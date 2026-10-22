@@ -46,10 +46,16 @@ async function getMeetingRowById(meetingId: string): Promise<MeetingRow> {
   return row;
 }
 
-async function getDefaultTemplate(channel: "email" | "whatsapp"): Promise<NotificationTemplateRow | null> {
+/** The workspace's active default "Meeting Scheduled" template for a channel (at most one, per 019's indexes). */
+export async function getDefaultTemplate(
+  workspaceId: string,
+  channel: "email" | "whatsapp",
+  db: Queryable = pool,
+): Promise<NotificationTemplateRow | null> {
   const column = channel === "email" ? "is_default_meeting_scheduled_email" : "is_default_meeting_scheduled_whatsapp";
-  const result = await pool.query<NotificationTemplateRow>(
-    `select * from public.message_templates where ${column} = true and is_active = true limit 1`,
+  const result = await db.query<NotificationTemplateRow>(
+    `select * from public.message_templates where workspace_id = $1 and ${column} = true and is_active = true limit 1`,
+    [workspaceId],
   );
   return result.rows[0] ?? null;
 }
@@ -69,11 +75,11 @@ function toRenderLead(lead: LeadRow): TemplateRenderLead {
 async function sendMeetingEmailNow(meeting: MeetingRow, lead: LeadRow): Promise<void> {
   try {
     if (!lead.email) throw new Error("Email-eligible meeting notification has no lead email (invariant violation).");
-    const template = await getDefaultTemplate("email");
+    const template = await getDefaultTemplate(meeting.workspace_id, "email");
     if (!template) {
       await pool.query(
         `update public.meetings set notify_email_status = 'skipped', notify_email_error = $2 where id = $1`,
-        [meeting.id, "No default \"Meeting Scheduled\" email template is configured (Admin → Templates)."],
+        [meeting.id, "No default \"Meeting Scheduled\" email template is configured (Automations → Templates)."],
       );
       return;
     }
@@ -136,11 +142,11 @@ export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise
       ]);
       return;
     }
-    const template = await getDefaultTemplate("whatsapp");
+    const template = await getDefaultTemplate(row.workspace_id, "whatsapp");
     if (!template) {
       await pool.query(
         `update public.meetings set notify_whatsapp_status = 'failed', notify_whatsapp_error = $2 where id = $1`,
-        [row.id, "No default \"Meeting Scheduled\" WhatsApp template is configured (Admin → Templates)."],
+        [row.id, "No default \"Meeting Scheduled\" WhatsApp template is configured (Automations → Templates)."],
       );
       return;
     }

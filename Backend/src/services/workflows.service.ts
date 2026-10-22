@@ -632,17 +632,16 @@ export async function updateTemplate(
     params.push(patch.active);
   }
   if (patch.isDefaultMeetingScheduled !== undefined) {
-    // Only one template per channel (within this workspace) may hold this
-    // flag — clear the previous default (if any) before setting this one,
-    // matching the partial unique index in
-    // 006_google_calendar_meeting_sync.sql (that index is global, not
-    // workspace-scoped, so "default meeting-scheduled template" is
-    // currently a single cross-workspace flag — acceptable for now since
-    // only one workspace, MOTM, uses it today; a future workspace enabling
-    // this feature would need that index revisited to be workspace-scoped).
+    // Only one template per channel per workspace may hold this flag — clear
+    // this workspace's previous default (if any) before setting this one,
+    // matching the per-workspace partial unique indexes in
+    // 019_workspace_default_meeting_templates.sql.
     const column = current.channel === "email" ? "is_default_meeting_scheduled_email" : "is_default_meeting_scheduled_whatsapp";
     if (patch.isDefaultMeetingScheduled) {
-      await db.query(`update public.message_templates set ${column} = false where ${column} = true and id != $1`, [id]);
+      await db.query(`update public.message_templates set ${column} = false where workspace_id = $1 and ${column} = true and id != $2`, [
+        current.workspace_id,
+        id,
+      ]);
     }
     sets.push(`${column} = $${i++}`);
     params.push(patch.isDefaultMeetingScheduled);
