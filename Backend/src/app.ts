@@ -3,11 +3,12 @@ import cors from "cors";
 import helmet from "helmet";
 import { corsOrigins } from "./env.js";
 import { apiRouter } from "./routes/index.js";
-import { errorMiddleware, notFoundMiddleware } from "./errorMiddleware.js";
+import { errorMiddleware, notFoundMiddleware, requestIdMiddleware } from "./errorMiddleware.js";
 
 export function createApp() {
   const app = express();
 
+  app.use(requestIdMiddleware);
   app.use(helmet());
   app.use(
     cors({

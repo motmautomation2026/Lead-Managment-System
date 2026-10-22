@@ -17,6 +17,8 @@ declare module "express-serve-static-core" {
   interface Request {
     actor?: Actor;
     workspaceId?: string;
+    /** Set by requestIdMiddleware; returned on 500s so a user can quote it. */
+    requestId?: string;
   }
 }
 
