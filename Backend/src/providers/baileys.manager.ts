@@ -611,8 +611,17 @@ export class BaileysManager {
         : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: input.body };
     }
 
+    // The socket can still go away after the recheck (e.g. the session lock
+    // connection drops and stop() nulls it). Nothing went out, so defer.
+    const socket = this.socket;
+    if (!socket || !this.connected) throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
     return withTransaction(async (db) => {
-      const sent = await this.socket!.sendMessage(jid, messageContent, { messageId: claim.messageId });
+      const sent = await socket.sendMessage(jid, messageContent, { messageId: claim.messageId }).catch((error: unknown) => {
+        if ((error as { output?: { statusCode?: number } }).output?.statusCode === DisconnectReason.connectionClosed) {
+          throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
+        }
+        throw error;
+      });
       if (!sent?.message) throw new Error("Baileys returned no message payload.");
       const payload = proto.Message.toObject(proto.Message.fromObject(sent.message));
       const encrypted = encryptBytes(Buffer.from(JSON.stringify(payload), "utf8"), `whatsapp:outbound:${claim.messageId}`);

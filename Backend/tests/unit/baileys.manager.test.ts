@@ -42,7 +42,9 @@ vi.mock("../../src/services/whatsapp-inbound.service.js", () => ({ processInboun
 vi.mock("../../src/supabaseAdmin.js", () => ({ supabaseAdmin: {} }));
 
 import { BaileysManager, resolveLeadIdForSource, type WhatsAppSendSource } from "../../src/providers/baileys.manager.js";
-import { PermanentProviderError } from "../../src/providers/provider-errors.js";
+import { PermanentProviderError, ProviderDeferredError } from "../../src/providers/provider-errors.js";
+import { supabaseAdmin } from "../../src/supabaseAdmin.js";
+import { DisconnectReason } from "baileys";
 
 const WS = "ws-1";
 const PHONE = "+919876543210";
@@ -204,6 +206,48 @@ describe("performSend: meeting source (B1)", () => {
   it("is permanently ineligible when the meeting row is missing", async () => {
     const socket = installFakeDb({ eligibility: [] });
     await expect(send(connectedManager(socket), source)).rejects.toBeInstanceOf(PermanentProviderError);
+  });
+});
+
+describe("performSend: socket lost at send time", () => {
+  const source = { type: "proposal" as const, id: "src-1" };
+  const attachment = { storagePath: "p/doc.pdf", fileName: "doc.pdf", mimeType: "application/pdf", bucket: "proposal-documents" };
+
+  it("defers when the session lock drops after the final recheck, before sendMessage", async () => {
+    const socket = Object.assign(installFakeDb({ eligibility: [{ phone_e164: PHONE }] }), { end: vi.fn() });
+    const manager = connectedManager(socket);
+    // The attachment download is the last await before the send: lose the lock there.
+    Object.assign(supabaseAdmin, {
+      storage: {
+        from: () => ({
+          download: async () => {
+            await manager.stop();
+            return { data: new Blob(["pdf"]), error: null };
+          },
+        }),
+      },
+    });
+
+    const error = await manager.sendAction({ source, phoneE164: PHONE, body: "hi", attachment }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderDeferredError);
+    expect(socket.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("defers when Baileys reports the connection closed during sendMessage (Boom 428)", async () => {
+    const socket = installFakeDb({ eligibility: [{ phone_e164: PHONE }] });
+    socket.sendMessage.mockRejectedValueOnce(Object.assign(new Error("Connection Closed"), { output: { statusCode: DisconnectReason.connectionClosed } }));
+
+    await expect(send(connectedManager(socket), source)).rejects.toBeInstanceOf(ProviderDeferredError);
+  });
+
+  it("does not turn other send errors into deferrals", async () => {
+    const socket = installFakeDb({ eligibility: [{ phone_e164: PHONE }] });
+    socket.sendMessage.mockRejectedValueOnce(new Error("bad media"));
+
+    const error = await send(connectedManager(socket), source).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(ProviderDeferredError);
+    expect((error as Error).message).toBe("bad media");
   });
 });
 
