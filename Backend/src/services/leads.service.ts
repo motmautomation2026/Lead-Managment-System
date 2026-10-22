@@ -763,6 +763,17 @@ export async function reactivateFromDnc(db: Queryable, actor: Actor, workspaceId
   return getLeadRowOr404(db, workspaceId, leadId);
 }
 
+const DNC_EXIT_MESSAGE = "This lead is Do Not Contact. Reactivate it with a reason first.";
+
+/**
+ * Do Not Contact may only be left through reactivateFromDnc (which records a
+ * reason). Any other lifecycle move would silently lift the suppression; the
+ * DB trigger (020_dnc_exit_only_to_active.sql) enforces the same rule.
+ */
+function assertNotDnc(lead: LeadRow) {
+  if (lead.lifecycle_state === "do_not_contact") throw new DoNotContactError(DNC_EXIT_MESSAGE);
+}
+
 async function setTerminalLifecycle(
   db: Queryable,
   actor: Actor | null,
@@ -775,6 +786,7 @@ async function setTerminalLifecycle(
 ) {
   assertValidLifecycleState(lifecycle);
   const current = await getLeadRowOr404(db, workspaceId, leadId);
+  assertNotDnc(current);
   if (current.lifecycle_state === lifecycle) return current;
 
   const extraEntries = Object.entries(extraColumns ?? {});
@@ -806,6 +818,7 @@ export const markDiscarded = (db: Queryable, actor: Actor, workspaceId: string, 
 
 export async function moveToLongTermNurture(db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string) {
   const current = await getLeadRowOr404(db, workspaceId, leadId);
+  assertNotDnc(current);
   if (current.lifecycle_state === "long_term_nurture") return current;
   await db.query(`update public.leads set lifecycle_state = 'long_term_nurture', last_activity_at = now() where id = $1`, [leadId]);
   await addTimelineEvent(db, { leadId, kind: "system", title: "Moved to Long-Term Nurture", detail: reason, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR) });
@@ -847,6 +860,8 @@ export async function mergeLead(db: Queryable, actor: Actor, workspaceId: string
   const source = await getLeadRowOr404(db, workspaceId, sourceLeadId);
   const target = await getLeadRowOr404(db, workspaceId, targetLeadId);
   if (source.lifecycle_state === "merged") throw new ConflictError("Source lead is already merged.");
+  // Merging would end the source's suppression without a recorded reason.
+  assertNotDnc(source);
   if (target.lifecycle_state === "merged") throw new ConflictError("Target lead is itself a merged (absorbed) lead.");
 
   await db.query(
