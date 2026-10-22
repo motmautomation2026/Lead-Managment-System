@@ -22,7 +22,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
  */
 
 const PROPOSAL_DOCUMENTS_BUCKET = "proposal-documents";
-const MAX_WHATSAPP_ATTEMPTS = 5;
+const PROPOSAL_WHATSAPP_MAX_DEFERRAL_MS = 72 * 60 * 60 * 1000;
 
 function sanitizeFileName(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? name;
@@ -242,23 +242,23 @@ export async function processQueuedProposalWhatsappSend(row: ProposalRow): Promi
     );
     await tryAdvanceToSent(row.workspace_id, row.id);
   } catch (err) {
+    // A deferral (disconnected, manager starting, daily cap, restriction) is not
+    // an attempt; give up only once the proposal has waited too long.
     if (err instanceof ProviderDeferredError) {
-      const attempts = row.whatsapp_attempt_count + 1;
-      if (attempts >= MAX_WHATSAPP_ATTEMPTS) {
-        await pool.query(
-          `update public.proposals
-              set whatsapp_send_status = 'failed', whatsapp_attempt_count = $2, whatsapp_send_error = $3
-            where id = $1`,
-          [row.id, attempts, `Gave up after ${attempts} attempts: ${err.message}`],
-        );
+      // The WhatsApp send is queued when the proposal is created.
+      if (Date.now() - row.created_at.getTime() >= PROPOSAL_WHATSAPP_MAX_DEFERRAL_MS) {
+        await pool.query(`update public.proposals set whatsapp_send_status = 'failed', whatsapp_send_error = $2 where id = $1`, [
+          row.id,
+          `Gave up: WhatsApp stayed unavailable for ${PROPOSAL_WHATSAPP_MAX_DEFERRAL_MS / 3_600_000} hours. Last reason: ${err.message}`,
+        ]);
         return;
       }
       await pool.query(
         `update public.proposals
-            set whatsapp_send_status = 'queued', whatsapp_attempt_count = $2,
-                whatsapp_next_attempt_at = now() + ($3 || ' milliseconds')::interval, whatsapp_send_error = $4
+            set whatsapp_send_status = 'queued',
+                whatsapp_next_attempt_at = now() + ($2 || ' milliseconds')::interval, whatsapp_send_error = $3
           where id = $1`,
-        [row.id, attempts, String(err.retryAfterMs), err.message],
+        [row.id, String(err.retryAfterMs), err.message],
       );
       return;
     }

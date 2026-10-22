@@ -21,8 +21,6 @@ import { ProviderDeferredError } from "../providers/provider-errors.js";
  * Calendar — never blocks or fails meeting creation.
  */
 
-const MAX_WHATSAPP_ATTEMPTS = 5;
-
 interface NotificationTemplateRow {
   id: string;
   name: string;
@@ -167,23 +165,22 @@ export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise
       [row.id],
     );
   } catch (err) {
+    // A deferral (disconnected, manager starting, daily cap, restriction) is not
+    // an attempt; the notification is only pointless once the meeting has started.
     if (err instanceof ProviderDeferredError) {
-      const attempts = row.notify_whatsapp_attempt_count + 1;
-      if (attempts >= MAX_WHATSAPP_ATTEMPTS) {
-        await pool.query(
-          `update public.meetings
-              set notify_whatsapp_status = 'failed', notify_whatsapp_attempt_count = $2, notify_whatsapp_error = $3
-            where id = $1`,
-          [row.id, attempts, `Gave up after ${attempts} attempts: ${err.message}`],
-        );
+      if (row.scheduled_at.getTime() <= Date.now()) {
+        await pool.query(`update public.meetings set notify_whatsapp_status = 'skipped', notify_whatsapp_error = $2 where id = $1`, [
+          row.id,
+          `Not sent: the meeting time passed while WhatsApp was unavailable. Last reason: ${err.message}`,
+        ]);
         return;
       }
       await pool.query(
         `update public.meetings
-            set notify_whatsapp_status = 'queued', notify_whatsapp_attempt_count = $2,
-                notify_whatsapp_next_attempt_at = now() + ($3 || ' milliseconds')::interval, notify_whatsapp_error = $4
+            set notify_whatsapp_status = 'queued',
+                notify_whatsapp_next_attempt_at = now() + ($2 || ' milliseconds')::interval, notify_whatsapp_error = $3
           where id = $1`,
-        [row.id, attempts, String(err.retryAfterMs), err.message],
+        [row.id, String(err.retryAfterMs), err.message],
       );
       return;
     }
