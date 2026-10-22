@@ -22,6 +22,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - `npm run check` (in both `Backend/` and `Frontend/`) must pass and stays database-free.
 - Integration tests (`Backend/tests/integration`) need `TEST_DATABASE_URL` (staging), run
   serially, and refuse the prod ref.
+- Run them with `npm run test:integration:staging` in `Backend/`. It loads
+  `TEST_DATABASE_URL` from `Backend/.env`, refuses the prod ref, and runs
+  `tests/integration`. Run it after every backend change.
 
 ## Migrations
 
