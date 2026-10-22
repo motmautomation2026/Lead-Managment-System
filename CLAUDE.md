@@ -25,6 +25,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Run them with `npm run test:integration:staging` in `Backend/`. It loads
   `TEST_DATABASE_URL` from `Backend/.env`, refuses the prod ref, and runs
   `tests/integration`. Run it after every backend change.
+- Stop any local `npm run dev` / `npm run worker:dev` that points at staging first. They
+  share the 15-slot session pooler (tests then fail with `EMAXCONNSESSION`). A live worker
+  also claims queued proposal/meeting rows that the tests create.
 
 ## Migrations
 
