@@ -64,3 +64,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   lock connection.
 - **0C:** B3 per-workspace meeting templates (migration 019), B5 DNC exit only via
   reactivation (migration 020), re-runnable integration suite.
+- **0D:** staging integration runner, B7 internal-action failures, B19 stuck-send reclaim,
+  deferrals don't burn attempts, send-time socket loss deferred, readable WhatsApp logs,
+  meeting-variable publish/edit validation.
+- **0E:** Postgres errors mapped to clear 4xx (`domain/dbErrorMessages.ts`), request ids on
+  500s, UUID-validated ids (B24), strict query booleans (B14), template delete 409 (B6),
+  provider errors on the email test, shared frontend error display.
