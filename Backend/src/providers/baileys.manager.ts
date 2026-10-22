@@ -143,6 +143,24 @@ export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSend
   return result.rows[0]?.lead_id ?? null;
 }
 
+/**
+ * Log redaction for the manager and Baileys. The log message text (`msg`) and
+ * error messages stay readable; WhatsApp message content and credentials do not:
+ * - message protos: `message`/`messages`/`fullMessage` (Baileys' WAMessage
+ *   fields; `*.message` only when not a string, so `err.message` survives)
+ * - content leaves if logged loose: text, caption, conversation, body (our send input), content
+ * - credentials: qr, auth, creds, signal `keys`, noise `handshake`, `protocolMsg`
+ *   (app-state sync key shares), and `key` (defensive; Baileys uses it for message keys)
+ */
+export const BAILEYS_LOG_REDACTION: pino.LoggerOptions["redact"] = {
+  paths: [
+    "message", "*.message", "messages", "*.messages", "fullMessage", "*.fullMessage",
+    "text", "*.text", "caption", "*.caption", "conversation", "*.conversation", "body", "*.body", "content", "*.content",
+    "qr", "auth", "creds", "*.creds", "keys", "*.keys", "handshake", "protocolMsg", "key", "*.key",
+  ],
+  censor: (value: unknown, path: string[]) => (path.length > 1 && path.at(-1) === "message" && typeof value === "string" ? value : "[Redacted]"),
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function disconnectCode(update: Partial<ConnectionState>) {
@@ -200,7 +218,7 @@ export class BaileysManager {
   constructor(private readonly workspaceId: string) {
     this.logger = pino({
       level: process.env.NODE_ENV === "production" ? "warn" : "info",
-      redact: ["qr", "auth", "key", "msg", "message", "*.key", "*.message"],
+      redact: BAILEYS_LOG_REDACTION,
     }).child({ workspaceId });
   }
 
@@ -254,8 +272,7 @@ export class BaileysManager {
    */
   private onLockConnectionLost(client: Client, error?: Error) {
     if (this.stopped || this.lockClient !== client) return;
-    // console, not this.logger: its redact list hides `msg` and error messages.
-    console.error(`[baileys-manager] Session lock connection lost for workspace ${this.workspaceId}; stopping its WhatsApp manager:`, error ?? "connection ended");
+    this.logger.error({ err: error ?? "connection ended" }, "Session lock connection lost; stopping this workspace's WhatsApp manager");
     void this.stop();
   }
 

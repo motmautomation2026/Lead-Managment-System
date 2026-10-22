@@ -41,7 +41,8 @@ vi.mock("baileys", async (importOriginal) => ({
 vi.mock("../../src/services/whatsapp-inbound.service.js", () => ({ processInboundUpsert: vi.fn() }));
 vi.mock("../../src/supabaseAdmin.js", () => ({ supabaseAdmin: {} }));
 
-import { BaileysManager, resolveLeadIdForSource, type WhatsAppSendSource } from "../../src/providers/baileys.manager.js";
+import pino from "pino";
+import { BAILEYS_LOG_REDACTION, BaileysManager, resolveLeadIdForSource, type WhatsAppSendSource } from "../../src/providers/baileys.manager.js";
 import { PermanentProviderError, ProviderDeferredError } from "../../src/providers/provider-errors.js";
 import { supabaseAdmin } from "../../src/supabaseAdmin.js";
 import { DisconnectReason } from "baileys";
@@ -251,6 +252,52 @@ describe("performSend: socket lost at send time", () => {
   });
 });
 
+describe("manager log redaction", () => {
+  function capture() {
+    const lines: string[] = [];
+    const logger = pino({ redact: BAILEYS_LOG_REDACTION }, { write: (line: string) => void lines.push(line) });
+    return { logger, output: () => lines.join("") };
+  }
+
+  it("hides inbound message content but keeps the log message and error text", () => {
+    const { logger, output } = capture();
+    const inboundUpsert = {
+      type: "notify",
+      messages: [
+        {
+          key: { remoteJid: "919876543210@s.whatsapp.net", fromMe: false, id: "3EB0ABC" },
+          pushName: "Asha",
+          message: {
+            conversation: "SECRET-CONVERSATION",
+            extendedTextMessage: { text: "SECRET-TEXT" },
+            imageMessage: { caption: "SECRET-CAPTION", mediaKey: "SECRET-MEDIA-KEY" },
+          },
+        },
+      ],
+    };
+
+    logger.info(inboundUpsert, "Inbound WhatsApp upsert received");
+    logger.info({ fullMessage: inboundUpsert.messages[0] }, "decrypting");
+    logger.info({ message: { documentMessage: { caption: "SECRET-DOC-CAPTION" } } }, "outbound media");
+    logger.info({ body: "SECRET-OUTBOUND-BODY", caption: "SECRET-LOOSE-CAPTION" }, "send input");
+    logger.error({ err: new Error("terminating connection due to administrator command") }, "Session lock connection lost");
+
+    const text = output();
+    expect(text).not.toMatch(/SECRET/);
+    expect(text).toContain("Inbound WhatsApp upsert received");
+    expect(text).toContain("Session lock connection lost");
+    expect(text).toContain("terminating connection due to administrator command");
+  });
+
+  it("hides credentials and keys", () => {
+    const { logger, output } = capture();
+    logger.info({ qr: "SECRET-QR", creds: { noiseKey: "SECRET-NOISE" }, keys: { "pre-key": "SECRET-PREKEY" }, handshake: "SECRET-HS" }, "auth");
+    logger.info({ protocolMsg: { appStateSyncKeyShare: { keys: ["SECRET-SYNC"] } } }, "recv app state sync with 0 keys");
+    expect(output()).not.toMatch(/SECRET/);
+    expect(output()).toContain("recv app state sync with 0 keys");
+  });
+});
+
 describe("resolveLeadIdForSource", () => {
   it.each([
     ["scheduled_action", "public.scheduled_actions"],
@@ -319,8 +366,6 @@ describe("BaileysManager session lock (B18)", () => {
   it.each(["error", "end"] as const)("stops the socket and marks itself stopped when the lock client emits %s", async (event) => {
     const { manager, client } = await startedManager();
     expect(pgMocks.makeWASocket).toHaveBeenCalledOnce();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
     client.emit(event, event === "error" ? new Error("terminating connection due to administrator command") : undefined);
 
     expect(manager.isStopped).toBe(true);
