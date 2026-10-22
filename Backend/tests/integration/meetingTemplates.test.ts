@@ -12,7 +12,10 @@ import type { Actor } from "../../src/authMiddleware.js";
 
 const mocks = vi.hoisted(() => ({ sendEmail: vi.fn(), sendWhatsApp: vi.fn() }));
 vi.mock("../../src/providers/email.provider.js", () => ({ sendEmail: mocks.sendEmail }));
-vi.mock("../../src/providers/whatsapp.provider.js", () => ({ sendWhatsApp: mocks.sendWhatsApp }));
+vi.mock("../../src/providers/whatsapp.provider.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/providers/whatsapp.provider.js")>()),
+  sendWhatsApp: mocks.sendWhatsApp,
+}));
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;

@@ -38,7 +38,7 @@ export interface WhatsAppAttachment {
  */
 export type WhatsAppSendSource = { type: "scheduled_action"; id: string } | { type: "proposal"; id: string } | { type: "meeting"; id: string };
 
-function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" {
+export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" {
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
   return "meeting_id";

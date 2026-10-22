@@ -8,7 +8,7 @@ import { createProposal, getProposalOr404, getProposalRowOr404, updateProposalSt
 import { renderTemplate, type TemplateRenderLead } from "../domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
 import { sendEmail } from "../providers/email.provider.js";
-import { sendWhatsApp } from "../providers/whatsapp.provider.js";
+import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 
@@ -178,15 +178,16 @@ export async function createAndSendProposal(actor: Actor, workspaceId: string, i
 /**
  * SKIP LOCKED claim, mirroring automation.service.ts's claimDueActions:
  * atomic so two worker poll ticks racing on the same rows never both claim
- * the same one.
+ * the same one. Claiming pushes whatsapp_next_attempt_at 15 minutes out, so a
+ * row left 'sending' by a crashed worker is reclaimed after that (audit B19).
  */
 export async function claimQueuedProposalWhatsappSends(db: Queryable, limit: number): Promise<ProposalRow[]> {
   const claimed = await db.query<ProposalRow>(
     `update public.proposals
-        set whatsapp_send_status = 'sending'
+        set whatsapp_send_status = 'sending', whatsapp_next_attempt_at = now() + interval '15 minutes'
       where id in (
         select id from public.proposals
-         where whatsapp_send_status = 'queued'
+         where whatsapp_send_status in ('queued', 'sending')
            and (whatsapp_next_attempt_at is null or whatsapp_next_attempt_at <= now())
          order by created_at asc
          limit $1
@@ -200,6 +201,14 @@ export async function claimQueuedProposalWhatsappSends(db: Queryable, limit: num
 
 export async function processQueuedProposalWhatsappSend(row: ProposalRow): Promise<void> {
   try {
+    if (await wasSentForSource(pool, { type: "proposal", id: row.id })) {
+      await pool.query(
+        `update public.proposals set whatsapp_send_status = 'sent', whatsapp_sent_at = coalesce(whatsapp_sent_at, now()), whatsapp_send_error = null where id = $1`,
+        [row.id],
+      );
+      await tryAdvanceToSent(row.workspace_id, row.id);
+      return;
+    }
     const lead = (await getLeadRowOr404(pool, row.workspace_id, row.lead_id)) as LeadRow & { owner_name: string | null };
     if (lead.lifecycle_state === "do_not_contact" || !lead.phone_e164) {
       await pool.query(`update public.proposals set whatsapp_send_status = 'failed', whatsapp_send_error = $2 where id = $1`, [

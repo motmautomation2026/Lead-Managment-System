@@ -6,7 +6,7 @@ import { toRenderMeeting, type MeetingRow } from "./meetings.service.js";
 import { renderTemplate, type TemplateRenderLead } from "../domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
 import { sendEmail } from "../providers/email.provider.js";
-import { sendWhatsApp } from "../providers/whatsapp.provider.js";
+import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 
 /**
@@ -113,14 +113,14 @@ export async function notifyMeetingScheduled(meetingId: string): Promise<void> {
   ]);
 }
 
-/** SKIP LOCKED claim, mirroring proposalSending.service.ts's claimQueuedProposalWhatsappSends. */
+/** SKIP LOCKED claim with a 15-minute reclaim of stuck 'sending' rows, mirroring claimQueuedProposalWhatsappSends. */
 export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: number): Promise<MeetingRow[]> {
   const claimed = await db.query<MeetingRow>(
     `update public.meetings
-        set notify_whatsapp_status = 'sending'
+        set notify_whatsapp_status = 'sending', notify_whatsapp_next_attempt_at = now() + interval '15 minutes'
       where id in (
         select id from public.meetings
-         where notify_whatsapp_status = 'queued'
+         where notify_whatsapp_status in ('queued', 'sending')
            and (notify_whatsapp_next_attempt_at is null or notify_whatsapp_next_attempt_at <= now())
          order by created_at asc
          limit $1
@@ -134,6 +134,13 @@ export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: numb
 
 export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise<void> {
   try {
+    if (await wasSentForSource(pool, { type: "meeting", id: row.id })) {
+      await pool.query(
+        `update public.meetings set notify_whatsapp_status = 'sent', notify_whatsapp_sent_at = coalesce(notify_whatsapp_sent_at, now()), notify_whatsapp_error = null where id = $1`,
+        [row.id],
+      );
+      return;
+    }
     const lead = await getLeadRowOr404(pool, row.workspace_id, row.lead_id);
     if (lead.lifecycle_state === "do_not_contact" || !lead.phone_e164) {
       await pool.query(`update public.meetings set notify_whatsapp_status = 'failed', notify_whatsapp_error = $2 where id = $1`, [
