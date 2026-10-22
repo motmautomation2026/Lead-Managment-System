@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../errors.js";
-import type { WorkflowStatus, WorkflowStepAction, WorkflowTrigger, WorkflowVersionStatus } from "../domain/enums.js";
-import { findUnknownTemplateTokens } from "../domain/templateRenderer.js";
+import { MEETING_TRIGGERS, type WorkflowStatus, type WorkflowStepAction, type WorkflowTrigger, type WorkflowVersionStatus } from "../domain/enums.js";
+import { findUnknownTemplateTokens, meetingVariablesIn } from "../domain/templateRenderer.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 
 const TEMPLATE_ATTACHMENTS_BUCKET = "template-attachments";
@@ -376,6 +376,31 @@ async function assertNoUnknownTemplateVariables(db: Queryable, versionId: string
 }
 
 /**
+ * A send step whose template uses {{meeting.*}} fails on every run unless the
+ * trigger guarantees a meeting (8 failed production runs before this check).
+ */
+async function assertMeetingVariablesHaveMeeting(db: Queryable, versionId: string, trigger: WorkflowTrigger): Promise<void> {
+  if (MEETING_TRIGGERS.includes(trigger)) return;
+  const result = await db.query<{ step_order: number; template_name: string; subject: string | null; body: string }>(
+    `select ws.step_order, mt.name as template_name, mt.subject, mt.body
+       from public.workflow_steps ws
+       join public.message_templates mt on mt.id = ws.template_id
+      where ws.workflow_version_id = $1 and ws.action in ('send_email', 'send_whatsapp')
+      order by ws.step_order`,
+    [versionId],
+  );
+  const problems = result.rows.flatMap((row) => {
+    const variables = meetingVariablesIn(row);
+    return variables.length ? [`Step ${row.step_order + 1} template "${row.template_name}" uses {{${variables.join("}}, {{")}}}`] : [];
+  });
+  if (problems.length > 0) {
+    throw new ValidationError(
+      `Cannot publish - ${problems.join("; ")}, but the "${trigger}" trigger has no meeting. Use a meeting trigger or remove the meeting variables.`,
+    );
+  }
+}
+
+/**
  * Publishing never touches existing workflow_runs (Rule 11: a run keeps the
  * version it entered) — this is the "safe default" the product brief asks
  * for while the real migration UX isn't finalized. Only `keep_existing` is
@@ -390,7 +415,7 @@ export async function publishVersion(db: Queryable, actor: Actor, workspaceId: s
     );
   }
 
-  await getWorkflowRowOr404(db, workspaceId, workflowId);
+  const workflow = await getWorkflowRowOr404(db, workspaceId, workflowId);
   const versionRow = await db.query<WorkflowVersionRow>(
     `select * from public.workflow_versions where workflow_id = $1 and version_number = $2`,
     [workflowId, version],
@@ -405,6 +430,7 @@ export async function publishVersion(db: Queryable, actor: Actor, workspaceId: s
   }
 
   await assertNoUnknownTemplateVariables(db, v.id);
+  await assertMeetingVariablesHaveMeeting(db, v.id, workflow.trigger);
 
   // Demote the currently-published version first, then promote the new one
   // — the partial unique index (one Published per workflow) is not
@@ -611,6 +637,28 @@ export async function updateTemplate(
   patch: { name?: string; subject?: string; body?: string; active?: boolean; isDefaultMeetingScheduled?: boolean },
 ) {
   const current = await getTemplateRowOr404(db, workspaceId, id);
+
+  if (patch.subject !== undefined || patch.body !== undefined) {
+    const variables = meetingVariablesIn({ subject: patch.subject ?? current.subject, body: patch.body ?? current.body });
+    if (variables.length) {
+      const users = await db.query<{ workflow_name: string; trigger: string; step_order: number }>(
+        `select w.name as workflow_name, w.trigger, ws.step_order
+           from public.workflow_steps ws
+           join public.workflow_versions v on v.id = ws.workflow_version_id
+           join public.workflows w on w.id = v.workflow_id
+          where ws.template_id = $1 and v.status = 'published' and ws.action in ('send_email', 'send_whatsapp')
+            and w.trigger::text <> all($2::text[])
+          order by w.name, ws.step_order`,
+        [id, MEETING_TRIGGERS],
+      );
+      if (users.rows.length) {
+        const where = users.rows.map((row) => `"${row.workflow_name}" step ${row.step_order + 1} (trigger "${row.trigger}")`).join("; ");
+        throw new ValidationError(
+          `Template "${current.name}" cannot use {{${variables.join("}}, {{")}}}: it is used by published workflow(s) whose trigger has no meeting: ${where}.`,
+        );
+      }
+    }
+  }
 
   const sets: string[] = [];
   const params: unknown[] = [];

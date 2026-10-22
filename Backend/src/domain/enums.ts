@@ -256,6 +256,17 @@ export const WORKFLOW_TRIGGERS = [
 ] as const;
 export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
 
+/** Triggers that fire from a meeting, so the lead always has one to fill {{meeting.*}} variables. */
+export const MEETING_TRIGGERS: readonly WorkflowTrigger[] = [
+  "meeting_scheduled",
+  "meeting_agreed",
+  "meeting_highly_interested",
+  "meeting_proposal_requested",
+  "meeting_needs_more_information",
+  "meeting_not_ready",
+  "meeting_not_a_fit",
+];
+
 export const WORKFLOW_STATUSES = ["active", "paused"] as const;
 export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 
