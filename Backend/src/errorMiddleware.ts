@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "./errors.js";
 import { env } from "./env.js";
+import { mapDatabaseError } from "./domain/dbErrorMessages.js";
 
 export function notFoundMiddleware(req: Request, res: Response) {
   res.status(404).json({ error: { code: "not_found", message: `No route: ${req.method} ${req.path}` } });
@@ -11,6 +12,12 @@ export function errorMiddleware(err: unknown, _req: Request, res: Response, _nex
     res.status(err.status).json({
       error: { code: err.code, message: err.message, details: err.details },
     });
+    return;
+  }
+
+  const mapped = mapDatabaseError(err);
+  if (mapped) {
+    res.status(mapped.status).json({ error: { code: mapped.code, message: mapped.message, details: mapped.details } });
     return;
   }
 
