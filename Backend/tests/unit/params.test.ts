@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 const poolQuery = vi.hoisted(() => vi.fn());
 vi.mock("../../src/db.js", () => ({ pool: { query: poolQuery } }));
 
-import { isUuid, uuidParam } from "../../src/validation/parse.js";
+import { z } from "zod";
+import { isUuid, parseQuery, queryBoolean, uuidParam } from "../../src/validation/parse.js";
 import { requireWorkspace } from "../../src/authMiddleware.js";
 import { errorMiddleware } from "../../src/errorMiddleware.js";
 
@@ -79,5 +80,26 @@ describe("uuid route params and the workspace header", () => {
     poolQuery.mockResolvedValueOnce({ rows: [{ id: ID }] });
     const res = await fetch(`${base}/ws`, { headers: { "X-Workspace-Id": ID } });
     expect(await res.json()).toEqual({ workspaceId: ID });
+  });
+});
+
+describe("queryBoolean (B14)", () => {
+  it.each([
+    ["true", true],
+    ["1", true],
+    ["false", false],
+    ["0", false],
+  ])("parses %s as %s", (value, expected) => {
+    expect(queryBoolean.parse(value)).toBe(expected);
+  });
+
+  it.each(["yes", "FALSE", "", "2", "no"])("rejects %j with a 400", (value) => {
+    expect(() => parseQuery(z.object({ force: queryBoolean.optional() }), { force: value })).toThrow(
+      expect.objectContaining({ status: 400, code: "invalid_input" }),
+    );
+  });
+
+  it("treats an absent value as undefined", () => {
+    expect(z.object({ force: queryBoolean.optional() }).parse({})).toEqual({});
   });
 });

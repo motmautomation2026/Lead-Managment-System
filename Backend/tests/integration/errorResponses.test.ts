@@ -95,6 +95,37 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
     expect(res.body.error.message).toBe("Invalid workspace id.");
   });
 
+  /** A published, active manual workflow with one enrolled lead. */
+  async function workflowWithEnrollment() {
+    const { createWorkflow, updateDraftSteps, publishVersion, updateWorkflow } = await import("../../src/services/workflows.service.js");
+    const { enrollLeadInWorkflow } = await import("../../src/services/runs.service.js");
+    const { withTransaction } = await import("../../src/db.js");
+    const lead = await newLead();
+    const workflow = await withTransaction((client) => createWorkflow(client, actor, WORKSPACE_ID, { name: `Errors ${randomUUID()}`, trigger: "manual_enrollment" }));
+    await withTransaction((client) => updateDraftSteps(client, WORKSPACE_ID, workflow.id, 1, [{ order: 0, delayDays: 3, action: "create_call_task", config: "Call", enabled: true }]));
+    await withTransaction((client) => publishVersion(client, actor, WORKSPACE_ID, workflow.id, 1, "keep_existing"));
+    await withTransaction((client) => updateWorkflow(client, WORKSPACE_ID, workflow.id, { status: "active" }));
+    await withTransaction((client) => enrollLeadInWorkflow(client, WORKSPACE_ID, lead.id, workflow.id, "errors test"));
+    return workflow;
+  }
+
+  it("?force=false does not force-delete a workflow with enrollments (B14)", async () => {
+    const workflow = await workflowWithEnrollment();
+    const res = await api("DELETE", `/workflows/${workflow.id}?force=false`);
+    expect(res.status).toBe(409);
+    expect(res.body.error.details).toMatchObject({ reason: "has_enrollment_history", runCount: 1 });
+    const still = await pool.query(`select count(*)::int as n from public.workflows where id = $1`, [workflow.id]);
+    expect(still.rows[0].n).toBe(1);
+  });
+
+  it("an unrecognised boolean is a 400, and ?force=true still force-deletes", async () => {
+    const workflow = await workflowWithEnrollment();
+    expect((await api("DELETE", `/workflows/${workflow.id}?force=yes`)).status).toBe(400);
+    expect((await api("DELETE", `/workflows/${workflow.id}?force=true`)).status).toBe(204);
+    const gone = await pool.query(`select count(*)::int as n from public.workflows where id = $1`, [workflow.id]);
+    expect(gone.rows[0].n).toBe(0);
+  });
+
   it("an unknown owner is a 400 naming the owner, not a 500", async () => {
     const lead = await newLead();
     const res = await api("PATCH", `/leads/${lead.id}`, { ownerId: randomUUID() });

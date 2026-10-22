@@ -5,7 +5,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseParams, parseQuery, uuidParam } from "../validation/parse.js";
+import { parseBody, parseParams, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { WORKFLOW_STATUSES, WORKFLOW_STEP_ACTIONS, WORKFLOW_TRIGGERS, TEMPLATE_CHANNELS } from "../domain/enums.js";
 import * as workflowsService from "../services/workflows.service.js";
 import { ValidationError } from "../errors.js";
@@ -123,7 +123,7 @@ workflowsRouter.post(
   }),
 );
 
-const deleteWorkflowQuerySchema = z.object({ force: z.coerce.boolean().optional() });
+const deleteWorkflowQuerySchema = z.object({ force: queryBoolean.optional() });
 
 workflowsRouter.delete(
   "/:id",

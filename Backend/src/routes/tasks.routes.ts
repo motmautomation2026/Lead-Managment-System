@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
+import { parseBody, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { TASK_STATUSES, TASK_TYPES } from "../domain/enums.js";
 import { cancelTask, completeTask, createTask, listTasks, taskToDto, updateTask } from "../services/tasks.service.js";
 
@@ -16,8 +16,8 @@ const listQuerySchema = z.object({
   leadId: z.string().uuid().optional(),
   status: z.enum(TASK_STATUSES).optional(),
   type: z.enum(TASK_TYPES).optional(),
-  overdueOnly: z.coerce.boolean().optional(),
-  dueTodayOnly: z.coerce.boolean().optional(),
+  overdueOnly: queryBoolean.optional(),
+  dueTodayOnly: queryBoolean.optional(),
 });
 
 tasksRouter.get(

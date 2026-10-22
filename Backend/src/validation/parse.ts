@@ -1,8 +1,8 @@
 import type { RequestParamHandler } from "express";
-import { z, type ZodSchema } from "zod";
+import { z, type ZodType, type ZodTypeDef } from "zod";
 import { ValidationError } from "../errors.js";
 
-export function parseBody<T>(schema: ZodSchema<T>, body: unknown): T {
+export function parseBody<T>(schema: ZodType<T, ZodTypeDef, unknown>, body: unknown): T {
   const result = schema.safeParse(body);
   if (!result.success) {
     throw new ValidationError("Request body failed validation.", result.error.flatten());
@@ -10,7 +10,7 @@ export function parseBody<T>(schema: ZodSchema<T>, body: unknown): T {
   return result.data;
 }
 
-export function parseQuery<T>(schema: ZodSchema<T>, query: unknown): T {
+export function parseQuery<T>(schema: ZodType<T, ZodTypeDef, unknown>, query: unknown): T {
   const result = schema.safeParse(query);
   if (!result.success) {
     throw new ValidationError("Query parameters failed validation.", result.error.flatten());
@@ -18,7 +18,7 @@ export function parseQuery<T>(schema: ZodSchema<T>, query: unknown): T {
   return result.data;
 }
 
-export function parseParams<T>(schema: ZodSchema<T>, params: unknown): T {
+export function parseParams<T>(schema: ZodType<T, ZodTypeDef, unknown>, params: unknown): T {
   const result = schema.safeParse(params);
   if (!result.success) {
     throw new ValidationError("Route parameters failed validation.", result.error.flatten());
@@ -40,3 +40,11 @@ export function isUuid(value: unknown): boolean {
 export function uuidParam(resource: string): RequestParamHandler {
   return (_req, _res, next, value) => next(isUuid(value) ? undefined : new ValidationError(`Invalid ${resource} id.`));
 }
+
+/**
+ * A query-string boolean: "true"/"1" or "false"/"0", anything else a 400.
+ * z.coerce.boolean() turns the string "false" into true (audit B14).
+ */
+export const queryBoolean = z
+  .enum(["true", "1", "false", "0"], { errorMap: () => ({ message: 'Use "true" or "false".' }) })
+  .transform((value) => value === "true" || value === "1");
