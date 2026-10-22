@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { afterAll, vi } from "vitest";
 
 // Integration tests: refuse production outright, and point the app's own pool
 // (src/db.ts) at the test database so no service call can reach another DB.
@@ -10,6 +10,12 @@ if (testDatabaseUrl) {
   process.env.DATABASE_URL = testDatabaseUrl;
   // Every statement is a network round trip to the remote test database.
   vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+  // Each file gets a fresh src/db.ts pool; close it so idle connections don't
+  // hold session-pooler slots (15 on Supabase) into the next file.
+  afterAll(async () => {
+    const { pool } = await import("../src/db.js");
+    await pool.end();
+  });
 }
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@127.0.0.1:5432/postgres";
