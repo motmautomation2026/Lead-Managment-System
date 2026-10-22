@@ -777,26 +777,30 @@ export async function deleteTemplateAttachment(db: Queryable, workspaceId: strin
 }
 
 /**
- * `workflow_steps.template_id` is ON DELETE SET NULL, so deleting a template
- * never fails outright — but a step in a *published* version that loses its
- * template would silently stop sending the next time it's due
- * (computeEligibility in automation.service.ts reports "No template
- * resolved" rather than crashing, which is easy to miss). Deleting a
- * template only referenced by draft steps is fine (that's normal workflow-
- * builder editing) and still allowed.
+ * `workflow_steps.template_id` is ON DELETE SET NULL. Steps in a published or
+ * previous version can't be changed (the draft-only trigger rejects that
+ * SET NULL, audit B6), and a published step that lost its template would
+ * silently stop sending. So only templates used by draft steps alone (normal
+ * workflow-builder editing) may be deleted.
  */
 export async function deleteTemplate(db: Queryable, workspaceId: string, id: string) {
   await getTemplateRowOr404(db, workspaceId, id);
 
-  const liveUsage = await db.query<{ count: string }>(
-    `select count(*)::text as count
+  const usage = await db.query<{ name: string }>(
+    `select distinct w.name
        from public.workflow_steps ws
        join public.workflow_versions wv on wv.id = ws.workflow_version_id
-      where ws.template_id = $1 and wv.status = 'published'`,
+       join public.workflows w on w.id = wv.workflow_id
+      where ws.template_id = $1 and wv.status <> 'draft'
+      order by w.name`,
     [id],
   );
-  if (Number(liveUsage.rows[0]?.count ?? 0) > 0) {
-    throw new ConflictError("Cannot delete a template used by a published workflow step - remove it from that step first.");
+  if (usage.rows.length > 0) {
+    const names = usage.rows.map((row) => `"${row.name}"`).join(", ");
+    throw new ConflictError(
+      `This template is used by workflow${usage.rows.length > 1 ? "s" : ""} ${names} (a published or older version) and can't be deleted. Deactivate it instead.`,
+      { workflows: usage.rows.map((row) => row.name) },
+    );
   }
 
   await db.query(`delete from public.message_templates where id = $1`, [id]);

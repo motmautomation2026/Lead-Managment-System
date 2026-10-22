@@ -126,6 +126,53 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
     expect(gone.rows[0].n).toBe(0);
   });
 
+  describe("deleting a template (B6)", () => {
+    async function emailTemplate() {
+      const res = await api("POST", "/templates", { name: `Errors template ${randomUUID()}`, channel: "email", subject: "Hi", body: "<p>Hello</p>" });
+      expect(res.status).toBe(201);
+      return (res.body.data ?? res.body) as { id: string };
+    }
+
+    it("is a 409 naming the workflow when only a previous version uses it", async () => {
+      const { createWorkflow, updateDraftSteps, publishVersion, createDraft } = await import("../../src/services/workflows.service.js");
+      const { withTransaction } = await import("../../src/db.js");
+      const template = await emailTemplate();
+      const name = `Superseded ${randomUUID()}`;
+      const workflow = await withTransaction((client) => createWorkflow(client, actor, WORKSPACE_ID, { name, trigger: "manual_enrollment" }));
+      await withTransaction((client) =>
+        updateDraftSteps(client, WORKSPACE_ID, workflow.id, 1, [{ order: 0, delayDays: 0, action: "send_email", templateId: template.id, enabled: true }]),
+      );
+      await withTransaction((client) => publishVersion(client, actor, WORKSPACE_ID, workflow.id, 1, "keep_existing"));
+      // v2 drops the template, so v1 (now "previous") is its only user.
+      await withTransaction((client) => createDraft(client, actor, WORKSPACE_ID, workflow.id));
+      await withTransaction((client) => updateDraftSteps(client, WORKSPACE_ID, workflow.id, 2, [{ order: 0, delayDays: 0, action: "create_call_task", config: "Call", enabled: true }]));
+      await withTransaction((client) => publishVersion(client, actor, WORKSPACE_ID, workflow.id, 2, "keep_existing"));
+
+      const res = await api("DELETE", `/templates/${template.id}`);
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toEqual({
+        code: "conflict",
+        message: `This template is used by workflow "${name}" (a published or older version) and can't be deleted. Deactivate it instead.`,
+        details: { workflows: [name] },
+      });
+      const still = await pool.query(`select count(*)::int as n from public.message_templates where id = $1`, [template.id]);
+      expect(still.rows[0].n).toBe(1);
+    });
+
+    it("still deletes a template only a draft uses", async () => {
+      const { createWorkflow, updateDraftSteps } = await import("../../src/services/workflows.service.js");
+      const { withTransaction } = await import("../../src/db.js");
+      const template = await emailTemplate();
+      const workflow = await withTransaction((client) => createWorkflow(client, actor, WORKSPACE_ID, { name: `Draft only ${randomUUID()}`, trigger: "manual_enrollment" }));
+      await withTransaction((client) =>
+        updateDraftSteps(client, WORKSPACE_ID, workflow.id, 1, [{ order: 0, delayDays: 0, action: "send_email", templateId: template.id, enabled: true }]),
+      );
+
+      expect((await api("DELETE", `/templates/${template.id}`)).status).toBe(204);
+    });
+  });
+
   it("an unknown owner is a 400 naming the owner, not a 500", async () => {
     const lead = await newLead();
     const res = await api("PATCH", `/leads/${lead.id}`, { ownerId: randomUUID() });
