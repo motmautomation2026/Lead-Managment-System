@@ -5,7 +5,7 @@ import { ValidationError } from "../errors.js";
 export function parseBody<T>(schema: ZodType<T, ZodTypeDef, unknown>, body: unknown): T {
   const result = schema.safeParse(body);
   if (!result.success) {
-    throw new ValidationError("Request body failed validation.", result.error.flatten());
+    throw new ValidationError("Some fields are missing or invalid.", result.error.flatten());
   }
   return result.data;
 }
@@ -13,7 +13,7 @@ export function parseBody<T>(schema: ZodType<T, ZodTypeDef, unknown>, body: unkn
 export function parseQuery<T>(schema: ZodType<T, ZodTypeDef, unknown>, query: unknown): T {
   const result = schema.safeParse(query);
   if (!result.success) {
-    throw new ValidationError("Query parameters failed validation.", result.error.flatten());
+    throw new ValidationError("Some query parameters are invalid.", result.error.flatten());
   }
   return result.data;
 }
@@ -21,7 +21,7 @@ export function parseQuery<T>(schema: ZodType<T, ZodTypeDef, unknown>, query: un
 export function parseParams<T>(schema: ZodType<T, ZodTypeDef, unknown>, params: unknown): T {
   const result = schema.safeParse(params);
   if (!result.success) {
-    throw new ValidationError("Route parameters failed validation.", result.error.flatten());
+    throw new ValidationError("The address contains an invalid value.", result.error.flatten());
   }
   return result.data;
 }

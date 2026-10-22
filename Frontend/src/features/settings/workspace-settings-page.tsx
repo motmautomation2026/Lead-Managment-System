@@ -12,11 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { useSession } from "@/store";
+import { messageFromError, useSession } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
-
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Something went wrong.";
 
 export function WorkspaceSettingsPage() {
   const { currentWorkspace, isLoading } = useWorkspace();
@@ -72,7 +69,7 @@ function WebsiteLeadsPanel({ workspaceId }: { workspaceId: string }) {
       void client.invalidateQueries({ queryKey: ["connections", "website-leads", workspaceId] });
       toast.success("Website lead owner saved.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
 
   const saved = query.data;
@@ -94,7 +91,7 @@ function WebsiteLeadsPanel({ workspaceId }: { workspaceId: string }) {
         {query.isError ? (
           <div className="space-y-2 text-sm">
             <p className="text-destructive">
-              Couldn't load the website lead settings: {message(query.error)}
+              Couldn't load the website lead settings: {messageFromError(query.error)}
             </p>
             <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
               <RefreshCw className="size-3.5" /> Retry
@@ -182,12 +179,12 @@ function EmailPanel({ workspaceId }: { workspaceId: string }) {
       refresh();
       toast.success("Email connection saved.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const test = useMutation({
     mutationFn: () => backend.connections.email.test(testTo),
     onSuccess: () => toast.success("Test email sent."),
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   if (!form)
     return (
@@ -196,7 +193,7 @@ function EmailPanel({ workspaceId }: { workspaceId: string }) {
           {query.isError ? (
             <div className="space-y-2">
               <p className="text-destructive">
-                Couldn't load the email connection: {message(query.error)}
+                Couldn't load the email connection: {messageFromError(query.error)}
               </p>
               <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
                 <RefreshCw className="size-3.5" /> Retry
@@ -356,7 +353,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
       refresh();
       toast.success("WhatsApp controls saved.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const command = useMutation({
     mutationFn: backend.connections.whatsapp.command,
@@ -365,7 +362,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
       refresh();
       toast.success("WhatsApp command queued.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const data = query.data;
   return (
@@ -384,7 +381,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
           query.isError ? (
             <div className="space-y-2">
               <p className="text-sm text-destructive">
-                Couldn't load WhatsApp status: {message(query.error)}
+                Couldn't load WhatsApp status: {messageFromError(query.error)}
               </p>
               <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
                 <RefreshCw className="size-3.5" /> Retry
@@ -559,14 +556,14 @@ function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
       refresh();
       toast.success("Google OAuth credentials saved.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const start = useMutation({
     mutationFn: backend.connections.googleCalendar.oauthStart,
     onSuccess: (data) => {
       window.location.href = data.url;
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const disconnect = useMutation({
     mutationFn: backend.connections.googleCalendar.disconnect,
@@ -575,7 +572,7 @@ function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
       refresh();
       toast.success("Google Calendar disconnected.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const data = query.data;
 
@@ -640,7 +637,7 @@ function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
           query.isError ? (
             <div className="space-y-2">
               <p className="text-sm text-destructive">
-                Couldn't load Google Calendar status: {message(query.error)}
+                Couldn't load Google Calendar status: {messageFromError(query.error)}
               </p>
               <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
                 <RefreshCw className="size-3.5" /> Retry

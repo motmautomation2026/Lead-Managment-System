@@ -48,8 +48,41 @@ export function refreshLead(client: QueryClient, workspaceId: string | null, lea
   ];
   return Promise.all(targets.map((queryKey) => client.invalidateQueries({ queryKey })));
 }
+interface ErrorDetails {
+  fieldErrors?: Record<string, string[] | undefined>;
+  formErrors?: string[];
+  requestId?: unknown;
+}
+
+/** "firstName" / "owner_id" → "First name" / "Owner id", for listing invalid fields. */
+function fieldLabel(field: string) {
+  const words = field
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_.]/g, " ")
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The text every toast and error block shows for a failed request: the
+ * backend's message, then any per-field problems from a 400, then the
+ * support reference of an unexpected 500 ("Reference: …").
+ */
 export function messageFromError(error: unknown) {
-  return error instanceof BackendError || error instanceof Error
-    ? error.message
-    : "The request failed.";
+  if (!(error instanceof Error)) return "The request failed.";
+  let text = error.message || "The request failed.";
+  if (error instanceof BackendError && error.details && typeof error.details === "object") {
+    const details = error.details as ErrorDetails;
+    const problems = [
+      ...(details.formErrors ?? []),
+      ...Object.entries(details.fieldErrors ?? {})
+        .filter(([, messages]) => messages?.length)
+        .map(([field, messages]) => `${fieldLabel(field)}: ${messages!.join(", ")}`),
+    ];
+    if (problems.length) text = `${text} ${problems.join("; ")}`;
+    if (typeof details.requestId === "string" && !text.includes(details.requestId)) {
+      text = `${text} Reference: ${details.requestId}`;
+    }
+  }
+  return text;
 }

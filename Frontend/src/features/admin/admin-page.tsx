@@ -3,15 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { backend, type AdminUser } from "@/lib/backend-client";
+import { messageFromError } from "@/store";
 import { supabase } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandLogo } from "@/components/common/brand-logo";
-
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Something went wrong.";
 
 export function AdminPage() {
   return (
@@ -49,7 +47,7 @@ function UsersPanel() {
       setPassword("");
       toast.success("Salesperson account created.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -99,7 +97,9 @@ function UsersPanel() {
           </p>
         </div>
         {users.isLoading && <p className="text-sm text-muted-foreground">Loading accounts…</p>}
-        {users.isError && <p className="text-sm text-destructive">{message(users.error)}</p>}
+        {users.isError && (
+          <p className="text-sm text-destructive">{messageFromError(users.error)}</p>
+        )}
         {users.data?.data.map((user) => (
           <UserEditor key={user.id} user={user} />
         ))}
@@ -121,7 +121,7 @@ function UserEditor({ user }: { user: AdminUser }) {
       setPassword("");
       toast.success("Account updated.");
     },
-    onError: (error) => toast.error(message(error)),
+    onError: (error) => toast.error(messageFromError(error)),
   });
   return (
     <Card>
