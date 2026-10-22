@@ -9,6 +9,7 @@ import makeWASocket, {
 import pino from "pino";
 import type { PoolClient } from "pg";
 import { pool, withTransaction } from "../db.js";
+import type { Queryable } from "../dto.js";
 import { phoneE164ToJid } from "../domain/phone.js";
 import { decryptBytes, encryptBytes } from "../security/encryption.js";
 import { clearBaileysAuthState, loadBaileysAuthState } from "./baileys-auth.store.js";
@@ -41,6 +42,105 @@ function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "prop
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
   return "meeting_id";
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled WhatsApp send source: ${JSON.stringify(value)}`);
+}
+
+const INELIGIBLE_MEETING_STATUSES = ["cancelled", "no_show", "failed"];
+const INELIGIBLE_MEETING_LIFECYCLES = ["do_not_contact", "merged"];
+
+export interface MeetingSendRow {
+  notify_whatsapp_status: string;
+  meeting_status: string;
+  lifecycle_state: string;
+  phone_e164: string | null;
+}
+
+/** A meeting notification may go out only while still claimed and the meeting and lead are still live. */
+export function isMeetingSendEligible(row: MeetingSendRow): boolean {
+  return (
+    row.notify_whatsapp_status === "sending" &&
+    !INELIGIBLE_MEETING_STATUSES.includes(row.meeting_status) &&
+    !INELIGIBLE_MEETING_LIFECYCLES.includes(row.lifecycle_state)
+  );
+}
+
+/**
+ * Re-checks, under row locks, that the source still allows this send, and
+ * returns the lead's current phone (null when ineligible) for the caller's
+ * target-phone check. Must run inside the claim transaction.
+ */
+export async function loadSourceEligibility(db: Queryable, workspaceId: string, source: WhatsAppSendSource): Promise<string | null> {
+  switch (source.type) {
+    case "scheduled_action": {
+      const result = await db.query<{ phone_e164: string | null }>(
+        `select l.phone_e164
+           from public.scheduled_actions a
+           join public.leads l on l.id = a.lead_id
+           join public.workflow_runs r on r.id = a.workflow_run_id
+          where a.id = $1 and a.workspace_id = $2 and a.status = 'executing'
+            and l.lifecycle_state = 'active' and l.automation_mode not in ('manual','paused','stopped')
+            and r.status in ('running','waiting')
+          for update of a, l, r`,
+        [source.id, workspaceId],
+      );
+      return result.rows[0]?.phone_e164 ?? null;
+    }
+    case "proposal": {
+      const result = await db.query<{ phone_e164: string | null }>(
+        // A human clicked "Send" on this proposal — no automation_mode
+        // gate (that gate restrains the automation engine, not a
+        // person), only the DNC safety check every customer-facing
+        // action must honor.
+        `select l.phone_e164
+           from public.proposals p
+           join public.leads l on l.id = p.lead_id
+          where p.id = $1 and p.workspace_id = $2 and p.whatsapp_send_status = 'sending'
+            and l.lifecycle_state != 'do_not_contact'
+          for update of p, l`,
+        [source.id, workspaceId],
+      );
+      return result.rows[0]?.phone_e164 ?? null;
+    }
+    case "meeting": {
+      // Human-initiated like proposals (no automation_mode gate). Conditions
+      // are checked in isMeetingSendEligible so they are unit-testable.
+      const result = await db.query<MeetingSendRow>(
+        `select m.notify_whatsapp_status, m.status::text as meeting_status, l.lifecycle_state::text as lifecycle_state, l.phone_e164
+           from public.meetings m
+           join public.leads l on l.id = m.lead_id
+          where m.id = $1 and m.workspace_id = $2
+          for update of m, l`,
+        [source.id, workspaceId],
+      );
+      const row = result.rows[0];
+      return row && isMeetingSendEligible(row) ? row.phone_e164 : null;
+    }
+    default:
+      return assertNever(source);
+  }
+}
+
+/** The lead a send is for, used to mark its WhatsApp channel invalid when the number is not registered. */
+export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSendSource): Promise<string | null> {
+  let table: string;
+  switch (source.type) {
+    case "scheduled_action":
+      table = "public.scheduled_actions";
+      break;
+    case "proposal":
+      table = "public.proposals";
+      break;
+    case "meeting":
+      table = "public.meetings";
+      break;
+    default:
+      return assertNever(source);
+  }
+  const result = await db.query<{ lead_id: string }>(`select lead_id from ${table} where id = $1`, [source.id]);
+  return result.rows[0]?.lead_id ?? null;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -401,33 +501,8 @@ export class BaileysManager {
       ]);
       if (isOutboundRestricted(liveReachout, liveCap))
         throw new ProviderDeferredError("WhatsApp has applied a reachout or new-chat restriction.", 300_000);
-      const eligible =
-        input.source.type === "scheduled_action"
-          ? await db.query<{ phone_e164: string | null }>(
-              `select l.phone_e164
-                 from public.scheduled_actions a
-                 join public.leads l on l.id = a.lead_id
-                 join public.workflow_runs r on r.id = a.workflow_run_id
-                where a.id = $1 and a.workspace_id = $2 and a.status = 'executing'
-                  and l.lifecycle_state = 'active' and l.automation_mode not in ('manual','paused','stopped')
-                  and r.status in ('running','waiting')
-                for update of a, l, r`,
-              [sourceId, this.workspaceId],
-            )
-          : await db.query<{ phone_e164: string | null }>(
-              // A human clicked "Send" on this proposal — no automation_mode
-              // gate (that gate restrains the automation engine, not a
-              // person), only the DNC safety check every customer-facing
-              // action must honor.
-              `select l.phone_e164
-                 from public.proposals p
-                 join public.leads l on l.id = p.lead_id
-                where p.id = $1 and p.workspace_id = $2 and p.whatsapp_send_status = 'sending'
-                  and l.lifecycle_state != 'do_not_contact'
-                for update of p, l`,
-              [sourceId, this.workspaceId],
-            );
-      if (eligible.rows[0]?.phone_e164 !== input.phoneE164) {
+      const eligiblePhone = await loadSourceEligibility(db, this.workspaceId, input.source);
+      if (eligiblePhone !== input.phoneE164) {
         throw new PermanentProviderError("The lead is no longer eligible for this WhatsApp action.");
       }
       const daily = await db.query<{ count: string }>(
@@ -453,15 +528,16 @@ export class BaileysManager {
           `update public.whatsapp_outbound_messages set status = 'failed', last_error = 'Recipient is not on WhatsApp' where ${column} = $1`,
           [sourceId],
         );
-        const leadIdSource = input.source.type === "scheduled_action" ? "public.scheduled_actions" : "public.proposals";
-        await db.query(
-          `insert into public.lead_contact_channels (lead_id, channel, status, reason, updated_by_name)
-           select lead_id, 'whatsapp', 'invalid', 'Number is not registered on WhatsApp', 'Automation'
-             from ${leadIdSource} where id = $1
-           on conflict (lead_id, channel) do update
-             set status = 'invalid', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'Automation'`,
-          [sourceId],
-        );
+        const leadId = await resolveLeadIdForSource(db, input.source);
+        if (leadId) {
+          await db.query(
+            `insert into public.lead_contact_channels (lead_id, channel, status, reason, updated_by_name)
+             values ($1, 'whatsapp', 'invalid', 'Number is not registered on WhatsApp', 'Automation')
+             on conflict (lead_id, channel) do update
+               set status = 'invalid', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'Automation'`,
+            [leadId],
+          );
+        }
         throw new PermanentProviderError("Recipient is not registered on WhatsApp.");
       }
       const latest = await db.query<{ sent_at: Date | null }>(
