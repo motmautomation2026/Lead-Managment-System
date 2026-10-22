@@ -3,3 +3,6 @@
 # schema changes belong in Supabase/migrations/*.sql instead.
 /Supabase/disposable/
 .env
+
+# Local Claude Code agent worktrees.
+.claude/worktrees/
