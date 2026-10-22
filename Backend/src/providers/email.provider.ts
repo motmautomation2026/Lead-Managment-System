@@ -24,18 +24,36 @@ interface ResendSendResponse {
   message?: string;
 }
 
+// Bounds for provider calls: the API awaits sends inline inside requests, and
+// unbounded sends would hang them (and stall worker batches) indefinitely.
+export const RESEND_TIMEOUT_MS = 15_000;
+export const SMTP_CONNECTION_TIMEOUT_MS = 10_000;
+export const SMTP_GREETING_TIMEOUT_MS = 10_000;
+export const SMTP_SOCKET_TIMEOUT_MS = 30_000;
+
 async function sendViaResend(input: SendEmailInput, apiKey: string, senderName: string, senderAddress: string) {
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: `${senderName} <${senderAddress}>`,
-      to: input.to,
-      subject: input.subject,
-      html: input.html,
-      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${senderName} <${senderAddress}>`,
+        to: input.to,
+        subject: input.subject,
+        html: input.html,
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      }),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // Plain Error so callers treat it as retryable. Resend may already have
+    // accepted the email, so a retry can send a duplicate.
+    if ((error as Error).name === "TimeoutError") {
+      throw new Error(`Resend request timed out after ${RESEND_TIMEOUT_MS / 1000}s`);
+    }
+    throw error;
+  }
   const data = (await response.json().catch(() => ({}))) as ResendSendResponse;
   if (!response.ok || !data.id) {
     const errorMessage = data.message ?? `Resend send failed with status ${response.status}.`;
@@ -82,6 +100,9 @@ export async function sendEmail(workspaceId: string, input: SendEmailInput, opti
     requireTLS: !implicitTls,
     auth: { user: secrets.smtpUsername, pass: secrets.smtpPassword },
     tls: { minVersion: "TLSv1.2" },
+    connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+    greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
+    socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
   });
   try {
     const info = await transporter.sendMail({

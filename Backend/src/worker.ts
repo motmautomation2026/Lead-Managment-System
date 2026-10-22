@@ -126,8 +126,8 @@ async function tick(): Promise<void> {
     // Each claimed action owns its own DB transaction and provider call, with
     // no shared mutable state between them, so processing the batch
     // concurrently is safe — and avoids one slow/hung send stalling the rest
-    // of the batch behind it (a real risk now that email.provider.ts has a
-    // bounded but non-trivial socket timeout).
+    // of the batch behind it (email.provider.ts bounds each send, but only to
+    // 15s for Resend and up to 10s connect + 30s socket idle for SMTP).
     await Promise.allSettled(
       claimed.map((ctx) =>
         processAction(ctx).catch((err) => {
