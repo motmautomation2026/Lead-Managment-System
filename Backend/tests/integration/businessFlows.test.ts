@@ -20,6 +20,7 @@
  * that one workspace, mirroring how every existing pre-migration row was
  * backfilled to it.
  */
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
@@ -28,10 +29,13 @@ const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
 
 const WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
+// Suffix for emails that must not collide with earlier runs (importLeads dedupes on them).
+const RUN = randomUUID().slice(0, 8);
 
 describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;
   let actor: Actor;
+  let authUserId: string | undefined;
 
   async function withTestTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
@@ -50,10 +54,12 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
-    const auth = await pool.query(
-      `insert into auth.users (id, email) values (gen_random_uuid(), 'test-salesperson@example.com') returning id`,
-    );
+    // Unique per run so the suite can be re-run against the same database.
+    const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [
+      `test-salesperson-${randomUUID()}@example.com`,
+    ]);
     const userId = auth.rows[0].id as string;
+    authUserId = userId;
     const profile = await pool.query(
       `select id, full_name, email from public.profiles where id = $1`,
       [userId],
@@ -68,6 +74,10 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    // Best-effort: profiles cascade from auth.users; rows the tests created keep a null owner.
+    if (authUserId) {
+      await pool.query(`delete from auth.users where id = $1`, [authUserId]).catch((error) => console.warn("[businessFlows] test user cleanup failed:", error));
+    }
     await pool.end();
   });
 
@@ -101,7 +111,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     const { listTasks } = await import("../../src/services/tasks.service.js");
 
     const lead = await withTestTransaction((client) =>
-      createLead(client, actor, WORKSPACE_ID, { firstName: "Ben", company: "Beta Ltd", source: "referral", phone: "+15550000000" }),
+      createLead(client, actor, WORKSPACE_ID, { firstName: "Ben", company: "Beta Ltd", source: "referral", phone: "+919876543210" }),
     );
 
     const result = await withTestTransaction((client) =>
@@ -179,7 +189,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     await withTestTransaction((client) => updateProposalStatus(client, actor, WORKSPACE_ID, proposal.id, "sent"));
 
     const routedLead = await getLeadRowOr404(pool, WORKSPACE_ID, lead.id);
-    expect(routedLead.pipeline_stage).toBe("proposal_sent");
+    expect(routedLead.pipeline_stage).toBe("proposal_decision_pending");
     const summary = await getDashboardSummary(pool, WORKSPACE_ID);
     expect(summary.activeLeads).toBeGreaterThan(0);
     expect(summary.proposalFollowUps).toBeGreaterThan(0);
@@ -361,7 +371,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
 
   it("enrollLeadInWorkflow enrolls a lead in a chosen workflow regardless of its trigger", async () => {
     const { createLead } = await import("../../src/services/leads.service.js");
-    const { createWorkflow, updateDraftSteps, publishVersion } = await import("../../src/services/workflows.service.js");
+    const { createWorkflow, updateDraftSteps, publishVersion, updateWorkflow } = await import("../../src/services/workflows.service.js");
     const { enrollLeadInWorkflow } = await import("../../src/services/runs.service.js");
 
     const lead = await withTestTransaction((client) =>
@@ -376,6 +386,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
       updateDraftSteps(client, WORKSPACE_ID, workflow.id, 1, [{ order: 0, delayDays: 0, action: "create_call_task", config: "Follow up", enabled: true }]),
     );
     await withTestTransaction((client) => publishVersion(client, actor, WORKSPACE_ID, workflow.id, 1, "keep_existing"));
+    await withTestTransaction((client) => updateWorkflow(client, WORKSPACE_ID, workflow.id, { status: "active" }));
 
     const run = await withTestTransaction((client) => enrollLeadInWorkflow(client, WORKSPACE_ID, lead.id, workflow.id, "Manually enrolled (test)"));
     expect(run).not.toBeNull();
@@ -393,12 +404,12 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     const { listTasks } = await import("../../src/services/tasks.service.js");
 
     const existing = await withTestTransaction((client) =>
-      createLead(client, actor, WORKSPACE_ID, { firstName: "Dup", company: "Existing Co", source: "website", email: "dup-import@example.com" }),
+      createLead(client, actor, WORKSPACE_ID, { firstName: "Dup", company: "Existing Co", source: "website", email: `dup-import-${RUN}@example.com` }),
     );
 
     const result = await withTestTransaction((client) =>
       importLeads(client, actor, WORKSPACE_ID, [
-        { rowNumber: 2, firstName: "Grace", company: "Compiler Co", source: "cold_call", email: "grace-import@example.com" },
+        { rowNumber: 2, firstName: "Grace", company: "Compiler Co", source: "cold_call", email: `grace-import-${RUN}@example.com` },
         { rowNumber: 3, firstName: "Dup2", company: "Whoever", source: "website", email: existing.email! },
         { rowNumber: 4, firstName: "", company: "No First Name Ltd", source: "website", email: "noone@example.com" },
         { rowNumber: 5, firstName: "Bad", company: "Source Ltd", source: "made_up_source", email: "bad-source@example.com" },

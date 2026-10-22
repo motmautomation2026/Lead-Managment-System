@@ -19,6 +19,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
   // A fresh workspace per run with NO default owner, so these tests never
   // depend on (or disturb) the real MOTM workspace's Settings.
   let WORKSPACE_ID: string;
+  const authUserIds: string[] = [];
 
   async function inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
@@ -52,12 +53,21 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`ingest-rep-${randomUUID()}@example.com`]);
+    authUserIds.push(auth.rows[0].id);
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [auth.rows[0].id]);
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = await newWorkspace();
   });
 
   afterAll(async () => {
+    // Best-effort: profiles cascade from auth.users; rows the tests created keep a null owner.
+    // One at a time: a user with append-only admin_audit_events rows (the
+    // deactivated owner) cannot be deleted, and must not block the others.
+    for (const id of authUserIds) {
+      await pool
+        .query(`delete from auth.users where id = $1`, [id])
+        .catch((error: Error) => console.warn(`[leadIngest] test user ${id} not deleted: ${error.message}`));
+    }
     await pool.end();
   });
 
@@ -133,6 +143,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
 
   it("falls back to an unassigned lead (never loses it) when the saved owner has been deactivated", async () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`ingest-gone-${randomUUID()}@example.com`]);
+    authUserIds.push(auth.rows[0].id);
     const goneId = auth.rows[0].id as string;
     await pool.query(`update public.profiles set is_active = false where id = $1`, [goneId]);
     const workspace = await newWorkspace(goneId);

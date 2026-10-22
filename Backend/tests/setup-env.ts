@@ -1,3 +1,17 @@
+import { vi } from "vitest";
+
+// Integration tests: refuse production outright, and point the app's own pool
+// (src/db.ts) at the test database so no service call can reach another DB.
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (testDatabaseUrl) {
+  if (testDatabaseUrl.includes("jorxltfwboabyjiydyhu")) {
+    throw new Error("TEST_DATABASE_URL points at the production project; refusing to run tests against it.");
+  }
+  process.env.DATABASE_URL = testDatabaseUrl;
+  // Every statement is a network round trip to the remote test database.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+}
+
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@127.0.0.1:5432/postgres";
 process.env.SUPABASE_URL ??= "https://example.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
