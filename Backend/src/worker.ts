@@ -89,7 +89,7 @@ async function processAction(ctx: automationService.ActionContext): Promise<void
   }
 
   if (!MESSAGE_ACTION_TYPES.includes(ctx.action.actionType)) {
-    await withTransaction((client) => automationService.executeInternalAction(client, ctx.action.id));
+    await withTransaction((client) => automationService.runInternalAction(client, ctx.action.id));
     return;
   }
 

@@ -1,5 +1,5 @@
 import type { Queryable } from "../dto.js";
-import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { AppError, ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import type { WorkflowStepAction, WorkflowRunStatus, TaskType } from "../domain/enums.js";
 import { assertPipelineStageEditable, assertValidPipelineStage } from "../domain/pipeline.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
@@ -418,6 +418,34 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
   }
 
   return { action: (await getActionContext(db, actionId)).action, run: finalRun, skipped: false };
+}
+
+/** Validation-type failures (bad step config, invalid transition, check violation) will fail the same way on every retry. */
+function isPermanentInternalError(err: unknown): boolean {
+  if (err instanceof AppError) return err.status === 400 || err.status === 422;
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "23514" || (typeof code === "string" && code.startsWith("22")); // check_violation, data_exception class
+}
+
+/**
+ * Worker entry point for internal actions (audit B7). A throw from
+ * executeInternalAction is rolled back to a savepoint and reported through
+ * the normal failure path (attempt_count, backoff, max_attempts, Workflow
+ * Failed) instead of leaving the action 'executing' to be reclaimed forever.
+ * `db` must be inside a transaction.
+ */
+export async function runInternalAction(db: Queryable, actionId: string) {
+  await db.query("savepoint internal_action");
+  try {
+    const result = await executeInternalAction(db, actionId);
+    await db.query("release savepoint internal_action");
+    return result;
+  } catch (err) {
+    await db.query("rollback to savepoint internal_action");
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[automation] Internal action ${actionId} failed: ${message}`);
+    return recordActionResult(db, actionId, { outcome: "failure", error: message, retryable: !isPermanentInternalError(err) });
+  }
 }
 
 export interface RecordResultInput {
