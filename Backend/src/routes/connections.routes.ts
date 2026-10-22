@@ -5,6 +5,7 @@ import { parseBody } from "../validation/parse.js";
 import * as connections from "../services/connections.service.js";
 import * as websiteLeadSettings from "../services/websiteLeadSettings.service.js";
 import { sendEmail } from "../providers/email.provider.js";
+import { toProviderHttpError } from "../providers/provider-errors.js";
 import { withTransaction } from "../db.js";
 import { recordAdminAudit } from "../services/admin-audit.service.js";
 
@@ -55,7 +56,7 @@ connectionsRouter.post(
       res.json({ ok: true, providerMessageId: result.providerMessageId });
     } catch (error) {
       await withTransaction((db) => recordAdminAudit(db, req.actor!, "connection.email.test_failed", "integration_connection", `${workspaceId}:email`, { to }));
-      throw error;
+      throw toProviderHttpError(error, "Email test failed");
     }
   }),
 );

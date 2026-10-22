@@ -10,7 +10,7 @@ vi.mock("../../src/services/connections.service.js", () => ({ loadEmailConnectio
 vi.mock("nodemailer", () => ({ default: { createTransport: mocks.createTransport } }));
 
 import { RESEND_TIMEOUT_MS, sendEmail } from "../../src/providers/email.provider.js";
-import { PermanentProviderError, ProviderDeferredError } from "../../src/providers/provider-errors.js";
+import { PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "../../src/providers/provider-errors.js";
 
 const INPUT = { to: "lead@example.com", subject: "Hi", html: "<p>Hi</p>" };
 const SENDER = { senderName: "Northbeam", senderAddress: "crm@example.com" };
@@ -60,7 +60,7 @@ describe("sendEmail via Resend", () => {
     const error = await result;
 
     expect(timeoutSpy).toHaveBeenCalledWith(15_000);
-    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(ProviderTimeoutError);
     expect((error as Error).message).toBe("Resend request timed out after 15s");
     expect(error).not.toBeInstanceOf(PermanentProviderError);
     expect(error).not.toBeInstanceOf(ProviderDeferredError);
@@ -105,5 +105,30 @@ describe("sendEmail via SMTP", () => {
     expect(mocks.createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 }),
     );
+  });
+
+  function useSmtp() {
+    mocks.loadEmailConnection.mockResolvedValue({
+      row: { provider: "smtp", enabled: true, settings: { ...SENDER, smtpHost: "smtp.example.com", smtpPort: 587, smtpSecurity: "starttls" } },
+      secrets: { smtpUsername: "user", smtpPassword: "pass" },
+    });
+    mocks.createTransport.mockReturnValue({ sendMail: mocks.sendMail });
+  }
+
+  it("turns an SMTP timeout into a ProviderTimeoutError", async () => {
+    useSmtp();
+    mocks.sendMail.mockRejectedValueOnce(Object.assign(new Error("Connection timeout"), { code: "ETIMEDOUT" }));
+    const error = await sendEmail("ws-1", INPUT).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ProviderTimeoutError);
+    expect((error as Error).message).toBe("The SMTP server did not respond in time: Connection timeout");
+  });
+
+  it("says the SMTP server rejected a 5xx, without the password", async () => {
+    useSmtp();
+    mocks.sendMail.mockRejectedValueOnce(Object.assign(new Error("Invalid login: 535 Authentication failed"), { responseCode: 535 }));
+    const error = await sendEmail("ws-1", INPUT).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PermanentProviderError);
+    expect((error as Error).message).toBe("The SMTP server rejected the request: Invalid login: 535 Authentication failed");
+    expect((error as Error).message).not.toContain("pass");
   });
 });

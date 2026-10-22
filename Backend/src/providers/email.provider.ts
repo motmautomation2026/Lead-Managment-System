@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { loadEmailConnection } from "../services/connections.service.js";
-import { PermanentProviderError, ProviderDeferredError } from "./provider-errors.js";
+import { PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "./provider-errors.js";
 
 export interface SendEmailAttachment {
   filename: string;
@@ -47,10 +47,10 @@ async function sendViaResend(input: SendEmailInput, apiKey: string, senderName: 
       signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
     });
   } catch (error) {
-    // Plain Error so callers treat it as retryable. Resend may already have
+    // Retryable (not a PermanentProviderError). Resend may already have
     // accepted the email, so a retry can send a duplicate.
     if ((error as Error).name === "TimeoutError") {
-      throw new Error(`Resend request timed out after ${RESEND_TIMEOUT_MS / 1000}s`);
+      throw new ProviderTimeoutError(`Resend request timed out after ${RESEND_TIMEOUT_MS / 1000}s`);
     }
     throw error;
   }
@@ -58,7 +58,7 @@ async function sendViaResend(input: SendEmailInput, apiKey: string, senderName: 
   if (!response.ok || !data.id) {
     const errorMessage = data.message ?? `Resend send failed with status ${response.status}.`;
     if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-      throw new PermanentProviderError(errorMessage);
+      throw new PermanentProviderError(`Resend rejected the request: ${errorMessage}`);
     }
     throw new Error(errorMessage);
   }
@@ -114,8 +114,9 @@ export async function sendEmail(workspaceId: string, input: SendEmailInput, opti
     });
     return { providerMessageId: info.messageId };
   } catch (error) {
-    const smtpError = error as Error & { responseCode?: number };
-    if (smtpError.responseCode && smtpError.responseCode >= 500) throw new PermanentProviderError(smtpError.message);
+    const smtpError = error as Error & { responseCode?: number; code?: string };
+    if (smtpError.responseCode && smtpError.responseCode >= 500) throw new PermanentProviderError(`The SMTP server rejected the request: ${smtpError.message}`);
+    if (smtpError.code === "ETIMEDOUT") throw new ProviderTimeoutError(`The SMTP server did not respond in time: ${smtpError.message}`);
     throw error;
   }
 }
