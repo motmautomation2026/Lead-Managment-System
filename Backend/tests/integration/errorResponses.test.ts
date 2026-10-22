@@ -82,4 +82,23 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
       details: { constraint: "leads_objection_stage_has_type" },
     });
   });
+
+  it("a malformed id is a 400, not a 500", async () => {
+    const res = await api("GET", "/leads/not-a-uuid");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toEqual({ code: "invalid_input", message: "Invalid lead id." });
+  });
+
+  it("a malformed X-Workspace-Id is a 400", async () => {
+    const res = await api("GET", "/leads", undefined, { "X-Workspace-Id": "123" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toBe("Invalid workspace id.");
+  });
+
+  it("an unknown owner is a 400 naming the owner, not a 500", async () => {
+    const lead = await newLead();
+    const res = await api("PATCH", `/leads/${lead.id}`, { ownerId: randomUUID() });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toBe("The selected owner doesn't exist.");
+  });
 });

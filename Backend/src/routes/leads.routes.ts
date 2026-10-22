@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import {
   LEAD_SOURCES,
   PIPELINE_STAGES,
@@ -26,6 +26,7 @@ import { listRuns } from "../services/runs.service.js";
 
 export const leadsRouter = Router();
 leadsRouter.use(requireAuth);
+leadsRouter.param("id", uuidParam("lead"));
 
 // firstName/company/source are bare optional strings, not z.string().min(1)/
 // z.enum(LEAD_SOURCES) -- a blank/unknown value is left for

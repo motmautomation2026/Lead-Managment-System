@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { supabaseAdmin } from "./supabaseAdmin.js";
-import { AuthenticationError, ForbiddenError, NotFoundError } from "./errors.js";
+import { AuthenticationError, ForbiddenError, NotFoundError, ValidationError } from "./errors.js";
+import { isUuid } from "./validation/parse.js";
 import { asyncHandler } from "./asyncHandler.js";
 
 /** The authenticated CRM actor (salesperson) for the lifetime of one request. */
@@ -107,6 +108,9 @@ export const requireWorkspace = asyncHandler(async (req: Request, _res: Response
   const header = req.header("x-workspace-id");
   if (!header) {
     throw new NotFoundError("Workspace");
+  }
+  if (!isUuid(header)) {
+    throw new ValidationError("Invalid workspace id.");
   }
   const result = await pool.query<{ id: string }>(
     `select id from public.workspaces where id = $1 and is_active = true`,

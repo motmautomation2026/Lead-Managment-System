@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { SCHEDULED_ACTION_STATUSES, WORKFLOW_RUN_STATUSES } from "../domain/enums.js";
 import { ValidationError } from "../errors.js";
 import * as runsService from "../services/runs.service.js";
@@ -11,6 +11,7 @@ import { autoEnroll, enrollLeadInWorkflow } from "../services/runs.service.js";
 
 export const runsRouter = Router();
 runsRouter.use(requireAuth);
+runsRouter.param("id", uuidParam("run"));
 
 const listQuerySchema = z.object({
   workflowId: z.string().uuid().optional(),

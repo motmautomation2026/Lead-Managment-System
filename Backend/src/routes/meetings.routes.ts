@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { MEETING_OUTCOMES, MEETING_STATUSES } from "../domain/enums.js";
 import { getMeetingOr404, listMeetings, recordMeetingOutcome, scheduleMeeting, updateMeeting } from "../services/meetings.service.js";
 import { syncMeetingCancelled, syncMeetingCreated, syncMeetingRescheduled } from "../services/meeting-calendar-sync.service.js";
@@ -11,6 +11,7 @@ import { notifyMeetingScheduled } from "../services/meetingScheduledNotification
 
 export const meetingsRouter = Router();
 meetingsRouter.use(requireAuth);
+meetingsRouter.param("id", uuidParam("meeting"));
 
 const listQuerySchema = z.object({
   leadId: z.string().uuid().optional(),

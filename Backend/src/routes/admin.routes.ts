@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin, requireAuth } from "../authMiddleware.js";
-import { parseBody, parseParams } from "../validation/parse.js";
+import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
 import * as users from "../services/admin-users.service.js";
 
 /**
@@ -15,6 +15,7 @@ import * as users from "../services/admin-users.service.js";
  */
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireAdmin);
+adminRouter.param("id", uuidParam("user"));
 
 adminRouter.get("/users", asyncHandler(async (_req, res) => res.json({ data: await users.listSalespeople() })));
 

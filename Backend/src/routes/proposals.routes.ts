@@ -4,7 +4,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { ValidationError } from "../errors.js";
 import { LEAD_LOSS_REASONS, PROPOSAL_STATUSES } from "../domain/enums.js";
 import { listProposals, updateProposal, updateProposalStatus } from "../services/proposals.service.js";
@@ -12,6 +12,7 @@ import { createAndSendProposal } from "../services/proposalSending.service.js";
 
 export const proposalsRouter = Router();
 proposalsRouter.use(requireAuth);
+proposalsRouter.param("id", uuidParam("proposal"));
 
 const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",

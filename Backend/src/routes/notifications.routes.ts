@@ -3,9 +3,11 @@ import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { listNotificationsFor, markAllNotificationsRead, markNotificationRead } from "../services/notifications.service.js";
+import { uuidParam } from "../validation/parse.js";
 
 export const notificationsRouter = Router();
 notificationsRouter.use(requireAuth);
+notificationsRouter.param("id", uuidParam("notification"));
 
 notificationsRouter.get(
   "/",

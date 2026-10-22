@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth, requireSalesperson } from "../authMiddleware.js";
-import { parseBody, parseParams } from "../validation/parse.js";
+import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
 import * as workspacesService from "../services/workspaces.service.js";
 
 /**
@@ -15,6 +15,7 @@ import * as workspacesService from "../services/workspaces.service.js";
  */
 export const workspacesRouter = Router();
 workspacesRouter.use(requireAuth, requireSalesperson);
+workspacesRouter.param("id", uuidParam("workspace"));
 
 workspacesRouter.get(
   "/",

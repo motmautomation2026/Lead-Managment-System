@@ -3,12 +3,13 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { TASK_STATUSES, TASK_TYPES } from "../domain/enums.js";
 import { cancelTask, completeTask, createTask, listTasks, taskToDto, updateTask } from "../services/tasks.service.js";
 
 export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
+tasksRouter.param("id", uuidParam("task"));
 
 const listQuerySchema = z.object({
   ownerId: z.string().uuid().optional(),
