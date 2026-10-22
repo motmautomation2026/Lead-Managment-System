@@ -11,8 +11,32 @@ vi.mock("../../src/db.js", () => ({
   pgConnectionOptions: { connectionString: "postgres://test" },
 }));
 vi.mock("../../src/providers/baileys-auth.store.js", () => ({
-  loadBaileysAuthState: vi.fn(),
+  loadBaileysAuthState: vi.fn(async () => ({ state: { creds: {} }, saveCreds: vi.fn() })),
   clearBaileysAuthState: vi.fn(),
+}));
+const pgMocks = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { EventEmitter } = require("node:events") as typeof import("node:events");
+  class FakeClient extends EventEmitter {
+    static instances: FakeClient[] = [];
+    static locked = true;
+    connect = vi.fn(async () => undefined);
+    end = vi.fn(async () => {
+      this.emit("end");
+    });
+    query = vi.fn(async (sql: string) => (sql.includes("pg_try_advisory_lock") ? { rows: [{ locked: FakeClient.locked }] } : { rows: [] }));
+    constructor(readonly options: unknown) {
+      super();
+      FakeClient.instances.push(this);
+    }
+  }
+  const fakeSocket = { ev: { on: vi.fn() }, end: vi.fn() };
+  return { FakeClient, fakeSocket, makeWASocket: vi.fn(() => fakeSocket) };
+});
+vi.mock("pg", () => ({ Client: pgMocks.FakeClient }));
+vi.mock("baileys", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("baileys")>()),
+  default: pgMocks.makeWASocket,
 }));
 vi.mock("../../src/services/whatsapp-inbound.service.js", () => ({ processInboundUpsert: vi.fn() }));
 vi.mock("../../src/supabaseAdmin.js", () => ({ supabaseAdmin: {} }));
@@ -207,5 +231,75 @@ describe("resolveLeadIdForSource", () => {
     await expect(send(connectedManager(socket), { type: "meeting", id: "meeting-1" })).rejects.toThrow("Recipient is not registered on WhatsApp.");
     expect(mocks.txQuery).toHaveBeenCalledWith("select lead_id from public.meetings where id = $1", ["meeting-1"]);
     expect(contactChannelCall()![1]).toEqual(["lead-1"]);
+  });
+});
+
+describe("BaileysManager session lock (B18)", () => {
+  const { FakeClient, fakeSocket } = pgMocks;
+
+  beforeEach(() => {
+    FakeClient.instances.length = 0;
+    FakeClient.locked = true;
+    mocks.poolQuery.mockImplementation(async (sql: string) =>
+      sql.startsWith("select * from public.whatsapp_connection")
+        ? { rows: [{ desired_state: "connected", command_version: "1" }] }
+        : { rows: [] },
+    );
+  });
+
+  async function startedManager() {
+    const manager = new BaileysManager(WS);
+    await manager.start();
+    return { manager, client: FakeClient.instances[0]! };
+  }
+
+  it("takes the lock on a dedicated client built from the shared options, not the pool", async () => {
+    const { manager, client } = await startedManager();
+    expect(FakeClient.instances).toHaveLength(1);
+    expect(client.options).toEqual({ connectionString: "postgres://test" });
+    expect(client.connect).toHaveBeenCalledOnce();
+    expect(client.query).toHaveBeenCalledWith("select pg_try_advisory_lock(hashtextextended($1, 1)) as locked", [WS]);
+    expect(mocks.poolQuery.mock.calls.some(([sql]) => String(sql).includes("advisory"))).toBe(false);
+    await manager.stop();
+  });
+
+  it("closes the client and throws when another worker holds the lock", async () => {
+    FakeClient.locked = false;
+    const manager = new BaileysManager(WS);
+    await expect(manager.start()).rejects.toThrow("Another automation worker already owns this workspace's WhatsApp session");
+    expect(FakeClient.instances[0]!.end).toHaveBeenCalledOnce();
+    expect(manager.isStopped).toBe(true);
+    expect(pgMocks.makeWASocket).not.toHaveBeenCalled();
+  });
+
+  it.each(["error", "end"] as const)("stops the socket and marks itself stopped when the lock client emits %s", async (event) => {
+    const { manager, client } = await startedManager();
+    expect(pgMocks.makeWASocket).toHaveBeenCalledOnce();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    client.emit(event, event === "error" ? new Error("terminating connection due to administrator command") : undefined);
+
+    expect(manager.isStopped).toBe(true);
+    expect(fakeSocket.end).toHaveBeenCalledOnce();
+    const error = await send(manager, { type: "scheduled_action", id: "a-1" }).catch((e: unknown) => e);
+    expect((error as Error).message).toBe("WhatsApp is disconnected or awaiting QR pairing.");
+  });
+
+  it("unlocks and then closes the client on stop", async () => {
+    const { manager, client } = await startedManager();
+    await manager.stop();
+    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [WS]);
+    expect(client.end).toHaveBeenCalledOnce();
+    expect(client.query.mock.invocationCallOrder.at(-1)!).toBeLessThan(client.end.mock.invocationCallOrder[0]!);
+    expect(manager.isStopped).toBe(true);
+  });
+
+  it("releases the lock if the first control sync fails, so a retry can take it", async () => {
+    mocks.poolQuery.mockRejectedValueOnce(new Error("db blip"));
+    const manager = new BaileysManager(WS);
+    await expect(manager.start()).rejects.toThrow("db blip");
+    const client = FakeClient.instances[0]!;
+    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [WS]);
+    expect(client.end).toHaveBeenCalledOnce();
   });
 });

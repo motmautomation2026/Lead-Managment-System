@@ -7,8 +7,8 @@ import makeWASocket, {
   type WASocket,
 } from "baileys";
 import pino from "pino";
-import type { PoolClient } from "pg";
-import { pool, withTransaction } from "../db.js";
+import { Client } from "pg";
+import { pgConnectionOptions, pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { phoneE164ToJid } from "../domain/phone.js";
 import { decryptBytes, encryptBytes } from "../security/encryption.js";
@@ -183,7 +183,8 @@ interface OutboundRow {
  */
 export class BaileysManager {
   private socket: WASocket | null = null;
-  private lockClient: PoolClient | null = null;
+  private lockClient: Client | null = null;
+  private stopped = false;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private qrExpiryTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -203,30 +204,63 @@ export class BaileysManager {
     }).child({ workspaceId });
   }
 
+  /** True once stopped, including after losing the session lock; the registry then replaces this manager. */
+  get isStopped() {
+    return this.stopped;
+  }
+
   async start() {
-    this.lockClient = await pool.connect();
-    // Salt 1 keeps this "one worker owns this workspace's WhatsApp session"
-    // lock in a separate namespace from performSend's per-phone dedup lock
-    // below (salt 0) — both hash an arbitrary string into a bigint via
-    // hashtextextended, so two different salts guarantee they can never
-    // collide even if a phone number string and a workspace UUID string
-    // happened to hash to the same value.
-    const lock = await this.lockClient.query<{ locked: boolean }>(
-      `select pg_try_advisory_lock(hashtextextended($1, 1)) as locked`,
-      [this.workspaceId],
-    );
-    if (!lock.rows[0]?.locked) {
-      this.lockClient.release();
-      this.lockClient = null;
-      throw new Error(`Another automation worker already owns this workspace's WhatsApp session (workspace ${this.workspaceId}).`);
+    // The session lock lives on its own connection, outside the shared pool,
+    // so N workspaces never pin N pooled connections.
+    const client = new Client(pgConnectionOptions);
+    client.on("error", (error) => this.onLockConnectionLost(client, error));
+    client.on("end", () => this.onLockConnectionLost(client));
+    try {
+      await client.connect();
+      // Salt 1 keeps this "one worker owns this workspace's WhatsApp session"
+      // lock in a separate namespace from performSend's per-phone dedup lock
+      // below (salt 0) — both hash an arbitrary string into a bigint via
+      // hashtextextended, so two different salts guarantee they can never
+      // collide even if a phone number string and a workspace UUID string
+      // happened to hash to the same value.
+      const lock = await client.query<{ locked: boolean }>(`select pg_try_advisory_lock(hashtextextended($1, 1)) as locked`, [
+        this.workspaceId,
+      ]);
+      if (!lock.rows[0]?.locked) {
+        throw new Error(`Another automation worker already owns this workspace's WhatsApp session (workspace ${this.workspaceId}).`);
+      }
+    } catch (error) {
+      this.stopped = true;
+      await client.end().catch(() => undefined);
+      throw error;
     }
-    await this.syncControl();
+    this.lockClient = client;
+    try {
+      await this.syncControl();
+    } catch (error) {
+      // Release the lock so the registry's retry can take it again.
+      await this.stop();
+      throw error;
+    }
     this.heartbeatTimer = setInterval(() => {
       void this.syncControl().catch((error) => this.logger.error({ err: error }, "WhatsApp control sync failed"));
     }, 10_000);
   }
 
+  /**
+   * Fail safe: once the lock connection errors or ends, another worker may
+   * take the lock, so this manager must stop its socket and stop sending
+   * immediately. The registry starts a replacement.
+   */
+  private onLockConnectionLost(client: Client, error?: Error) {
+    if (this.stopped || this.lockClient !== client) return;
+    // console, not this.logger: its redact list hides `msg` and error messages.
+    console.error(`[baileys-manager] Session lock connection lost for workspace ${this.workspaceId}; stopping its WhatsApp manager:`, error ?? "connection ended");
+    void this.stop();
+  }
+
   async stop() {
+    this.stopped = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.qrExpiryTimer) clearTimeout(this.qrExpiryTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -234,10 +268,11 @@ export class BaileysManager {
     this.socket?.end(new Error("Worker shutting down"));
     this.socket = null;
     this.connected = false;
-    if (this.lockClient) {
-      await this.lockClient.query(`select pg_advisory_unlock(hashtextextended($1, 1))`, [this.workspaceId]).catch(() => undefined);
-      this.lockClient.release();
-      this.lockClient = null;
+    const client = this.lockClient;
+    this.lockClient = null;
+    if (client) {
+      await client.query(`select pg_advisory_unlock(hashtextextended($1, 1))`, [this.workspaceId]).catch(() => undefined);
+      await client.end().catch(() => undefined);
     }
   }
 
@@ -274,6 +309,7 @@ export class BaileysManager {
     this.intentionalClose = false;
     await pool.query(`update public.whatsapp_connection set status = 'connecting', last_error = null where workspace_id = $1`, [this.workspaceId]);
     const { state, saveCreds } = await loadBaileysAuthState(this.workspaceId);
+    if (this.stopped) return; // stopped (e.g. lock lost) while loading auth state
     const socket = makeWASocket({
       auth: state,
       logger: this.logger,

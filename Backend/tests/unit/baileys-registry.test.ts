@@ -6,12 +6,16 @@ const mocks = vi.hoisted(() => ({
   constructed: [] as string[],
 }));
 
-vi.mock("../../src/db.js", () => ({ pool: { query: mocks.poolQuery } }));
+vi.mock("../../src/db.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/db.js")>()),
+  pool: { query: mocks.poolQuery },
+}));
 vi.mock("../../src/providers/baileys.manager.js", () => ({
   BaileysManager: class {
     constructor(readonly workspaceId: string) {
       mocks.constructed.push(workspaceId);
     }
+    isStopped = false;
     start = mocks.start;
     stop = vi.fn(async () => undefined);
   },
@@ -137,5 +141,31 @@ describe("BaileysManagerRegistry start retries (B17)", () => {
     expect(error).toBeInstanceOf(ProviderDeferredError);
     expect((error as ProviderDeferredError).retryAfterMs).toBe(20_000);
     expect(mocks.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("BaileysManagerRegistry lock safety (B18)", () => {
+  it("replaces a manager that stopped itself after losing its lock", async () => {
+    mocks.start.mockResolvedValue(undefined);
+    const registry = new BaileysManagerRegistry();
+    const first = await registry.getOrCreateManager(WS);
+    (first as unknown as { isStopped: boolean }).isStopped = true;
+
+    await registry.ensureManagersForAllActiveWorkspaces();
+    const second = registry.getExistingManager(WS);
+    expect(second).toBeDefined();
+    expect(second).not.toBe(first);
+    expect(mocks.start).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses to start managers behind the port-6543 transaction pooler", async () => {
+    const registry = new BaileysManagerRegistry("postgres://u:p@aws-0.pooler.supabase.com:6543/postgres");
+    await registry.ensureManagersForAllActiveWorkspaces();
+    await registry.ensureManagersForAllActiveWorkspaces();
+    expect(console.error).toHaveBeenCalledOnce();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("port 6543"));
+    await expect(registry.getOrCreateManager(WS)).rejects.toBeInstanceOf(ProviderDeferredError);
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.poolQuery).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
-import { pool } from "../db.js";
+import { pool, sessionLockUnsupportedReason } from "../db.js";
+import { env } from "../env.js";
 import { BaileysManager } from "./baileys.manager.js";
 import { ProviderDeferredError } from "./provider-errors.js";
 
@@ -23,6 +24,22 @@ export class BaileysManagerRegistry {
   private readonly managers = new Map<string, BaileysManager>();
   private readonly starting = new Map<string, Promise<BaileysManager>>();
   private readonly failures = new Map<string, { attempts: number; failedAt: number }>();
+  private readonly lockUnsupportedReason: string | null;
+  private lockUnsupportedLogged = false;
+
+  constructor(databaseUrl: string = env.DATABASE_URL) {
+    this.lockUnsupportedReason = sessionLockUnsupportedReason(databaseUrl);
+  }
+
+  /** The running manager, dropping one that stopped itself (e.g. lost its session lock) so it gets restarted. */
+  private runningManager(workspaceId: string): BaileysManager | undefined {
+    const manager = this.managers.get(workspaceId);
+    if (manager?.isStopped) {
+      this.managers.delete(workspaceId);
+      return undefined;
+    }
+    return manager;
+  }
 
   /**
    * Lazily starts (once) and returns the manager for a workspace. Safe to call
@@ -31,8 +48,10 @@ export class BaileysManagerRegistry {
    * ProviderDeferredError so sends are retried later instead of failing.
    */
   async getOrCreateManager(workspaceId: string): Promise<BaileysManager> {
-    const existing = this.managers.get(workspaceId);
+    const existing = this.runningManager(workspaceId);
     if (existing) return existing;
+
+    if (this.lockUnsupportedReason) throw new ProviderDeferredError(this.lockUnsupportedReason, START_BACKOFF_MAX_MS);
 
     const inFlight = this.starting.get(workspaceId);
     if (inFlight) return inFlight;
@@ -65,7 +84,7 @@ export class BaileysManagerRegistry {
   }
 
   getExistingManager(workspaceId: string): BaileysManager | undefined {
-    return this.managers.get(workspaceId);
+    return this.runningManager(workspaceId);
   }
 
   private backoffRemainingMs(workspaceId: string): number {
@@ -84,10 +103,15 @@ export class BaileysManagerRegistry {
    * advisory lock) is retried here once its backoff has elapsed.
    */
   async ensureManagersForAllActiveWorkspaces(): Promise<void> {
+    if (this.lockUnsupportedReason) {
+      if (!this.lockUnsupportedLogged) console.error(`[baileys-registry] ${this.lockUnsupportedReason}`);
+      this.lockUnsupportedLogged = true;
+      return;
+    }
     const result = await pool.query<{ id: string }>(`select id from public.workspaces where is_active = true`);
     await Promise.all(
       result.rows.map(async (row) => {
-        if (this.managers.has(row.id) || this.starting.has(row.id) || this.backoffRemainingMs(row.id) > 0) return;
+        if (this.runningManager(row.id) || this.starting.has(row.id) || this.backoffRemainingMs(row.id) > 0) return;
         // Start failures are already logged and recorded by getOrCreateManager.
         await this.getOrCreateManager(row.id).catch(() => undefined);
       }),
