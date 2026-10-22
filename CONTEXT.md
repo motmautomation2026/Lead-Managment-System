@@ -405,6 +405,8 @@ Worker/provider values:
 - `WORKER_BATCH_SIZE`
 - `WORKER_DRY_RUN`
 
+The API also sends email inline (test, proposal and meeting-scheduled emails), so under Compose the `backend` service receives `RESEND_API_KEY`, `SMTP_FROM_NAME` and `SMTP_FROM_ADDRESS` too, with the same defaults as `worker`.
+
 Docker Compose only (root `.env`, read by `compose.yaml`):
 
 - `FRONTEND_PORT` (default `8080`) and `BACKEND_PORT` (default `8787`) — host ports, bound to `127.0.0.1`

@@ -24,6 +24,11 @@ services:
       # both blank (endpoint stays disabled). Only the API uses them.
       INGEST_API_KEY: ${INGEST_API_KEY:-}
       INGEST_WORKSPACE_ID: ${INGEST_WORKSPACE_ID:-}
+      # Legacy env email fallback; the API also sends email inline (test email,
+      # proposal and meeting-scheduled emails), not only the worker.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MOTM Technologies}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
     restart: unless-stopped
 
   worker:
