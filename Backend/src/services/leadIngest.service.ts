@@ -1,4 +1,5 @@
 import type { Queryable } from "../dto.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import { addDaysIso } from "../dto.js";
 import { ValidationError } from "../errors.js";
 import { formatSubmissionDetail, normalizeWebsiteForm, type NormalizedWebsiteForm, type RawWebsiteForm } from "../domain/websiteForm.js";
@@ -207,5 +208,6 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
   });
 
   await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead", `${displayName(form)} (${form.company}) submitted the website form.`);
+  await onAgentEvent(db, { workspaceId, leadId, event: "lead_created" });
   return { status: "created", leadId };
 }

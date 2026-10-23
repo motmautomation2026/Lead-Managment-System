@@ -2,6 +2,7 @@ import { getContentType, type WAMessage } from "baileys";
 import { withTransaction } from "../db.js";
 import { jidToPhoneE164 } from "../domain/phone.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 
 function messageTime(message: WAMessage) {
   const raw = message.messageTimestamp;
@@ -101,6 +102,7 @@ export async function processInboundUpsert(workspaceId: string, event: { message
             ],
           );
         }
+        await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
       }
 
       if (matches.rowCount! > 1) {

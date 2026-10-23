@@ -20,6 +20,7 @@ import { applyAutomationModeToRuns, autoEnroll } from "./runs.service.js";
 import { normalizePhoneE164 } from "../domain/phone.js";
 import { normalizeEmail } from "../domain/email.js";
 import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
@@ -258,6 +259,7 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
   // after it. Enrollment is a quiet no-op if no active published workflow
   // is configured for this trigger yet (see autoEnroll).
   await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence");
+  await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
 
   return getLeadRowOr404(db, workspaceId, id);
 }
@@ -416,6 +418,7 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     // Same Stage 1 welcome sequence as a single lead create — every
     // imported row gets it, not just leads added one at a time.
     await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (CSV import)");
+    await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
 
     created.push(await getLeadRowOr404(db, workspaceId, id));
   }
@@ -691,6 +694,7 @@ export async function addNote(db: Queryable, actor: Actor, workspaceId: string, 
     detail: body.trim(),
     ...actorEvent(actor),
   });
+  await onAgentEvent(db, { workspaceId, leadId, event: "note_added" });
   return { id: result.rows[0]!.id, author: actor.fullName, at: result.rows[0]!.created_at.toISOString(), body: body.trim() };
 }
 

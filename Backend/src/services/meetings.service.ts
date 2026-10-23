@@ -1,4 +1,5 @@
 import type { Queryable } from "../dto.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
 import type { MeetingOutcome, MeetingStatus } from "../domain/enums.js";
@@ -147,6 +148,7 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
   });
 
   await autoEnroll(db, workspaceId, input.leadId, "meeting_scheduled", `Meeting scheduled: ${input.title.trim()}`);
+  await onAgentEvent(db, { workspaceId, leadId: input.leadId, event: "meeting_booked", payload: { meetingId: id } });
 
   return getMeetingOr404(db, workspaceId, id);
 }
@@ -261,6 +263,16 @@ export async function updateMeeting(db: Queryable, actor: Actor, workspaceId: st
     }
   }
 
+  // A meeting that won't happen (cancelled / no-show / failed) ends the meeting pause like a cancel.
+  const statusChanged = patch.status !== undefined && patch.status !== current.status;
+  const agentEvent =
+    statusChanged && (patch.status === "cancelled" || patch.status === "no_show" || patch.status === "failed")
+      ? "meeting_cancelled"
+      : (statusChanged && patch.status === "rescheduled") || (patch.at !== undefined && Date.parse(patch.at) !== current.scheduled_at.getTime())
+        ? "meeting_rescheduled"
+        : null;
+  if (agentEvent) await onAgentEvent(db, { workspaceId, leadId: current.lead_id, event: agentEvent, payload: { meetingId: id } });
+
   return getMeetingOr404(db, workspaceId, id);
 }
 
@@ -317,6 +329,7 @@ export async function recordMeetingOutcome(db: Queryable, actor: Actor, workspac
   if (routing.workflowTrigger) {
     await autoEnroll(db, workspaceId, meeting.lead_id, routing.workflowTrigger, `Meeting outcome: ${outcome}`);
   }
+  await onAgentEvent(db, { workspaceId, leadId: meeting.lead_id, event: "meeting_outcome", payload: { meetingId: id } });
 
   return getMeetingOr404(db, workspaceId, id);
 }

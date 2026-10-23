@@ -1,4 +1,5 @@
 import type { Queryable } from "../dto.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
 import type { EmailSendStatus, LeadLossReason, ProposalStatus, WhatsappSendStatus } from "../domain/enums.js";
@@ -286,6 +287,7 @@ export async function updateProposalStatus(
   if (routing.workflowTrigger) {
     await autoEnroll(db, workspaceId, proposal.lead_id, routing.workflowTrigger, `Proposal ${status}: ${proposal.title}`);
   }
+  await onAgentEvent(db, { workspaceId, leadId: proposal.lead_id, event: "proposal_status", payload: { proposalId: id } });
 
   return getProposalOr404(db, workspaceId, id);
 }

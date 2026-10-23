@@ -1,4 +1,5 @@
 import type { Queryable } from "../dto.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
 import type { CallConnectedOutcome, CallNotConnectedReason } from "../domain/enums.js";
@@ -186,6 +187,7 @@ export async function logCall(db: Queryable, actor: Actor, workspaceId: string, 
   // frontend so the rep is always asked which workflow to enroll in, rather
   // than one being silently auto-picked (product decision: nurture entry
   // always prompts a choice).
+  await onAgentEvent(db, { workspaceId, leadId, event: "call_logged", payload: { callId: call.id } });
   return {
     call: callToDto(call),
     lead: await getLeadRowOr404(db, workspaceId, leadId),
