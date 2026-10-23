@@ -6,7 +6,22 @@ import { parsePrices } from "./agent/pricing.js";
 const blankToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => (value === "" ? undefined : value), schema);
 
-const EnvSchema = z.object({
+/**
+ * Postgres pool tuning (API and worker). The Supabase session pooler caps
+ * client connections per project (15 on staging), and every pooled
+ * connection counts while it is open, even idle. Exported for tests.
+ */
+export const DbEnvSchema = z.object({
+  // Max connections in the API's pool / the worker's pool. Default 10 (the old fixed size).
+  DB_POOL_MAX: blankToUndefined(z.coerce.number().int().min(1).max(100).default(10)),
+  WORKER_DB_POOL_MAX: blankToUndefined(z.coerce.number().int().min(1).max(100).default(10)),
+  // Close a connection after it has been idle this long. 0 = never.
+  DB_IDLE_TIMEOUT_MS: blankToUndefined(z.coerce.number().int().min(0).default(10_000)),
+  // How long a query waits for a free pool connection (or a new one) before failing. 0 = forever.
+  DB_CONNECTION_TIMEOUT_MS: blankToUndefined(z.coerce.number().int().min(0).default(15_000)),
+});
+
+const EnvSchema = DbEnvSchema.extend({
   PORT: z.coerce.number().int().positive().default(8787),
   CORS_ORIGINS: z.string().default("http://localhost:8080,http://127.0.0.1:8080"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),

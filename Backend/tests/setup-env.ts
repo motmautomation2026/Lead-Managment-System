@@ -8,6 +8,9 @@ if (testDatabaseUrl) {
     throw new Error("TEST_DATABASE_URL points at the production project; refusing to run tests against it.");
   }
   process.env.DATABASE_URL = testDatabaseUrl;
+  // The app's pool is named northbeam-test; PGAPPNAME names the tests' own pg Pools too.
+  process.env.NORTHBEAM_DB_ROLE = "test";
+  process.env.PGAPPNAME = "northbeam-test";
   // Every statement is a network round trip to the remote test database.
   vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
   // Each file gets a fresh src/db.ts pool; close it so idle connections don't

@@ -8,7 +8,7 @@ import makeWASocket, {
 } from "baileys";
 import pino from "pino";
 import { Client } from "pg";
-import { pgConnectionOptions, pool, withTransaction } from "../db.js";
+import { pgConnectionOptions, pool, WA_LOCK_APPLICATION_NAME, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { phoneE164ToJid } from "../domain/phone.js";
 import { decryptBytes, encryptBytes } from "../security/encryption.js";
@@ -230,7 +230,7 @@ export class BaileysManager {
   async start() {
     // The session lock lives on its own connection, outside the shared pool,
     // so N workspaces never pin N pooled connections.
-    const client = new Client(pgConnectionOptions);
+    const client = new Client({ ...pgConnectionOptions, application_name: WA_LOCK_APPLICATION_NAME });
     client.on("error", (error) => this.onLockConnectionLost(client, error));
     client.on("end", () => this.onLockConnectionLost(client));
     try {

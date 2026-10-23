@@ -1,3 +1,4 @@
+import "./workerRole.js"; // must stay first: sets the pool role before db.js loads
 import { pool, withTransaction } from "./db.js";
 import { workerEnv as env } from "./workerEnv.js";
 import * as automationService from "./services/automation.service.js";

@@ -1,19 +1,42 @@
-import { Pool, type ClientConfig, type PoolClient } from "pg";
-import { env } from "./env.js";
+import { Pool, type ClientConfig, type PoolClient, type PoolConfig } from "pg";
+import { env, type DbEnvSchema } from "./env.js";
+import type { z } from "zod";
+
+/**
+ * Which process this is, for its pool size and application_name. Entry points
+ * set NORTHBEAM_DB_ROLE before this module loads (worker.ts imports
+ * ./workerRole.js first; tests and scripts set it themselves); unset = the API.
+ */
+export type DbRole = "api" | "worker" | "test" | "script";
+const DB_ROLES: readonly DbRole[] = ["api", "worker", "test", "script"];
+
+/** The worker's dedicated WhatsApp session-lock clients. */
+export const WA_LOCK_APPLICATION_NAME = "northbeam-worker-walock";
+
+/** Pool settings for a role. Pure; exported for tests. */
+export function poolSettings(role: DbRole, dbEnv: z.infer<typeof DbEnvSchema>): PoolConfig {
+  return {
+    max: role === "worker" ? dbEnv.WORKER_DB_POOL_MAX : dbEnv.DB_POOL_MAX,
+    idleTimeoutMillis: dbEnv.DB_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: dbEnv.DB_CONNECTION_TIMEOUT_MS,
+    application_name: `northbeam-${role}`,
+  };
+}
+
+export const dbRole: DbRole = DB_ROLES.find((r) => r === process.env.NORTHBEAM_DB_ROLE) ?? "api";
 
 /** Connection settings shared by the pool and any dedicated pg.Client (e.g. WhatsApp session locks). */
-export const pgConnectionOptions: ClientConfig = { connectionString: env.DATABASE_URL };
+export const pgConnectionOptions: ClientConfig = {
+  connectionString: env.DATABASE_URL,
+  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
+};
 
 // Single pool for the whole process. Supabase's pooled connection strings
 // (pgbouncer) are fine here too, but transactions (BEGIN/COMMIT) require a
 // single dedicated connection per transaction, which is exactly what
 // pool.connect() + client.query gives us below — pool.query() alone would
 // not guarantee the same underlying connection across statements.
-export const pool = new Pool({
-  ...pgConnectionOptions,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-});
+export const pool = new Pool({ ...pgConnectionOptions, ...poolSettings(dbRole, env) });
 
 /**
  * Session-level advisory locks (the WhatsApp session lock) do not work behind

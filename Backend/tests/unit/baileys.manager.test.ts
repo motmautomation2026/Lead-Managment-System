@@ -9,6 +9,7 @@ vi.mock("../../src/db.js", () => ({
   pool: { query: mocks.poolQuery },
   withTransaction: async (fn: (db: { query: typeof mocks.txQuery }) => Promise<unknown>) => fn({ query: mocks.txQuery }),
   pgConnectionOptions: { connectionString: "postgres://test" },
+  WA_LOCK_APPLICATION_NAME: "northbeam-worker-walock",
 }));
 vi.mock("../../src/providers/baileys-auth.store.js", () => ({
   loadBaileysAuthState: vi.fn(async () => ({ state: { creds: {} }, saveCreds: vi.fn() })),
@@ -344,10 +345,10 @@ describe("BaileysManager session lock (B18)", () => {
     return { manager, client: FakeClient.instances[0]! };
   }
 
-  it("takes the lock on a dedicated client built from the shared options, not the pool", async () => {
+  it("takes the lock on a dedicated, named client built from the shared options, not the pool", async () => {
     const { manager, client } = await startedManager();
     expect(FakeClient.instances).toHaveLength(1);
-    expect(client.options).toEqual({ connectionString: "postgres://test" });
+    expect(client.options).toEqual({ connectionString: "postgres://test", application_name: "northbeam-worker-walock" });
     expect(client.connect).toHaveBeenCalledOnce();
     expect(client.query).toHaveBeenCalledWith("select pg_try_advisory_lock(hashtextextended($1, 1)) as locked", [WS]);
     expect(mocks.poolQuery.mock.calls.some(([sql]) => String(sql).includes("advisory"))).toBe(false);

@@ -33,6 +33,7 @@ const section = (title: string) => console.log(`\n=== ${title} ${"=".repeat(Math
 
 async function main(id: string) {
   // Imported after the checks above so nothing connects before them.
+  process.env.NORTHBEAM_DB_ROLE = "script";
   const { pool } = await import("../src/db.js");
   const { env } = await import("../src/env.js");
   const { buildAgentContext } = await import("../src/services/agentContext.service.js");
