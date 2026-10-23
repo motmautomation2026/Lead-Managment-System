@@ -23,6 +23,14 @@ export class ProviderTimeoutError extends Error {
   }
 }
 
+/** The model answered, but not with valid JSON matching the schema (or refused). A failed attempt, not a provider outage. */
+export class ModelOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelOutputError";
+  }
+}
+
 /**
  * For routes that await a provider inline: turns a provider failure into a
  * clear HTTP error, e.g. "Email test failed: Resend rejected the request: API

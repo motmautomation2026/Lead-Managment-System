@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { env } from "../env.js";
-import { PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "./provider-errors.js";
+import { ModelOutputError, PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "./provider-errors.js";
+import { parseModelOutput, type AgentDecision } from "../agent/decisionSchema.js";
+import { parseGroundingOutput, type ChatMessage, type GroundingResult } from "../agent/prompt.js";
 
 /** kb_chunks.embedding is vector(1536): every model must produce exactly this many dimensions. */
 export const EMBEDDING_DIMENSIONS = 1536;
@@ -133,4 +135,110 @@ export function getDefaultEmbedder(): Embedder {
 /** Embeds with the environment-configured OpenAI embedder. */
 export function embedTexts(texts: string[]): Promise<number[][]> {
   return getDefaultEmbedder().embed(texts);
+}
+
+// --- AI agent decisions ------------------------------------------------------
+
+export interface ModelCallInput {
+  model: string;
+  messages: ChatMessage[];
+  /** Strict structured output: DECISION_JSON_SCHEMA or GROUNDING_JSON_SCHEMA. */
+  jsonSchema: { name: string; schema: Record<string, unknown> };
+}
+
+export interface ModelCallResult<T> {
+  /** The parsed, schema-validated output. */
+  json: T;
+  inputTokens: number;
+  outputTokens: number;
+  /** The model that answered (as the API reports it). */
+  model: string;
+}
+
+/**
+ * The agent's model calls. Injected so tests never call OpenAI
+ * (tests/helpers/fakeDecisionModel.ts). Throws ProviderDeferredError (no key,
+ * rate limit, outage), PermanentProviderError (quota, auth, bad request) or
+ * ModelOutputError (invalid JSON / schema mismatch / refusal: a failed attempt).
+ */
+export interface DecisionModel {
+  decide(input: ModelCallInput): Promise<ModelCallResult<AgentDecision>>;
+  checkGrounding(input: ModelCallInput): Promise<ModelCallResult<GroundingResult>>;
+}
+
+type ChatClient = Pick<OpenAI, "chat">;
+
+export interface OpenAIDecisionModelOptions {
+  apiKey?: string | undefined;
+  /** For tests: a stand-in for the SDK client. */
+  client?: ChatClient;
+  /** For tests: replaces the backoff wait. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Workspace setting first, then the env default; never a hard-coded name. */
+export function resolveAgentModels(
+  settings: { decision_model: string | null; grounding_model: string | null },
+  defaults: { decision?: string | undefined; grounding?: string | undefined } = { decision: env.OPENAI_DECISION_MODEL, grounding: env.OPENAI_GROUNDING_MODEL },
+): { decisionModel: string; groundingModel: string } {
+  const decisionModel = settings.decision_model?.trim() || defaults.decision?.trim();
+  const groundingModel = settings.grounding_model?.trim() || defaults.grounding?.trim();
+  // Configuration doesn't change by itself: check back in 10 minutes.
+  if (!decisionModel || !groundingModel) throw new ProviderDeferredError("No AI model configured", 10 * 60_000);
+  return { decisionModel, groundingModel };
+}
+
+async function structuredCall<T>(client: ChatClient, input: ModelCallInput, parse: (json: unknown) => T, sleep: (ms: number) => Promise<void>): Promise<ModelCallResult<T>> {
+  for (let attempt = 1; ; attempt++) {
+    let completion: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      completion = await client.chat.completions.create({
+        model: input.model,
+        messages: input.messages,
+        stream: false,
+        response_format: { type: "json_schema", json_schema: { name: input.jsonSchema.name, schema: input.jsonSchema.schema, strict: true } },
+      });
+    } catch (error) {
+      const outcome = classify(error);
+      if (!outcome.retry || attempt >= MAX_ATTEMPTS) throw outcome.error;
+      await sleep(1000 * 2 ** (attempt - 1));
+      continue;
+    }
+    const choice = completion.choices[0];
+    if (!choice) throw new ModelOutputError("The model returned no answer.");
+    if (choice.message.refusal) throw new ModelOutputError(`The model refused: ${choice.message.refusal}`);
+    if (choice.finish_reason === "length") throw new ModelOutputError("The model's answer was cut off (length limit).");
+    let json: T;
+    try {
+      json = parse(choice.message.content ?? "");
+    } catch (error) {
+      const reason = error instanceof SyntaxError ? "invalid JSON" : "output didn't match the schema";
+      throw new ModelOutputError(`The model's ${reason}.`);
+    }
+    return {
+      json,
+      inputTokens: completion.usage?.prompt_tokens ?? 0,
+      outputTokens: completion.usage?.completion_tokens ?? 0,
+      model: completion.model || input.model,
+    };
+  }
+}
+
+/**
+ * OpenAI chat completions with strict JSON-schema output, 30 s per request,
+ * up to 2 retries on network / 5xx failures (1 s, 2 s). A missing key throws
+ * ProviderDeferredError("OpenAI is not configured"). Server-only.
+ */
+export function createOpenAIDecisionModel(options: OpenAIDecisionModelOptions = {}): DecisionModel {
+  const apiKey = options.apiKey ?? env.OPENAI_API_KEY;
+  const client = options.client ?? (apiKey ? new OpenAI({ apiKey, timeout: TIMEOUT_MS, maxRetries: 0 }) : null);
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const call = <T>(input: ModelCallInput, parse: (json: unknown) => T) => {
+    if (!client) throw new ProviderDeferredError("OpenAI is not configured", 10 * 60_000);
+    return structuredCall(client, input, parse, sleep);
+  };
+  return {
+    decide: async (input) => call(input, parseModelOutput),
+    checkGrounding: async (input) => call(input, parseGroundingOutput),
+  };
 }

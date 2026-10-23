@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { parsePrices } from "./agent/pricing.js";
 
 // A blank `KEY=` line in .env arrives as "" — treat it as "not set".
 const blankToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
@@ -42,6 +43,25 @@ const EnvSchema = z.object({
   // without a key, embedding calls fail with "OpenAI is not configured".
   OPENAI_API_KEY: blankToUndefined(z.string().optional()),
   OPENAI_EMBEDDING_MODEL: blankToUndefined(z.string().default("text-embedding-3-small")),
+
+  // AI agent (API and worker; never the frontend). The default models when a
+  // workspace's agent_settings has none; no model is hard-coded. Prices per
+  // million tokens, e.g. {"<model>": {"inputPer1M": 2.5, "outputPer1M": 10}}.
+  OPENAI_DECISION_MODEL: blankToUndefined(z.string().optional()),
+  OPENAI_GROUNDING_MODEL: blankToUndefined(z.string().optional()),
+  OPENAI_PRICES_JSON: blankToUndefined(
+    z
+      .string()
+      .optional()
+      .refine((value) => {
+        try {
+          parsePrices(value);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 'OPENAI_PRICES_JSON must be JSON like {"<model>": {"inputPer1M": 2.5, "outputPer1M": 10}}'),
+  ),
 });
 
 // WORKER_* tuning is validated separately in workerEnv.ts. Provider secrets
