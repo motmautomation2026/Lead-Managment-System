@@ -20,6 +20,7 @@ import { applyAutomationModeToRuns, autoEnroll } from "./runs.service.js";
 import { normalizePhoneE164 } from "../domain/phone.js";
 import { normalizeEmail } from "../domain/email.js";
 import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
+import type { AgentStatus } from "../agent/rules.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
@@ -57,6 +58,11 @@ export interface LeadRow {
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
   merged_into_lead_id: string | null;
+  agent_status: AgentStatus;
+  agent_status_reason: string | null;
+  agent_status_changed_at: Date | null;
+  agent_touch_count: number;
+  agent_last_touch_at: Date | null;
   last_activity_at: Date;
   created_by: string | null;
   created_by_name: string | null;
