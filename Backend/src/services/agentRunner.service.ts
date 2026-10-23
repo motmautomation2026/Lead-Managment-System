@@ -29,7 +29,7 @@ const FAILURE_RETRY_MS = 5 * MINUTE;
 const HANDOFF_TITLE = "AI couldn't write a safe message";
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
-const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
+export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
 
 export interface AgentRunnerDeps {
   model: DecisionModel;
