@@ -39,7 +39,7 @@ export interface RulesContext {
     ownerName: string | null;
   };
   /** lead_contact_channels.status per channel (null = no row). */
-  contactability: { email: string | null; whatsapp: string | null };
+  contactability: { email: string | null; whatsapp: string | null; phone: string | null };
   /** Agent sends in the last 7 days. */
   recentTouchTimes: Date[];
   hasSentWhatsApp: boolean;
@@ -77,6 +77,8 @@ export const AGENT_STAGE_ALLOW_LIST: readonly PipelineStage[] = [
 
 const EMAIL_BLOCKED_STATUSES = ["permanent_bounce", "unsubscribed", "invalid"];
 const WHATSAPP_BLOCKED_STATUSES = ["invalid", "opted_out", "do_not_contact"];
+// WhatsApp goes to phone_e164, so a bad phone also means a bad WhatsApp.
+const PHONE_BLOCKED_STATUSES = ["invalid", "wrong_number", "do_not_contact"];
 const WHATSAPP_MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -104,7 +106,11 @@ export function emailUsable(ctx: RulesContext): boolean {
 }
 
 export function whatsappUsable(ctx: RulesContext): boolean {
-  return Boolean(ctx.lead.phoneE164) && !WHATSAPP_BLOCKED_STATUSES.includes(ctx.contactability.whatsapp ?? "");
+  return (
+    Boolean(ctx.lead.phoneE164) &&
+    !WHATSAPP_BLOCKED_STATUSES.includes(ctx.contactability.whatsapp ?? "") &&
+    !PHONE_BLOCKED_STATUSES.includes(ctx.contactability.phone ?? "")
+  );
 }
 
 export function countWords(text: string): number {

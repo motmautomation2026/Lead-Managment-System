@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { countWords, nextAllowedSendTime, validateDecision, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
+import { countWords, nextAllowedSendTime, validateDecision, whatsappUsable, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
 
 /** Asia/Kolkata wall-clock time → Date. */
 const ist = (local: string) => new Date(`${local}:00+05:30`);
@@ -37,7 +37,7 @@ function ctx(overrides: Partial<Omit<RulesContext, "lead">> & { lead?: Partial<R
       ownerName: "Ravi",
       ...lead,
     },
-    contactability: { email: null, whatsapp: null },
+    contactability: { email: null, whatsapp: null, phone: null },
     recentTouchTimes: [],
     hasSentWhatsApp: false,
     assets: [{ id: ASSET, active: true, channels: ["email", "whatsapp"], sizeBytes: 1000 }],
@@ -152,7 +152,7 @@ describe("validateDecision", () => {
   });
 
   it.each(["permanent_bounce", "unsubscribed", "invalid"])("5. email %s with WhatsApp usable → wait 1 day + violation", (status) => {
-    const result = validateDecision(email(), ctx({ contactability: { email: status, whatsapp: null } }), settings, NOW);
+    const result = validateDecision(email(), ctx({ contactability: { email: status, whatsapp: null, phone: null } }), settings, NOW);
     expect(result.finalDecision).toEqual({ action: "wait", nextWakeInDays: 1, reasoning: "No reply yet." });
     expect(rules(result)).toEqual(["channel"]);
     expect(result.nextWakeAt).toEqual(new Date(NOW.getTime() + DAY));
@@ -160,15 +160,33 @@ describe("validateDecision", () => {
   });
 
   it.each(["invalid", "opted_out", "do_not_contact"])("5. WhatsApp %s with email usable → wait", (status) => {
-    const result = validateDecision(whatsapp(), ctx({ contactability: { email: "delivered", whatsapp: status } }), settings, NOW);
+    const result = validateDecision(whatsapp(), ctx({ contactability: { email: "delivered", whatsapp: status, phone: null } }), settings, NOW);
     expect(result.finalDecision.action).toBe("wait");
   });
 
   it("5. WhatsApp without phone_e164 → wait; temporary statuses stay usable", () => {
     expect(validateDecision(whatsapp(), ctx({ lead: { phoneE164: null } }), settings, NOW).finalDecision.action).toBe("wait");
-    const ok = ctx({ contactability: { email: "temporary_bounce", whatsapp: "temporarily_unreachable" } });
+    const ok = ctx({ contactability: { email: "temporary_bounce", whatsapp: "temporarily_unreachable", phone: "temporarily_unreachable" } });
     expect(validateDecision(email(), ok, settings, NOW).allowed).toBe(true);
     expect(validateDecision(whatsapp(), ok, settings, NOW).allowed).toBe(true);
+  });
+
+  it("5. a bad phone status makes WhatsApp unusable even when the WhatsApp status is valid", () => {
+    expect(whatsappUsable(ctx({ contactability: { email: null, whatsapp: "valid", phone: "wrong_number" } }))).toBe(false);
+    expect(whatsappUsable(ctx({ contactability: { email: null, whatsapp: "valid", phone: "valid" } }))).toBe(true);
+
+    const wrongNumber = ctx({ contactability: { email: "delivered", whatsapp: "valid", phone: "wrong_number" } });
+    const waited = validateDecision(whatsapp(), wrongNumber, settings, NOW);
+    expect(waited.finalDecision).toMatchObject({ action: "wait", nextWakeInDays: 1 });
+    expect(rules(waited)).toEqual(["channel"]);
+
+    const dncNoEmail = ctx({ lead: { email: null }, contactability: { email: null, whatsapp: null, phone: "do_not_contact" } });
+    const handedOff = validateDecision(whatsapp(), dncNoEmail, settings, NOW);
+    expect(handedOff.finalDecision).toMatchObject({ action: "handoff", title: "No usable channel", urgency: "normal" });
+    expect(rules(handedOff)).toEqual(["channel"]);
+
+    const ok = ctx({ contactability: { email: null, whatsapp: "valid", phone: "valid" } });
+    expect(validateDecision(whatsapp(), ok, settings, NOW)).toMatchObject({ allowed: true, finalDecision: { action: "send_whatsapp" } });
   });
 
   it("5. no usable channel → handoff 'No usable channel' (normal) + violation", () => {
