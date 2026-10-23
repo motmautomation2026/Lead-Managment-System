@@ -1,4 +1,5 @@
-// Dev only: shows what the AI agent would see and (with --call) decide for one lead.
+// Dev only: shows what the AI agent would see and (with --call) draft for one lead, using the
+// runner's pipeline (incl. grounding and one regeneration).
 //   npm run agent:preview -- --lead <uuid> [--call]
 // Reads only: saves nothing to the database and never sends anything.
 // Refuses to run against the production project.
@@ -35,11 +36,10 @@ async function main(id: string) {
   const { pool } = await import("../src/db.js");
   const { env } = await import("../src/env.js");
   const { buildAgentContext } = await import("../src/services/agentContext.service.js");
-  const { buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA } = await import("../src/agent/prompt.js");
-  const { DECISION_JSON_SCHEMA } = await import("../src/agent/decisionSchema.js");
-  const { validateDecision } = await import("../src/agent/rules.js");
+  const { buildDecisionMessages } = await import("../src/agent/prompt.js");
+  const { draftDecision } = await import("../src/services/agentRunner.service.js");
   const { composeOutgoing } = await import("../src/agent/composeMessage.js");
-  const { costUsd, parsePrices } = await import("../src/agent/pricing.js");
+  const { parsePrices } = await import("../src/agent/pricing.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
   try {
@@ -67,31 +67,29 @@ async function main(id: string) {
     }
     if (!call) return;
 
+    // The runner's own pipeline (decide, rules, grounding, one regeneration, handoff fallback), minus every write.
     const prices = parsePrices(env.OPENAI_PRICES_JSON);
-    const price = (model: string, input: number, output: number) => {
-      const cost = costUsd(prices, model, input, output);
-      return cost === null ? `no price configured for ${model}` : `$${cost.toFixed(6)}`;
-    };
-    const { decisionModel, groundingModel } = resolveAgentModels(ctx.settings);
-    const ai = createOpenAIDecisionModel();
+    const models = resolveAgentModels(ctx.settings);
+    const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !prices[m]);
+    if (unpriced.length) console.warn(`No price in OPENAI_PRICES_JSON for ${unpriced.join(", ")} (the runner would defer); cost below excludes it.`);
+    const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const draft = await draftDecision(ctx, { model: createOpenAIDecisionModel(), ...models, prices, now }, usage);
 
-    const decided = await ai.decide({ model: decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
-    section("Decision");
-    console.log(JSON.stringify(decided.json, null, 2));
-    console.log(`Model ${decided.model} · ${decided.inputTokens} in / ${decided.outputTokens} out · ${price(decisionModel, decided.inputTokens, decided.outputTokens)}`);
+    draft.attempts.forEach((attempt, i) => {
+      section(`Attempt ${i + 1}: decision`);
+      console.log(JSON.stringify(attempt.decision, null, 2));
+      section(`Attempt ${i + 1}: rules result`);
+      console.log(JSON.stringify(attempt.rules, null, 2));
+      section(`Attempt ${i + 1}: grounding`);
+      console.log(attempt.grounding ? JSON.stringify(attempt.grounding, null, 2) : "(not checked: not an allowed send)");
+      if (attempt.problems.length) console.log(`Problems:\n- ${attempt.problems.join("\n- ")}`);
+    });
 
-    const rules = validateDecision(decided.json, ctx.rules, ctx.settings, now);
-    section("Rules result");
-    console.log(JSON.stringify(rules, null, 2));
+    section("Result (what the runner would record as a draft)");
+    console.log(JSON.stringify({ outcome: draft.outcome, regenerated: draft.regenerated, decision: draft.decision }, null, 2));
+    console.log(`Models ${models.decisionModel} / ${models.groundingModel} · ${usage.inputTokens} in / ${usage.outputTokens} out · $${usage.costUsd.toFixed(6)}`);
 
-    const final = rules.finalDecision;
-    const grounding = buildGroundingMessages(final, ctx.knowledge.chunks, { leadCompany: ctx.lead.company, ownCompany: ctx.companyName });
-    if (grounding) {
-      const checked = await ai.checkGrounding({ model: groundingModel, messages: grounding, jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> } });
-      section("Grounding");
-      console.log(JSON.stringify(checked.json, null, 2));
-      console.log(`Model ${checked.model} · ${checked.inputTokens} in / ${checked.outputTokens} out · ${price(groundingModel, checked.inputTokens, checked.outputTokens)}`);
-    }
+    const final = draft.decision;
     if (final.action === "send_email" || final.action === "send_whatsapp") {
       section("Composed message (NOT sent)");
       const composed = composeOutgoing(final, {
