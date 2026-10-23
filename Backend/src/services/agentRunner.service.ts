@@ -200,6 +200,15 @@ async function claimWakeups(workspaceIds: string[] | null): Promise<ClaimedWakeu
            where ((x.status = 'pending' and x.due_at <= now())
                or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
              and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+             -- At most one per lead: only the earliest claimable one, and none while another
+             -- wakeup for the lead is being processed (a fresh executing row).
+             and not exists (
+               select 1 from public.agent_wakeups y
+                where y.lead_id = x.lead_id and y.id <> x.id
+                  and (((y.status = 'pending' and y.due_at <= now())
+                        or (y.status = 'executing' and y.claimed_at < now() - interval '15 minutes'))
+                       and (y.due_at, y.id) < (x.due_at, x.id)
+                    or (y.status = 'executing' and y.claimed_at >= now() - interval '15 minutes')))
            order by x.due_at
            limit $2
            for update of x skip locked)

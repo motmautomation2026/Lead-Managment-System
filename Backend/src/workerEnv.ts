@@ -9,8 +9,8 @@ const WorkerEnvSchema = z.object({
   AGENT_RUNNER_ENABLED: z.string().default("false").transform((value) => value === "true"),
 });
 
-function loadWorkerEnv() {
-  const parsed = WorkerEnvSchema.safeParse(process.env);
+export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env) {
+  const parsed = WorkerEnvSchema.safeParse(source);
   if (!parsed.success) {
     console.error("Invalid worker environment configuration:", parsed.error.flatten().fieldErrors);
     throw new Error("Invalid worker environment configuration. Check WORKER_* values in .env.example.");

@@ -207,9 +207,11 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     const model = createFakeDecisionModel();
     expect(await tick(ws, model, { enabled: false })).toEqual([]);
     expect(await wakeupRow(wakeupId)).toMatchObject({ status: "pending" });
-    const { workerEnv } = await import("../../src/workerEnv.js");
-    expect(process.env.AGENT_RUNNER_ENABLED).toBeUndefined();
-    expect(workerEnv.AGENT_RUNNER_ENABLED).toBe(false);
+    // The switch defaults to off, and only exactly "true" turns it on.
+    const { loadWorkerEnv } = await import("../../src/workerEnv.js");
+    expect(loadWorkerEnv({}).AGENT_RUNNER_ENABLED).toBe(false);
+    for (const value of ["", "false", "TRUE", "1", "yes"]) expect(loadWorkerEnv({ AGENT_RUNNER_ENABLED: value }).AGENT_RUNNER_ENABLED).toBe(false);
+    expect(loadWorkerEnv({ AGENT_RUNNER_ENABLED: "true" }).AGENT_RUNNER_ENABLED).toBe(true);
   });
 
   it("budget reached: no model call, the wakeup deferred an hour, exactly one admin notification over two ticks", async () => {
@@ -253,6 +255,27 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     const model = createFakeDecisionModel({ decisions: [EMAIL] });
     expect((await tick(ws, model))[0]).toMatchObject({ wakeupId: stale, result: "draft" });
     expect(await wakeupRow(stale)).toMatchObject({ status: "done", attempt_count: 2 });
+  });
+
+  it("claims at most one wakeup per lead: a stale executing row and a due pending one → only the earliest", async () => {
+    const { ws, leadId, wakeupId: pending } = await scenario();
+    const stale = await wakeup(ws, leadId, { status: "executing", claimedAgo: "20 minutes", attempts: 1 });
+    // The stale row is the earlier one.
+    await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 hour' where id = $1`, [stale]);
+    const model = createFakeDecisionModel({ decisions: [EMAIL] });
+    const outcomes = await tick(ws, model);
+    expect(outcomes.map((o) => o.wakeupId)).toEqual([stale]);
+    expect(decideCalls(model)).toHaveLength(1);
+    expect(await wakeupRow(stale)).toMatchObject({ status: "done" });
+    // The pending one was left for a later tick (it merged with the new timer, keeping the earlier due time).
+    expect(await wakeupRow(pending)).toMatchObject({ status: "pending", attempt_count: 0 });
+
+    // While a fresh executing row exists for the lead, nothing else is claimed for it.
+    const busy = await wakeup(ws, leadId, { status: "executing", claimedAgo: "1 minute", attempts: 1 });
+    await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 minute' where id = $1`, [pending]);
+    expect(await tick(ws, model)).toEqual([]);
+    expect(await wakeupRow(pending)).toMatchObject({ status: "pending" });
+    await pool.query(`update public.agent_wakeups set status = 'cancelled' where id = $1`, [busy]);
   });
 
   it("an event wakeup arriving during processing merges with the new timer", async () => {
