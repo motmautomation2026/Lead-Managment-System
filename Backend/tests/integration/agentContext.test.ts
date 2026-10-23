@@ -149,6 +149,9 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect(ctx.rules.allowedContacts.phones).toEqual(["+919800000001"]);
     expect(ctx.rules.mode).toBe("shadow");
 
+    // Call notes and a separate note both reach the agent with their text.
+    expect(ctx.timeline.find((t) => t.kind === "call")?.detail).toBe("Call back after budget");
+    expect(ctx.timeline.find((t) => t.kind === "note")?.detail).toBe("Prefers WhatsApp");
     const kinds = ctx.timeline.map((t) => t.kind);
     for (const kind of ["call", "note", "meeting", "proposal", "stage"]) expect(kinds).toContain(kind);
     expect(ctx.timeline.some((t) => t.title === "Website form submission")).toBe(false);
@@ -167,6 +170,36 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect(ctx.assets.map((a) => a.title)).toEqual(["Steel case study"]);
     expect(ctx.meta).toMatchObject({ trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 });
     expect(ctx.meta.tokenEstimate).toBeGreaterThan(0);
+  });
+
+  it("shadow counts drafts the rules allowed as touches; off counts only real sends", async () => {
+    const lead = await newLead(WS);
+    const allowedAt = new Date(Date.now() + 3 * 3600 * 1000);
+    await pool.query(
+      `insert into public.agent_decisions (workspace_id, lead_id, mode, action, reasoning, message_body, send_at, rules_result, outcome, created_at)
+       values ($1, $2, 'shadow', 'send_whatsapp', 'ok', 'Hi', $3, '{"allowed": true}', 'draft', now() - interval '1 hour'),
+              ($1, $2, 'shadow', 'send_email', 'bad', 'Hi', null, '{"allowed": false}', 'draft', now() - interval '30 minutes'),
+              ($1, $2, 'shadow', 'wait', 'later', null, null, '{"allowed": true}', 'draft', now()),
+              ($1, $2, 'live', 'send_email', 'sent', 'Hi', now() - interval '3 days', '{"allowed": true}', 'sent', now() - interval '3 days')`,
+      [WS, lead, allowedAt],
+    );
+    const shadow = await build(WS, lead);
+    expect(shadow.rules.recentTouchTimes).toHaveLength(2);
+    expect(shadow.rules.hasSentWhatsApp).toBe(true);
+    expect(shadow.rules.lead.agentTouchCount).toBe(2);
+    expect(shadow.rules.lead.agentLastTouchAt?.getTime()).toBe(allowedAt.getTime());
+    const row = (await pool.query(`select agent_touch_count, agent_last_touch_at from public.leads where id = $1`, [lead])).rows[0];
+    expect(row).toEqual({ agent_touch_count: 0, agent_last_touch_at: null });
+
+    await pool.query(`update public.agent_settings set mode = 'off' where workspace_id = $1`, [WS]);
+    try {
+      const off = await build(WS, lead);
+      expect(off.rules.recentTouchTimes).toHaveLength(1);
+      expect(off.rules.hasSentWhatsApp).toBe(false);
+      expect(off.rules.lead.agentTouchCount).toBe(0);
+    } finally {
+      await pool.query(`update public.agent_settings set mode = 'shadow' where workspace_id = $1`, [WS]);
+    }
   });
 
   it("is workspace-isolated", async () => {

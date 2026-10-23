@@ -111,6 +111,7 @@ export interface AgentContextDeps {
   fallbackSenderAddress?: string | null;
 }
 
+const latest = (dates: Date[]) => (dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null);
 const truncate = (text: string | null, max: number) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 // Timeline events worth showing the agent: calls (with outcome), notes, meetings, proposals,
@@ -165,6 +166,7 @@ export async function buildAgentContext(
 
   const settings = (await db.query<AgentSettingsRow>(`select * from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0];
   if (!settings) throw new NotFoundError("Agent settings");
+  const shadow = settings.mode === "shadow";
 
   const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender] = await Promise.all([
     db.query<{ message: string | null }>(
@@ -180,10 +182,13 @@ export async function buildAgentContext(
         where c.lead_id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId],
     ),
+    // Touches: real sends; in shadow also the drafts the rules allowed, so shadow drafts
+    // respect the same gaps and limits a live agent would (leads.agent_touch_* stay real-only).
     db.query<{ action: string; at: Date }>(
       `select action, coalesce(send_at, created_at) as at from public.agent_decisions
-        where lead_id = $1 and workspace_id = $2 and outcome = 'sent' and action in ('send_email', 'send_whatsapp')`,
-      [leadId, workspaceId],
+        where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp')
+          and (outcome = 'sent' or ($3::boolean and outcome = 'draft' and coalesce((rules_result ->> 'allowed')::boolean, false)))`,
+      [leadId, workspaceId, shadow],
     ),
     db.query<{ at: Date | null }>(
       `select greatest(
@@ -270,13 +275,14 @@ export async function buildAgentContext(
       pipelineStage: leadRow.pipeline_stage,
       email: leadRow.email,
       phoneE164: leadRow.phone_e164,
-      agentTouchCount: leadRow.agent_touch_count,
-      agentLastTouchAt: leadRow.agent_last_touch_at,
+      agentTouchCount: shadow ? sends.rows.length : leadRow.agent_touch_count,
+      agentLastTouchAt: shadow ? latest(sends.rows.map((s) => s.at)) : leadRow.agent_last_touch_at,
       ownerId: leadRow.owner_id,
       ownerName: leadRow.owner_name,
     },
     contactability: { email: status("email"), whatsapp: status("whatsapp"), phone: status("phone") },
-    recentTouchTimes: sends.rows.map((s) => s.at).filter((at) => at.getTime() >= weekAgo && at.getTime() <= now.getTime()),
+    // A deferred draft's touch time can be in the future; nextAllowedSendTime ignores touches after its candidate time.
+    recentTouchTimes: sends.rows.map((s) => s.at).filter((at) => at.getTime() >= weekAgo),
     lastRepActivityAt: repActivity.rows[0]?.at ?? null,
     hasSentWhatsApp: sends.rows.some((s) => s.action === "send_whatsapp"),
     assets: assets.map((a) => ({ id: a.id, active: true, channels: a.channels, sizeBytes: a.sizeBytes })),
