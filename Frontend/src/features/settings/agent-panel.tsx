@@ -180,8 +180,7 @@ function ModeCard({ settings }: { settings: AgentSettings }) {
             Live (coming later)
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground">{MODE_HELP[settings.mode]}</p>
-        <ul className="space-y-1 text-xs text-muted-foreground">
+        <ul className="space-y-1 text-sm text-muted-foreground">
           <li>{MODE_HELP.off}</li>
           <li>{MODE_HELP.shadow}</li>
         </ul>
