@@ -123,6 +123,10 @@ export interface Lead {
   email: string;
   source: LeadSource;
   serviceInterest: string;
+  /** Company revenue as entered; revenueMin/MaxCr are the backend's parse in crore (null = open/unknown). */
+  revenueRange?: string;
+  revenueMinCr?: number | null;
+  revenueMaxCr?: number | null;
   ownerId?: string;
   ownerName?: string;
   pipelineStage: PipelineStage;

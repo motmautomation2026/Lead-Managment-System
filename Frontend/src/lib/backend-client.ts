@@ -163,6 +163,8 @@ export interface CreateLeadInput {
   phone?: string | undefined;
   source: LeadSource;
   serviceInterest?: string | undefined;
+  revenueRange?: string | undefined;
+  /** Omit to let the workspace's revenue rules pick the owner. */
   ownerId?: string | undefined;
 }
 export interface ImportLeadRow {
@@ -176,6 +178,7 @@ export interface ImportLeadRow {
   phone?: string | undefined;
   source: string;
   serviceInterest?: string | undefined;
+  revenueRange?: string | undefined;
 }
 export interface ImportLeadsResult {
   created: Lead[];
@@ -193,6 +196,7 @@ export interface UpdateLeadInput {
   phone?: string | undefined;
   source?: LeadSource | undefined;
   serviceInterest?: string | undefined;
+  revenueRange?: string | undefined;
   ownerId?: string | undefined;
   pipelineStage?: PipelineStage | undefined;
   responseState?: ResponseState | undefined;
@@ -333,11 +337,19 @@ export interface Workspace {
   updatedAt: string;
 }
 
-export interface WebsiteLeadSettings {
-  defaultOwnerId: string | null;
-  defaultOwnerName: string | null;
-  /** False when the saved owner is no longer an active salesperson (new website leads then stay unassigned). */
-  ownerAvailable: boolean;
+/** One revenue rule: minCr exclusive, maxCr inclusive, both in crore; null = open. */
+export interface AssignmentRuleInput {
+  position: number;
+  minCr: number | null;
+  maxCr: number | null;
+  ownerId: string;
+}
+export interface AssignmentRules {
+  rules: (AssignmentRuleInput & { id: string; ownerName: string; ownerActive: boolean })[];
+  fallbackOwnerId: string | null;
+  fallbackOwnerName: string | null;
+  /** False when the saved fallback owner has been deactivated (new leads then stay unassigned). */
+  fallbackOwnerAvailable: boolean;
 }
 
 export interface EmailConnection {
@@ -446,11 +458,6 @@ export const backend = {
           to,
         }),
     },
-    websiteLeads: {
-      get: (signal?: AbortSignal) => get<WebsiteLeadSettings>("/connections/website-leads", signal),
-      update: (input: { defaultOwnerId: string | null }) =>
-        send<WebsiteLeadSettings>("PUT", "/connections/website-leads", input),
-    },
     whatsapp: {
       get: (signal?: AbortSignal) =>
         get<WhatsAppConnection>("/connections/whatsapp/settings", signal),
@@ -472,6 +479,11 @@ export const backend = {
       disconnect: () =>
         send<GoogleCalendarConnection>("POST", "/connections/google-calendar/disconnect"),
     },
+  },
+  assignmentRules: {
+    get: (signal?: AbortSignal) => get<AssignmentRules>("/assignment-rules", signal),
+    replace: (input: { rules: AssignmentRuleInput[]; fallbackOwnerId: string | null }) =>
+      send<AssignmentRules>("PUT", "/assignment-rules", input),
   },
   leads: {
     list: (params?: LeadFilters, signal?: AbortSignal) =>

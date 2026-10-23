@@ -304,6 +304,7 @@ export function LeadDetailPage({ leadId }: { leadId: string }) {
                   <Row label="Company" value={lead.company} />
                   <Row label="Industry" value={lead.industry || "-"} />
                   <Row label="Interest" value={lead.serviceInterest || "-"} />
+                  <Row label="Revenue" value={lead.revenueRange || "-"} />
                   {detail.contactability.map((item) => (
                     <Row
                       key={item.channel}

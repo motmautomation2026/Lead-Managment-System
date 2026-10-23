@@ -407,6 +407,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                             void navigate({ to: "/automations/runs" });
                           else if (n.href === "/automations") void navigate({ to: "/automations" });
                           else if (n.href === "/meetings") void navigate({ to: "/meetings" });
+                          else if (n.href === "/leads") void navigate({ to: "/leads" });
                         }}
                       >
                         <span

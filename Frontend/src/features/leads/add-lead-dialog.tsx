@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,9 @@ const SERVICES = [
   "Other",
 ];
 
+/** Owner select value meaning "send no ownerId": the workspace's revenue rules decide. */
+const AUTO_OWNER = "auto";
+
 function fieldFromDetails(details: unknown): string | null {
   if (details && typeof details === "object" && "field" in details) {
     const field = (details as { field?: unknown }).field;
@@ -69,7 +72,7 @@ export function AddLeadDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const { addLead, addNote, isPending } = useLeads();
-  const { users, currentUser } = useSession();
+  const { users } = useSession();
   const navigate = useNavigate();
   const [form, setForm] = useState({
     firstName: "",
@@ -80,7 +83,8 @@ export function AddLeadDialog({
     email: "",
     source: "website" as LeadSource,
     serviceInterest: "B2B Lead Generation",
-    ownerId: currentUser?.id ?? "",
+    revenueRange: "",
+    ownerId: AUTO_OWNER,
     notes: "",
   });
   const [touched, setTouched] = useState<Partial<Record<keyof LeadFormErrors, boolean>>>({});
@@ -88,11 +92,6 @@ export function AddLeadDialog({
     field: string;
     message: string;
   } | null>(null);
-
-  useEffect(() => {
-    if (currentUser?.id && !form.ownerId)
-      setForm((value) => ({ ...value, ownerId: currentUser.id }));
-  }, [currentUser?.id, form.ownerId]);
 
   const errors = validateLeadForm(form);
   const set = (k: keyof typeof form, v: string) => {
@@ -121,7 +120,8 @@ export function AddLeadDialog({
         email: form.email.trim() ? (normalizeEmail(form.email).value ?? form.email.trim()) : "",
         source: form.source,
         serviceInterest: form.serviceInterest,
-        ownerId: form.ownerId,
+        revenueRange: form.revenueRange.trim() || undefined,
+        ownerId: form.ownerId === AUTO_OWNER ? undefined : form.ownerId,
       });
     } catch (error) {
       // Lead was never created — safe to leave the dialog open with the
@@ -150,6 +150,7 @@ export function AddLeadDialog({
       industry: "",
       phone: "",
       email: "",
+      revenueRange: "",
       notes: "",
     }));
     setTouched({});
@@ -196,6 +197,13 @@ export function AddLeadDialog({
           </Field>
           <Field label="Industry">
             <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} />
+          </Field>
+          <Field label="Company revenue">
+            <Input
+              value={form.revenueRange}
+              onChange={(e) => set("revenueRange", e.target.value)}
+              placeholder="e.g. ₹1–5 Cr"
+            />
           </Field>
           <Field label="Phone" error={fieldError("phone")}>
             <Input
@@ -256,6 +264,7 @@ export function AddLeadDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={AUTO_OWNER}>Auto (by revenue rules)</SelectItem>
                 {users.map((u) => (
                   <SelectItem key={u.id} value={u.id}>
                     {u.name}

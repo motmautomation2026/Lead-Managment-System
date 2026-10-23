@@ -61,6 +61,7 @@ type FormState = {
   email: string;
   source: LeadSource;
   serviceInterest: string;
+  revenueRange: string;
   ownerId: string;
 };
 
@@ -75,6 +76,7 @@ function formFromLead(lead: Lead): FormState {
     email: lead.email ?? "",
     source: lead.source,
     serviceInterest: lead.serviceInterest || "B2B Lead Generation",
+    revenueRange: lead.revenueRange ?? "",
     ownerId: lead.ownerId ?? "",
   };
 }
@@ -144,6 +146,7 @@ export function EditLeadDialog({
         email: form.email.trim() ? (normalizeEmail(form.email).value ?? form.email.trim()) : "",
         source: form.source,
         serviceInterest: form.serviceInterest,
+        revenueRange: form.revenueRange.trim(),
         ownerId: form.ownerId || undefined,
       });
     } catch (error) {
@@ -192,6 +195,13 @@ export function EditLeadDialog({
           </Field>
           <Field label="Industry">
             <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} />
+          </Field>
+          <Field label="Company revenue">
+            <Input
+              value={form.revenueRange}
+              onChange={(e) => set("revenueRange", e.target.value)}
+              placeholder="e.g. ₹1–5 Cr"
+            />
           </Field>
           <Field label="Phone" error={fieldError("phone")}>
             <Input

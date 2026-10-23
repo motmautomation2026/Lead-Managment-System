@@ -90,10 +90,10 @@ describe("backend client", () => {
       "/api/v1/connections/whatsapp/connect",
     ],
     [
-      "website lead owner update",
-      () => backend.connections.websiteLeads.update({ defaultOwnerId: null }),
+      "assignment rules replace",
+      () => backend.assignmentRules.replace({ rules: [], fallbackOwnerId: null }),
       "PUT",
-      "/api/v1/connections/website-leads",
+      "/api/v1/assignment-rules",
     ],
     [
       "workspace create",

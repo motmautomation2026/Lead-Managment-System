@@ -12,6 +12,7 @@ export const CANONICAL_FIELDS = [
   "phone",
   "source",
   "serviceInterest",
+  "revenueRange",
 ] as const;
 export type CanonicalField = (typeof CANONICAL_FIELDS)[number];
 
@@ -27,6 +28,7 @@ const HEADER_ALIASES: Record<CanonicalField, string[]> = {
   phone: ["phone", "phone number", "mobile", "mobile number", "contact number", "whatsapp"],
   source: ["source", "lead source"],
   serviceInterest: ["service interest", "interest", "service", "service of interest"],
+  revenueRange: ["revenue", "turnover", "annual revenue", "company revenue", "revenue range"],
 };
 
 const SAMPLE_HEADERS = [
@@ -39,6 +41,7 @@ const SAMPLE_HEADERS = [
   "Phone",
   "Source",
   "Service Interest",
+  "Revenue",
 ];
 const SAMPLE_ROW = [
   "Ada",
@@ -50,6 +53,7 @@ const SAMPLE_ROW = [
   "+91 98765 43210",
   "website",
   "B2B Lead Generation",
+  "₹1–5 Cr",
 ];
 
 const BOM_CHAR = String.fromCharCode(0xfeff);
@@ -151,6 +155,7 @@ export interface MappedRow {
   phone?: string | undefined;
   source: string;
   serviceInterest?: string | undefined;
+  revenueRange?: string | undefined;
 }
 
 export function mapRow(
@@ -173,6 +178,7 @@ export function mapRow(
     phone: out.phone,
     source: out.source ?? "",
     serviceInterest: out.serviceInterest,
+    revenueRange: out.revenueRange,
   };
 }
 

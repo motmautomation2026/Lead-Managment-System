@@ -125,6 +125,7 @@ export function ImportLeadsDialog({
           phone: r.phone,
           source: r.source,
           serviceInterest: r.serviceInterest,
+          revenueRange: r.revenueRange,
         })),
       );
       setResult(data);
