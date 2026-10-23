@@ -85,7 +85,7 @@ async function main(id: string) {
     console.log(JSON.stringify(rules, null, 2));
 
     const final = rules.finalDecision;
-    const grounding = buildGroundingMessages(final, ctx.knowledge.chunks);
+    const grounding = buildGroundingMessages(final, ctx.knowledge.chunks, { leadCompany: ctx.lead.company, ownCompany: ctx.companyName });
     if (grounding) {
       const checked = await ai.checkGrounding({ model: groundingModel, messages: grounding, jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> } });
       section("Grounding");

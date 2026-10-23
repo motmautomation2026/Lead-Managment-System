@@ -72,6 +72,13 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- Don't repeat an earlier message (see the past_agent_messages block). Write in English unless the lead clearly prefers another language.",
     "- When unsure, pick handoff.",
     "",
+    "Writing:",
+    `- Greet the lead by first name${ctx.lead.firstName ? ` (${ctx.lead.firstName})` : " when known"}.`,
+    "- Refer specifically to the latest call, note or enquiry when it is relevant; don't send a generic message.",
+    "- One clear next step per message.",
+    "- Respect timing the lead or rep stated (\"interested later\", \"after Diwali\", \"call next month\"): prefer wait with a matching nextWakeInDays over messaging early.",
+    "- The knowledge excerpts may contain INTERNAL material (client lists, internal tiers, strategy or process notes). Use only what is suitable to tell a prospect. Never name a client company unless the excerpt clearly presents it as a public reference, and never reveal internal strategy, tiers or process notes.",
+    "",
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
     `Send window: ${days}, ${settings.send_window_start.slice(0, 5)}–${settings.send_window_end.slice(0, 5)} IST. Sends outside it are scheduled for the next opening.`,
@@ -155,14 +162,20 @@ export function parseGroundingOutput(json: unknown): GroundingResult {
 }
 
 /** Messages asking whether every factual claim in a send is backed by the chunks; null for non-send actions. */
-export function buildGroundingMessages(decision: AgentDecision, chunks: AgentKnowledgeChunk[]): ChatMessage[] | null {
+export function buildGroundingMessages(
+  decision: AgentDecision,
+  chunks: AgentKnowledgeChunk[],
+  names: { leadCompany: string; ownCompany: string },
+): ChatMessage[] | null {
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return null;
   const message = decision.action === "send_email" ? `Subject: ${decision.subject}\n\n${decision.body}` : decision.body;
   const system = [
     "You check a sales message for unsupported facts.",
-    "List every factual claim in the message: numbers, client or company names, results, prices, timelines, guarantees and capabilities.",
-    "A claim is supported only if the knowledge excerpts state it. Greetings, questions, offers to talk and opinions are not claims.",
-    "Return supported = true only when every claim is supported; put each unsupported claim, quoted briefly, in unsupportedClaims.",
+    "Check ONLY factual claims: numbers, client or company names, results, prices, timelines, and specific capabilities stated as fact.",
+    "These are NOT claims, never flag them: greetings, questions, offers or suggestions of a next step (e.g. \"shall we set up a call?\"), scheduling, opinions, and restating what the lead or rep said.",
+    "A claim is supported only if the knowledge excerpts state it.",
+    `Also flag every company name other than the lead's own company (${names.leadCompany}) and the sender's company (${names.ownCompany}).`,
+    "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     DATA_NOTICE,
   ].join("\n");
   const user = [block("message", neutralise(message)), block("knowledge", knowledgeBlock(chunks))].join("\n\n");
