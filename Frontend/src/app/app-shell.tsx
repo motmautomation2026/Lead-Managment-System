@@ -159,11 +159,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     <AddLeadContext.Provider value={{ open: () => setAddOpen(true) }}>
       <div className="flex min-h-screen bg-background">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
-          <div className="px-3 py-5">
+          <div className="shrink-0 px-3 py-5">
             <BrandLogo caption="MOTM Flow · Sales Automation" />
           </div>
 
-          <div className="px-3 pb-3">
+          <div className="shrink-0 px-3 pb-4">
             <Button
               className="w-full justify-start gap-2"
               size="sm"
@@ -174,7 +174,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           <ScrollArea className="flex-1 px-2">
-            <nav className="space-y-0.5 pb-4">
+            <nav className="space-y-0.5 pb-4 pt-1">
               {nav.map((item) => {
                 const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
                 return (
