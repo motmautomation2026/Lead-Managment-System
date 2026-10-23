@@ -89,7 +89,6 @@ export async function draftDecision(
     usage.outputTokens += result.outputTokens;
     usage.costUsd += costUsd(deps.prices, modelName, result.inputTokens, result.outputTokens) ?? 0;
   };
-  const names = { leadCompany: ctx.lead.company, ownCompany: ctx.companyName };
 
   const attempt = async (problems?: string[]): Promise<DraftAttempt> => {
     const messages = buildDecisionMessages(ctx, ctx.settings, deps.now, problems ? { previousFailure: { problems } } : {});
@@ -100,7 +99,7 @@ export async function draftDecision(
     if (rules.allowed && isSend(rules.finalDecision)) {
       const checked = await deps.model.checkGrounding({
         model: deps.groundingModel,
-        messages: buildGroundingMessages(rules.finalDecision, ctx.knowledge.chunks, names)!,
+        messages: buildGroundingMessages(rules.finalDecision, ctx)!,
         jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
       });
       add(deps.groundingModel, checked);
