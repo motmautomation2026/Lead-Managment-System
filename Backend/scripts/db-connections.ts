@@ -67,6 +67,12 @@ async function probe() {
   if (stoppedOn && open.length < POOLER_LIMIT) console.log(`(Stopped on: ${stoppedOn})`);
 }
 
-await activity();
+try {
+  await activity();
+} catch (error) {
+  // EMAXCONNSESSION here means the pooler is full right now: that is the answer.
+  console.error(`Couldn't connect: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 if (process.argv.includes("--probe")) await probe();
 else console.log("Add `-- --probe` to measure how many of the pooler's client slots are in use.");
