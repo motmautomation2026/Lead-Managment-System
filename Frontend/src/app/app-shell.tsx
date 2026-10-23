@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   Settings as SettingsIcon,
+  Sparkles,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -60,6 +61,7 @@ const NAV = [
   { to: "/proposals", label: "Proposals", icon: FileText },
   { to: "/automations", label: "Automations", icon: Bot },
   { to: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { to: "/ai-activity", label: "AI Activity", icon: Sparkles },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 const ADMIN_NAV = [...NAV, { to: "/admin", label: "Admin", icon: ShieldCheck }] as const;

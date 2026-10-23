@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AiActivityRouteImport } from './routes/ai-activity'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as MeetingsRouteImport } from './routes/meetings'
 import { Route as PrivacyRouteImport } from './routes/privacy'
@@ -32,6 +33,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AiActivityRoute = AiActivityRouteImport.update({
+  id: '/ai-activity',
+  path: '/ai-activity',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KnowledgeRoute = KnowledgeRouteImport.update({
@@ -99,6 +105,7 @@ const AutomationsWorkflowsWorkflowIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/ai-activity': typeof AiActivityRoute
   '/knowledge': typeof KnowledgeRoute
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/ai-activity': typeof AiActivityRoute
   '/knowledge': typeof KnowledgeRoute
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/ai-activity': typeof AiActivityRoute
   '/knowledge': typeof KnowledgeRoute
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/ai-activity'
     | '/knowledge'
     | '/meetings'
     | '/privacy'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/ai-activity'
     | '/knowledge'
     | '/meetings'
     | '/privacy'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admin'
+    | '/ai-activity'
     | '/knowledge'
     | '/meetings'
     | '/privacy'
@@ -199,6 +211,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  AiActivityRoute: typeof AiActivityRoute
   KnowledgeRoute: typeof KnowledgeRoute
   MeetingsRoute: typeof MeetingsRoute
   PrivacyRoute: typeof PrivacyRoute
@@ -227,6 +240,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ai-activity': {
+      id: '/ai-activity'
+      path: '/ai-activity'
+      fullPath: '/ai-activity'
+      preLoaderRoute: typeof AiActivityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/knowledge': {
@@ -319,6 +339,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  AiActivityRoute: AiActivityRoute,
   KnowledgeRoute: KnowledgeRoute,
   MeetingsRoute: MeetingsRoute,
   PrivacyRoute: PrivacyRoute,

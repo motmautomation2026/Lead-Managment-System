@@ -88,6 +88,16 @@ vi.mock("@/store", () => {
       addTemplate: noop,
       updateTemplate: noop,
     }),
+    useIsAdmin: () => false,
+    useAgentStats: () => ({ data: undefined, error: null }),
+    useAgentDecisions: () => ({
+      data: { pages: [] },
+      isLoading: false,
+      error: null,
+      hasNextPage: false,
+    }),
+    useAgentDecision: () => ({ data: undefined, isLoading: false, error: null }),
+    useEnrollLeads: () => ({ mutateAsync: noop, isPending: false }),
     useDashboard: () => ({
       summary: {
         activeLeads: 0,
@@ -111,6 +121,7 @@ import { LeadsPage } from "@/features/leads/leads-page";
 import { TasksPage } from "@/features/tasks/tasks-page";
 import { MeetingsPage } from "@/features/meetings/meetings-page";
 import { ProposalsPage } from "@/features/proposals/proposals-page";
+import { AiActivityPage } from "@/features/agent/ai-activity-page";
 
 afterEach(cleanup);
 
@@ -136,6 +147,7 @@ describe("zero-record route states", () => {
     [TasksPage, "Nothing here."],
     [MeetingsPage, "No meetings."],
     [ProposalsPage, "No proposals."],
+    [AiActivityPage, "No AI decisions match these filters."],
   ])("renders an empty backend dataset", async (Screen, expectedText) => {
     const view = await renderScreen(Screen);
     expect(view.container).toHaveTextContent(expectedText);

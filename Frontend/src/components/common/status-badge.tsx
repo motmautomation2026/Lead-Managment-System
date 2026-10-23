@@ -91,9 +91,12 @@ export function StatusBadge({
   tone,
   dot = false,
   className,
+  display,
 }: {
   value: string;
   tone?: Tone;
+  /** Text shown as given instead of label(value). */
+  display?: string;
   dot?: boolean;
   className?: string;
 }) {
@@ -107,7 +110,7 @@ export function StatusBadge({
       )}
     >
       {dot && <span className="size-1.5 rounded-full bg-current" />}
-      {label(value)}
+      {display ?? label(value)}
     </span>
   );
 }
