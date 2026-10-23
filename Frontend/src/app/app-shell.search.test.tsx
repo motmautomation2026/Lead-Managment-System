@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Lead } from "@/types/lead";
 
 const noop = vi.fn(async () => undefined);
+const mockRole = vi.hoisted(() => ({ isAdmin: false }));
 
 const leads: Lead[] = [
   {
@@ -66,6 +67,7 @@ vi.mock("@/store", () => ({
     isLoading: false,
     error: null,
   }),
+  useIsAdmin: () => mockRole.isAdmin,
   useLeads: () => ({
     leads,
     getLead: (id: string) => leads.find((l) => l.id === id),
@@ -203,5 +205,19 @@ describe("AppShell top search bar", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("lead detail")).toBeInTheDocument();
     expect(input).toHaveValue("");
+  });
+});
+
+describe("AppShell nav", () => {
+  it("shows the Admin item only to admins", async () => {
+    mockRole.isAdmin = false;
+    await renderShell();
+    expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Admin" })).toBeNull();
+    cleanup();
+
+    mockRole.isAdmin = true;
+    await renderShell();
+    expect(screen.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe("/admin");
   });
 });

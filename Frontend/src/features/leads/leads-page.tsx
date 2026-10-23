@@ -174,7 +174,7 @@ export function LeadsPage() {
                         </Link>
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{l.source}</td>
-                      <td className="px-3 py-2 text-xs">{userName(l.ownerId)}</td>
+                      <td className="px-3 py-2 text-xs">{l.ownerName ?? userName(l.ownerId)}</td>
                       <td className="px-3 py-2">
                         {l.doNotContact ? (
                           <StatusBadge value="Do Not Contact" />

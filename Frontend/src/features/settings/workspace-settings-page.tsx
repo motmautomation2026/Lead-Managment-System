@@ -103,8 +103,8 @@ function WebsiteLeadsPanel({ workspaceId }: { workspaceId: string }) {
           <>
             {!saved.ownerAvailable && (
               <Notice danger>
-                {saved.defaultOwnerName ?? "The saved owner"} is no longer an active salesperson, so
-                new website leads are currently unassigned. Choose someone else below.
+                {saved.defaultOwnerName ?? "The saved owner"} is no longer an active user, so new
+                website leads are currently unassigned. Choose someone else below.
               </Notice>
             )}
             <div className="max-w-sm">
@@ -114,7 +114,7 @@ function WebsiteLeadsPanel({ workspaceId }: { workspaceId: string }) {
                   value={ownerId}
                   onChange={(e) => setOwnerId(e.target.value)}
                 >
-                  <option value={UNASSIGNED}>Unassigned (notify every salesperson)</option>
+                  <option value={UNASSIGNED}>Unassigned (notify everyone)</option>
                   {salespeople.map((user) => (
                     <option key={user.id} value={user.id}>
                       {user.name}

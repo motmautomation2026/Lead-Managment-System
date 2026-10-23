@@ -151,7 +151,7 @@ export function TasksPage() {
                         >
                           {relDay(t.dueAt)}
                         </td>
-                        <td className="px-3 py-2 text-xs">{userName(t.ownerId)}</td>
+                        <td className="px-3 py-2 text-xs">{t.ownerName ?? userName(t.ownerId)}</td>
                         <td className="px-3 py-2">
                           <StatusBadge
                             value={t.origin}

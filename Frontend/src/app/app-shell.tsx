@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings as SettingsIcon,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,7 +42,7 @@ import {
 import { toast } from "sonner";
 import { AddLeadContext } from "@/app/add-lead-context";
 import { AddLeadDialog } from "@/features/leads/add-lead-dialog";
-import { messageFromError, useLeads, useNotifications, useSession } from "@/store";
+import { messageFromError, useIsAdmin, useLeads, useNotifications, useSession } from "@/store";
 import { backend } from "@/lib/backend-client";
 import { keys } from "@/store/query";
 import { useWorkspace } from "@/store/workspace-context";
@@ -59,6 +60,7 @@ const NAV = [
   { to: "/automations", label: "Automations", icon: Bot },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
+const ADMIN_NAV = [...NAV, { to: "/admin", label: "Admin", icon: ShieldCheck }] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [addOpen, setAddOpen] = useState(false);
@@ -75,6 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { leads } = useLeads();
   const { notifications, markNotificationsRead } = useNotifications();
   const { currentUser } = useSession();
+  const nav = useIsAdmin() ? ADMIN_NAV : NAV;
   const {
     workspaces,
     currentWorkspaceId,
@@ -170,7 +173,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <ScrollArea className="flex-1 px-2">
             <nav className="space-y-0.5 pb-4">
-              {NAV.map((item) => {
+              {nav.map((item) => {
                 const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
                 return (
                   <Link

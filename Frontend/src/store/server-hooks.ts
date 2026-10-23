@@ -42,7 +42,7 @@ export function useSession() {
   });
   const users: User[] = (profiles.data?.data ?? []).map((user) => ({
     ...user,
-    role: "Salesperson",
+    role: user.role === "admin" ? "Admin" : "Salesperson",
   }));
   const currentUser: User | null = me.data
     ? {
@@ -63,6 +63,11 @@ export function useSession() {
   };
 }
 export type SessionSlice = ReturnType<typeof useSession>;
+
+/** The one check for admin-only UI (role from GET /me); the backend enforces it with requireAdmin. */
+export function useIsAdmin() {
+  return useSession().currentUser?.role === "Admin";
+}
 
 export function useLeads() {
   const client = useQueryClient();

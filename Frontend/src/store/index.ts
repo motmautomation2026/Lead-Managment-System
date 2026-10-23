@@ -1,6 +1,7 @@
 export { StoreProvider } from "./store-provider";
 export {
   useSession,
+  useIsAdmin,
   useLeads,
   useLead,
   useTasks,

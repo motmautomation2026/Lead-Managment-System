@@ -1,30 +1,21 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { backend, type AdminUser } from "@/lib/backend-client";
 import { messageFromError } from "@/store";
-import { supabase } from "@/lib/supabase-client";
+import { PageHeader } from "@/app/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { BrandLogo } from "@/components/common/brand-logo";
 
 export function AdminPage() {
   return (
-    <div className="min-h-screen bg-muted/25">
-      <header className="border-b bg-card">
-        <div className="mx-auto flex h-16 max-w-6xl items-center px-5">
-          <BrandLogo caption="MOTM Flow Admin" />
-          <Button className="ml-auto" variant="ghost" onClick={() => void supabase?.auth.signOut()}>
-            <LogOut /> Sign out
-          </Button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-6xl p-5 md:p-8">
+    <div>
+      <PageHeader title="Admin" description="Create, edit and deactivate salesperson accounts." />
+      <div className="p-6">
         <UsersPanel />
-      </main>
+      </div>
     </div>
   );
 }
