@@ -18,7 +18,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Never print passwords, keys or full connection strings.
 - `OPENAI_API_KEY` / `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`, must be 1536
   dims) are optional, backend + worker only, never the frontend. Tests never call OpenAI:
-  inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`).
+  inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`) or a `DecisionModel`
+  (`tests/helpers/fakeDecisionModel.ts`). The agent also reads `OPENAI_DECISION_MODEL`,
+  `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none) and `OPENAI_PRICES_JSON`.
 
 ## Tests
 
@@ -130,6 +132,18 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `Lead` has the agent fields. Settings → admin-only `AgentPanel`
   (`features/settings/agent-panel.tsx`): mode (Off → Shadow confirms), limits form, playbook
   editor with history/restore. `ConfirmDialog` takes `confirmVariant`. Sidebar Add Lead spacing.
+- **3C-1:** one decision's inputs, no loop, nothing saved or sent:
+  `services/agentContext.service.ts` `buildAgentContext` (lead, rules inputs, timeline,
+  past agent messages, decision summaries, playbook, KB top 8 via pure `agent/kbQuery.ts`,
+  active assets; ≤12,000 tokens by trimming oldest timeline then summaries, `ctx.meta`);
+  `agent/prompt.ts` (`buildDecisionMessages`, `buildGroundingMessages`, data in delimited
+  blocks with tags neutralised, `GROUNDING_JSON_SCHEMA`); `providers/openai.provider.ts`
+  `DecisionModel` / `createOpenAIDecisionModel` (strict JSON schema, 30 s, 2 retries;
+  `ModelOutputError` = failed attempt) and `resolveAgentModels` (no hard-coded models);
+  `agent/pricing.ts` `costUsd` (unknown model → null). Fake: `tests/helpers/fakeDecisionModel.ts`.
+  Dev: `npm run agent:preview -- --lead <uuid> [--call]` (refuses the prod ref).
+  New env (backend + worker only): `OPENAI_DECISION_MODEL`, `OPENAI_GROUNDING_MODEL`,
+  `OPENAI_PRICES_JSON` (`{"<model>":{"inputPer1M":n,"outputPer1M":n}}`).
 
 ## AI agent (Feature 3)
 
