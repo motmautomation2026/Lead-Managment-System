@@ -47,6 +47,13 @@ describe("agent settings update schema", () => {
     expect(parse({ wakeMinDays: 3, wakeMaxDays: 3 }).success).toBe(true);
   });
 
+  it("company display name: trimmed, 1-120 chars, or null", () => {
+    expect(parse({ companyDisplayName: "  MOTM Technologies " }).success && parse({ companyDisplayName: "  MOTM Technologies " }).data).toEqual({ companyDisplayName: "MOTM Technologies" });
+    expect(parse({ companyDisplayName: null }).success).toBe(true);
+    expect(parse({ companyDisplayName: "   " }).success).toBe(false);
+    expect(parse({ companyDisplayName: "x".repeat(121) }).success).toBe(false);
+  });
+
   it("opt-out texts can't be blank", () => {
     expect(parse({ emailOptOutText: "   " }).success).toBe(false);
     expect(parse({ whatsappOptOutText: "" }).success).toBe(false);

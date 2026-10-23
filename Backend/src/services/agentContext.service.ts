@@ -30,6 +30,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   grounding_model: string | null;
   monthly_budget_usd: string;
   current_playbook_version: number | null;
+  company_display_name: string | null;
 }
 
 export interface AgentContextLead {
@@ -88,7 +89,9 @@ export interface AgentAssetSummary {
 
 export interface AgentContext {
   workspaceId: string;
+  /** The selling company as the agent names it: agent_settings.company_display_name, else the workspace name. */
   companyName: string;
+  workspaceName: string;
   lead: AgentContextLead;
   settings: AgentSettingsRow;
   /** Exactly what validateDecision needs. */
@@ -298,7 +301,8 @@ export async function buildAgentContext(
 
   const context: AgentContext = {
     workspaceId,
-    companyName: leadRow.company_name,
+    companyName: settings.company_display_name ?? leadRow.company_name,
+    workspaceName: leadRow.company_name,
     lead,
     settings,
     rules,

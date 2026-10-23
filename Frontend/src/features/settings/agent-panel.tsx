@@ -205,6 +205,7 @@ type LimitsForm = Record<NumberField, string> & {
   sendWindowEnd: string;
   nurtureLongTerm: boolean;
   autoEnrollNewLeads: boolean;
+  companyDisplayName: string;
   decisionModel: string;
   groundingModel: string;
   emailOptOutText: string;
@@ -222,6 +223,7 @@ function formFrom(settings: AgentSettings): LimitsForm {
     sendWindowEnd: settings.sendWindowEnd,
     nurtureLongTerm: settings.nurtureLongTerm,
     autoEnrollNewLeads: settings.autoEnrollNewLeads,
+    companyDisplayName: settings.companyDisplayName ?? "",
     decisionModel: settings.decisionModel ?? "",
     groundingModel: settings.groundingModel ?? "",
     emailOptOutText: settings.emailOptOutText,
@@ -241,6 +243,7 @@ function toUpdate(form: LimitsForm): AgentSettingsUpdate {
     sendWindowEnd: form.sendWindowEnd,
     nurtureLongTerm: form.nurtureLongTerm,
     autoEnrollNewLeads: form.autoEnrollNewLeads,
+    companyDisplayName: form.companyDisplayName.trim() || null,
     decisionModel: form.decisionModel.trim() || null,
     groundingModel: form.groundingModel.trim() || null,
     emailOptOutText: form.emailOptOutText,
@@ -361,6 +364,16 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
               onCheckedChange={(value) => set("autoEnrollNewLeads", value)}
             />
           </label>
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="agent-company-name">Company name used in AI messages</Label>
+          <Input
+            id="agent-company-name"
+            placeholder="Workspace name"
+            value={form.companyDisplayName}
+            onChange={(e) => set("companyDisplayName", e.target.value)}
+          />
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

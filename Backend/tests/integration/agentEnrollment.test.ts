@@ -126,9 +126,11 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     expect(initial.status).toBe(200);
     expect(initial.body).toMatchObject({ mode: "off", sendWindowStart: "09:30", sendWindowEnd: "19:00", repQuietHours: 24, autoEnrollNewLeads: false });
 
-    const saved = await api(admin, ws, "PUT", "/agent/settings", { sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5 });
+    expect(initial.body.companyDisplayName).toBeNull();
+    const saved = await api(admin, ws, "PUT", "/agent/settings", { sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5, companyDisplayName: " MOTM Technologies " });
     expect(saved.status).toBe(200);
-    expect(saved.body).toMatchObject({ sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5, updatedBy: admin.id });
+    expect(saved.body).toMatchObject({ sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5, companyDisplayName: "MOTM Technologies", updatedBy: admin.id });
+    expect((await api(admin, ws, "PUT", "/agent/settings", { companyDisplayName: null })).body.companyDisplayName).toBeNull();
 
     const live = await api(admin, ws, "PUT", "/agent/settings", { mode: "live" });
     expect(live.status).toBe(422);

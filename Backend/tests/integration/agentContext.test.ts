@@ -202,6 +202,19 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     }
   });
 
+  it("names the selling company by the display name when set, else the workspace name", async () => {
+    const workspaceName = (await pool.query(`select name from public.workspaces where id = $1`, [WS])).rows[0].name;
+    await pool.query(`update public.agent_settings set company_display_name = 'MOTM Technologies' where workspace_id = $1`, [WS]);
+    try {
+      const ctx = await build(WS, leadId);
+      expect(ctx.companyName).toBe("MOTM Technologies");
+      expect(ctx.workspaceName).toBe(workspaceName);
+    } finally {
+      await pool.query(`update public.agent_settings set company_display_name = null where workspace_id = $1`, [WS]);
+    }
+    expect((await build(WS, leadId)).companyName).toBe(workspaceName);
+  });
+
   it("is workspace-isolated", async () => {
     await expect(build(WS, otherLeadId)).rejects.toMatchObject({ status: 404 });
     const other = await build(OTHER, otherLeadId);

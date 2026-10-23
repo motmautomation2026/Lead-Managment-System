@@ -43,6 +43,8 @@ export const settingsUpdateSchema = z
     whatsappOptOutText: nonBlank,
     repQuietHours: z.number().int().min(0).max(168),
     autoEnrollNewLeads: z.boolean(),
+    // null = use the workspace name.
+    companyDisplayName: z.string().trim().min(1, "Can't be blank.").max(120).nullable(),
   })
   .partial()
   .superRefine((value, ctx) => {

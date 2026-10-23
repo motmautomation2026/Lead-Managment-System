@@ -21,6 +21,7 @@ const settings = {
   whatsappOptOutText: "Reply STOP to opt out.",
   repQuietHours: 24,
   autoEnrollNewLeads: false,
+  companyDisplayName: null,
   currentPlaybookVersion: null,
   updatedBy: "admin-1",
   updatedAt: "2026-10-23T05:30:00.000Z",
@@ -96,10 +97,25 @@ describe("AgentPanel", () => {
         minGapHours: 48,
         sendDays: [1, 2, 3, 4, 5, 6, 7],
         decisionModel: null,
+        companyDisplayName: null,
       }),
       expect.any(Object),
     );
     expect(screen.getByText(/Last updated by Ada Admin/)).toBeInTheDocument();
+  });
+
+  it("saves the company display name trimmed, and blank as null", () => {
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    render(<AgentPanel />);
+    const field = screen.getByLabelText("Company name used in AI messages");
+    expect(field).toHaveAttribute("placeholder", "Workspace name");
+    fireEvent.change(field, { target: { value: "  MOTM Technologies " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    expect(mocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ companyDisplayName: "MOTM Technologies" }),
+      expect.any(Object),
+    );
   });
 
   it("offers the starter template when there is no playbook, and saves it as a new version", () => {

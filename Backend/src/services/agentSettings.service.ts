@@ -28,6 +28,7 @@ interface SettingsRow {
   whatsapp_opt_out_text: string;
   rep_quiet_hours: number;
   auto_enroll_new_leads: boolean;
+  company_display_name: string | null;
   current_playbook_version: number | null;
   updated_by: string | null;
   updated_at: Date;
@@ -54,6 +55,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   whatsappOptOutText: "whatsapp_opt_out_text",
   repQuietHours: "rep_quiet_hours",
   autoEnrollNewLeads: "auto_enroll_new_leads",
+  companyDisplayName: "company_display_name",
 };
 
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */
@@ -80,6 +82,7 @@ function settingsToDto(row: SettingsRow) {
     whatsappOptOutText: row.whatsapp_opt_out_text,
     repQuietHours: row.rep_quiet_hours,
     autoEnrollNewLeads: row.auto_enroll_new_leads,
+    companyDisplayName: row.company_display_name,
     currentPlaybookVersion: row.current_playbook_version,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at.toISOString(),

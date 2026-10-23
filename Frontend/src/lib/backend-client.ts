@@ -432,6 +432,8 @@ export interface AgentSettings {
   whatsappOptOutText: string;
   repQuietHours: number;
   autoEnrollNewLeads: boolean;
+  /** The selling company name in AI messages; null = the workspace name. */
+  companyDisplayName: string | null;
   currentPlaybookVersion: number | null;
   updatedBy: string | null;
   updatedAt: string;
