@@ -1,5 +1,6 @@
 import { backendBaseUrl, configurationError, supabase } from "./supabase-client";
 import type {
+  AgentStatus,
   AppNotification,
   AutomationMode,
   Call,
@@ -450,6 +451,168 @@ export interface AgentPlaybook {
   createdAt: string;
 }
 
+// --- AI decision review (3D) -------------------------------------------------------
+export type AgentAction =
+  "send_email" | "send_whatsapp" | "wait" | "handoff" | "update_stage" | "stop";
+export type AgentOutcome = "draft" | "sent" | "skipped" | "blocked" | "executed" | "failed";
+export type AgentRatingReason =
+  "made_up_fact" | "internal_info_leak" | "wrong_tone" | "wrong_timing" | "wrong_action" | "other";
+export interface AgentDecisionFilters {
+  action?: AgentAction | undefined;
+  outcome?: AgentOutcome | undefined;
+  rating?: "good" | "bad" | "unrated" | undefined;
+  hasOpenReport?: boolean | undefined;
+  leadId?: string | undefined;
+  /** ISO datetimes. */
+  from?: string | undefined;
+  to?: string | undefined;
+}
+export interface AgentDecisionRow {
+  id: string;
+  createdAt: string;
+  lead: { id: string; name: string; company: string };
+  ownerName: string | null;
+  action: AgentAction;
+  outcome: AgentOutcome;
+  /** Email subject, handoff title, new stage or stop reason. */
+  subject: string | null;
+  bodyPreview: string | null;
+  regenerated: boolean;
+  rating: "good" | "bad" | null;
+  ratingReason: AgentRatingReason | null;
+  openReports: number;
+}
+export interface AgentRuleNote {
+  rule: string;
+  message: string;
+}
+export interface AgentDecisionReport {
+  id: string;
+  decisionId: string;
+  reportedBy: string | null;
+  reportedByName: string | null;
+  note: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolvedByName?: string | null;
+  resolutionNote: string | null;
+}
+export type AgentComposedMessage =
+  | { channel: "email"; subject: string; text: string; html: string }
+  | { channel: "whatsapp"; text: string };
+export interface AgentDecisionDetail {
+  id: string;
+  createdAt: string;
+  mode: "shadow" | "live";
+  action: AgentAction;
+  outcome: AgentOutcome;
+  error: string | null;
+  reasoning: string | null;
+  messageSubject: string | null;
+  messageBody: string | null;
+  sendAt: string | null;
+  nextWakeAt: string | null;
+  handoffTitle: string | null;
+  handoffUrgency: "low" | "normal" | "high" | null;
+  newStage: string | null;
+  stopReason: string | null;
+  rulesResult: {
+    allowed: boolean;
+    violations: AgentRuleNote[];
+    adjustments: AgentRuleNote[];
+  } | null;
+  groundingResult: {
+    supported: boolean;
+    unsupportedClaims: string[];
+    ignoredClaims?: string[];
+  } | null;
+  regenerated: boolean;
+  playbookVersion: number | null;
+  decisionModel: string | null;
+  groundingModel: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  rating: "good" | "bad" | null;
+  ratingReason: AgentRatingReason | null;
+  ratingNote: string | null;
+  ratedBy: string | null;
+  ratedByName: string | null;
+  ratedAt: string | null;
+  leadId: string;
+  lead: { id: string; name: string; company: string; ownerId: string | null };
+  /** The message exactly as it would go out; null for non-send actions. */
+  composed: AgentComposedMessage | null;
+  chunks: { id: string; deleted: boolean; title: string; text: string }[];
+  reports: AgentDecisionReport[];
+}
+export interface AgentRatingInput {
+  rating: "good" | "bad";
+  reason?: AgentRatingReason | undefined;
+  note?: string | undefined;
+}
+export interface AgentStats {
+  mode: AgentMode | null;
+  byAction: Partial<Record<AgentAction, number>>;
+  byOutcome: Partial<Record<AgentOutcome, number>>;
+  failed: number;
+  ratings: {
+    rated: number;
+    good: number;
+    bad: number;
+    badByReason: Record<AgentRatingReason, number>;
+  };
+  openReports: number;
+  spend: { month: string; spentUsd: number; budgetUsd: number | null };
+  readiness: {
+    ready: boolean;
+    rated: number;
+    goodPct: number | null;
+    seriousBad: number;
+    reasons: string[];
+  };
+}
+export interface LeadAgentPanel {
+  leadId: string;
+  status: AgentStatus;
+  statusReason: string | null;
+  statusChangedAt: string | null;
+  touchCount: number;
+  lastTouchAt: string | null;
+  nextWakeup: { id: string; dueAt: string; reason: string } | null;
+  decisions: (Pick<
+    AgentDecisionDetail,
+    | "id"
+    | "createdAt"
+    | "mode"
+    | "action"
+    | "outcome"
+    | "reasoning"
+    | "messageSubject"
+    | "messageBody"
+    | "sendAt"
+    | "handoffTitle"
+    | "newStage"
+    | "stopReason"
+    | "regenerated"
+    | "error"
+    | "rating"
+    | "ratingReason"
+    | "ratingNote"
+  > & {
+    rules: AgentDecisionDetail["rulesResult"];
+    grounding: AgentDecisionDetail["groundingResult"];
+    openReports: number;
+  })[];
+}
+export type AgentEnrollSkipReason =
+  "not_found" | "not_eligible" | "already_active" | "permanently_stopped" | "no_contact";
+export type AgentEnrollResult =
+  | { leadId: string; result: "enrolled" }
+  | { leadId: string; result: "skipped"; reason: AgentEnrollSkipReason }
+  | { leadId: string; result: "failed"; message: string };
+
 export interface EmailConnection {
   provider: "resend" | "smtp" | null;
   enabled: boolean;
@@ -626,6 +789,35 @@ export const backend = {
       create: (body: string) => send<AgentPlaybook>("POST", "/agent/playbooks", { body }),
       restore: (version: number) =>
         send<AgentPlaybook>("POST", `/agent/playbooks/${version}/restore`),
+    },
+    decisions: {
+      list: (filters: AgentDecisionFilters, cursor?: string, signal?: AbortSignal) =>
+        get<{ data: AgentDecisionRow[]; nextCursor: string | null }>(
+          query("/agent/decisions", { ...filters, cursor }),
+          signal,
+        ),
+      get: (id: string, signal?: AbortSignal) =>
+        get<AgentDecisionDetail>(`/agent/decisions/${id}`, signal),
+      rate: (id: string, input: AgentRatingInput) =>
+        send<AgentDecisionDetail>("PUT", `/agent/decisions/${id}/rating`, input),
+      report: (id: string, note: string) =>
+        send<AgentDecisionReport>("POST", `/agent/decisions/${id}/reports`, { note }),
+    },
+    /** Admin only. */
+    resolveReport: (reportId: string, note?: string) =>
+      send<AgentDecisionReport>("POST", `/agent/reports/${reportId}/resolve`, { note }),
+    stats: (signal?: AbortSignal) => get<AgentStats>("/agent/stats", signal),
+    leads: {
+      panel: (leadId: string, signal?: AbortSignal) =>
+        get<LeadAgentPanel>(`/agent/leads/${leadId}`, signal),
+      /** Admin only; at most 500 ids per call. */
+      enroll: (leadIds: string[]) =>
+        send<{ data: AgentEnrollResult[] }>("POST", "/agent/leads/enroll", { leadIds }),
+      pause: (leadId: string) => send<Lead>("POST", `/agent/leads/${leadId}/pause`),
+      resume: (leadId: string) => send<Lead>("POST", `/agent/leads/${leadId}/resume`),
+      stop: (leadId: string, note?: string) =>
+        send<Lead>("POST", `/agent/leads/${leadId}/stop`, { note }),
+      wake: (leadId: string) => send<{ wakeup: unknown }>("POST", `/agent/leads/${leadId}/wake`),
     },
   },
   assignmentRules: {

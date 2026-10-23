@@ -20,6 +20,18 @@ export {
   useAgentPlaybooks,
   useSavePlaybook,
   useRestorePlaybook,
+  useAgentDecisions,
+  useAgentDecision,
+  useAgentStats,
+  useLeadAgentPanel,
+  useRateDecision,
+  useReportDecision,
+  useResolveReport,
+  useEnrollLeads,
+  usePauseLead,
+  useResumeLead,
+  useStopLead,
+  useWakeLead,
 } from "./server-hooks";
 export { messageFromError } from "./query";
 export type {

@@ -1,6 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backend,
+  type AgentDecisionFilters,
+  type AgentEnrollResult,
+  type AgentRatingInput,
   type AgentSettingsUpdate,
   type CreateLeadInput,
   type CreateMeetingInput,
@@ -724,3 +727,138 @@ export const useSavePlaybook = () =>
   usePlaybookWrite((body: string) => backend.agent.playbooks.create(body));
 export const useRestorePlaybook = () =>
   usePlaybookWrite((version: number) => backend.agent.playbooks.restore(version));
+
+// --- AI decision review (AI Activity page, lead AI panel; any CRM user) ----------
+
+export function useAgentDecisions(filters: AgentDecisionFilters) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey: keys.agentDecisions(currentWorkspaceId, filters),
+    queryFn: ({ pageParam, signal }) => backend.agent.decisions.list(filters, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useAgentDecision(id: string | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentDecision(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.agent.decisions.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+export function useAgentStats() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentStats(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.stats(signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useLeadAgentPanel(leadId: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentLeadPanel(currentWorkspaceId, leadId),
+    queryFn: ({ signal }) => backend.agent.leads.panel(leadId, signal),
+    enabled: Boolean(currentWorkspaceId && leadId),
+  });
+}
+
+/** A rating, report or resolve: the decision, every decisions list, stats and the lead panels. */
+function useReviewWrite<A>(fn: (arg: A) => Promise<{ decisionId?: string; id: string }>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (result) =>
+      Promise.all(
+        [
+          keys.agentDecision(ws, result.decisionId ?? result.id),
+          keys.agentDecisions(ws),
+          keys.agentStats(ws),
+          keys.agentLeadPanel(ws),
+        ].map((queryKey) => client.invalidateQueries({ queryKey })),
+      ),
+  });
+}
+
+export const useRateDecision = () =>
+  useReviewWrite(({ id, input }: { id: string; input: AgentRatingInput }) =>
+    backend.agent.decisions.rate(id, input),
+  );
+export const useReportDecision = () =>
+  useReviewWrite(({ id, note }: { id: string; note: string }) =>
+    backend.agent.decisions.report(id, note),
+  );
+export const useResolveReport = () =>
+  useReviewWrite(({ reportId, note }: { reportId: string; note?: string | undefined }) =>
+    backend.agent.resolveReport(reportId, note),
+  );
+
+const ENROLL_CHUNK = 100;
+
+/** Admin: agent status changes refresh the lead(s), the leads list, the lead panels and stats. */
+function useAgentStatusWrite<A>(
+  fn: (arg: A) => Promise<unknown>,
+  leadIdOf: (arg: A) => string | null,
+) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (_, arg) => {
+      const leadId = leadIdOf(arg);
+      return Promise.all([
+        leadId
+          ? refreshLead(client, ws, leadId)
+          : Promise.all(
+              [keys.leads(ws), ["lead", ws], ["timeline", ws]].map((queryKey) =>
+                client.invalidateQueries({ queryKey }),
+              ),
+            ),
+        client.invalidateQueries({ queryKey: keys.agentLeadPanel(ws) }),
+        client.invalidateQueries({ queryKey: keys.agentStats(ws) }),
+      ]);
+    },
+  });
+}
+
+/** Sends the ids in chunks of 100, one after another; returns every result. */
+export const useEnrollLeads = () =>
+  useAgentStatusWrite(
+    async (leadIds: string[]) => {
+      const results: AgentEnrollResult[] = [];
+      for (let i = 0; i < leadIds.length; i += ENROLL_CHUNK) {
+        results.push(
+          ...(await backend.agent.leads.enroll(leadIds.slice(i, i + ENROLL_CHUNK))).data,
+        );
+      }
+      return results;
+    },
+    (leadIds) => (leadIds.length === 1 ? leadIds[0]! : null),
+  );
+export const usePauseLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.pause(leadId),
+    (id) => id,
+  );
+export const useResumeLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.resume(leadId),
+    (id) => id,
+  );
+export const useStopLead = () =>
+  useAgentStatusWrite(
+    ({ leadId, note }: { leadId: string; note?: string | undefined }) =>
+      backend.agent.leads.stop(leadId, note),
+    ({ leadId }) => leadId,
+  );
+export const useWakeLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.wake(leadId),
+    (id) => id,
+  );

@@ -34,6 +34,19 @@ export const keys = {
   knowledgeAssets: (workspaceId: string | null) => ["knowledgeAssets", workspaceId] as const,
   agentSettings: (workspaceId: string | null) => ["agentSettings", workspaceId] as const,
   agentPlaybooks: (workspaceId: string | null) => ["agentPlaybooks", workspaceId] as const,
+  /** Without filters: the prefix of every decisions list in the workspace (for invalidation). */
+  agentDecisions: (workspaceId: string | null, filters?: object) =>
+    filters
+      ? (["agentDecisions", workspaceId, filters] as const)
+      : (["agentDecisions", workspaceId] as const),
+  agentDecision: (workspaceId: string | null, id: string) =>
+    ["agentDecision", workspaceId, id] as const,
+  agentStats: (workspaceId: string | null) => ["agentStats", workspaceId] as const,
+  /** Without a lead id: the prefix of every lead AI panel in the workspace. */
+  agentLeadPanel: (workspaceId: string | null, leadId?: string) =>
+    leadId
+      ? (["agentLeadPanel", workspaceId, leadId] as const)
+      : (["agentLeadPanel", workspaceId] as const),
 };
 
 export function refreshLead(client: QueryClient, workspaceId: string | null, leadId: string) {
