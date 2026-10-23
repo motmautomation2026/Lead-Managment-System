@@ -26,8 +26,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Integration tests (`Backend/tests/integration`) need `TEST_DATABASE_URL` (staging), run
   serially, and refuse the prod ref.
 - Run them with `npm run test:integration:staging` in `Backend/`. It loads
-  `TEST_DATABASE_URL` from `Backend/.env`, refuses the prod ref, and runs
-  `tests/integration`. Run it after every backend change.
+  `TEST_DATABASE_URL` (plus the staging `SUPABASE_URL` / service key, for Storage) from
+  `Backend/.env`, refuses the prod ref, and runs `tests/integration`. Run it after every backend change.
 - Stop any local `npm run dev` / `npm run worker:dev` that points at staging first. They
   share the 15-slot session pooler (tests then fail with `EMAXCONNSESSION`). A live worker
   also claims queued proposal/meeting rows that the tests create.
@@ -35,7 +35,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `022`).
+  (currently `023`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -52,7 +52,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `022`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `023`).
 
 ## Way of working
 
@@ -86,3 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   buckets `kb-documents` / `agent-assets`), `knowledge/extractText.ts` (PDF/DOCX/PPTX/MD/TXT),
   `knowledge/chunkText.ts` (cl100k_base, ≤800 tokens, ~80 overlap), `providers/openai.provider.ts`
   (injectable `Embedder`), `services/knowledge.service.ts` `searchKnowledge`.
+- **2B:** knowledge ingestion in the worker tick (`services/knowledgeIngestion.service.ts`,
+  migration 023: `next_attempt_at`, `storage_bucket`), `/knowledge` API (reads + search for
+  every CRM user, writes admin-only; `services/knowledgeLibrary.service.ts`), and the
+  Knowledge page (documents, assets, test retrieval). Still nothing sent to leads.
