@@ -72,6 +72,10 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     return Boolean(data);
   }
 
+  // Staging Storage can briefly still serve an object right after it is removed.
+  const expectObjectGone = (bucket: string, path: string) =>
+    vi.waitFor(async () => expect(await objectExists(bucket, path)).toBe(false), { timeout: 10_000, interval: 500 });
+
   const chunkCount = async (documentId: string) => (await pool.query(`select count(*)::int as n from public.kb_chunks where document_id = $1`, [documentId])).rows[0].n as number;
 
   beforeAll(async () => {
@@ -139,7 +143,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     expect((await api(admin, "DELETE", `/documents/${created.body.id}`)).status).toBe(204);
     expect(await chunkCount(created.body.id)).toBe(0);
     expect((await api(admin, "GET", `/documents/${created.body.id}`)).status).toBe(404);
-    expect(await objectExists("kb-documents", path)).toBe(false);
+    await expectObjectGone("kb-documents", path);
   });
 
   it("reprocess and patch documents", async () => {
@@ -201,7 +205,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     expect((await api(admin, "DELETE", `/assets/${created.body.id}`)).status).toBe(204);
     expect((await pool.query(`select 1 from public.kb_documents where id = $1`, [docId])).rowCount).toBe(0);
     expect(await chunkCount(docId)).toBe(0);
-    expect(await objectExists("agent-assets", path)).toBe(false);
+    await expectObjectGone("agent-assets", path);
   });
 
   it("assets validate their channels and file type", async () => {
