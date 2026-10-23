@@ -176,6 +176,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (CRM users): `GET /agent/decisions[/:decisionId]`, `PUT …/:decisionId/rating`, `POST …/:decisionId/reports`,
   `POST /agent/reports/:reportId/resolve` (inline `requireAdmin`), `GET /agent/stats`, `GET /agent/leads/:id`.
   `IST_MONTH` is exported from `agentRunner.service.ts`.
+- **3D-2:** AI review screens, nothing sent. `GET /agent/stats` also returns `mode` (settings are
+  admin-only; every user needs the Shadow banner). Frontend: `backend.agent.decisions/stats/leads/
+  resolveReport`; keys `agentDecisions` (prefix without filters), `agentDecision`, `agentStats`,
+  `agentLeadPanel` (prefix without lead id); hooks `useAgentDecisions` (infinite, cursor),
+  `useAgentDecision`, `useRateDecision`, `useReportDecision`, `useResolveReport`, `useAgentStats`,
+  `useLeadAgentPanel`, `useEnrollLeads` (chunks of 100), `usePauseLead`, `useResumeLead`,
+  `useStopLead`, `useWakeLead`. `features/agent/`: `ai-activity-page.tsx` (nav "AI Activity", route
+  `/ai-activity`, all CRM users), `decision-drawer.tsx` (also `RatingControls`, `ReportsSection`),
+  `lead-ai-panel.tsx` (lead page "AI" tab), `enroll-in-ai-dialog.tsx`, `agent-labels.ts` (display
+  labels only). Leads list: AI column + filter; admins get row checkboxes → "Enroll in AI".
+  `StatusBadge` takes `display` to show text as given (no `label()` title-casing).
 
 ## AI agent (Feature 3)
 
