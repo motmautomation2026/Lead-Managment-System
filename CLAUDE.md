@@ -98,6 +98,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `rules.ts` (`validateDecision`, `nextAllowedSendTime`, IST = fixed UTC+05:30),
   `composeMessage.ts` (code appends signature + opt-out), `constants.ts`
   (`AGENT_ACTOR_NAME`; timeline events use `actor_source='automation'`).
+  3A-fix: a bad phone status (`invalid`/`wrong_number`/`do_not_contact`) also blocks agent
+  WhatsApp; knowledge delete was fine (caching: downloads are served from cache briefly), so
+  `knowledgeApi` checks Storage existence with `list()` and polls (500 ms, up to 10 s).
 
 ## AI agent (Feature 3)
 
