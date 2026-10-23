@@ -37,7 +37,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `027`).
+  (currently `028`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -54,7 +54,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `027`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `028`).
 
 ## Way of working
 
@@ -159,6 +159,13 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   as touches (`agentContext.service.ts`). Prompt: first name, latest call/note, stated timing,
   internal-KB guard; grounding checks factual claims only. `agent:preview --call` uses the
   same pipeline and saves nothing.
+- **3C-3:** migration 028 `agent_settings.company_display_name` (null = workspace name; API
+  `companyDisplayName`, Settings "Company name used in AI messages"); `ctx.companyName` is the
+  display name (persona, signature, grounding), `ctx.workspaceName` the raw name. Grounding
+  (`buildGroundingMessages(decision, ctx)`) has three approved sources (knowledge, playbook,
+  lead_data incl. call/note text) and checks only specific, checkable claims; never the
+  sender's/lead's own company names or vague intent. The runner claims at most one wakeup per
+  lead (earliest; none while one is executing). `loadWorkerEnv(source)` is exported.
 
 ## AI agent (Feature 3)
 
