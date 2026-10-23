@@ -17,6 +17,7 @@ export interface AgentRuleSettings {
   wake_min_days: number;
   wake_max_days: number;
   nurture_long_term: boolean;
+  rep_quiet_hours: number;
 }
 
 export interface AgentAssetInfo {
@@ -42,6 +43,8 @@ export interface RulesContext {
   contactability: { email: string | null; whatsapp: string | null; phone: string | null };
   /** Agent sends in the last 7 days. */
   recentTouchTimes: Date[];
+  /** The latest call or note a rep logged on this lead (null = none). */
+  lastRepActivityAt: Date | null;
   hasSentWhatsApp: boolean;
   assets: AgentAssetInfo[];
   /** Contacts the message may mention: the lead's own plus the workspace's / owner's. */
@@ -164,7 +167,7 @@ function assetViolations(decision: SendDecision, ctx: RulesContext): RuleNote[] 
  *  7. assets exist / active / allow the channel / count + size limits (sends) → else violation
  *  8. content safety (sends): foreign contacts, opt-out text, signature, HTML → violations
  *  9. update_stage only on an active lead and to the allow-list → else violation
- * 10. timing (sends): sendAt = nextAllowedSendTime(...), deferral recorded as an adjustment
+ * 10. timing (sends): sendAt = nextAllowedSendTime(...) incl. rep quiet hours; deferrals are adjustments
  * 11. nextWakeInDays clamped to [wake_min_days, wake_max_days]; next wake = (sendAt or now) + days
  * 12. mode result: allowed = no block and no violations; executable = allowed && live;
  *     outcome: shadow → draft (violations recorded), block → blocked, live → null
@@ -235,7 +238,10 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
   // 10: timing
   let sendAt: Date | null = null;
   if (isSend(final)) {
-    sendAt = nextAllowedSendTime(now, settings, ctx.lead.agentLastTouchAt, ctx.recentTouchTimes);
+    sendAt = nextAllowedSendTime(now, settings, ctx.lead.agentLastTouchAt, ctx.recentTouchTimes, ctx.lastRepActivityAt);
+    if (ctx.lastRepActivityAt && now.getTime() < ctx.lastRepActivityAt.getTime() + settings.rep_quiet_hours * HOUR_MS) {
+      adjustments.push({ rule: "rep_quiet", message: `A rep was active ${settings.rep_quiet_hours}h ago or less; waiting before contacting the lead.` });
+    }
     if (sendAt > now) adjustments.push({ rule: "timing", message: `Deferred until ${sendAt.toISOString()}.` });
   }
 
@@ -271,18 +277,21 @@ function timeOfDayMs(value: string): number {
 }
 
 /**
- * Earliest time ≥ now that is: ≥ min_gap_hours after lastTouchAt; has fewer than
+ * Earliest time ≥ now that is: ≥ min_gap_hours after lastTouchAt; ≥ rep_quiet_hours
+ * after lastRepActivityAt (a rep's latest call or note); has fewer than
  * max_touches_7d touches in the 7 days before it; on a send_days weekday; inside
  * [send_window_start, send_window_end) Asia/Kolkata. Weekdays only, no holidays.
  */
 export function nextAllowedSendTime(
   now: Date,
-  settings: Pick<AgentRuleSettings, "send_days" | "send_window_start" | "send_window_end" | "min_gap_hours" | "max_touches_7d">,
+  settings: Pick<AgentRuleSettings, "send_days" | "send_window_start" | "send_window_end" | "min_gap_hours" | "max_touches_7d" | "rep_quiet_hours">,
   lastTouchAt: Date | null,
   recentTouchTimes: Date[],
+  lastRepActivityAt: Date | null = null,
 ): Date {
   let t = now.getTime();
   if (lastTouchAt) t = Math.max(t, lastTouchAt.getTime() + settings.min_gap_hours * HOUR_MS);
+  if (lastRepActivityAt) t = Math.max(t, lastRepActivityAt.getTime() + settings.rep_quiet_hours * HOUR_MS);
 
   // A touch counts while t - touch < 7 days. Touches are in the past, so moving t later only drops some.
   const inWindow = recentTouchTimes

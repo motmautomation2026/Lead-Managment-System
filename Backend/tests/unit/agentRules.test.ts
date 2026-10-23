@@ -20,6 +20,7 @@ const settings: AgentRuleSettings = {
   wake_min_days: 1,
   wake_max_days: 30,
   nurture_long_term: false,
+  rep_quiet_hours: 24,
 };
 
 function ctx(overrides: Partial<Omit<RulesContext, "lead">> & { lead?: Partial<RulesContext["lead"]> } = {}): RulesContext {
@@ -39,6 +40,7 @@ function ctx(overrides: Partial<Omit<RulesContext, "lead">> & { lead?: Partial<R
     },
     contactability: { email: null, whatsapp: null, phone: null },
     recentTouchTimes: [],
+    lastRepActivityAt: null,
     hasSentWhatsApp: false,
     assets: [{ id: ASSET, active: true, channels: ["email", "whatsapp"], sizeBytes: 1000 }],
     allowedContacts: { emails: ["asha@acme.in", "ravi@northbeam.in"], phones: ["+919876543210", "+912240001234"] },
@@ -111,6 +113,14 @@ describe("nextAllowedSendTime", () => {
     const old = new Date(NOW.getTime() - 8 * DAY);
     const older = new Date(NOW.getTime() - 9 * DAY);
     expect(next(NOW, old, [old, older])).toEqual(NOW);
+  });
+
+  it("allows exactly rep_quiet_hours after the last rep call/note, not 1 minute less", () => {
+    const rep = new Date(NOW.getTime() - 24 * HOUR);
+    expect(nextAllowedSendTime(NOW, settings, null, [], rep)).toEqual(NOW);
+    const tooRecent = new Date(NOW.getTime() - 24 * HOUR + 60_000);
+    expect(nextAllowedSendTime(NOW, settings, null, [], tooRecent)).toEqual(new Date(NOW.getTime() + 60_000));
+    expect(nextAllowedSendTime(NOW, { ...settings, rep_quiet_hours: 0 }, null, [], NOW)).toEqual(NOW);
   });
 
   it("respects custom send days (e.g. only Monday)", () => {
@@ -270,6 +280,18 @@ describe("validateDecision", () => {
     const last = new Date(NOW.getTime() - 24 * HOUR);
     const result = validateDecision(email(), ctx({ lead: { agentLastTouchAt: last }, recentTouchTimes: [last] }), settings, NOW);
     expect(result.sendAt).toEqual(new Date(NOW.getTime() + 24 * HOUR));
+  });
+
+  it("10. rep quiet hours: a send right after a rep call is deferred (adjustment, not a violation)", () => {
+    const atBoundary = validateDecision(email(), ctx({ lastRepActivityAt: new Date(NOW.getTime() - 24 * HOUR) }), settings, NOW);
+    expect(atBoundary.sendAt).toEqual(NOW);
+    expect(atBoundary.adjustments).toEqual([]);
+
+    const result = validateDecision(email(), ctx({ lastRepActivityAt: new Date(NOW.getTime() - 24 * HOUR + 60_000) }), settings, NOW);
+    expect(result.allowed).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.sendAt).toEqual(new Date(NOW.getTime() + 60_000));
+    expect(result.adjustments.map((a) => a.rule)).toEqual(["rep_quiet", "timing"]);
   });
 
   it("11. nextWakeInDays is clamped (0 → 1, 90 → 30) as an adjustment", () => {
