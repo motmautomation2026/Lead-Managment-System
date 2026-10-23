@@ -111,7 +111,8 @@ export function createOpenAIEmbedder(options: OpenAIEmbedderOptions = {}): Embed
     model,
     async embed(texts) {
       if (texts.length === 0) return [];
-      if (!client) throw new ProviderDeferredError("OpenAI is not configured");
+      // Configuration doesn't change by itself: check back in 10 minutes, not every minute.
+      if (!client) throw new ProviderDeferredError("OpenAI is not configured", 10 * 60_000);
       const vectors: number[][] = [];
       for (let start = 0; start < texts.length; start += BATCH_SIZE) {
         vectors.push(...(await embedBatch(client, model, texts.slice(start, start + BATCH_SIZE), sleep)));
@@ -123,8 +124,13 @@ export function createOpenAIEmbedder(options: OpenAIEmbedderOptions = {}): Embed
 
 let defaultEmbedder: Embedder | undefined;
 
+/** The environment-configured OpenAI embedder (one per process). */
+export function getDefaultEmbedder(): Embedder {
+  defaultEmbedder ??= createOpenAIEmbedder();
+  return defaultEmbedder;
+}
+
 /** Embeds with the environment-configured OpenAI embedder. */
 export function embedTexts(texts: string[]): Promise<number[][]> {
-  defaultEmbedder ??= createOpenAIEmbedder();
-  return defaultEmbedder.embed(texts);
+  return getDefaultEmbedder().embed(texts);
 }

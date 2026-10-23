@@ -31,7 +31,7 @@ const apiError = (status: number, message: string, headers: Record<string, strin
 describe("OpenAI embedder", () => {
   it("throws ProviderDeferredError when no key is configured (and never builds a client)", async () => {
     const embedder = createOpenAIEmbedder();
-    await expect(embedder.embed(["hi"])).rejects.toThrow(new ProviderDeferredError("OpenAI is not configured"));
+    await expect(embedder.embed(["hi"])).rejects.toMatchObject({ message: "OpenAI is not configured", retryAfterMs: 600_000 });
     expect(embedder.model).toBe("text-embedding-3-small");
     expect(await embedder.embed([])).toEqual([]);
   });

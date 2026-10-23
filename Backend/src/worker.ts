@@ -11,6 +11,8 @@ import type { WorkflowStepAction } from "./domain/enums.js";
 import { baileysRegistry } from "./providers/baileys-registry.js";
 import { PermanentProviderError, ProviderDeferredError } from "./providers/provider-errors.js";
 import { supabaseAdmin } from "./supabaseAdmin.js";
+import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
+import { getDefaultEmbedder } from "./providers/openai.provider.js";
 
 /**
  * The automation executor: polls for due scheduled_actions and dispatches
@@ -160,6 +162,11 @@ async function tick(): Promise<void> {
       ),
     );
   }
+
+  // Knowledge-base ingestion: at most 2 documents per tick (extraction and
+  // embedding are the slow part, done outside any transaction).
+  const ingested = await runKnowledgeIngestion({ embedder: getDefaultEmbedder() });
+  for (const { id, outcome } of ingested) console.log(`[worker] Knowledge document ${id}: ${outcome}.`);
 }
 
 let stopped = false;
