@@ -35,7 +35,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `024`).
+  (currently `025`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -52,7 +52,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `024`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `025`).
 
 ## Way of working
 
@@ -101,6 +101,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   3A-fix: a bad phone status (`invalid`/`wrong_number`/`do_not_contact`) also blocks agent
   WhatsApp; knowledge delete was fine (caching: downloads are served from cache briefly), so
   `knowledgeApi` checks Storage existence with `list()` and polls (500 ms, up to 10 s).
+- **3B-1:** agent admin backend, nothing sent and no AI calls: migration 025 (one pending
+  `agent_wakeups` row per lead via partial unique index; `agent_settings.rep_quiet_hours`,
+  `auto_enroll_new_leads`); `agent/settingsSchema.ts` (`live` → 422 until Feature 6),
+  `agent/status.ts` (`canTransition`; permanent stop reasons `asked_to_stop`/`not_interested`);
+  `services/agentWakeups.service.ts` (`enqueueWakeup(s)` no-op when mode off or lead not
+  active, merges into the pending row; `cancelPendingWakeups`), `agentSettings.service.ts`
+  (off → shadow wakes active leads over 60 min; linear playbook versions, restore = new
+  version), `agentStatus.service.ts` (enroll ≤500, one tx per lead; pause/resume/stop/wake).
+  Admin-only `/agent/*` routes; lead DTO has read-only `agentStatus*`/`agentTouchCount`/
+  `agentLastTouchAt`. Agent status timeline events: kind `automation`, titles `AI Agent …`.
+  Never touches workflows, runs or `automation_mode`.
 
 ## AI agent (Feature 3)
 
