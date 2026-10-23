@@ -70,3 +70,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - **0E:** Postgres errors mapped to clear 4xx (`domain/dbErrorMessages.ts`), request ids on
   500s, UUID-validated ids (B24), strict query booleans (B14), template delete 409 (B6),
   provider errors on the email test, shared frontend error display.
+- **1A:** admins get the full CRM (`requireCrmUser`) plus admin-only options; `requireAdmin`
+  is the admin-only guard (also for future routes inside the CRM router); `/profiles` lists
+  active users of both roles with `role` (B29); frontend `useIsAdmin()` and an admin-only
+  Admin nav item. RLS `is_active_salesperson()` still excludes admins (backend bypasses RLS).
