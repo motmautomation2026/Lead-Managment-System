@@ -9,7 +9,10 @@ import { addTimelineEvent } from "./timeline.service.js";
 
 /**
  * CRM events the AI agent reacts to. Called at the END of the caller's work,
- * inside its transaction, so it sees the final stage / lifecycle. Lifecycle
+ * inside its transaction, so it sees the final stage / lifecycle. Status
+ * effects apply in every mode (so turning the agent on later never acts on a
+ * lead that replied or booked a meeting meanwhile); auto-enroll and wakeups
+ * only when the mode isn't off (enqueueWakeup checks that itself). Lifecycle
  * stops are done by the migration 026 trigger, not here. Never touches
  * workflows, runs or automation_mode. Nothing is sent.
  */
@@ -58,7 +61,7 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
       [workspaceId],
     )
   ).rows[0];
-  if (!settings || settings.mode === "off") return;
+  if (!settings) return;
 
   const lead = (
     await client.query<{ agent_status: AgentStatus; agent_status_reason: string | null; lifecycle_state: LifecycleState; has_contact: boolean }>(
@@ -90,7 +93,7 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
     hasContact: lead.has_contact,
   };
 
-  if (event === "lead_created" && settings.auto_enroll_new_leads && lead.agent_status === "none") {
+  if (event === "lead_created" && settings.mode !== "off" && settings.auto_enroll_new_leads && lead.agent_status === "none") {
     if (canTransition("none", "enroll", transitionCtx).ok) await setStatus("active", "auto_enroll", "AI Agent Enrolled");
   } else if (event === "meeting_booked" && lead.agent_status === "active") {
     await setStatus("paused", "meeting_booked", "AI Agent Paused");

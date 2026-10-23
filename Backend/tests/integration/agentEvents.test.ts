@@ -238,18 +238,27 @@ describeIfDb("agent events and automatic status changes (requires TEST_DATABASE_
     expect((await agentTimeline(leadId)).at(-1)).toMatchObject({ title: "AI Agent Handed Off", actor_name: "AI Agent" });
   });
 
-  it("mode off: events create no wakeups and change no status", async () => {
+  it("mode off: status effects still apply (meeting → paused, reply → handed_off), but no wakeups are created", async () => {
     const ws = await newWorkspace({ mode: "off" });
+    const s = await services();
     const phone = randomPhone();
     const leadId = await newLead(ws, phone);
     await api(ws, "POST", "/agent/leads/enroll", { leadIds: [leadId] });
     await api(ws, "POST", `/leads/${leadId}/notes`, { body: "note" });
     await api(ws, "POST", `/leads/${leadId}/calls`, { connected: false, notConnectedReason: "busy" });
-    await bookMeeting(ws, leadId);
     expect(await agent(leadId)).toEqual({ status: "active", reason: "admin_enroll" });
+    const meeting = await bookMeeting(ws, leadId);
+    expect(await agent(leadId)).toEqual({ status: "paused", reason: "meeting_booked" });
+    await s.withTransaction((c) => s.recordMeetingOutcome(c, admin, ws, meeting.id, "follow_up_required"));
+    expect(await agent(leadId)).toEqual({ status: "active", reason: "meeting_done" });
     await inboundWhatsApp(ws, phone);
-    expect(await agent(leadId)).toEqual({ status: "active", reason: "admin_enroll" });
+    expect(await agent(leadId)).toEqual({ status: "handed_off", reason: "lead_replied" });
     expect(await allWakeups(leadId)).toEqual([]);
+
+    // A lead that was never enrolled is never touched.
+    const never = await newLead(ws);
+    await bookMeeting(ws, never);
+    expect(await agent(never)).toEqual({ status: "none", reason: null });
   });
 
   it("won / lost / DNC / merged stop the agent, cancel wakeups and write a timeline row; DNC reactivation leaves it stopped", async () => {
