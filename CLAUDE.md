@@ -41,8 +41,15 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Env (backend + worker): `DB_POOL_MAX` (API) and `WORKER_DB_POOL_MAX` (worker), default 10 each;
   `DB_IDLE_TIMEOUT_MS` (10000); `DB_CONNECTION_TIMEOUT_MS` (15000, how long a query waits for a
   connection). Local staging `.env`: `DB_POOL_MAX=5`, `WORKER_DB_POOL_MAX=4`.
-- The worker also holds one dedicated connection per running WhatsApp manager (lock client), and the
-  registry tries to start one for EVERY active workspace.
+- The worker also holds one dedicated connection per running WhatsApp manager (lock client). It starts
+  managers (every tick, one at a time) only for active workspaces whose `whatsapp_connection` has
+  `desired_state` connected/restart, or a live status while disconnecting; unneeded managers are
+  stopped (lock client closed). No row = no manager.
+- Integration tests create workspaces with `createTestWorkspace` (`tests/helpers/testWorkspaces.ts`,
+  name `[test] <label> <uuid>`) and delete them in `afterAll` with `deleteCreatedTestWorkspaces`
+  (FK-safe, throws on failure). Never insert/delete workspaces directly in tests.
+- Leftovers on staging: `npm run staging:cleanup-test-workspaces` (dry run; `-- --confirm` deletes;
+  staging ref only; never MOTM / Quick ICP / workspaces with a `whatsapp_connection` row).
 - On EMAXCONNSESSION run `npm run db:connections -- --probe` (Backend). Behind the pooler every
   connection shows as `Supavisor` in `pg_stat_activity`; `--probe` counts free client slots.
 - Stop the local API/worker before integration tests.
