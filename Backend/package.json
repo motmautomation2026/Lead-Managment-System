@@ -21,7 +21,8 @@
     "check": "npm run typecheck && npm run lint && npm run test:run",
     "test:integration:staging": "node scripts/test-integration-staging.mjs",
     "agent:preview": "tsx scripts/agent-preview.ts",
-    "db:connections": "tsx scripts/db-connections.ts"
+    "db:connections": "tsx scripts/db-connections.ts",
+    "staging:cleanup-test-workspaces": "tsx scripts/cleanup-test-workspaces.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
