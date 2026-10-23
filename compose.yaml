@@ -24,6 +24,9 @@ services:
       # both blank (endpoint stays disabled). Only the API uses them.
       INGEST_API_KEY: ${INGEST_API_KEY:-}
       INGEST_WORKSPACE_ID: ${INGEST_WORKSPACE_ID:-}
+      # Knowledge-base embeddings. Optional; backend and worker only.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       # Legacy env email fallback; the API also sends email inline (test email,
       # proposal and meeting-scheduled emails), not only the worker.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
@@ -51,6 +54,8 @@ services:
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-10000}
       WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
       WORKER_DRY_RUN: ${WORKER_DRY_RUN:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     restart: unless-stopped
     depends_on:
       - backend

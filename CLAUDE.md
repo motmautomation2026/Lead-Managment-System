@@ -16,6 +16,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - The **PRODUCTION** project ref is `jorxltfwboabyjiydyhu`. Never connect to, migrate or
   query anything containing it.
 - Never print passwords, keys or full connection strings.
+- `OPENAI_API_KEY` / `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`, must be 1536
+  dims) are optional, backend + worker only, never the frontend. Tests never call OpenAI:
+  inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`).
 
 ## Tests
 

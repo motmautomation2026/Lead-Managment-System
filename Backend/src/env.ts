@@ -37,6 +37,11 @@ const EnvSchema = z.object({
   // one workspace named here.
   INGEST_API_KEY: blankToUndefined(z.string().min(32, "INGEST_API_KEY must be at least 32 characters").optional()),
   INGEST_WORKSPACE_ID: blankToUndefined(z.string().uuid().optional()),
+
+  // Knowledge-base embeddings (API and worker; never the frontend). Optional:
+  // without a key, embedding calls fail with "OpenAI is not configured".
+  OPENAI_API_KEY: blankToUndefined(z.string().optional()),
+  OPENAI_EMBEDDING_MODEL: blankToUndefined(z.string().default("text-embedding-3-small")),
 });
 
 // WORKER_* tuning is validated separately in workerEnv.ts. Provider secrets
