@@ -12,7 +12,8 @@ import { baileysRegistry } from "./providers/baileys-registry.js";
 import { PermanentProviderError, ProviderDeferredError } from "./providers/provider-errors.js";
 import { supabaseAdmin } from "./supabaseAdmin.js";
 import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
-import { getDefaultEmbedder } from "./providers/openai.provider.js";
+import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
+import { runAgentTick } from "./services/agentRunner.service.js";
 
 /**
  * The automation executor: polls for due scheduled_actions and dispatches
@@ -167,7 +168,16 @@ async function tick(): Promise<void> {
   // embedding are the slow part, done outside any transaction).
   const ingested = await runKnowledgeIngestion({ embedder: getDefaultEmbedder() });
   for (const { id, outcome } of ingested) console.log(`[worker] Knowledge document ${id}: ${outcome}.`);
+
+  // AI agent (shadow drafts only), behind AGENT_RUNNER_ENABLED; after all other work.
+  await runAgentTick(env.AGENT_RUNNER_ENABLED, {
+    model: decisionModel,
+    embedder: getDefaultEmbedder(),
+    fallbackSenderAddress: process.env.SMTP_FROM_ADDRESS ?? null,
+  });
 }
+
+const decisionModel = createOpenAIDecisionModel();
 
 let stopped = false;
 
@@ -190,7 +200,7 @@ async function loop(): Promise<void> {
 }
 
 console.log(
-  `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}).`,
+  `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}, AI agent runner ${env.AGENT_RUNNER_ENABLED ? "on (shadow only)" : "off"}).`,
 );
 void baileysRegistry
   .ensureManagersForAllActiveWorkspaces()
