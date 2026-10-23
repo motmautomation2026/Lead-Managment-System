@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 import { fakeEmbedder, fakeVector } from "../helpers/fakeEmbedder.js";
@@ -24,7 +25,7 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
 
   async function newWorkspace(name: string) {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $3)`, [id, name, `ctx-${id}`]);
+    await createTestWorkspace(pool, `ctx ${name}`, { id });
     return id;
   }
 
@@ -113,9 +114,7 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
-    // leads.workspace_id has no cascade: remove the leads (cascading their rows) first.
-    await pool.query(`delete from public.leads where workspace_id = any($1::uuid[])`, [[WS, OTHER]]).catch(() => undefined);
-    await pool.query(`delete from public.workspaces where id = any($1::uuid[])`, [[WS, OTHER]]).catch((error: Error) => console.warn(`[agentContext] cleanup failed: ${error.message}`));
+    await deleteCreatedTestWorkspaces(pool);
     await pool.query(`delete from auth.users where id = $1`, [authUserId]).catch((error: Error) => console.warn(`[agentContext] user cleanup failed: ${error.message}`));
     await pool.end();
   });

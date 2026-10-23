@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Embedder } from "../../src/providers/openai.provider.js";
 import { ProviderDeferredError } from "../../src/providers/provider-errors.js";
@@ -60,16 +61,16 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
     WORKSPACE = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE, `kb-ingest-${WORKSPACE}`]);
+    await createTestWorkspace(pool, "kb-ingest", { id: WORKSPACE });
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     for (const bucket of ["kb-documents", "agent-assets"]) {
       const paths = uploaded.filter((file) => file.bucket === bucket).map((file) => file.path);
       if (paths.length) await supabaseAdmin.storage.from(bucket).remove(paths);
     }
-    await pool.query(`delete from public.workspaces where id = $1`, [WORKSPACE]).catch((error: Error) => console.warn(`[knowledgeIngestion] cleanup failed: ${error.message}`));
     await pool.end();
   });
 

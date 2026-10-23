@@ -11,6 +11,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -49,7 +50,7 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [authUserId]);
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE_ID, `errors-test-${WORKSPACE_ID}`]);
+    await createTestWorkspace(pool, "errors-test", { id: WORKSPACE_ID });
 
     const { createApp } = await import("../../src/app.js");
     const app = express();
@@ -65,6 +66,7 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (authUserId) {
       await pool.query(`delete from auth.users where id = $1`, [authUserId]).catch((error) => console.warn("[errorResponses] test user cleanup failed:", error));

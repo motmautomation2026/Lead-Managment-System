@@ -9,6 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -53,7 +54,7 @@ describeIfDb("roles (requires TEST_DATABASE_URL)", () => {
     salesperson = await newUser("salesperson");
     inactiveId = (await newUser("salesperson", false)).id;
     WORKSPACE_ID = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE_ID, `roles-test-${WORKSPACE_ID}`]);
+    await createTestWorkspace(pool, "roles-test", { id: WORKSPACE_ID });
 
     const { createApp } = await import("../../src/app.js");
     const { requireAdmin, requireAuth, requireCrmUser, requireWorkspace } = await import("../../src/authMiddleware.js");
@@ -76,6 +77,7 @@ describeIfDb("roles (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     for (const id of authUserIds) {
       await pool.query(`delete from auth.users where id = $1`, [id]).catch((error) => console.warn("[roles] test user cleanup failed:", error));

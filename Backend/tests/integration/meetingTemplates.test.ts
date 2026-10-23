@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -44,7 +45,7 @@ describeIfDb("default meeting templates are per workspace (requires TEST_DATABAS
 
   async function newWorkspace(): Promise<string> {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [id, `meeting-tpl-test-${id}`]);
+    await createTestWorkspace(pool, "meeting-tpl-test", { id: id });
     return id;
   }
 
@@ -82,6 +83,7 @@ describeIfDb("default meeting templates are per workspace (requires TEST_DATABAS
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     if (authUserId) {
       await pool.query(`delete from auth.users where id = $1`, [authUserId]).catch((error) => console.warn("[meetingTemplates] test user cleanup failed:", error));
     }

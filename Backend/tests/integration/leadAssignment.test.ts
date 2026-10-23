@@ -9,6 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -41,7 +42,7 @@ describeIfDb("lead assignment by revenue (requires TEST_DATABASE_URL)", () => {
 
   async function newWorkspace(): Promise<string> {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [id, `assign-test-${id}`]);
+    await createTestWorkspace(pool, "assign-test", { id: id });
     return id;
   }
 
@@ -104,6 +105,7 @@ describeIfDb("lead assignment by revenue (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     // Users with append-only admin_audit_events rows can't be deleted; that must not block the others.
     for (const id of authUserIds) {

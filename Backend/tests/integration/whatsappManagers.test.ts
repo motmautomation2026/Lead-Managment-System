@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 
 const mocks = vi.hoisted(() => ({ started: [] as string[] }));
@@ -28,7 +29,7 @@ describeIfDb("WhatsApp manager scan (requires TEST_DATABASE_URL)", () => {
 
   async function workspace(row: { desired: string; status: string } | null, active = true) {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug, is_active) values ($1, $2, $2, $3)`, [id, `wa-managers-test-${id}`, active]);
+    await createTestWorkspace(pool, "wa-managers-test", { id: id, isActive: active });
     workspaceIds.push(id);
     if (row) {
       await pool.query(`insert into public.whatsapp_connection (workspace_id, desired_state, status) values ($1, $2, $3)`, [id, row.desired, row.status]);
@@ -41,10 +42,7 @@ describeIfDb("WhatsApp manager scan (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
-    for (const id of workspaceIds) {
-      await pool.query(`delete from public.whatsapp_connection where workspace_id = $1`, [id]);
-      await pool.query(`delete from public.workspaces where id = $1`, [id]);
-    }
+    await deleteCreatedTestWorkspaces(pool);
     await pool.end();
   });
 

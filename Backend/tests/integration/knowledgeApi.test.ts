@@ -10,6 +10,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { Embedder } from "../../src/providers/openai.provider.js";
@@ -87,7 +88,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     admin = await newUser("admin");
     rep = await newUser("salesperson");
     WORKSPACE = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE, `kb-api-${WORKSPACE}`]);
+    await createTestWorkspace(pool, "kb-api", { id: WORKSPACE });
 
     const { createApp } = await import("../../src/app.js");
     const app = express();
@@ -103,6 +104,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const leftovers = await pool.query<{ bucket: string; path: string }>(
@@ -111,7 +113,6 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
       [WORKSPACE],
     );
     for (const { bucket, path } of leftovers.rows) await supabaseAdmin.storage.from(bucket).remove([path]);
-    await pool.query(`delete from public.workspaces where id = $1`, [WORKSPACE]).catch((error: Error) => console.warn(`[knowledgeApi] cleanup failed: ${error.message}`));
     // Users with append-only admin_audit_events rows can't be deleted; that must not block the others.
     for (const id of authUserIds) await pool.query(`delete from auth.users where id = $1`, [id]).catch(() => undefined);
     await pool.end();

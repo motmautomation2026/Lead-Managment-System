@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import { fakeEmbedder, fakeVector } from "../helpers/fakeEmbedder.js";
 
@@ -18,7 +19,7 @@ describeIfDb("knowledge search (requires TEST_DATABASE_URL)", () => {
 
   async function newWorkspace() {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [id, `kb-test-${id}`]);
+    await createTestWorkspace(pool, "kb-test", { id: id });
     return id;
   }
 
@@ -59,8 +60,8 @@ describeIfDb("knowledge search (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     // Cascades to kb_documents and kb_chunks.
-    await pool.query(`delete from public.workspaces where id = any($1::uuid[])`, [[WORKSPACE, OTHER]]).catch((error: Error) => console.warn(`[knowledgeSearch] cleanup failed: ${error.message}`));
     await pool.end();
   });
 

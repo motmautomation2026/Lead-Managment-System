@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -43,7 +44,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
 
   async function newWorkspace(defaultLeadOwnerId: string | null = null): Promise<string> {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug, default_lead_owner_id) values ($1, $2, $2, $3)`, [id, `ingest-test-${id}`, defaultLeadOwnerId]);
+    await createTestWorkspace(pool, "ingest-test", { id: id, defaultLeadOwnerId: defaultLeadOwnerId });
     return id;
   }
 
@@ -60,6 +61,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     // Best-effort: profiles cascade from auth.users; rows the tests created keep a null owner.
     // One at a time: a user with append-only admin_audit_events rows (the
     // deactivated owner) cannot be deleted, and must not block the others.

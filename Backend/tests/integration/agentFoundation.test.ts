@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -16,13 +17,13 @@ describeIfDb("AI agent foundation, migration 024 (requires TEST_DATABASE_URL)", 
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE_ID, `agent-024-${WORKSPACE_ID}`]);
+    await createTestWorkspace(pool, "agent-024", { id: WORKSPACE_ID });
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await pool.query(`delete from public.tasks where workspace_id = $1`, [WORKSPACE_ID]).catch(() => undefined);
     await pool.query(`delete from public.leads where workspace_id = $1`, [WORKSPACE_ID]).catch(() => undefined);
-    await pool.query(`delete from public.workspaces where id = $1`, [WORKSPACE_ID]).catch((error) => console.warn("[agent024] cleanup failed:", error));
     await pool.end();
   });
 

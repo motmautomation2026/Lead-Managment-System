@@ -9,6 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -27,7 +28,7 @@ describeIfDb("agent events and automatic status changes (requires TEST_DATABASE_
 
   async function newWorkspace(settings: { mode?: "off" | "shadow"; nurture_long_term?: boolean; auto_enroll_new_leads?: boolean } = {}) {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [id, `agent3b2-${id}`]);
+    await createTestWorkspace(pool, "agent3b2", { id: id });
     workspaceIds.push(id);
     await pool.query(
       `update public.agent_settings set mode = $2, nurture_long_term = $3, auto_enroll_new_leads = $4, rep_quiet_hours = 24 where workspace_id = $1`,
@@ -137,10 +138,8 @@ describeIfDb("agent events and automatic status changes (requires TEST_DATABASE_
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    for (const id of workspaceIds) {
-      await pool.query(`delete from public.workspaces where id = $1`, [id]).catch((error: Error) => console.warn(`[agentEvents] workspace ${id} not deleted: ${error.message}`));
-    }
     for (const id of authUserIds) {
       await pool.query(`delete from auth.users where id = $1`, [id]).catch((error: Error) => console.warn(`[agentEvents] test user ${id} not deleted: ${error.message}`));
     }

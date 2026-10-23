@@ -8,6 +8,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -37,7 +38,7 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
 
   async function newWorkspace(): Promise<string> {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [id, `agent3b-${id}`]);
+    await createTestWorkspace(pool, "agent3b", { id: id });
     workspaceIds.push(id);
     return id;
   }
@@ -91,10 +92,8 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    for (const id of workspaceIds) {
-      await pool.query(`delete from public.workspaces where id = $1`, [id]).catch((error: Error) => console.warn(`[agentEnrollment] workspace ${id} not deleted: ${error.message}`));
-    }
     for (const id of authUserIds) {
       await pool.query(`delete from auth.users where id = $1`, [id]).catch((error: Error) => console.warn(`[agentEnrollment] test user ${id} not deleted: ${error.message}`));
     }

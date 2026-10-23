@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import type { DecisionModel } from "../../src/providers/openai.provider.js";
@@ -37,7 +38,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
 
   async function scenario(settings: { mode?: string; monthly_budget_usd?: number; nurture_long_term?: boolean; playbook?: boolean } = {}) {
     const ws = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [ws, `runner-${ws}`]);
+    await createTestWorkspace(pool, "runner", { id: ws });
     workspaces.push(ws);
     if (settings.playbook !== false) {
       await pool.query(`insert into public.agent_playbooks (workspace_id, version, body, created_by_name) values ($1, 1, 'Be helpful.', 'Test')`, [ws]);
@@ -88,9 +89,8 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     await pool.query(`delete from public.notifications where workspace_id = any($1::uuid[])`, [workspaces]).catch(() => undefined);
-    await pool.query(`delete from public.leads where workspace_id = any($1::uuid[])`, [workspaces]).catch(() => undefined);
-    await pool.query(`delete from public.workspaces where id = any($1::uuid[])`, [workspaces]).catch((error: Error) => console.warn(`[agentRunner] cleanup failed: ${error.message}`));
     await pool.query(`delete from auth.users where id = $1`, [adminId]).catch((error: Error) => console.warn(`[agentRunner] user cleanup failed: ${error.message}`));
     await pool.end();
   });

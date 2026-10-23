@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 import { ProviderDeferredError } from "../../src/providers/provider-errors.js";
@@ -151,7 +152,7 @@ describeIfDb("proposal and meeting WhatsApp queues (requires TEST_DATABASE_URL)"
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [authUserId]);
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug) values ($1, $2, $2)`, [WORKSPACE_ID, `wa-queue-test-${WORKSPACE_ID}`]);
+    await createTestWorkspace(pool, "wa-queue-test", { id: WORKSPACE_ID });
     const template = await pool.query(
       `insert into public.message_templates (workspace_id, name, channel, body, is_default_meeting_scheduled_whatsapp)
        values ($1, 'Queue test WhatsApp', 'whatsapp', 'Hello {{lead.first_name}}', true) returning id`,
@@ -166,6 +167,7 @@ describeIfDb("proposal and meeting WhatsApp queues (requires TEST_DATABASE_URL)"
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
     if (authUserId) {
       await pool.query(`delete from auth.users where id = $1`, [authUserId]).catch((error) => console.warn("[whatsappQueue] test user cleanup failed:", error));
     }
