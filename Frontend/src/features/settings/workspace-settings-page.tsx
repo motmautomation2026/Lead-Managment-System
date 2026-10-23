@@ -15,6 +15,7 @@ import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { messageFromError, useSession } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { LeadAssignmentPanel } from "./lead-assignment-panel";
+import { AgentPanel } from "./agent-panel";
 
 export function WorkspaceSettingsPage() {
   const { currentWorkspace, isLoading } = useWorkspace();
@@ -35,6 +36,7 @@ export function WorkspaceSettingsPage() {
         {currentWorkspace ? (
           <div className="space-y-6">
             <LeadAssignmentPanel workspaceId={currentWorkspace.id} />
+            <AgentPanel />
             <EmailPanel workspaceId={currentWorkspace.id} />
             <WhatsAppPanel workspaceId={currentWorkspace.id} />
             <GoogleCalendarPanel workspaceId={currentWorkspace.id} />

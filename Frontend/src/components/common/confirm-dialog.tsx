@@ -14,6 +14,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = "Delete",
+  confirmVariant = "destructive",
   disabled,
   onConfirm,
 }: {
@@ -22,6 +23,8 @@ export function ConfirmDialog({
   title: string;
   description: string;
   confirmLabel?: string;
+  /** "default" for a non-destructive confirmation (e.g. turning a feature on). */
+  confirmVariant?: "destructive" | "default";
   disabled?: boolean;
   onConfirm: () => void;
 }) {
@@ -36,7 +39,7 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" disabled={disabled} onClick={onConfirm}>
+          <Button variant={confirmVariant} disabled={disabled} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </DialogFooter>
