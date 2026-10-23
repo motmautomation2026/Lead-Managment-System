@@ -96,6 +96,24 @@ describe("backend client", () => {
       "/api/v1/assignment-rules",
     ],
     [
+      "agent settings update",
+      () => backend.agent.settings.update({ mode: "shadow", sendDays: [1, 2] }),
+      "PUT",
+      "/api/v1/agent/settings",
+    ],
+    [
+      "playbook save",
+      () => backend.agent.playbooks.create("Who we are"),
+      "POST",
+      "/api/v1/agent/playbooks",
+    ],
+    [
+      "playbook restore",
+      () => backend.agent.playbooks.restore(2),
+      "POST",
+      "/api/v1/agent/playbooks/2/restore",
+    ],
+    [
       "workspace create",
       () => backend.workspaces.create("Second Brand"),
       "POST",
@@ -114,6 +132,23 @@ describe("backend client", () => {
       method,
       headers: { Authorization: "Bearer session-token", "Content-Type": "application/json" },
     });
+  });
+
+  it("reads agent settings and playbooks with GET, and sends the playbook body", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await backend.agent.settings.get();
+    await backend.agent.playbooks.list();
+    await backend.agent.playbooks.create("Tone: warm");
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"]);
+    expect(calls).toEqual([
+      ["https://api.example.test/api/v1/agent/settings", "GET"],
+      ["https://api.example.test/api/v1/agent/playbooks", "GET"],
+      ["https://api.example.test/api/v1/agent/playbooks", "POST"],
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[2]![1]!.body as string)).toEqual({ body: "Tone: warm" });
   });
 
   it("uploads a proposal document with its multipart fields", async () => {

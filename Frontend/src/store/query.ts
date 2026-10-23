@@ -32,6 +32,8 @@ export const keys = {
   knowledgeDocument: (workspaceId: string | null, id: string) =>
     ["knowledgeDocument", workspaceId, id] as const,
   knowledgeAssets: (workspaceId: string | null) => ["knowledgeAssets", workspaceId] as const,
+  agentSettings: (workspaceId: string | null) => ["agentSettings", workspaceId] as const,
+  agentPlaybooks: (workspaceId: string | null) => ["agentPlaybooks", workspaceId] as const,
 };
 
 export function refreshLead(client: QueryClient, workspaceId: string | null, leadId: string) {

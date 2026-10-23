@@ -112,6 +112,8 @@ export interface LeadNote {
   at: string;
   body: string;
 }
+export type AgentStatus = "none" | "active" | "paused" | "handed_off" | "stopped";
+
 export interface Lead {
   id: string;
   firstName: string;
@@ -145,6 +147,12 @@ export interface Lead {
   lossReason?: LeadLossReason;
   lossNotes?: string;
   mergedIntoLeadId?: string;
+  /** AI agent state (read-only; managed from Settings → AI agent). */
+  agentStatus: AgentStatus;
+  agentStatusReason?: string;
+  agentStatusChangedAt?: string;
+  agentTouchCount: number;
+  agentLastTouchAt?: string;
   lastActivityAt: string;
   nextAction: NextAction | null;
   createdBy?: string;

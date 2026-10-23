@@ -409,6 +409,45 @@ export interface AssignmentRules {
   fallbackOwnerAvailable: boolean;
 }
 
+export type AgentMode = "off" | "shadow" | "live";
+/** GET/PUT /agent/settings (admin only). Times are "HH:MM" in IST; send days are ISO weekdays (Mon=1). */
+export interface AgentSettings {
+  mode: AgentMode;
+  sendDays: number[];
+  sendWindowStart: string;
+  sendWindowEnd: string;
+  minGapHours: number;
+  maxTouches7d: number;
+  maxTouchesTotal: number;
+  emailMaxWords: number;
+  whatsappMaxWords: number;
+  wakeMinDays: number;
+  wakeMaxDays: number;
+  nurtureLongTerm: boolean;
+  monthlyBudgetUsd: number;
+  /** null = the server's default model. */
+  decisionModel: string | null;
+  groundingModel: string | null;
+  emailOptOutText: string;
+  whatsappOptOutText: string;
+  repQuietHours: number;
+  autoEnrollNewLeads: boolean;
+  currentPlaybookVersion: number | null;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+export type AgentSettingsUpdate = Partial<
+  Omit<AgentSettings, "currentPlaybookVersion" | "updatedBy" | "updatedAt">
+>;
+export interface AgentPlaybook {
+  id: string;
+  version: number;
+  body: string;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
 export interface EmailConnection {
   provider: "resend" | "smtp" | null;
   enabled: boolean;
@@ -573,6 +612,19 @@ export const backend = {
     },
     search: (input: { query: string; docTypes?: string[]; tags?: string[]; limit?: number }) =>
       send<{ data: KnowledgeHit[] }>("POST", "/knowledge/search", input),
+  },
+  agent: {
+    settings: {
+      get: (signal?: AbortSignal) => get<AgentSettings>("/agent/settings", signal),
+      update: (input: AgentSettingsUpdate) => send<AgentSettings>("PUT", "/agent/settings", input),
+    },
+    playbooks: {
+      list: (signal?: AbortSignal) =>
+        get<{ currentVersion: number | null; data: AgentPlaybook[] }>("/agent/playbooks", signal),
+      create: (body: string) => send<AgentPlaybook>("POST", "/agent/playbooks", { body }),
+      restore: (version: number) =>
+        send<AgentPlaybook>("POST", `/agent/playbooks/${version}/restore`),
+    },
   },
   assignmentRules: {
     get: (signal?: AbortSignal) => get<AssignmentRules>("/assignment-rules", signal),

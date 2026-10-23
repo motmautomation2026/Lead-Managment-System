@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backend,
+  type AgentSettingsUpdate,
   type CreateLeadInput,
   type CreateMeetingInput,
   type CreateProposalInput,
@@ -674,3 +675,52 @@ export function useKnowledgeDocument(id: string | null) {
 export function useKnowledgeSearch() {
   return useMutation({ mutationFn: backend.knowledge.search });
 }
+
+// --- AI agent (Settings → AI agent, admin only) ---------------------------------
+
+export function useAgentSettings() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentSettings(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.settings.get(signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useUpdateAgentSettings() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: AgentSettingsUpdate) => backend.agent.settings.update(input),
+    onSuccess: (data) => client.setQueryData(keys.agentSettings(currentWorkspaceId), data),
+  });
+}
+
+export function useAgentPlaybooks() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentPlaybooks(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.playbooks.list(signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** A new playbook version also changes settings.currentPlaybookVersion. */
+function usePlaybookWrite<A>(fn: (arg: A) => Promise<unknown>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () =>
+      Promise.all(
+        [keys.agentPlaybooks(currentWorkspaceId), keys.agentSettings(currentWorkspaceId)].map(
+          (queryKey) => client.invalidateQueries({ queryKey }),
+        ),
+      ),
+  });
+}
+
+export const useSavePlaybook = () =>
+  usePlaybookWrite((body: string) => backend.agent.playbooks.create(body));
+export const useRestorePlaybook = () =>
+  usePlaybookWrite((version: number) => backend.agent.playbooks.restore(version));

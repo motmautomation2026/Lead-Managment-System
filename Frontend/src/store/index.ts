@@ -15,6 +15,11 @@ export {
   useKnowledgeDocument,
   useKnowledgeSearch,
   knowledgePollInterval,
+  useAgentSettings,
+  useUpdateAgentSettings,
+  useAgentPlaybooks,
+  useSavePlaybook,
+  useRestorePlaybook,
 } from "./server-hooks";
 export { messageFromError } from "./query";
 export type {
