@@ -1,13 +1,14 @@
 import type { Queryable } from "../dto.js";
 
+/** Active CRM users (salespeople and admins): the owner pickers' directory. */
 export async function listProfiles(db: Queryable) {
-  const result = await db.query<{ id: string; full_name: string; email: string; initials: string; is_active: boolean }>(
-    `select id, full_name, email, initials, is_active
+  const result = await db.query<{ id: string; full_name: string; email: string; initials: string; role: "admin" | "salesperson" }>(
+    `select id, full_name, email, initials, role
        from public.profiles
-      where role = 'salesperson'
+      where is_active
       order by full_name asc`,
   );
-  return result.rows.map((r) => ({ id: r.id, name: r.full_name, email: r.email, initials: r.initials, active: r.is_active }));
+  return result.rows.map((r) => ({ id: r.id, name: r.full_name, email: r.email, initials: r.initials, active: true, role: r.role }));
 }
 
 export async function getProfile(db: Queryable, id: string) {

@@ -13,7 +13,7 @@ import { recordAdminAudit } from "../services/admin-audit.service.js";
  * Workspace-scoped Email/WhatsApp/Google Calendar connection management.
  * Moved out of the admin-only app (see admin.routes.ts) per the
  * multi-workspace architecture plan: Admin stays limited to user
- * management, and every active salesperson can configure the connections
+ * management, and every active CRM user can configure the connections
  * for whichever workspace they currently have selected (requireWorkspace,
  * applied at the crmRouter level in routes/index.ts, resolves req.workspaceId).
  */

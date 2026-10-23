@@ -171,10 +171,8 @@ leadsRouter.patch(
 
 /**
  * Permanent delete. Gated the same as every other lead-mutating route here
- * (requireAuth + requireSalesperson + requireWorkspace, applied at the
- * crmRouter level in routes/index.ts) -- admin accounts are walled off from
- * all CRM data in this app (see requireSalesperson), so there is no
- * more-privileged tier within leads to additionally require. Irreversible
+ * (requireAuth + requireCrmUser + requireWorkspace, applied at the
+ * crmRouter level in routes/index.ts) -- salespeople and admins alike. Irreversible
  * and cascades across every related table -- see leadsService.deleteLead
  * and 007_lead_hard_delete.sql.
  */

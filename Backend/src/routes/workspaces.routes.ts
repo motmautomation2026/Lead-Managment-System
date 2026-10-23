@@ -1,20 +1,20 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
-import { requireAuth, requireSalesperson } from "../authMiddleware.js";
+import { requireAuth, requireCrmUser } from "../authMiddleware.js";
 import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
 import * as workspacesService from "../services/workspaces.service.js";
 
 /**
  * Deliberately NOT gated by requireWorkspace: a workspace must be listable
  * (and creatable) before the frontend has one selected to send as
- * X-Workspace-Id. Any active salesperson can list/create/rename workspaces —
+ * X-Workspace-Id. Any active CRM user (salesperson or admin) can list/create/rename workspaces —
  * see the multi-workspace architecture plan: there is no per-workspace
  * membership, and workspace administration is intentionally NOT limited to
  * the admin role (Admin stays scoped to user management only).
  */
 export const workspacesRouter = Router();
-workspacesRouter.use(requireAuth, requireSalesperson);
+workspacesRouter.use(requireAuth, requireCrmUser);
 workspacesRouter.param("id", uuidParam("workspace"));
 
 workspacesRouter.get(

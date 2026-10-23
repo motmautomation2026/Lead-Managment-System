@@ -5,7 +5,7 @@ import { AuthenticationError, ForbiddenError, NotFoundError, ValidationError } f
 import { isUuid } from "./validation/parse.js";
 import { asyncHandler } from "./asyncHandler.js";
 
-/** The authenticated CRM actor (salesperson) for the lifetime of one request. */
+/** The authenticated CRM actor (salesperson or admin) for the lifetime of one request. */
 export interface Actor {
   id: string;
   fullName: string;
@@ -24,7 +24,7 @@ declare module "express-serve-static-core" {
 }
 
 /**
- * Establishes the authenticated salesperson for a request:
+ * Establishes the authenticated CRM user for a request:
  *  1. Verify the bearer token against Supabase Auth (proves the caller owns
  *     a real session issued by our auth foundation — we never trust a
  *     client-supplied user id).
@@ -79,6 +79,10 @@ export const requireAuth = asyncHandler(async (req: Request, _res: Response, nex
   next();
 });
 
+/**
+ * Admin-only. Guards the /admin router, and is also the guard for admin-only
+ * routes inside the CRM router (mount it after requireCrmUser + requireWorkspace).
+ */
 export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
   if (req.actor?.role !== "admin") {
     next(new ForbiddenError("Administrator access is required."));
@@ -87,9 +91,10 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
-export function requireSalesperson(req: Request, _res: Response, next: NextFunction) {
-  if (req.actor?.role !== "salesperson") {
-    next(new ForbiddenError("Administrator accounts cannot access CRM business routes."));
+/** Any CRM user: admins can do everything a salesperson can. Must run after requireAuth. */
+export function requireCrmUser(req: Request, _res: Response, next: NextFunction) {
+  if (req.actor?.role !== "salesperson" && req.actor?.role !== "admin") {
+    next(new ForbiddenError("This account cannot access the CRM."));
     return;
   }
   next();
@@ -98,11 +103,11 @@ export function requireSalesperson(req: Request, _res: Response, next: NextFunct
 /**
  * Resolves the workspace a CRM request is operating in from the
  * `X-Workspace-Id` header the frontend attaches to every request (see
- * Frontend/src/lib/backend-client.ts). Any active salesperson may address
+ * Frontend/src/lib/backend-client.ts). Any active CRM user may address
  * any active workspace — there is no per-user workspace membership (see the
  * multi-workspace architecture plan) — so this only validates that the
  * header names a real, active workspace; it is not an authorization check
- * beyond that. Must run after requireAuth + requireSalesperson.
+ * beyond that. Must run after requireAuth + requireCrmUser.
  */
 export const requireWorkspace = asyncHandler(async (req: Request, _res: Response, next: NextFunction) => {
   const header = req.header("x-workspace-id");

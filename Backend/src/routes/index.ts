@@ -14,7 +14,7 @@ import { connectionsRouter } from "./connections.routes.js";
 import { googleCalendarOAuthRouter } from "./googleCalendarOAuth.routes.js";
 import { createPublicLeadsRouter } from "./publicLeads.routes.js";
 import { env } from "../env.js";
-import { requireAuth, requireSalesperson, requireWorkspace } from "../authMiddleware.js";
+import { requireAuth, requireCrmUser, requireWorkspace } from "../authMiddleware.js";
 
 export const apiRouter = Router();
 
@@ -44,17 +44,17 @@ apiRouter.use("/admin", adminRouter);
 // to send as X-Workspace-Id.
 apiRouter.use("/workspaces", workspacesRouter);
 
-// /profiles is salesperson-gated but intentionally NOT workspace-gated: the
+// /profiles is CRM-user-gated but intentionally NOT workspace-gated: the
 // user directory is the same across every workspace (there is no
 // per-workspace membership), and the frontend fetches it alongside the
 // workspace list itself, before a workspace is necessarily selected yet.
 const profilesAccessRouter = Router();
-profilesAccessRouter.use(requireAuth, requireSalesperson);
+profilesAccessRouter.use(requireAuth, requireCrmUser);
 profilesAccessRouter.use("/profiles", profilesRouter);
 apiRouter.use(profilesAccessRouter);
 
 const crmRouter = Router();
-crmRouter.use(requireAuth, requireSalesperson, requireWorkspace);
+crmRouter.use(requireAuth, requireCrmUser, requireWorkspace);
 crmRouter.use("/leads", leadsRouter);
 crmRouter.use("/tasks", tasksRouter);
 crmRouter.use("/meetings", meetingsRouter);

@@ -7,7 +7,7 @@ import { recordAdminAudit } from "./admin-audit.service.js";
 export interface WebsiteLeadSettings {
   defaultOwnerId: string | null;
   defaultOwnerName: string | null;
-  /** False when an owner is saved but is no longer an active salesperson; new website leads then stay unassigned. */
+  /** False when an owner is saved but is no longer an active user; new website leads then stay unassigned. */
   ownerAvailable: boolean;
 }
 
@@ -15,7 +15,7 @@ export async function getWebsiteLeadSettings(workspaceId: string, db: Queryable 
   const result = await db.query<{ owner_id: string | null; full_name: string | null; usable: boolean | null }>(
     `select w.default_lead_owner_id as owner_id,
             p.full_name,
-            (p.is_active and p.role = 'salesperson') as usable
+            p.is_active as usable
        from public.workspaces w
        left join public.profiles p on p.id = w.default_lead_owner_id
       where w.id = $1`,
@@ -30,13 +30,13 @@ export async function getWebsiteLeadSettings(workspaceId: string, db: Queryable 
   };
 }
 
-/** Only an active salesperson may own website leads; null clears the setting (leads become unassigned). */
+/** Only an active CRM user (salesperson or admin) may own website leads; null clears the setting (leads become unassigned). */
 export async function updateWebsiteLeadSettings(actor: Actor, workspaceId: string, input: { defaultOwnerId: string | null }) {
   await withTransaction(async (db) => {
     if (input.defaultOwnerId) {
-      const owner = await db.query(`select 1 from public.profiles where id = $1 and role = 'salesperson' and is_active = true`, [input.defaultOwnerId]);
+      const owner = await db.query(`select 1 from public.profiles where id = $1 and is_active = true`, [input.defaultOwnerId]);
       if (!owner.rowCount) {
-        throw new ValidationError("Choose an active salesperson.", { field: "defaultOwnerId" });
+        throw new ValidationError("Choose an active user.", { field: "defaultOwnerId" });
       }
     }
     const updated = await db.query(`update public.workspaces set default_lead_owner_id = $2 where id = $1`, [workspaceId, input.defaultOwnerId]);

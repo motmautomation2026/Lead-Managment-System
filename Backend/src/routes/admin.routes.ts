@@ -9,7 +9,7 @@ import * as users from "../services/admin-users.service.js";
  * Admin is intentionally limited to user management only (see the
  * multi-workspace architecture plan). Email/WhatsApp/Google Calendar
  * connection management moved to the workspace-scoped
- * routes/connections.routes.ts, reachable by any active salesperson for
+ * routes/connections.routes.ts, reachable by any active CRM user for
  * whichever workspace they currently have selected — it is no longer an
  * admin-only concern.
  */

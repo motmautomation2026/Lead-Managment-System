@@ -153,12 +153,12 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const leadId = (outcome as { leadId: string }).leadId;
     const lead = (await pool.query(`select owner_id from public.leads where id = $1`, [leadId])).rows[0];
     expect(lead.owner_id).toBeNull();
-    // Unassigned, so every active salesperson is told instead.
+    // Unassigned, so every active user is told instead.
     const notified = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2`, [leadId, actor.id]);
     expect(notified.rowCount).toBe(1);
   });
 
-  it("settings service: saves, reads back, rejects non-salespeople and clears the default owner", async () => {
+  it("settings service: saves, reads back, rejects unknown users and clears the default owner", async () => {
     const { getWebsiteLeadSettings, updateWebsiteLeadSettings } = await import("../../src/services/websiteLeadSettings.service.js");
     const workspace = await newWorkspace();
 
@@ -167,7 +167,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const saved = await updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: actor.id });
     expect(saved).toEqual({ defaultOwnerId: actor.id, defaultOwnerName: actor.fullName, ownerAvailable: true });
 
-    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("Choose an active salesperson.");
+    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("Choose an active user.");
     expect((await getWebsiteLeadSettings(workspace, pool)).defaultOwnerId).toBe(actor.id);
 
     await pool.query(`update public.profiles set is_active = false where id = $1`, [actor.id]);

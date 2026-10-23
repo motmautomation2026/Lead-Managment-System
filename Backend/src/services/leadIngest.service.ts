@@ -42,8 +42,7 @@ interface OwnerProfile {
 
 /**
  * The workspace's configured default owner (Settings -> Website leads), or
- * null when none is set. A saved owner who has since been deactivated or is no
- * longer a salesperson is ignored: that must never cost us the lead, so it
+ * null when none is set. A saved owner who has since been deactivated is ignored: that must never cost us the lead, so it
  * falls back to unassigned (and says so in the logs).
  */
 async function resolveOwner(db: Queryable, workspaceId: string): Promise<OwnerProfile | null> {
@@ -55,7 +54,7 @@ async function resolveOwner(db: Queryable, workspaceId: string): Promise<OwnerPr
       `select w.default_lead_owner_id as configured, p.id, p.full_name
          from public.workspaces w
          left join public.profiles p
-           on p.id = w.default_lead_owner_id and p.role = 'salesperson' and p.is_active = true
+           on p.id = w.default_lead_owner_id and p.is_active = true
         where w.id = $1`,
       [workspaceId],
     );
@@ -63,7 +62,7 @@ async function resolveOwner(db: Queryable, workspaceId: string): Promise<OwnerPr
     const row = result.rows[0];
     if (!row?.configured) return null;
     if (!row.id || !row.full_name) {
-      console.warn(JSON.stringify({ event: "website_lead_owner_unavailable", reason: "configured default owner is not an active salesperson" }));
+      console.warn(JSON.stringify({ event: "website_lead_owner_unavailable", reason: "configured default owner is not an active user" }));
       return null;
     }
     return { id: row.id, fullName: row.full_name };
@@ -90,19 +89,19 @@ async function findExistingLead(db: Queryable, workspaceId: string, form: Normal
 }
 
 /**
- * Notifies the lead's owner when it has one (and is an active salesperson),
- * otherwise every active salesperson so an unassigned lead is still seen.
+ * Notifies the lead's owner when it has one (and is active), otherwise every
+ * active CRM user (salespeople and admins) so an unassigned lead is still seen.
  */
 async function notifyAboutLead(db: Queryable, workspaceId: string, leadId: string, ownerId: string | null, title: string, detail: string) {
   const result = await db.query(
     `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
      select $1, p.id, $2, $3, 'info'::public.notification_kind, $4, $5
        from public.profiles p
-      where p.role = 'salesperson' and p.is_active = true
+      where p.is_active = true
         and ($6::uuid is null or p.id = $6::uuid)`,
     [workspaceId, title, detail, leadId, `/leads/${leadId}`, ownerId],
   );
-  // The owner was deactivated or is no longer a salesperson: tell everyone instead.
+  // The owner was deactivated: tell everyone instead.
   if (ownerId && !result.rowCount) await notifyAboutLead(db, workspaceId, leadId, null, title, detail);
 }
 
@@ -128,8 +127,8 @@ function submissionMetadata(form: NormalizedWebsiteForm): Record<string, unknown
  * untouched. Differences from an in-app createLead, all deliberate:
  *  - no acting user: events are written as SYSTEM and created_by is null. The
  *    lead is owned by the workspace's configured default owner (Settings ->
- *    Website leads) while that person is an active salesperson; otherwise it
- *    stays unassigned and every active salesperson is notified;
+ *    Website leads) while that person is an active user; otherwise it
+ *    stays unassigned and every active user is notified;
  *  - no workflow enrollment (no automatic email/WhatsApp to the visitor);
  *  - a repeat submitter updates the existing lead's timeline instead of
  *    creating a second lead, and never changes its stage/lifecycle/DNC state.
