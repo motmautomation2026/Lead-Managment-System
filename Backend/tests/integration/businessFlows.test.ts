@@ -87,7 +87,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     const { listTasks } = await import("../../src/services/tasks.service.js");
 
     const lead = await withTestTransaction((client) =>
-      createLead(client, actor, WORKSPACE_ID, { firstName: "Ada", company: "Analytics Co", source: "website", email: "ada@example.com" }),
+      createLead(client, actor, WORKSPACE_ID, { firstName: "Ada", company: "Analytics Co", source: "website", email: "ada@example.com", ownerId: actor.id }),
     );
 
     expect(lead.pipeline_stage).toBe("new");
@@ -223,7 +223,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     const { createLead, getLeadRowOr404, updateLead } = await import("../../src/services/leads.service.js");
     const { scheduleMeeting } = await import("../../src/services/meetings.service.js");
     const lead = await withTestTransaction((client) =>
-      createLead(client, actor, WORKSPACE_ID, { firstName: "Farid", company: "Foxtrot Inc", source: "event", email: "farid@example.com" }),
+      createLead(client, actor, WORKSPACE_ID, { firstName: "Farid", company: "Foxtrot Inc", source: "event", email: "farid@example.com", ownerId: actor.id }),
     );
     await withTestTransaction((client) => updateLead(client, actor, WORKSPACE_ID, lead.id, { pipelineStage: "proposal_sent" }));
 
@@ -430,9 +430,15 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     const timeline = await listTimelineForLead(pool, WORKSPACE_ID, result.created[0]!.id);
     expect(timeline.some((e) => e.title === "Lead Created" && e.detail?.includes("CSV import"))).toBe(true);
 
+    // Rows carry no owner: the workspace's rules/fallback decide (this shared workspace may have a fallback set).
+    const { assignOwnerForNewLead } = await import("../../src/services/leadAssignment.service.js");
+    const expected = await assignOwnerForNewLead(pool, WORKSPACE_ID, null);
+    expect(result.created[0]?.owner_id).toBe(expected.ownerId);
+    expect(timeline.some((e) => e.title === (expected.ownerId ? "Lead Assigned" : "Lead Unassigned") && e.detail?.includes(expected.reason!))).toBe(true);
+
     // Imported leads need a next action too, same as a manually created lead.
     const tasks = await listTasks(pool, WORKSPACE_ID, { leadId: result.created[0]!.id, status: "open" });
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ type: "call", title: "First call", ownerId: actor.id });
+    expect(tasks[0]).toMatchObject({ type: "call", title: "First call", ownerId: expected.ownerId ?? undefined });
   });
 });

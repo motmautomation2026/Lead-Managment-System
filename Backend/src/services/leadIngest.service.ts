@@ -2,7 +2,9 @@ import type { Queryable } from "../dto.js";
 import { addDaysIso } from "../dto.js";
 import { ValidationError } from "../errors.js";
 import { formatSubmissionDetail, normalizeWebsiteForm, type NormalizedWebsiteForm, type RawWebsiteForm } from "../domain/websiteForm.js";
-import { validateLeadFields } from "./leads.service.js";
+import { insertLead, validateLeadFields } from "./leads.service.js";
+import { assignOwnerForNewLead, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
+import type { RevenueRange } from "../domain/revenue.js";
 import { createTask } from "./tasks.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 
@@ -35,41 +37,21 @@ async function lockSubmitter(db: Queryable, workspaceId: string, form: Normalize
   }
 }
 
-interface OwnerProfile {
-  id: string;
-  fullName: string;
-}
-
 /**
- * The workspace's configured default owner (Settings -> Website leads), or
- * null when none is set. A saved owner who has since been deactivated is ignored: that must never cost us the lead, so it
- * falls back to unassigned (and says so in the logs).
+ * The new lead's owner from the workspace's revenue rules and fallback owner.
+ * A savepoint keeps a failed lookup from aborting the whole transaction: the
+ * lead is still created, unassigned, and says why.
  */
-async function resolveOwner(db: Queryable, workspaceId: string): Promise<OwnerProfile | null> {
-  // A savepoint keeps a failed lookup (e.g. migration 018 not applied yet)
-  // from aborting the whole transaction: the lead is still created, unassigned.
-  await db.query("savepoint resolve_default_owner");
+async function resolveOwner(db: Queryable, workspaceId: string, revenue: RevenueRange | null): Promise<LeadAssignment> {
+  await db.query("savepoint resolve_lead_owner");
   try {
-    const result = await db.query<{ configured: string | null; id: string | null; full_name: string | null }>(
-      `select w.default_lead_owner_id as configured, p.id, p.full_name
-         from public.workspaces w
-         left join public.profiles p
-           on p.id = w.default_lead_owner_id and p.is_active = true
-        where w.id = $1`,
-      [workspaceId],
-    );
-    await db.query("release savepoint resolve_default_owner");
-    const row = result.rows[0];
-    if (!row?.configured) return null;
-    if (!row.id || !row.full_name) {
-      console.warn(JSON.stringify({ event: "website_lead_owner_unavailable", reason: "configured default owner is not an active user" }));
-      return null;
-    }
-    return { id: row.id, fullName: row.full_name };
+    const assignment = await assignOwnerForNewLead(db, workspaceId, revenue);
+    await db.query("release savepoint resolve_lead_owner");
+    return assignment;
   } catch (err) {
-    await db.query("rollback to savepoint resolve_default_owner");
+    await db.query("rollback to savepoint resolve_lead_owner");
     console.warn(JSON.stringify({ event: "website_lead_owner_lookup_failed", message: err instanceof Error ? err.message : String(err) }));
-    return null;
+    return { ownerId: null, ownerName: null, reason: "Assignment rules unavailable - unassigned" };
   }
 }
 
@@ -126,9 +108,9 @@ function submissionMetadata(form: NormalizedWebsiteForm): Record<string, unknown
  * helpers and never modifies createLead/importLeads, so the in-app flows are
  * untouched. Differences from an in-app createLead, all deliberate:
  *  - no acting user: events are written as SYSTEM and created_by is null. The
- *    lead is owned by the workspace's configured default owner (Settings ->
- *    Website leads) while that person is an active user; otherwise it
- *    stays unassigned and every active user is notified;
+ *    owner comes from the workspace's revenue rules (the form's "Revenue
+ *    range:" line), else its fallback owner; with neither the lead stays
+ *    unassigned and every active user is notified;
  *  - no workflow enrollment (no automatic email/WhatsApp to the visitor);
  *  - a repeat submitter updates the existing lead's timeline instead of
  *    creating a second lead, and never changes its stage/lifecycle/DNC state.
@@ -191,43 +173,18 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
       email: form.email ?? undefined,
       phone: form.phone ?? undefined,
       source: "website",
+      revenueRange: form.revenueRange ?? undefined,
     });
   } catch (err) {
     if (err instanceof ValidationError) return { status: "rejected", reason: err.message };
     throw err;
   }
 
-  const owner = await resolveOwner(db, workspaceId);
-
-  const inserted = await db.query<{ id: string }>(
-    `insert into public.leads
-      (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
-       service_interest, owner_id, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     returning id`,
-    [
-      workspaceId,
-      fields.firstName,
-      fields.lastName,
-      fields.company,
-      fields.jobTitle,
-      fields.industry,
-      fields.email,
-      fields.phone,
-      fields.phoneE164,
-      fields.source,
-      fields.serviceInterest,
-      owner?.id ?? null,
-      null,
-      CREATED_BY_LABEL,
-    ],
-  );
-  const leadId = inserted.rows[0]!.id;
+  const owner = await resolveOwner(db, workspaceId, fields.revenue);
+  const leadId = await insertLead(db, workspaceId, fields, owner.ownerId, null, CREATED_BY_LABEL);
 
   await addTimelineEvent(db, { leadId, kind: "system", title: "Lead Created", detail: "Source: website (website form)", ...SYSTEM_ACTOR });
-  if (owner) {
-    await addTimelineEvent(db, { leadId, kind: "system", title: "Lead Assigned", detail: `Owner: ${owner.fullName}`, ...SYSTEM_ACTOR });
-  }
+  await recordAssignment(db, leadId, owner, SYSTEM_ACTOR);
   await addTimelineEvent(db, {
     leadId,
     kind: "system",
@@ -241,14 +198,14 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
   // action, owned by the lead's owner (or unassigned if there is none).
   await createTask(db, null, workspaceId, {
     leadId,
-    ownerId: owner?.id ?? null,
-    ownerName: owner?.fullName ?? null,
+    ownerId: owner.ownerId,
+    ownerName: owner.ownerName,
     type: "call",
     title: "First call",
     dueAt: addDaysIso(0),
     origin: "manual",
   });
 
-  await notifyAboutLead(db, workspaceId, leadId, owner?.id ?? null, "New website lead", `${displayName(form)} (${form.company}) submitted the website form.`);
+  await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead", `${displayName(form)} (${form.company}) submitted the website form.`);
   return { status: "created", leadId };
 }

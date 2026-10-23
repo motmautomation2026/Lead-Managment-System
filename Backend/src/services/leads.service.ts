@@ -19,6 +19,8 @@ import { cancelOpenTasksForLead, createTask, getLeadNextAction } from "./tasks.s
 import { applyAutomationModeToRuns, autoEnroll } from "./runs.service.js";
 import { normalizePhoneE164 } from "../domain/phone.js";
 import { normalizeEmail } from "../domain/email.js";
+import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
+import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
   id: string;
@@ -33,6 +35,10 @@ export interface LeadRow {
   phone_e164: string | null;
   source: LeadSource;
   service_interest: string | null;
+  revenue_range: string | null;
+  /** numeric columns come back from pg as strings */
+  revenue_min_cr: string | null;
+  revenue_max_cr: string | null;
   owner_id: string | null;
   owner_name: string | null;
   pipeline_stage: PipelineStage;
@@ -76,6 +82,9 @@ export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof g
     phone: row.phone ?? "",
     source: row.source,
     serviceInterest: row.service_interest ?? "",
+    revenueRange: row.revenue_range ?? "",
+    revenueMinCr: row.revenue_min_cr === null ? null : Number(row.revenue_min_cr),
+    revenueMaxCr: row.revenue_max_cr === null ? null : Number(row.revenue_max_cr),
     ownerId: row.owner_id ?? undefined,
     ownerName: row.owner_name ?? undefined,
     pipelineStage: row.pipeline_stage,
@@ -112,6 +121,9 @@ export interface CreateLeadInput {
   phone?: string;
   source: string;
   serviceInterest?: string;
+  /** Free text, stored as entered and parsed to crore. */
+  revenueRange?: string;
+  /** Explicit owner; when absent the workspace's revenue rules pick one. */
   ownerId?: string;
 }
 
@@ -126,6 +138,7 @@ export interface LeadFieldsInput {
   phone?: string;
   source: string;
   serviceInterest?: string;
+  revenueRange?: string;
 }
 
 export interface ValidatedLeadFields {
@@ -139,6 +152,8 @@ export interface ValidatedLeadFields {
   phoneE164: string | null;
   source: LeadSource;
   serviceInterest: string | null;
+  revenueRange: string | null;
+  revenue: RevenueRange | null;
 }
 
 /**
@@ -180,40 +195,24 @@ export function validateLeadFields(input: LeadFieldsInput): ValidatedLeadFields 
     phoneE164,
     source: input.source as LeadSource,
     serviceInterest: input.serviceInterest?.trim() || null,
+    revenueRange: input.revenueRange?.trim() || null,
+    revenue: parseRevenueRange(input.revenueRange),
   };
 }
 
 export async function createLead(db: Queryable, actor: Actor, workspaceId: string, input: CreateLeadInput): Promise<LeadRow> {
   const fields = validateLeadFields(input);
 
-  const ownerId = input.ownerId ?? actor.id;
-  const result = await db.query<{ id: string }>(
-    `insert into public.leads
-      (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
-       service_interest, owner_id, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     returning id`,
-    [
-      workspaceId,
-      fields.firstName,
-      fields.lastName,
-      fields.company,
-      fields.jobTitle,
-      fields.industry,
-      fields.email,
-      fields.phone,
-      fields.phoneE164,
-      fields.source,
-      fields.serviceInterest,
-      ownerId,
-      actor.id,
-      actor.fullName,
-    ],
-  );
-  const id = result.rows[0]!.id;
-
-  const owner = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [ownerId]);
-  const ownerName = owner.rows[0]?.full_name ?? "Unassigned";
+  // An explicit owner is kept; otherwise the workspace's revenue rules decide (possibly unassigned).
+  const assignment: LeadAssignment = input.ownerId
+    ? { ownerId: input.ownerId, ownerName: null, reason: null }
+    : await assignOwnerForNewLead(db, workspaceId, fields.revenue);
+  const id = await insertLead(db, workspaceId, fields, assignment.ownerId, actor.id, actor.fullName);
+  if (input.ownerId) {
+    const owner = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [input.ownerId]);
+    assignment.ownerName = owner.rows[0]?.full_name ?? null;
+  }
+  const ownerId = assignment.ownerId;
 
   await addTimelineEvent(db, {
     leadId: id,
@@ -222,13 +221,12 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
     detail: `Source: ${fields.source}`,
     ...actorEvent(actor),
   });
-  await addTimelineEvent(db, {
-    leadId: id,
-    kind: "system",
-    title: "Lead Assigned",
-    detail: `Owner: ${ownerName}`,
-    ...actorEvent(actor),
-  });
+  await recordAssignment(db, id, assignment, actorEvent(actor));
+  if (ownerId && ownerId !== actor.id) {
+    const who = `${fields.firstName} ${fields.lastName}`.trim();
+    const detail = `${actor.fullName} added ${who} (${fields.company})${assignment.reason ? ` - ${assignment.reason}` : ""}.`;
+    await notifyOwner(db, workspaceId, ownerId, "New lead assigned to you", detail, id, `/leads/${id}`);
+  }
 
   // Every new lead needs a next action from the moment it exists (Rule: an
   // active lead should never sit with nothing assigned — see the leads list
@@ -237,6 +235,7 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
   await createTask(db, actor, workspaceId, {
     leadId: id,
     ownerId,
+    ownerName: assignment.ownerName,
     type: "call",
     title: "First call",
     dueAt: addDaysIso(0),
@@ -250,6 +249,44 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
   await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence");
 
   return getLeadRowOr404(db, workspaceId, id);
+}
+
+/** The one INSERT for a new lead, shared by createLead, importLeads and the website-form ingest. */
+export async function insertLead(
+  db: Queryable,
+  workspaceId: string,
+  fields: ValidatedLeadFields,
+  ownerId: string | null,
+  createdBy: string | null,
+  createdByName: string,
+): Promise<string> {
+  const result = await db.query<{ id: string }>(
+    `insert into public.leads
+      (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
+       service_interest, revenue_range, revenue_min_cr, revenue_max_cr, owner_id, created_by, created_by_name)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     returning id`,
+    [
+      workspaceId,
+      fields.firstName,
+      fields.lastName,
+      fields.company,
+      fields.jobTitle,
+      fields.industry,
+      fields.email,
+      fields.phone,
+      fields.phoneE164,
+      fields.source,
+      fields.serviceInterest,
+      fields.revenueRange,
+      fields.revenue?.minCr ?? null,
+      fields.revenue?.maxCr ?? null,
+      ownerId,
+      createdBy,
+      createdByName,
+    ],
+  );
+  return result.rows[0]!.id;
 }
 
 export async function getLeadRowOr404(db: Queryable, workspaceId: string, id: string): Promise<LeadRow> {
@@ -318,8 +355,9 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
   const existingEmails = new Set(existing.rows.flatMap((r) => (r.email ? [r.email] : [])));
   const existingPhones = new Set(existing.rows.flatMap((r) => (r.phone_e164 ? [r.phone_e164] : [])));
 
-  const ownerRow = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [actor.id]);
-  const ownerName = ownerRow.rows[0]?.full_name ?? actor.fullName;
+  // Rows carry no owner: the revenue rules assign every one. Loaded once for the whole file.
+  const assignmentContext = await loadAssignmentContext(db, workspaceId);
+  const assignedCounts = new Map<string, number>();
 
   const seenEmails = new Set<string>();
   const seenPhones = new Set<string>();
@@ -340,30 +378,11 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     if (emailKey) seenEmails.add(emailKey);
     if (phoneKey) seenPhones.add(phoneKey);
 
-    const result = await db.query<{ id: string }>(
-      `insert into public.leads
-        (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
-         service_interest, owner_id, created_by, created_by_name)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       returning id`,
-      [
-        workspaceId,
-        fields.firstName,
-        fields.lastName,
-        fields.company,
-        fields.jobTitle,
-        fields.industry,
-        fields.email,
-        fields.phone,
-        fields.phoneE164,
-        fields.source,
-        fields.serviceInterest,
-        actor.id,
-        actor.id,
-        actor.fullName,
-      ],
-    );
-    const id = result.rows[0]!.id;
+    const assignment = assignFromContext(assignmentContext, fields.revenue);
+    const id = await insertLead(db, workspaceId, fields, assignment.ownerId, actor.id, actor.fullName);
+    if (assignment.ownerId && assignment.ownerId !== actor.id) {
+      assignedCounts.set(assignment.ownerId, (assignedCounts.get(assignment.ownerId) ?? 0) + 1);
+    }
 
     await addTimelineEvent(db, {
       leadId: id,
@@ -372,16 +391,11 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
       detail: `Source: ${fields.source} (CSV import)`,
       ...actorEvent(actor),
     });
-    await addTimelineEvent(db, {
-      leadId: id,
-      kind: "system",
-      title: "Lead Assigned",
-      detail: `Owner: ${ownerName}`,
-      ...actorEvent(actor),
-    });
+    await recordAssignment(db, id, assignment, actorEvent(actor));
     await createTask(db, actor, workspaceId, {
       leadId: id,
-      ownerId: actor.id,
+      ownerId: assignment.ownerId,
+      ownerName: assignment.ownerName,
       type: "call",
       title: "First call",
       dueAt: addDaysIso(0),
@@ -393,6 +407,12 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (CSV import)");
 
     created.push(await getLeadRowOr404(db, workspaceId, id));
+  }
+
+  // One summary per owner, not one notification per imported lead.
+  for (const [ownerId, count] of assignedCounts) {
+    const title = `${count} new lead${count === 1 ? "" : "s"} assigned to you`;
+    await notifyOwner(db, workspaceId, ownerId, title, `From a CSV import by ${actor.fullName}.`, null, "/leads");
   }
 
   return { created, duplicates, failed, totalRows: rows.length };
@@ -492,6 +512,7 @@ export interface UpdateLeadInput {
   phone?: string;
   source?: string;
   serviceInterest?: string;
+  revenueRange?: string;
   ownerId?: string;
   pipelineStage?: PipelineStage;
   responseState?: ResponseState;
@@ -577,6 +598,13 @@ export async function updateLead(
     push("source", patch.source);
   }
   if (patch.serviceInterest !== undefined) push("service_interest", patch.serviceInterest.trim() || null);
+  // Revenue is informational after creation: changing it never reassigns the lead.
+  if (patch.revenueRange !== undefined) {
+    const revenue = parseRevenueRange(patch.revenueRange);
+    push("revenue_range", patch.revenueRange.trim() || null);
+    push("revenue_min_cr", revenue?.minCr ?? null);
+    push("revenue_max_cr", revenue?.maxCr ?? null);
+  }
   if (patch.ownerId !== undefined) push("owner_id", patch.ownerId);
   if (patch.pipelineStage !== undefined) push("pipeline_stage", patch.pipelineStage);
   if (patch.responseState !== undefined) push("response_state", patch.responseState);

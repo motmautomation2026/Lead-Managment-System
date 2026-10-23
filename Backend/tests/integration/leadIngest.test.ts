@@ -128,7 +128,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const task = (await pool.query(`select owner_id, owner_name from public.tasks where lead_id = $1`, [leadId])).rows[0];
     expect(task).toEqual({ owner_id: actor.id, owner_name: actor.fullName });
     const assigned = await pool.query(`select detail from public.timeline_events where lead_id = $1 and title = 'Lead Assigned'`, [leadId]);
-    expect(assigned.rows[0].detail).toBe(`Owner: ${actor.fullName}`);
+    expect(assigned.rows[0].detail).toBe(`Owner: ${actor.fullName} (Revenue unknown — default owner)`);
 
     // Only the owner is notified - not every salesperson.
     const notified = await pool.query(`select recipient_id from public.notifications where lead_id = $1`, [leadId]);

@@ -45,6 +45,7 @@ const createLeadSchema = z.object({
   phone: z.string().optional(),
   source: z.string().optional(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
   ownerId: z.string().uuid().optional(),
 });
 
@@ -82,6 +83,7 @@ const importRowSchema = z.object({
   // all-or-nothing.
   source: z.string(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
 });
 
 const importLeadsSchema = z.object({
@@ -155,6 +157,7 @@ const updateLeadSchema = z.object({
   phone: z.string().optional(),
   source: z.string().optional(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
   ownerId: z.string().uuid().optional(),
   pipelineStage: z.enum(PIPELINE_STAGES).optional(),
   responseState: z.enum(RESPONSE_STATES).optional(),
