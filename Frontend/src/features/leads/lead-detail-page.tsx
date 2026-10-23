@@ -40,6 +40,7 @@ import { EditLeadDialog } from "./edit-lead-dialog";
 import { LogCallDialog } from "./log-call-dialog";
 import { EnrollWorkflowDialog } from "./scheduled-followups";
 import { LeadJourneyCard } from "./lead-journey-card";
+import { LeadAiPanel } from "@/features/agent/lead-ai-panel";
 import { ScheduleMeetingDialog } from "@/features/meetings/schedule-meeting-dialog";
 import { dateInputValue, toIsoFromIst } from "@/lib/dates";
 import { fmtDateTime, isOverdue, money, relDay } from "@/lib/format";
@@ -285,12 +286,13 @@ export function LeadDetailPage({ leadId }: { leadId: string }) {
           </Card>
 
           <Tabs defaultValue="overview">
-            <TabsList>
+            <TabsList className="max-w-full justify-start overflow-x-auto">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
               <TabsTrigger value="meetings">Meetings</TabsTrigger>
               <TabsTrigger value="proposals">Proposals</TabsTrigger>
               <TabsTrigger value="automation">Automation</TabsTrigger>
+              <TabsTrigger value="ai">AI</TabsTrigger>
               <TabsTrigger value="notes">Notes</TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="mt-4 grid gap-4 md:grid-cols-2">
@@ -629,6 +631,9 @@ export function LeadDetailPage({ leadId }: { leadId: string }) {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+            <TabsContent value="ai" className="mt-4">
+              <LeadAiPanel leadId={lead.id} />
             </TabsContent>
             <TabsContent value="notes" className="mt-4 space-y-3">
               <Card>

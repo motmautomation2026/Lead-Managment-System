@@ -802,8 +802,8 @@ export const useResolveReport = () =>
 const ENROLL_CHUNK = 100;
 
 /** Admin: agent status changes refresh the lead(s), the leads list, the lead panels and stats. */
-function useAgentStatusWrite<A>(
-  fn: (arg: A) => Promise<unknown>,
+function useAgentStatusWrite<A, R>(
+  fn: (arg: A) => Promise<R>,
   leadIdOf: (arg: A) => string | null,
 ) {
   const client = useQueryClient();
