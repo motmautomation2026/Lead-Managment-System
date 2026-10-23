@@ -49,6 +49,7 @@
     "@types/node": "^22.16.5",
     "@types/nodemailer": "7.0.2",
     "@types/pg": "^8.11.10",
+    "ajv": "^8.20.0",
     "eslint": "^9.32.0",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",
