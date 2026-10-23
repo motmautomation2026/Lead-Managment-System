@@ -35,7 +35,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `021`).
+  (currently `022`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -81,3 +81,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   assignment for NEW leads by admin-managed per-workspace rules (`/assignment-rules`,
   `domain/revenue.ts`, `services/leadAssignment.service.ts`) on manual add (no explicit
   owner), CSV import and website form; fallback owner = `workspaces.default_lead_owner_id`.
+- **2A:** knowledge-base foundation, nothing sent to leads: migration 022 (pgvector in
+  `extensions`, `kb_documents`, `kb_chunks` with HNSW cosine index, `agent_assets`, private
+  buckets `kb-documents` / `agent-assets`), `knowledge/extractText.ts` (PDF/DOCX/PPTX/MD/TXT),
+  `knowledge/chunkText.ts` (cl100k_base, ≤800 tokens, ~80 overlap), `providers/openai.provider.ts`
+  (injectable `Embedder`), `services/knowledge.service.ts` `searchKnowledge`.
