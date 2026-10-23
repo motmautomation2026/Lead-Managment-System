@@ -337,6 +337,63 @@ export interface Workspace {
   updatedAt: string;
 }
 
+export type KnowledgeStatus = "pending" | "processing" | "ready" | "failed";
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  docType: string;
+  tags: string[];
+  source: "upload" | "text";
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  status: KnowledgeStatus;
+  error: string | null;
+  chunkCount: number;
+  attemptCount: number;
+  isActive: boolean;
+  /** Set when this is an asset's searchable copy: manage it through the asset. */
+  assetId: string | null;
+  processedAt: string | null;
+  nextAttemptAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  extractedTextPreview: string | null;
+  extractedTextLength: number;
+}
+export interface KnowledgeAsset {
+  id: string;
+  title: string;
+  useWhen: string;
+  tags: string[];
+  channels: ("email" | "whatsapp")[];
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  isActive: boolean;
+  kbDocumentId: string | null;
+  status: KnowledgeStatus | null;
+  error: string | null;
+  chunkCount: number;
+  /** Signed for 5 minutes. */
+  downloadUrl: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface KnowledgeHit {
+  chunkId: string;
+  documentId: string;
+  documentTitle: string;
+  docType: string;
+  content: string;
+  metadata: { page?: number; slide?: number; heading?: string };
+  score: number;
+}
+
 /** One revenue rule: minCr exclusive, maxCr inclusive, both in crore; null = open. */
 export interface AssignmentRuleInput {
   position: number;
@@ -479,6 +536,43 @@ export const backend = {
       disconnect: () =>
         send<GoogleCalendarConnection>("POST", "/connections/google-calendar/disconnect"),
     },
+  },
+  knowledge: {
+    documents: {
+      list: (signal?: AbortSignal) =>
+        get<{ data: KnowledgeDocument[] }>("/knowledge/documents", signal),
+      get: (id: string, signal?: AbortSignal) =>
+        get<KnowledgeDocumentDetail>(`/knowledge/documents/${id}`, signal),
+      createText: (input: { title: string; docType: string; tags: string[]; text: string }) =>
+        send<KnowledgeDocumentDetail>("POST", "/knowledge/documents", input),
+      /** Multipart: `file`, `docType`, optional `title` and comma-separated `tags`. */
+      upload: (form: FormData) => uploadFile<KnowledgeDocumentDetail>("/knowledge/documents", form),
+      update: (
+        id: string,
+        input: { title?: string; docType?: string; tags?: string[]; isActive?: boolean },
+      ) => send<KnowledgeDocumentDetail>("PATCH", `/knowledge/documents/${id}`, input),
+      reprocess: (id: string) =>
+        send<KnowledgeDocumentDetail>("POST", `/knowledge/documents/${id}/reprocess`),
+      remove: (id: string) => del(`/knowledge/documents/${id}`),
+    },
+    assets: {
+      list: (signal?: AbortSignal) => get<{ data: KnowledgeAsset[] }>("/knowledge/assets", signal),
+      /** Multipart: `file`, `title`, `useWhen`, comma-separated `tags` and `channels`. */
+      create: (form: FormData) => uploadFile<KnowledgeAsset>("/knowledge/assets", form),
+      update: (
+        id: string,
+        input: {
+          title?: string;
+          useWhen?: string;
+          tags?: string[];
+          channels?: string[];
+          isActive?: boolean;
+        },
+      ) => send<KnowledgeAsset>("PATCH", `/knowledge/assets/${id}`, input),
+      remove: (id: string) => del(`/knowledge/assets/${id}`),
+    },
+    search: (input: { query: string; docTypes?: string[]; tags?: string[]; limit?: number }) =>
+      send<{ data: KnowledgeHit[] }>("POST", "/knowledge/search", input),
   },
   assignmentRules: {
     get: (signal?: AbortSignal) => get<AssignmentRules>("/assignment-rules", signal),

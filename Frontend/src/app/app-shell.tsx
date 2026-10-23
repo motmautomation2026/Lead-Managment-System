@@ -3,6 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
+  BookOpen,
   Bot,
   CalendarDays,
   Check,
@@ -58,6 +59,7 @@ const NAV = [
   { to: "/meetings", label: "Meetings", icon: CalendarDays },
   { to: "/proposals", label: "Proposals", icon: FileText },
   { to: "/automations", label: "Automations", icon: Bot },
+  { to: "/knowledge", label: "Knowledge", icon: BookOpen },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 const ADMIN_NAV = [...NAV, { to: "/admin", label: "Admin", icon: ShieldCheck }] as const;

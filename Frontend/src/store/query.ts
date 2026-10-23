@@ -28,6 +28,10 @@ export const keys = {
   scheduledActions: (workspaceId: string | null) => ["scheduledActions", workspaceId] as const,
   dashboard: (workspaceId: string | null) => ["dashboard", workspaceId] as const,
   notifications: (workspaceId: string | null) => ["notifications", workspaceId] as const,
+  knowledgeDocuments: (workspaceId: string | null) => ["knowledgeDocuments", workspaceId] as const,
+  knowledgeDocument: (workspaceId: string | null, id: string) =>
+    ["knowledgeDocument", workspaceId, id] as const,
+  knowledgeAssets: (workspaceId: string | null) => ["knowledgeAssets", workspaceId] as const,
 };
 
 export function refreshLead(client: QueryClient, workspaceId: string | null, leadId: string) {

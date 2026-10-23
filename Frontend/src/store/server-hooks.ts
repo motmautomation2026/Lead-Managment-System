@@ -605,3 +605,72 @@ export function useDashboard() {
   });
   return { summary: query.data, isLoading: query.isLoading, error: query.error };
 }
+
+const KNOWLEDGE_POLL_MS = 5_000;
+
+/** Poll while anything is still being ingested by the worker; stop once all are ready or failed. */
+export function knowledgePollInterval(
+  items: { status: string | null }[] | undefined,
+): number | false {
+  return items?.some((item) => item.status === "pending" || item.status === "processing")
+    ? KNOWLEDGE_POLL_MS
+    : false;
+}
+
+export function useKnowledge() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  const enabled = Boolean(currentWorkspaceId);
+  const documents = useQuery({
+    queryKey: keys.knowledgeDocuments(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.knowledge.documents.list(signal),
+    enabled,
+    refetchInterval: (query) => knowledgePollInterval(query.state.data?.data),
+  });
+  const assets = useQuery({
+    queryKey: keys.knowledgeAssets(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.knowledge.assets.list(signal),
+    enabled,
+    refetchInterval: (query) => knowledgePollInterval(query.state.data?.data),
+  });
+  const invalidate = () =>
+    Promise.all(
+      [keys.knowledgeDocuments(currentWorkspaceId), keys.knowledgeAssets(currentWorkspaceId)].map(
+        (queryKey) => client.invalidateQueries({ queryKey }),
+      ),
+    );
+  const write =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A) => {
+      const result = await fn(...args);
+      await invalidate();
+      return result;
+    };
+  return {
+    documents: documents.data?.data ?? [],
+    assets: assets.data?.data ?? [],
+    isLoading: documents.isLoading || assets.isLoading,
+    error: documents.error ?? assets.error,
+    createText: write(backend.knowledge.documents.createText),
+    upload: write(backend.knowledge.documents.upload),
+    updateDocument: write(backend.knowledge.documents.update),
+    reprocess: write(backend.knowledge.documents.reprocess),
+    removeDocument: write(backend.knowledge.documents.remove),
+    createAsset: write(backend.knowledge.assets.create),
+    updateAsset: write(backend.knowledge.assets.update),
+    removeAsset: write(backend.knowledge.assets.remove),
+  };
+}
+
+export function useKnowledgeDocument(id: string | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.knowledgeDocument(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.knowledge.documents.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+export function useKnowledgeSearch() {
+  return useMutation({ mutationFn: backend.knowledge.search });
+}

@@ -11,6 +11,10 @@ export {
   useAutomations,
   useNotifications,
   useDashboard,
+  useKnowledge,
+  useKnowledgeDocument,
+  useKnowledgeSearch,
+  knowledgePollInterval,
 } from "./server-hooks";
 export { messageFromError } from "./query";
 export type {
