@@ -35,7 +35,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `023`).
+  (currently `024`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -52,7 +52,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `023`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `024`).
 
 ## Way of working
 
@@ -90,3 +90,20 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   migration 023: `next_attempt_at`, `storage_bucket`), `/knowledge` API (reads + search for
   every CRM user, writes admin-only; `services/knowledgeLibrary.service.ts`), and the
   Knowledge page (documents, assets, test retrieval). Still nothing sent to leads.
+- **3A:** AI agent foundation, nothing sent to leads and no AI calls: migration 024
+  (`agent_settings` per workspace, seeded + AFTER INSERT trigger on `workspaces`;
+  `agent_playbooks`, `agent_wakeups`, `agent_decisions`; `leads.agent_status` /
+  `agent_touch_count` / `agent_last_touch_at`; `task_origin` + `agent`) and pure code in
+  `src/agent/`: `decisionSchema.ts` (Zod + strict JSON Schema, `parseModelOutput`),
+  `rules.ts` (`validateDecision`, `nextAllowedSendTime`, IST = fixed UTC+05:30),
+  `composeMessage.ts` (code appends signature + opt-out), `constants.ts`
+  (`AGENT_ACTOR_NAME`; timeline events use `actor_source='automation'`).
+
+## AI agent (Feature 3)
+
+- One action per wake-up: `send_email`, `send_whatsapp`, `wait`, `handoff`, `update_stage`,
+  `stop`. Code enforces the safety rules (`src/agent/rules.ts`), not the model.
+- Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live`
+  (Feature 6). Nothing in Feature 3 sends messages to leads.
+- The agent never marks Won/Lost/DNC, never deletes, never changes the owner; never contacts
+  DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`.
