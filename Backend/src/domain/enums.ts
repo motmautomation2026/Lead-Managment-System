@@ -174,7 +174,8 @@ export type TaskType = (typeof TASK_TYPES)[number];
 export const TASK_STATUSES = ["open", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-export const TASK_ORIGINS = ["manual", "automation"] as const;
+/** `agent` = an AI agent handoff task (migration 024); `automation` requires a workflow run. */
+export const TASK_ORIGINS = ["manual", "automation", "agent"] as const;
 export type TaskOrigin = (typeof TASK_ORIGINS)[number];
 
 export const MEETING_STATUSES = [
