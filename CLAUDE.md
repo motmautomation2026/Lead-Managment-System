@@ -37,7 +37,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `026`).
+  (currently `027`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -54,7 +54,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `026`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `027`).
 
 ## Way of working
 
@@ -144,6 +144,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   Dev: `npm run agent:preview -- --lead <uuid> [--call]` (refuses the prod ref).
   New env (backend + worker only): `OPENAI_DECISION_MODEL`, `OPENAI_GROUNDING_MODEL`,
   `OPENAI_PRICES_JSON` (`{"<model>":{"inputPer1M":n,"outputPer1M":n}}`).
+- **3C-2:** the SHADOW decision loop (drafts only; never sends, creates tasks, changes stage/
+  status from a decision or touches workflows). `services/agentRunner.service.ts`
+  `runAgentTick` in the worker tick behind `AGENT_RUNNER_ENABLED=true` (worker env, default
+  off): cancel pending wakeups of non-active leads; claim ≤5 due wakeups in shadow workspaces
+  (SKIP LOCKED, reclaim `executing` > 15 min, `claimed_at` ms-precision = claim token);
+  `precheck` (rules.ts) → models + prices + playbook (else defer, no attempt burned) → IST-month
+  budget (else defer 1 h, admins notified once via `budget_alerted_month`, migration 027) →
+  context → `draftDecision` (decide, rules, grounding for allowed sends, regenerate once,
+  then handoff "AI couldn't write a safe message") → one `agent_decisions` draft row, timer
+  wakeup for send/wait, timeline "AI drafted…/suggested…" ("Shadow mode — not sent"). No DB
+  client held during model calls. Deferrals restore the attempt; other errors burn it (3 →
+  `failed` row); permanent provider errors fail at once. Shadow drafts the rules allowed count
+  as touches (`agentContext.service.ts`). Prompt: first name, latest call/note, stated timing,
+  internal-KB guard; grounding checks factual claims only. `agent:preview --call` uses the
+  same pipeline and saves nothing.
 
 ## AI agent (Feature 3)
 
