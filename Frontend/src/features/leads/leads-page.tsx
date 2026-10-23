@@ -5,6 +5,7 @@ import { PageHeader } from "@/app/app-shell";
 import { useAddLead } from "@/app/add-lead-context";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,11 +16,13 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/common/status-badge";
 import { isOverdue, relDay } from "@/lib/format";
-import { useAutomations, useLeads, useSession } from "@/store";
+import { useAutomations, useIsAdmin, useLeads, useSession } from "@/store";
 import { PIPELINE_STAGES } from "@/types";
 import { label } from "@/lib/labels";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { ImportLeadsDialog } from "./import-leads-dialog";
+import { AGENT_STATUS_LABEL, AGENT_STATUS_TONE } from "@/features/agent/agent-labels";
+import { EnrollInAiDialog } from "@/features/agent/enroll-in-ai-dialog";
 
 export function LeadsPage() {
   const { leads, isLoading, error } = useLeads();
@@ -30,6 +33,10 @@ export function LeadsPage() {
   const [owner, setOwner] = useState("all");
   const [stage, setStage] = useState("all");
   const [auto, setAuto] = useState("all");
+  const [ai, setAi] = useState("all");
+  const isAdmin = useIsAdmin();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [enrollOpen, setEnrollOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   // Same blind spot as the lead detail page's "Next action" card: a lead
@@ -47,6 +54,7 @@ export function LeadsPage() {
         if (owner !== "all" && l.ownerId !== owner) return false;
         if (stage !== "all" && l.pipelineStage !== stage) return false;
         if (auto !== "all" && l.automationMode !== auto) return false;
+        if (ai !== "all" && l.agentStatus !== ai) return false;
         if (
           q &&
           !`${l.firstName} ${l.lastName} ${l.company}`.toLowerCase().includes(q.toLowerCase())
@@ -54,8 +62,19 @@ export function LeadsPage() {
           return false;
         return true;
       }),
-    [leads, owner, stage, auto, q],
+    [leads, owner, stage, auto, ai, q],
   );
+
+  // Selection only counts leads still shown by the filters.
+  const selectedIds = filtered.filter((l) => selected.has(l.id)).map((l) => l.id);
+  const allSelected = filtered.length > 0 && selectedIds.length === filtered.length;
+  const toggle = (id: string, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
 
   const missing = filtered.filter(
     (l) => l.lifecycleState === "active" && !l.nextAction && !hasAutomationStep(l.id),
@@ -68,6 +87,11 @@ export function LeadsPage() {
         description="One row per lead. Stage, next action and automation state tell you what happens next."
         actions={
           <div className="flex gap-2">
+            {isAdmin && selectedIds.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setEnrollOpen(true)}>
+                Enroll in AI ({selectedIds.length})
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
               Import from CSV
             </Button>
@@ -78,6 +102,14 @@ export function LeadsPage() {
         }
       />
       <ImportLeadsDialog open={importOpen} onOpenChange={setImportOpen} />
+      {isAdmin && (
+        <EnrollInAiDialog
+          leadIds={selectedIds}
+          open={enrollOpen}
+          onOpenChange={setEnrollOpen}
+          onDone={() => setSelected(new Set())}
+        />
+      )}
 
       <div className="space-y-4 p-6">
         <div className="flex flex-wrap items-center gap-2">
@@ -120,6 +152,19 @@ export function LeadsPage() {
               ["stopped", "Stopped"],
             ]}
           />
+          <Filter
+            value={ai}
+            onChange={setAi}
+            placeholder="AI"
+            options={[
+              ["all", "All AI statuses"],
+              ["none", "Not enrolled"],
+              ["active", "AI active"],
+              ["paused", "AI paused"],
+              ["handed_off", "AI handed off"],
+              ["stopped", "AI stopped"],
+            ]}
+          />
           <div className="ml-auto text-xs text-muted-foreground">
             {filtered.length} of {leads.length} leads
           </div>
@@ -142,6 +187,17 @@ export function LeadsPage() {
               <table className="w-full min-w-[1000px] text-sm">
                 <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
                   <tr>
+                    {isAdmin && (
+                      <th className="w-8 px-3 py-2">
+                        <Checkbox
+                          aria-label="Select all shown leads"
+                          checked={allSelected}
+                          onCheckedChange={(v) =>
+                            setSelected(v === true ? new Set(filtered.map((l) => l.id)) : new Set())
+                          }
+                        />
+                      </th>
+                    )}
                     {[
                       "Lead / Company",
                       "Source",
@@ -150,6 +206,7 @@ export function LeadsPage() {
                       "Next action",
                       "Due",
                       "Automation",
+                      "AI",
                       "Last activity",
                     ].map((h) => (
                       <th key={h} className="px-3 py-2 font-medium">
@@ -161,6 +218,15 @@ export function LeadsPage() {
                 <tbody>
                   {filtered.map((l) => (
                     <tr key={l.id} className="border-t hover:bg-accent/40">
+                      {isAdmin && (
+                        <td className="px-3 py-2">
+                          <Checkbox
+                            aria-label={`Select ${l.firstName} ${l.lastName}`}
+                            checked={selected.has(l.id)}
+                            onCheckedChange={(v) => toggle(l.id, v === true)}
+                          />
+                        </td>
+                      )}
                       <td className="px-3 py-2">
                         <Link
                           to="/leads/$leadId"
@@ -211,6 +277,13 @@ export function LeadsPage() {
                       <td className="px-3 py-2">
                         <StatusBadge value={l.automationMode} dot />
                       </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge
+                          value=""
+                          display={AGENT_STATUS_LABEL[l.agentStatus]}
+                          tone={AGENT_STATUS_TONE[l.agentStatus]}
+                        />
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
                         {relDay(l.lastActivityAt)}
                       </td>
@@ -219,7 +292,7 @@ export function LeadsPage() {
                   {filtered.length === 0 && (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={isAdmin ? 10 : 9}
                         className="px-3 py-10 text-center text-sm text-muted-foreground"
                       >
                         No leads match these filters.
