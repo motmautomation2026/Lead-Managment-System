@@ -4,24 +4,84 @@ import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { InvalidTransitionError } from "../errors.js";
-import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
+import { parseBody, parseParams, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
+import { AGENT_ACTIONS } from "../agent/decisionSchema.js";
+import { RATING_REASONS } from "../agent/readiness.js";
 import { LIVE_MODE_UNAVAILABLE, settingsUpdateSchema } from "../agent/settingsSchema.js";
+import * as review from "../services/agentReview.service.js";
 import * as settings from "../services/agentSettings.service.js";
 import * as agentStatus from "../services/agentStatus.service.js";
 import { leadToDto, type LeadRow } from "../services/leads.service.js";
 import { getLeadNextAction } from "../services/tasks.service.js";
 
 /**
- * AI agent configuration and lead enrollment. Admin only (mounted inside
- * crmRouter, so requireAuth + requireCrmUser + requireWorkspace have already
- * run). Nothing here calls OpenAI or sends anything.
+ * AI agent review (any CRM user unless noted), then configuration and lead
+ * enrollment (admin only). Mounted inside crmRouter, so requireAuth +
+ * requireCrmUser + requireWorkspace have already run. Nothing here calls
+ * OpenAI or sends anything.
  */
 export const agentRouter = Router();
-agentRouter.use(requireAdmin);
 agentRouter.param("id", uuidParam("lead"));
+agentRouter.param("decisionId", uuidParam("decision"));
+agentRouter.param("reportId", uuidParam("report"));
 
 const ws = (req: { workspaceId?: string }) => req.workspaceId!;
 const withNextAction = async (row: LeadRow) => leadToDto(row, await getLeadNextAction(pool, row.id));
+
+// --- Review (3D-1): CRM users ---------------------------------------------------
+
+const decisionsQuery = z
+  .object({
+    action: z.enum(AGENT_ACTIONS).optional(),
+    outcome: z.enum(review.DECISION_OUTCOMES).optional(),
+    leadId: z.string().uuid().optional(),
+    rating: z.enum(review.RATING_FILTERS).optional(),
+    hasOpenReport: queryBoolean.optional(),
+    from: z.string().datetime({ offset: true }).or(z.string().date()).pipe(z.coerce.date()).optional(),
+    to: z.string().datetime({ offset: true }).or(z.string().date()).pipe(z.coerce.date()).optional(),
+    cursor: z.string().max(500).optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(25),
+  })
+  .strict();
+agentRouter.get(
+  "/decisions",
+  asyncHandler(async (req, res) => res.json(await review.listDecisions(pool, ws(req), parseQuery(decisionsQuery, req.query)))),
+);
+agentRouter.get("/decisions/:decisionId", asyncHandler(async (req, res) => res.json(await review.getDecision(pool, ws(req), req.params.decisionId!))));
+
+const noteSchema = z.string().trim().max(2000);
+const ratingSchema = z
+  .object({ rating: z.enum(["good", "bad"]), reason: z.enum(RATING_REASONS).optional(), note: noteSchema.optional() })
+  .strict()
+  .refine((v) => (v.rating === "bad") === Boolean(v.reason), { message: "A bad rating needs a reason; a good rating takes none.", path: ["reason"] });
+agentRouter.put(
+  "/decisions/:decisionId/rating",
+  asyncHandler(async (req, res) => res.json(await review.rateDecision(pool, ws(req), req.params.decisionId!, req.actor!, parseBody(ratingSchema, req.body)))),
+);
+
+const reportSchema = z.object({ note: noteSchema.min(1, "Describe the problem.") }).strict();
+agentRouter.post(
+  "/decisions/:decisionId/reports",
+  asyncHandler(async (req, res) => {
+    const { note } = parseBody(reportSchema, req.body);
+    res.status(201).json(await withTransaction((c) => review.reportProblem(c, ws(req), req.params.decisionId!, req.actor!, note)));
+  }),
+);
+const resolveSchema = z.object({ note: noteSchema.optional() }).strict();
+agentRouter.post(
+  "/reports/:reportId/resolve",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { note } = parseBody(resolveSchema, req.body ?? {});
+    res.json(await review.resolveReport(pool, ws(req), req.params.reportId!, req.actor!, note));
+  }),
+);
+
+agentRouter.get("/stats", asyncHandler(async (req, res) => res.json(await review.getAgentStats(pool, ws(req)))));
+agentRouter.get("/leads/:id", asyncHandler(async (req, res) => res.json(await review.getLeadAgentPanel(pool, ws(req), req.params.id!))));
+
+// --- Configuration and enrollment: admin only. Every route below this line. ----------
+agentRouter.use(requireAdmin);
 
 agentRouter.get("/settings", asyncHandler(async (req, res) => res.json(await settings.getSettings(pool, ws(req)))));
 
