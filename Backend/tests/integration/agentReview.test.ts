@@ -332,6 +332,7 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
     const stats = await api(owner, ws, "GET", "/agent/stats");
     expect(stats.status).toBe(200);
     expect(stats.body).toMatchObject({
+      mode: "shadow",
       byAction: { send_email: 46, send_whatsapp: 4, handoff: 1, wait: 1 },
       byOutcome: { draft: 51, blocked: 1 },
       failed: 2,

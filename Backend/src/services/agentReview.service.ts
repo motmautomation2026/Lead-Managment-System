@@ -272,10 +272,11 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       [workspaceId],
     ),
     db.query<{ n: number }>(`select count(*)::int as n from public.agent_decision_reports where workspace_id = $1 and resolved_at is null`, [workspaceId]),
-    db.query<{ spent: number; budget: number | null; month: string }>(
+    db.query<{ spent: number; budget: number | null; month: string; mode: string | null }>(
       `select coalesce((select sum(cost_usd) from public.agent_decisions
                          where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)::float8 as spent,
               (select monthly_budget_usd::float8 from public.agent_settings where workspace_id = $1) as budget,
+              (select mode from public.agent_settings where workspace_id = $1) as mode,
               to_char(${IST_MONTH}, 'YYYY-MM') as month`,
       [workspaceId],
     ),
@@ -301,6 +302,8 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
   const bad = Object.values(badByReason).reduce((a, b) => a + b, 0);
   const s = spend.rows[0]!;
   return {
+    // The agent mode, so every CRM user (not only admins, who can read the settings) sees it.
+    mode: s.mode,
     byAction,
     byOutcome,
     failed,
