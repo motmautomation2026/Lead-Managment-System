@@ -182,19 +182,11 @@ const decisionModel = createOpenAIDecisionModel();
 
 let stopped = false;
 
-// How often the worker re-scans for newly created/activated workspaces and
-// starts a BaileysManager for any that don't have one running yet (see
-// baileys-registry.ts) — deliberately less frequent than the action poll
-// itself, since new workspaces are rare compared to due scheduled actions.
-const WORKSPACE_SCAN_INTERVAL_TICKS = 6;
-let tickCount = 0;
-
 async function loop(): Promise<void> {
   while (!stopped) {
     await tick().catch((err) => console.error("[worker] Poll tick failed:", err));
-    if (tickCount++ % WORKSPACE_SCAN_INTERVAL_TICKS === 0) {
-      await baileysRegistry.ensureManagersForAllActiveWorkspaces().catch((err) => console.error("[worker] Workspace WhatsApp session scan failed:", err));
-    }
+    // Every tick (one cheap query), so a Settings pairing request starts its manager within a poll interval.
+    await baileysRegistry.ensureManagers().catch((err) => console.error("[worker] WhatsApp manager scan failed:", err));
     if (stopped) break;
     await new Promise((resolve) => setTimeout(resolve, env.WORKER_POLL_INTERVAL_MS));
   }
@@ -204,7 +196,7 @@ console.log(
   `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}, AI agent runner ${env.AGENT_RUNNER_ENABLED ? "on (shadow only)" : "off"}).`,
 );
 void baileysRegistry
-  .ensureManagersForAllActiveWorkspaces()
+  .ensureManagers()
   .then(() => loop())
   .catch(async (error) => {
     console.error("Automation worker failed to initialize per-workspace WhatsApp sessions:", error);

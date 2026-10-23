@@ -7,6 +7,23 @@ const START_BACKOFF_BASE_MS = 30_000;
 const START_BACKOFF_MAX_MS = 10 * 60_000;
 const RECOVERING_MESSAGE = "WhatsApp is starting up or recovering for this workspace.";
 
+/**
+ * Active workspaces whose WhatsApp needs a running manager: an admin wants it
+ * connected (desired_state 'connected' or 'restart', which covers pairing and
+ * a paired number), or it was told to disconnect while a socket may still be
+ * live (status connecting / qr_ready / connected / reconnecting), so the
+ * manager can log out. disconnected, error and reauth_required with
+ * desired_state 'disconnected' need nothing.
+ */
+const NEEDS_MANAGER_SQL = `
+  select wc.workspace_id as id
+    from public.whatsapp_connection wc
+    join public.workspaces w on w.id = wc.workspace_id
+   where w.is_active
+     and (wc.desired_state in ('connected', 'restart')
+          or wc.status in ('connecting', 'qr_ready', 'connected', 'reconnecting'))
+   order by wc.workspace_id`;
+
 /** Wait before retrying a workspace whose manager failed to start `attempts` times in a row: 30s × 2^(n-1), capped at 10 min. */
 export function startBackoffMs(attempts: number): number {
   return Math.min(START_BACKOFF_BASE_MS * 2 ** Math.max(attempts - 1, 0), START_BACKOFF_MAX_MS);
@@ -94,28 +111,34 @@ export class BaileysManagerRegistry {
   }
 
   /**
-   * Called periodically by the worker so every active workspace has a
-   * running manager — a manager's own heartbeat loop (started in start())
-   * is what actually reacts to an admin's connect/restart/logout command
-   * (see BaileysManager.syncControl), so a workspace that has never had a
-   * manager started for it would otherwise never notice a connect request.
-   * A workspace whose start failed (e.g. another process still holding its
-   * advisory lock) is retried here once its backoff has elapsed.
+   * Called on every worker tick. Starts a manager only for active workspaces
+   * whose whatsapp_connection needs a socket (see NEEDS_MANAGER_SQL), ONE AT
+   * A TIME, so many workspaces never open many session-lock connections at
+   * once; and stops managers that are no longer needed, closing their lock
+   * connections. Pairing from Settings (connect → desired_state 'connected')
+   * is picked up on the next tick. A failed start is retried once its
+   * backoff (B17) has elapsed.
    */
-  async ensureManagersForAllActiveWorkspaces(): Promise<void> {
+  async ensureManagers(): Promise<void> {
     if (this.lockUnsupportedReason) {
       if (!this.lockUnsupportedLogged) console.error(`[baileys-registry] ${this.lockUnsupportedReason}`);
       this.lockUnsupportedLogged = true;
       return;
     }
-    const result = await pool.query<{ id: string }>(`select id from public.workspaces where is_active = true`);
-    await Promise.all(
-      result.rows.map(async (row) => {
-        if (this.runningManager(row.id) || this.starting.has(row.id) || this.backoffRemainingMs(row.id) > 0) return;
-        // Start failures are already logged and recorded by getOrCreateManager.
-        await this.getOrCreateManager(row.id).catch(() => undefined);
-      }),
-    );
+    const result = await pool.query<{ id: string }>(NEEDS_MANAGER_SQL);
+    const needed = new Set(result.rows.map((row) => row.id));
+
+    for (const [workspaceId, manager] of this.managers) {
+      if (needed.has(workspaceId)) continue;
+      this.managers.delete(workspaceId);
+      await manager.stop().catch(() => undefined);
+    }
+
+    for (const workspaceId of needed) {
+      if (this.runningManager(workspaceId) || this.starting.has(workspaceId) || this.backoffRemainingMs(workspaceId) > 0) continue;
+      // Start failures are already logged and recorded by getOrCreateManager.
+      await this.getOrCreateManager(workspaceId).catch(() => undefined);
+    }
   }
 
   async stopAll(): Promise<void> {
