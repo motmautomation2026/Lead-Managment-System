@@ -123,6 +123,13 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (`auto_enroll`); then `enqueueWakeup(wakeFor(...))`. Called once at the end of createLead,
   importLeads (per lead), ingestWebsiteLead, logCall, addNote, scheduleMeeting, updateMeeting,
   recordMeetingOutcome, updateProposalStatus, processInboundUpsert (per matched lead).
+- **3B-3:** `onAgentEvent` status effects (meeting pause/resume, reply → `handed_off`) apply in
+  EVERY mode; only wakeups and auto-enroll are mode-gated. Frontend: `backend.agent.settings`
+  / `.playbooks`, keys `agentSettings` / `agentPlaybooks`, hooks `useAgentSettings`,
+  `useUpdateAgentSettings`, `useAgentPlaybooks`, `useSavePlaybook`, `useRestorePlaybook`;
+  `Lead` has the agent fields. Settings → admin-only `AgentPanel`
+  (`features/settings/agent-panel.tsx`): mode (Off → Shadow confirms), limits form, playbook
+  editor with history/restore. `ConfirmDialog` takes `confirmVariant`. Sidebar Add Lead spacing.
 
 ## AI agent (Feature 3)
 
