@@ -34,6 +34,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   share the 15-slot session pooler (tests then fail with `EMAXCONNSESSION`). A live worker
   also claims queued proposal/meeting rows that the tests create.
 
+## DB connections
+
+- The staging session pooler allows **15 client connections in total** (API, worker, WhatsApp lock
+  clients, tests, scripts, the Supabase dashboard). Every pooled connection counts while open, even idle.
+- Env (backend + worker): `DB_POOL_MAX` (API) and `WORKER_DB_POOL_MAX` (worker), default 10 each;
+  `DB_IDLE_TIMEOUT_MS` (10000); `DB_CONNECTION_TIMEOUT_MS` (15000, how long a query waits for a
+  connection). Local staging `.env`: `DB_POOL_MAX=5`, `WORKER_DB_POOL_MAX=4`.
+- The worker also holds one dedicated connection per running WhatsApp manager (lock client), and the
+  registry tries to start one for EVERY active workspace.
+- On EMAXCONNSESSION run `npm run db:connections -- --probe` (Backend). Behind the pooler every
+  connection shows as `Supavisor` in `pg_stat_activity`; `--probe` counts free client slots.
+- Stop the local API/worker before integration tests.
+- Production: `DB_POOL_MAX` + `WORKER_DB_POOL_MAX` + WhatsApp lock clients must stay below the
+  production pooler size (Supabase → Database → Connection pooling); check it before deploying.
+
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
