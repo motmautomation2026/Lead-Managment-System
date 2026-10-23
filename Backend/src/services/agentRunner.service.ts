@@ -3,7 +3,7 @@ import { env } from "../env.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
-import { buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
+import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -103,7 +103,7 @@ export async function draftDecision(
         jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
       });
       add(deps.groundingModel, checked);
-      grounding = checked.json;
+      grounding = applyGroundingAllowList(checked.json, ctx);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
     return {

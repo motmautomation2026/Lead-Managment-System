@@ -66,7 +66,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "",
     "Rules:",
     "- Facts (numbers, client names, results, prices, timelines) may come ONLY from the knowledge excerpts, the playbook, or the lead's own data. If you lack a fact, don't invent it: pick wait or handoff.",
-    "- Don't write a signature, a sign-off or an opt-out line; they are added automatically. No HTML: plain text only.",
+    "- Don't write a signature, a sign-off or an opt-out line; they are added automatically. End the body with your last real sentence (e.g. your question); never end with \"Regards\", \"Best regards\", \"Thanks\", your name or the company name. No HTML: plain text only.",
     `- Word limits: email ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words.`,
     `- Don't include email addresses or phone numbers other than these allowed contacts: ${[...rules.allowedContacts.emails, ...rules.allowedContacts.phones].join(", ") || "none"}.`,
     "- Don't repeat an earlier message (see the past_agent_messages block). Write in English unless the lead clearly prefers another language.",
@@ -159,6 +159,20 @@ export const GROUNDING_JSON_SCHEMA = {
 
 export const groundingSchema = z.object({ supported: z.boolean(), unsupportedClaims: z.array(z.string()) }).strict();
 export type GroundingResult = z.infer<typeof groundingSchema>;
+
+/**
+ * Drops flagged "claims" that are only an allowed company name (the sender's display or
+ * workspace name, or the lead's own company): the grounding model sometimes flags them
+ * despite the prompt. Kept in ignoredClaims for review.
+ */
+export function applyGroundingAllowList(result: GroundingResult, ctx: AgentContext): GroundingResult & { ignoredClaims?: string[] } {
+  const norm = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const allowed = new Set([ctx.companyName, ctx.workspaceName, ctx.lead.company].map(norm));
+  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)));
+  if (!ignored.length) return result;
+  const unsupportedClaims = result.unsupportedClaims.filter((claim) => !allowed.has(norm(claim)));
+  return { supported: unsupportedClaims.length === 0, unsupportedClaims, ignoredClaims: ignored };
+}
 
 /** Parses the grounding model's output (a JSON string or an object). Throws on invalid input. */
 export function parseGroundingOutput(json: unknown): GroundingResult {
