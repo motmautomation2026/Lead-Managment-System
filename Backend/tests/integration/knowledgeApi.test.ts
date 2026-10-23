@@ -66,13 +66,16 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     return runKnowledgeIngestion({ embedder: fakeEmbedder, workspaceId: WORKSPACE, limit: 10 });
   }
 
+  // list(), not download(): after remove() a download can still be served from cache for a while.
   async function objectExists(bucket: string, path: string) {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
-    const { data } = await supabaseAdmin.storage.from(bucket).download(path);
-    return Boolean(data);
+    const slash = path.lastIndexOf("/");
+    const name = path.slice(slash + 1);
+    const { data, error } = await supabaseAdmin.storage.from(bucket).list(path.slice(0, slash), { search: name });
+    if (error) throw new Error(`Storage list failed: ${error.message}`);
+    return data.some((object) => object.name === name);
   }
 
-  // Staging Storage can briefly still serve an object right after it is removed.
   const expectObjectGone = (bucket: string, path: string) =>
     vi.waitFor(async () => expect(await objectExists(bucket, path)).toBe(false), { timeout: 10_000, interval: 500 });
 
