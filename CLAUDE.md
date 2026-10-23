@@ -35,7 +35,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `025`).
+  (currently `026`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -52,7 +52,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `025`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `026`).
 
 ## Way of working
 
@@ -112,6 +112,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   Admin-only `/agent/*` routes; lead DTO has read-only `agentStatus*`/`agentTouchCount`/
   `agentLastTouchAt`. Agent status timeline events: kind `automation`, titles `AI Agent …`.
   Never touches workflows, runs or `automation_mode`.
+- **3B-2:** agent reacts to CRM events, still nothing sent and no AI calls: migration 026
+  (`leads_agent_lifecycle_stop` BEFORE UPDATE OF `lifecycle_state`: terminal, or LTN without
+  `nurture_long_term` → `stopped`/`lifecycle_changed`, wakeups cancelled, timeline; never
+  restarts). `agent/wakePolicy.ts` (`wakeFor`); `rules.ts` adds `lastRepActivityAt` +
+  `rep_quiet_hours` to the send time (adjustment `rep_quiet`).
+  `services/agentEvents.service.ts` `onAgentEvent` (SAVEPOINT, never fails the caller; no-op
+  in mode off): meeting booked → paused; outcome/cancel (no other upcoming meeting) resumes
+  only `meeting_booked` pauses; inbound WhatsApp → `handed_off`; auto-enroll on lead creation
+  (`auto_enroll`); then `enqueueWakeup(wakeFor(...))`. Called once at the end of createLead,
+  importLeads (per lead), ingestWebsiteLead, logCall, addNote, scheduleMeeting, updateMeeting,
+  recordMeetingOutcome, updateProposalStatus, processInboundUpsert (per matched lead).
 
 ## AI agent (Feature 3)
 
