@@ -37,7 +37,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `028`).
+  (currently `029`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -54,7 +54,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `028`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `029`).
 
 ## Way of working
 
@@ -166,6 +166,16 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   lead_data incl. call/note text) and checks only specific, checkable claims; never the
   sender's/lead's own company names or vague intent. The runner claims at most one wakeup per
   lead (earliest; none while one is executing). `loadWorkerEnv(source)` is exported.
+- **3D-1:** AI review backend, nothing sent: migration 029 (`agent_decisions.rating_reason`, required iff
+  rating `bad`; `agent_decision_reports`). Pure `agent/readiness.ts` `goLiveReadiness` (≥50 rated excl.
+  failed, ≥90% good, zero `made_up_fact`/`internal_info_leak`). `services/agentReview.service.ts`:
+  decision log (keyset cursor on `created_at` text + id), detail with `composed` (via `composeOutgoing`)
+  and KB chunk previews ("deleted" when gone), ratings (admin or the lead's owner; failed → 422),
+  problem reports (warning notification to every active admin; resolve admin-only), stats with spend
+  and readiness, lead AI panel. Routes in `agent.routes.ts` registered BEFORE `agentRouter.use(requireAdmin)`
+  (CRM users): `GET /agent/decisions[/:decisionId]`, `PUT …/:decisionId/rating`, `POST …/:decisionId/reports`,
+  `POST /agent/reports/:reportId/resolve` (inline `requireAdmin`), `GET /agent/stats`, `GET /agent/leads/:id`.
+  `IST_MONTH` is exported from `agentRunner.service.ts`.
 
 ## AI agent (Feature 3)
 
