@@ -1,0 +1,480 @@
+import { pool, withTransaction } from "../db.js";
+import { env } from "../env.js";
+import { AGENT_ACTOR_NAME } from "../agent/constants.js";
+import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
+import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
+import { buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
+import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
+import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
+import { resolveAgentModels } from "../providers/openai.provider.js";
+import { PermanentProviderError, ProviderDeferredError } from "../providers/provider-errors.js";
+import { buildAgentContext, type AgentContext, type AgentSettingsRow } from "./agentContext.service.js";
+import { enqueueWakeup } from "./agentWakeups.service.js";
+import { addTimelineEvent } from "./timeline.service.js";
+
+/**
+ * The agent's decision loop (3C-2), SHADOW ONLY: turns due wakeups into DRAFT
+ * agent_decisions. Never sends, never creates tasks, never changes a lead's
+ * stage or status from a decision, never touches workflows. No transaction or
+ * checked-out client is held during model calls.
+ */
+
+const BATCH_SIZE = 5;
+const MAX_ATTEMPTS = 3;
+const MINUTE = 60_000;
+const CONFIG_RETRY_MS = 10 * MINUTE;
+const PLAYBOOK_RETRY_MS = 60 * MINUTE;
+const BUDGET_RETRY_MS = 60 * MINUTE;
+const FAILURE_RETRY_MS = 5 * MINUTE;
+const HANDOFF_TITLE = "AI couldn't write a safe message";
+const SHADOW_NOTE = "Shadow mode — not sent";
+const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
+const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
+
+export interface AgentRunnerDeps {
+  model: DecisionModel;
+  embedder: Embedder;
+  /** Default: OPENAI_PRICES_JSON. */
+  prices?: ModelPrices;
+  /** Default: OPENAI_DECISION_MODEL / OPENAI_GROUNDING_MODEL. */
+  defaultModels?: { decision?: string | undefined; grounding?: string | undefined };
+  /** Tests: only claim wakeups in these workspaces. */
+  workspaceIds?: string[];
+  fallbackSenderAddress?: string | null;
+}
+
+// --- The decision pipeline (no DB; shared with scripts/agent-preview.ts) ---------
+
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export interface DraftAttempt {
+  decision: AgentDecision;
+  rules: RulesResult;
+  grounding: GroundingResult | null;
+  /** Rule violations and unsupported claims; empty = passed. */
+  problems: string[];
+}
+
+export interface DraftResult {
+  /** What gets recorded: the passing attempt's final decision, or the handoff fallback. */
+  decision: AgentDecision;
+  rules: RulesResult;
+  grounding: GroundingResult | null;
+  outcome: "draft" | "blocked";
+  regenerated: boolean;
+  /** The failed attempt whose message is kept on a handoff fallback. */
+  failedAttempt: DraftAttempt | null;
+  attempts: DraftAttempt[];
+}
+
+const isSend = (d: AgentDecision): d is Extract<AgentDecision, { action: "send_email" | "send_whatsapp" }> =>
+  d.action === "send_email" || d.action === "send_whatsapp";
+
+/**
+ * decide → validate → ground (allowed sends) → regenerate once on problems →
+ * handoff fallback after a second failure. `usage` accumulates over every call,
+ * including ones before a thrown error.
+ */
+export async function draftDecision(
+  ctx: AgentContext,
+  deps: { model: DecisionModel; decisionModel: string; groundingModel: string; prices: ModelPrices; now: Date },
+  usage: Usage,
+): Promise<DraftResult> {
+  const add = (modelName: string, result: ModelCallResult<unknown>) => {
+    usage.inputTokens += result.inputTokens;
+    usage.outputTokens += result.outputTokens;
+    usage.costUsd += costUsd(deps.prices, modelName, result.inputTokens, result.outputTokens) ?? 0;
+  };
+  const names = { leadCompany: ctx.lead.company, ownCompany: ctx.companyName };
+
+  const attempt = async (problems?: string[]): Promise<DraftAttempt> => {
+    const messages = buildDecisionMessages(ctx, ctx.settings, deps.now, problems ? { previousFailure: { problems } } : {});
+    const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
+    add(deps.decisionModel, decided);
+    const rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
+    let grounding: GroundingResult | null = null;
+    if (rules.allowed && isSend(rules.finalDecision)) {
+      const checked = await deps.model.checkGrounding({
+        model: deps.groundingModel,
+        messages: buildGroundingMessages(rules.finalDecision, ctx.knowledge.chunks, names)!,
+        jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
+      });
+      add(deps.groundingModel, checked);
+      grounding = checked.json;
+    }
+    const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
+    return {
+      decision: decided.json,
+      rules,
+      grounding,
+      problems: [...rules.violations.map((v) => `${v.rule}: ${v.message}`), ...unsupported.map((claim) => `Unsupported claim: ${claim}`)],
+    };
+  };
+
+  const first = await attempt();
+  const done = (a: DraftAttempt, regenerated: boolean, attempts: DraftAttempt[]): DraftResult => ({
+    decision: a.rules.finalDecision,
+    rules: a.rules,
+    grounding: a.grounding,
+    outcome: a.rules.outcome === "blocked" ? "blocked" : "draft",
+    regenerated,
+    failedAttempt: null,
+    attempts,
+  });
+  // A block (the lead changed since the precheck) can't be fixed by rewriting.
+  if (!first.problems.length || first.rules.outcome === "blocked") return done(first, false, [first]);
+  const second = await attempt(first.problems);
+  if (!second.problems.length || second.rules.outcome === "blocked") return done(second, true, [first, second]);
+  return {
+    decision: {
+      action: "handoff",
+      title: HANDOFF_TITLE,
+      urgency: "normal",
+      reasoning: `Two attempts failed the checks: ${second.problems.join("; ")}`.slice(0, 2000),
+    },
+    rules: second.rules,
+    grounding: second.grounding,
+    outcome: "draft",
+    regenerated: true,
+    failedAttempt: second,
+    attempts: [first, second],
+  };
+}
+
+// --- The worker loop -------------------------------------------------------------
+
+interface ClaimedWakeup {
+  id: string;
+  workspace_id: string;
+  lead_id: string;
+  attempt_count: number;
+  claimed_at: Date;
+}
+
+export interface WakeupOutcome {
+  wakeupId: string;
+  leadId: string;
+  result: "draft" | "blocked" | "precheck" | "deferred" | "failed" | "skipped" | "lost_claim";
+  action?: string;
+}
+
+/**
+ * One agent tick: cancel pending wakeups of leads the agent no longer manages,
+ * claim up to 5 due wakeups in SHADOW workspaces (reclaiming any stuck in
+ * `executing` for 15 min), and process them one at a time. A no-op unless
+ * `enabled` (AGENT_RUNNER_ENABLED).
+ */
+export async function runAgentTick(enabled: boolean, deps: AgentRunnerDeps): Promise<WakeupOutcome[]> {
+  if (!enabled) return [];
+  const claimed = await claimWakeups(deps.workspaceIds ?? null);
+  const configNotes = new Set<string>();
+  const outcomes: WakeupOutcome[] = [];
+  for (const wakeup of claimed) {
+    outcomes.push(await processWakeup(wakeup, deps, configNotes));
+  }
+  for (const note of configNotes) console.warn(`[agent] ${note}`);
+  return outcomes;
+}
+
+async function claimWakeups(workspaceIds: string[] | null): Promise<ClaimedWakeup[]> {
+  return withTransaction(async (client) => {
+    await client.query(
+      `update public.agent_wakeups w
+          set status = 'cancelled', processed_at = now(),
+              payload = coalesce(w.payload, '{}'::jsonb) || jsonb_build_object('cancel_reason', 'lead_not_active')
+         from public.leads l
+        where l.id = w.lead_id and w.status = 'pending' and l.agent_status <> 'active'
+          and ($1::uuid[] is null or w.workspace_id = any($1::uuid[]))`,
+      [workspaceIds],
+    );
+    const result = await client.query<ClaimedWakeup>(
+      `update public.agent_wakeups w
+          -- Millisecond precision so the claimed_at we hold (a JS Date) matches exactly.
+          set status = 'executing', claimed_at = date_trunc('milliseconds', now()), attempt_count = w.attempt_count + 1
+        where w.id in (
+          select x.id from public.agent_wakeups x
+            join public.agent_settings s on s.workspace_id = x.workspace_id and s.mode = 'shadow'
+           where ((x.status = 'pending' and x.due_at <= now())
+               or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
+             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+           order by x.due_at
+           limit $2
+           for update of x skip locked)
+        returning w.id, w.workspace_id, w.lead_id, w.attempt_count, w.claimed_at`,
+      [workspaceIds, BATCH_SIZE],
+    );
+    return result.rows;
+  });
+}
+
+/** Ends our claim on the wakeup: only while it is still ours (executing, same claimed_at). */
+async function markDone(wakeup: ClaimedWakeup): Promise<void> {
+  await pool.query(
+    `update public.agent_wakeups set status = 'done', processed_at = now()
+      where id = $1 and status = 'executing' and claimed_at = $2`,
+    [wakeup.id, wakeup.claimed_at],
+  );
+}
+
+/**
+ * Puts the wakeup back to pending at `retryAt` (restoring the attempt for a
+ * deferral). If an event wakeup for the lead arrived meanwhile (only one may be
+ * pending), that one carries on, no earlier than `retryAt`, and ours is cancelled.
+ */
+async function retryLater(wakeup: ClaimedWakeup, retryAt: Date, restoreAttempt: boolean): Promise<void> {
+  await withTransaction(async (client) => {
+    const other = await client.query(
+      `update public.agent_wakeups set due_at = greatest(due_at, $3)
+        where lead_id = $2 and status = 'pending' and id <> $1 returning id`,
+      [wakeup.id, wakeup.lead_id, retryAt],
+    );
+    await client.query(
+      `update public.agent_wakeups
+          set status = $4, due_at = $3, claimed_at = null,
+              attempt_count = attempt_count - $5,
+              processed_at = case when $4 = 'cancelled' then now() end
+        where id = $1 and status = 'executing' and claimed_at = $2`,
+      [wakeup.id, wakeup.claimed_at, retryAt, other.rowCount ? "cancelled" : "pending", restoreAttempt ? 1 : 0],
+    );
+  });
+}
+
+async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, configNotes: Set<string>): Promise<WakeupOutcome> {
+  const base = { wakeupId: wakeup.id, leadId: wakeup.lead_id };
+  const now = new Date();
+  const defer = async (ms: number, restore = true): Promise<WakeupOutcome> => {
+    await retryLater(wakeup, new Date(Date.now() + ms), restore);
+    return { ...base, result: "deferred" };
+  };
+
+  // 1. Pre-checks, before any model call.
+  const state = (
+    await pool.query<AgentSettingsRow & { lifecycle_state: AgentContext["lead"]["lifecycleState"]; agent_status: AgentContext["rules"]["lead"]["agentStatus"] }>(
+      `select s.*, l.lifecycle_state, l.agent_status
+         from public.agent_settings s join public.leads l on l.workspace_id = s.workspace_id
+        where l.id = $1 and s.workspace_id = $2`,
+      [wakeup.lead_id, wakeup.workspace_id],
+    )
+  ).rows[0];
+  const blocked = state ? precheck({ mode: state.mode, lead: { lifecycleState: state.lifecycle_state, agentStatus: state.agent_status } }, state) : { rule: "lead", message: "Lead not found." };
+  if (!state || blocked) {
+    await markDone(wakeup);
+    console.log(`[agent] wakeup ${wakeup.id} lead ${wakeup.lead_id}: skipped (${blocked?.rule}).`);
+    return { ...base, result: "precheck" };
+  }
+
+  // 2. Configuration: models with prices, and a playbook. Deferrals don't burn an attempt.
+  const prices = deps.prices ?? parsePrices(env.OPENAI_PRICES_JSON);
+  let models: { decisionModel: string; groundingModel: string };
+  try {
+    models = resolveAgentModels(state, deps.defaultModels);
+  } catch {
+    configNotes.add("No AI model configured; agent wakeups deferred 10 min.");
+    return defer(CONFIG_RETRY_MS);
+  }
+  const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !prices[m]);
+  if (unpriced.length) {
+    configNotes.add(`No price in OPENAI_PRICES_JSON for ${[...new Set(unpriced)].join(", ")}; agent wakeups deferred 10 min.`);
+    return defer(CONFIG_RETRY_MS);
+  }
+  if (state.current_playbook_version === null) {
+    console.log(`[agent] wakeup ${wakeup.id}: workspace ${wakeup.workspace_id} has no playbook; deferred 1 h.`);
+    return defer(PLAYBOOK_RETRY_MS);
+  }
+
+  // 3. Budget for the current IST calendar month.
+  const spent = Number(
+    (
+      await pool.query<{ spent: string }>(
+        `select coalesce(sum(cost_usd), 0) as spent from public.agent_decisions
+          where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')`,
+        [wakeup.workspace_id],
+      )
+    ).rows[0]!.spent,
+  );
+  const budget = Number(state.monthly_budget_usd);
+  if (spent >= budget) {
+    await alertBudgetOnce(wakeup.workspace_id, spent, budget);
+    console.log(`[agent] wakeup ${wakeup.id}: workspace ${wakeup.workspace_id} reached its monthly budget; deferred 1 h.`);
+    return defer(BUDGET_RETRY_MS);
+  }
+
+  // 4-7. Context and the model calls (no client held).
+  const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  let ctx: AgentContext | null = null;
+  try {
+    ctx = await buildAgentContext(pool, wakeup.workspace_id, wakeup.lead_id, now, { embedder: deps.embedder, fallbackSenderAddress: deps.fallbackSenderAddress ?? null });
+    const draft = await draftDecision(ctx, { model: deps.model, ...models, prices, now }, usage);
+    return await recordDraft(wakeup, ctx, draft, models, usage);
+  } catch (error) {
+    if (error instanceof ProviderDeferredError) {
+      console.warn(`[agent] wakeup ${wakeup.id}: deferred (${error.message}).`);
+      return defer(error.retryAfterMs || CONFIG_RETRY_MS);
+    }
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    if (error instanceof PermanentProviderError || wakeup.attempt_count >= MAX_ATTEMPTS) {
+      await recordFailure(wakeup, ctx, models, usage, message);
+      console.error(`[agent] wakeup ${wakeup.id} lead ${wakeup.lead_id}: failed after attempt ${wakeup.attempt_count} (${error instanceof Error ? error.name : "error"}).`);
+      return { ...base, result: "failed" };
+    }
+    console.warn(`[agent] wakeup ${wakeup.id}: attempt ${wakeup.attempt_count} failed (${error instanceof Error ? error.name : "error"}); retrying in 5 min.`);
+    return defer(FAILURE_RETRY_MS, false);
+  }
+}
+
+function decisionColumns(decision: AgentDecision) {
+  return {
+    action: decision.action,
+    reasoning: decision.reasoning,
+    message_subject: decision.action === "send_email" ? decision.subject : null,
+    message_body: isSend(decision) ? decision.body : null,
+    asset_ids: isSend(decision) ? decision.assetIds : null,
+    handoff_title: decision.action === "handoff" ? decision.title : null,
+    handoff_urgency: decision.action === "handoff" ? decision.urgency : null,
+    new_stage: decision.action === "update_stage" ? decision.newStage : null,
+    stop_reason: decision.action === "stop" ? decision.reason : null,
+  };
+}
+
+const INSERT_DECISION = `
+  insert into public.agent_decisions
+    (workspace_id, lead_id, wakeup_id, mode, action, reasoning, message_subject, message_body, asset_ids,
+     send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
+     regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
+     outcome, error)
+  values ($1, $2, $3, 'shadow', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+  returning id`;
+
+async function recordDraft(
+  wakeup: ClaimedWakeup,
+  ctx: AgentContext,
+  draft: DraftResult,
+  models: { decisionModel: string; groundingModel: string },
+  usage: Usage,
+): Promise<WakeupOutcome> {
+  const base = { wakeupId: wakeup.id, leadId: wakeup.lead_id };
+  return withTransaction(async (client) => {
+    const ours = await client.query(`select 1 from public.agent_wakeups where id = $1 and status = 'executing' and claimed_at = $2 for update`, [wakeup.id, wakeup.claimed_at]);
+    if (!ours.rowCount) {
+      console.warn(`[agent] wakeup ${wakeup.id}: claim lost while deciding; result discarded.`);
+      return { ...base, result: "lost_claim" as const };
+    }
+    const lead = (await client.query<{ agent_status: string }>(`select agent_status from public.leads where id = $1 for update`, [wakeup.lead_id])).rows[0];
+    const stillActive = lead?.agent_status === "active";
+
+    const columns = decisionColumns(draft.decision);
+    // A handoff fallback keeps the failed attempt's message for review.
+    const failed = draft.failedAttempt ? decisionColumns(draft.failedAttempt.rules.finalDecision) : null;
+    const outcome = stillActive ? draft.outcome : "skipped";
+    const recorded = draft.decision.action === "handoff" && failed ? { ...columns, message_subject: failed.message_subject, message_body: failed.message_body } : columns;
+    const sendAt = draft.failedAttempt ? null : draft.rules.sendAt;
+    const nextWakeAt = draft.failedAttempt ? null : draft.rules.nextWakeAt;
+    const inserted = await client.query<{ id: string }>(INSERT_DECISION, [
+      wakeup.workspace_id,
+      wakeup.lead_id,
+      wakeup.id,
+      recorded.action,
+      recorded.reasoning,
+      recorded.message_subject,
+      recorded.message_body,
+      recorded.asset_ids,
+      sendAt,
+      nextWakeAt,
+      recorded.handoff_title,
+      recorded.handoff_urgency,
+      recorded.new_stage,
+      recorded.stop_reason,
+      JSON.stringify(draft.rules),
+      draft.grounding ? JSON.stringify(draft.grounding) : null,
+      draft.regenerated,
+      ctx.knowledge.chunks.map((c) => c.id),
+      ctx.playbook?.version ?? null,
+      models.decisionModel,
+      models.groundingModel,
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.costUsd,
+      outcome,
+      stillActive ? null : "The lead is no longer managed by the agent.",
+    ]);
+    const decisionId = inserted.rows[0]!.id;
+
+    if (outcome === "draft") {
+      const d = draft.decision;
+      if ((isSend(d) || d.action === "wait") && nextWakeAt) {
+        await enqueueWakeup(client, { workspaceId: wakeup.workspace_id, leadId: wakeup.lead_id, reason: "timer", dueAt: nextWakeAt, payload: { decisionId } });
+      }
+      const title = timelineTitle(d);
+      if (title) {
+        await addTimelineEvent(client, { leadId: wakeup.lead_id, kind: "automation", title, detail: SHADOW_NOTE, ...AGENT_ACTOR, metadata: { decisionId } });
+      }
+    }
+    await client.query(`update public.agent_wakeups set status = 'done', processed_at = now() where id = $1`, [wakeup.id]);
+    console.log(
+      `[agent] wakeup ${wakeup.id} lead ${wakeup.lead_id}: decision ${decisionId} ${draft.decision.action} ${outcome}${draft.regenerated ? " (regenerated)" : ""}, tokens ${usage.inputTokens}/${usage.outputTokens}, cost $${usage.costUsd.toFixed(6)}.`,
+    );
+    return { ...base, result: outcome === "draft" ? "draft" : outcome === "blocked" ? "blocked" : "skipped", action: draft.decision.action };
+  });
+}
+
+function timelineTitle(decision: AgentDecision): string | null {
+  const words = (value: string) => value.replace(/_/g, " ");
+  switch (decision.action) {
+    case "send_email":
+      return `AI drafted email: ${decision.subject}`.slice(0, 300);
+    case "send_whatsapp":
+      return "AI drafted WhatsApp message";
+    case "handoff":
+      return `AI suggested handoff: ${decision.title}`.slice(0, 300);
+    case "update_stage":
+      return `AI suggested stage: ${words(decision.newStage)}`;
+    case "stop":
+      return `AI suggested stopping: ${words(decision.reason)}`;
+    case "wait":
+      return null;
+  }
+}
+
+/** A `failed` decision row (no AI text) and the wakeup done. */
+async function recordFailure(
+  wakeup: ClaimedWakeup,
+  ctx: AgentContext | null,
+  models: { decisionModel: string; groundingModel: string },
+  usage: Usage,
+  error: string,
+): Promise<void> {
+  await withTransaction(async (client) => {
+    const ours = await client.query(`select 1 from public.agent_wakeups where id = $1 and status = 'executing' and claimed_at = $2 for update`, [wakeup.id, wakeup.claimed_at]);
+    if (!ours.rowCount) return;
+    await client.query(
+      `insert into public.agent_decisions
+         (workspace_id, lead_id, wakeup_id, mode, action, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd, outcome, error)
+       values ($1, $2, $3, 'shadow', 'wait', $4, $5, $6, $7, $8, $9, 'failed', $10)`,
+      [wakeup.workspace_id, wakeup.lead_id, wakeup.id, ctx?.playbook?.version ?? null, models.decisionModel, models.groundingModel, usage.inputTokens, usage.outputTokens, usage.costUsd, error.slice(0, 1000)],
+    );
+    await client.query(`update public.agent_wakeups set status = 'done', processed_at = now() where id = $1`, [wakeup.id]);
+  });
+}
+
+/** Notifies every active admin once per IST month that the workspace's budget is reached. */
+async function alertBudgetOnce(workspaceId: string, spent: number, budget: number): Promise<void> {
+  await withTransaction(async (client) => {
+    const claimed = await client.query(
+      `update public.agent_settings set budget_alerted_month = (${IST_MONTH})::date
+        where workspace_id = $1 and budget_alerted_month is distinct from (${IST_MONTH})::date
+        returning workspace_id`,
+      [workspaceId],
+    );
+    if (!claimed.rowCount) return;
+    await client.query(
+      `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, href)
+       select $1, p.id, 'AI agent paused: monthly budget reached', $2, 'warning', '/settings'
+         from public.profiles p where p.role = 'admin' and p.is_active`,
+      [workspaceId, `Spent $${spent.toFixed(2)} of $${budget.toFixed(2)} this month. The agent resumes next month or when an admin raises the budget in Settings → AI agent.`],
+    );
+  });
+}

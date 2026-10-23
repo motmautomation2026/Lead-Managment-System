@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { countWords, nextAllowedSendTime, validateDecision, whatsappUsable, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
+import { countWords, nextAllowedSendTime, precheck, validateDecision, whatsappUsable, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
 
 /** Asia/Kolkata wall-clock time → Date. */
 const ist = (local: string) => new Date(`${local}:00+05:30`);
@@ -317,5 +317,32 @@ describe("validateDecision", () => {
     expect(validateDecision(handoff, ctx(), settings, NOW)).toMatchObject({ allowed: true, finalDecision: handoff, nextWakeAt: null });
     const stop: AgentDecision = { action: "stop", reason: "asked_to_stop", moveToLongTermNurture: false, reasoning: "r" };
     expect(validateDecision(stop, ctx(), settings, NOW).finalDecision).toEqual(stop);
+  });
+});
+
+describe("precheck", () => {
+  const lead = (lifecycleState: RulesContext["lead"]["lifecycleState"], agentStatus: RulesContext["lead"]["agentStatus"] = "active") => ({ lifecycleState, agentStatus });
+
+  it("passes an active lead in shadow (and live)", () => {
+    expect(precheck({ mode: "shadow", lead: lead("active") }, settings)).toBeNull();
+    expect(precheck({ mode: "live", lead: lead("active") }, settings)).toBeNull();
+  });
+
+  it("blocks mode off first", () => {
+    expect(precheck({ mode: "off", lead: lead("won", "stopped") }, settings)?.rule).toBe("mode_off");
+  });
+
+  it("blocks ineligible lifecycles; long-term nurture only when the workspace nurtures it", () => {
+    for (const lifecycle of ["won", "lost", "discarded", "do_not_contact", "merged"] as const) {
+      expect(precheck({ mode: "shadow", lead: lead(lifecycle) }, settings)?.rule).toBe("lifecycle");
+    }
+    expect(precheck({ mode: "shadow", lead: lead("long_term_nurture") }, settings)?.rule).toBe("lifecycle");
+    expect(precheck({ mode: "shadow", lead: lead("long_term_nurture") }, { nurture_long_term: true })).toBeNull();
+  });
+
+  it("blocks any agent status other than active", () => {
+    for (const status of ["none", "paused", "handed_off", "stopped"] as const) {
+      expect(precheck({ mode: "shadow", lead: lead("active", status) }, settings)?.rule).toBe("agent_status");
+    }
   });
 });

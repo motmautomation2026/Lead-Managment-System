@@ -157,6 +157,23 @@ function assetViolations(decision: SendDecision, ctx: RulesContext): RuleNote[] 
 }
 
 /**
+ * Rules 1-3 of validateDecision, usable before any AI call: mode off, lifecycle
+ * not eligible, or agent_status not active → the block; else null.
+ */
+export function precheck(
+  ctx: { mode: AgentMode; lead: { lifecycleState: LifecycleState; agentStatus: AgentStatus } },
+  settings: Pick<AgentRuleSettings, "nurture_long_term">,
+): RuleNote | null {
+  if (ctx.mode === "off") return { rule: "mode_off", message: "The agent is off for this workspace." };
+  const lifecycle = ctx.lead.lifecycleState;
+  if (!(lifecycle === "active" || (lifecycle === "long_term_nurture" && settings.nurture_long_term))) {
+    return { rule: "lifecycle", message: `The agent doesn't act on leads in lifecycle "${lifecycle}".` };
+  }
+  if (ctx.lead.agentStatus !== "active") return { rule: "agent_status", message: `The agent is "${ctx.lead.agentStatus}" for this lead.` };
+  return null;
+}
+
+/**
  * Validates one agent decision. Rules run in THIS order:
  *  1. mode off → BLOCK
  *  2. lifecycle active (or long_term_nurture when nurture_long_term) → else BLOCK
@@ -188,12 +205,9 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
   });
 
   // 1-3: blocks
-  if (ctx.mode === "off") return block("mode_off", "The agent is off for this workspace.");
+  const blocked = precheck(ctx, settings);
+  if (blocked) return block(blocked.rule, blocked.message);
   const lifecycle = ctx.lead.lifecycleState;
-  if (!(lifecycle === "active" || (lifecycle === "long_term_nurture" && settings.nurture_long_term))) {
-    return block("lifecycle", `The agent doesn't act on leads in lifecycle "${lifecycle}".`);
-  }
-  if (ctx.lead.agentStatus !== "active") return block("agent_status", `The agent is "${ctx.lead.agentStatus}" for this lead.`);
 
   let final: AgentDecision = decision;
 
