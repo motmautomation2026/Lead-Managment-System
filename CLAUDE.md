@@ -63,7 +63,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `030`).
+  (currently `031`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -76,11 +76,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not duplicate business routing tables in React.
 - Do not send provider messages from manual Email/WhatsApp activity buttons.
 - Do not execute workflow sends in request/response handlers; use the worker.
-- Do not store inbound WhatsApp message bodies.
+- Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `030`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `031`).
 
 ## Way of working
 
@@ -218,6 +218,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   IST `agent_decisions`) the runner defers to the next IST midnight + 5 min, no attempt burned, admins
   notified once per day. `GET/PUT /agent/settings` return read-only `activeLeadCount`, shown in the
   Off → Shadow confirm.
+- **4A:** WhatsApp reply logging + AI handoff + B37, backend only (no UI, no AI classification, no email
+  replies). Migration 031: `whatsapp_inbound_events.body_ciphertext/iv/tag/key_version` (all-or-none) +
+  `body_truncated`. Pure `domain/whatsappInboundText.ts` `extractInboundText` (text, extended text,
+  image/video/document captions, button/list replies; wrappers unwrapped; ≤4,000 code points). In
+  `processInboundUpsert`, `matched` events only: text encrypted with `encryptText` (AAD
+  `whatsapp:inbound:<message_id>`); a lead whose `agent_status` was active/paused before the reply gets ONE
+  open task (`origin='agent'`, `follow_up`, "Lead replied on WhatsApp — respond today", due 23:59 IST today,
+  owner only) in every mode; `onAgentEvent`'s handoff cancels the wakeups. `createTask` accepts
+  `origin: 'agent'` (created_by/timeline actor "AI Agent"). B37: `recordActionResult` on a `cancelled`
+  action no longer throws; success → timeline "A message was already being sent when the reply arrived"
+  (provider id in detail/metadata; no column for it), failure/deferred → no-op; the run is never touched.
 
 ## AI agent (Feature 3)
 

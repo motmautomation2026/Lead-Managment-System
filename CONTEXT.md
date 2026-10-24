@@ -494,7 +494,7 @@ Rollback starts by disabling WhatsApp outbound and pausing workflows/runs as nee
 - Do not duplicate business routing tables in React.
 - Do not send provider messages from manual Email/WhatsApp activity buttons.
 - Do not execute workflow sends in request/response handlers; use the worker.
-- Do not store inbound WhatsApp message bodies.
+- Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
