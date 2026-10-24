@@ -20,6 +20,8 @@ import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as AutomationsIndexRouteImport } from './routes/automations.index'
 import { Route as AutomationsRunsRouteImport } from './routes/automations.runs'
 import { Route as AutomationsTemplatesRouteImport } from './routes/automations.templates'
+import { Route as CompaniesIndexRouteImport } from './routes/companies.index'
+import { Route as DealsIndexRouteImport } from './routes/deals.index'
 import { Route as LeadsIndexRouteImport } from './routes/leads.index'
 import { Route as LeadsLeadIdRouteImport } from './routes/leads.$leadId'
 import { Route as ProposalsIndexRouteImport } from './routes/proposals.index'
@@ -80,6 +82,16 @@ const AutomationsTemplatesRoute = AutomationsTemplatesRouteImport.update({
   path: '/automations/templates',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CompaniesIndexRoute = CompaniesIndexRouteImport.update({
+  id: '/companies/',
+  path: '/companies/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DealsIndexRoute = DealsIndexRouteImport.update({
+  id: '/deals/',
+  path: '/deals/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LeadsIndexRoute = LeadsIndexRouteImport.update({
   id: '/leads/',
   path: '/leads/',
@@ -115,6 +127,8 @@ export interface FileRoutesByFullPath {
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
+  '/companies/': typeof CompaniesIndexRoute
+  '/deals/': typeof DealsIndexRoute
   '/leads/': typeof LeadsIndexRoute
   '/proposals/': typeof ProposalsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
@@ -132,6 +146,8 @@ export interface FileRoutesByTo {
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations': typeof AutomationsIndexRoute
+  '/companies': typeof CompaniesIndexRoute
+  '/deals': typeof DealsIndexRoute
   '/leads': typeof LeadsIndexRoute
   '/proposals': typeof ProposalsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
@@ -150,6 +166,8 @@ export interface FileRoutesById {
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
+  '/companies/': typeof CompaniesIndexRoute
+  '/deals/': typeof DealsIndexRoute
   '/leads/': typeof LeadsIndexRoute
   '/proposals/': typeof ProposalsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
@@ -169,6 +187,8 @@ export interface FileRouteTypes {
     | '/automations/templates'
     | '/leads/$leadId'
     | '/automations/'
+    | '/companies/'
+    | '/deals/'
     | '/leads/'
     | '/proposals/'
     | '/automations/workflows/$workflowId'
@@ -186,6 +206,8 @@ export interface FileRouteTypes {
     | '/automations/templates'
     | '/leads/$leadId'
     | '/automations'
+    | '/companies'
+    | '/deals'
     | '/leads'
     | '/proposals'
     | '/automations/workflows/$workflowId'
@@ -203,6 +225,8 @@ export interface FileRouteTypes {
     | '/automations/templates'
     | '/leads/$leadId'
     | '/automations/'
+    | '/companies/'
+    | '/deals/'
     | '/leads/'
     | '/proposals/'
     | '/automations/workflows/$workflowId'
@@ -221,6 +245,8 @@ export interface RootRouteChildren {
   AutomationsTemplatesRoute: typeof AutomationsTemplatesRoute
   LeadsLeadIdRoute: typeof LeadsLeadIdRoute
   AutomationsIndexRoute: typeof AutomationsIndexRoute
+  CompaniesIndexRoute: typeof CompaniesIndexRoute
+  DealsIndexRoute: typeof DealsIndexRoute
   LeadsIndexRoute: typeof LeadsIndexRoute
   ProposalsIndexRoute: typeof ProposalsIndexRoute
   AutomationsWorkflowsWorkflowIdRoute: typeof AutomationsWorkflowsWorkflowIdRoute
@@ -305,6 +331,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AutomationsTemplatesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/companies/': {
+      id: '/companies/'
+      path: '/companies'
+      fullPath: '/companies/'
+      preLoaderRoute: typeof CompaniesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/deals/': {
+      id: '/deals/'
+      path: '/deals'
+      fullPath: '/deals/'
+      preLoaderRoute: typeof DealsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/leads/': {
       id: '/leads/'
       path: '/leads'
@@ -349,6 +389,8 @@ const rootRouteChildren: RootRouteChildren = {
   AutomationsTemplatesRoute: AutomationsTemplatesRoute,
   LeadsLeadIdRoute: LeadsLeadIdRoute,
   AutomationsIndexRoute: AutomationsIndexRoute,
+  CompaniesIndexRoute: CompaniesIndexRoute,
+  DealsIndexRoute: DealsIndexRoute,
   LeadsIndexRoute: LeadsIndexRoute,
   ProposalsIndexRoute: ProposalsIndexRoute,
   AutomationsWorkflowsWorkflowIdRoute: AutomationsWorkflowsWorkflowIdRoute,
