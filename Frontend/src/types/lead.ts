@@ -119,6 +119,8 @@ export interface Lead {
   firstName: string;
   lastName: string;
   company: string;
+  /** CRM v2 company link (read-only); null when the company text is a placeholder or not linked yet. */
+  companyId?: string | null;
   jobTitle: string;
   industry: string;
   phone: string;

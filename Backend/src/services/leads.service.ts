@@ -21,6 +21,7 @@ import { normalizePhoneE164 } from "../domain/phone.js";
 import { normalizeEmail } from "../domain/email.js";
 import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
 import { onAgentEvent } from "./agentEvents.service.js";
+import { linkCompanySafely } from "./companies.service.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
@@ -64,6 +65,7 @@ export interface LeadRow {
   agent_status_changed_at: Date | null;
   agent_touch_count: number;
   agent_last_touch_at: Date | null;
+  company_id: string | null;
   last_activity_at: Date;
   created_by: string | null;
   created_by_name: string | null;
@@ -83,6 +85,7 @@ export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof g
     firstName: row.first_name,
     lastName: row.last_name,
     company: row.company,
+    companyId: row.company_id,
     jobTitle: row.job_title ?? "",
     industry: row.industry ?? "",
     email: row.email ?? "",
@@ -260,6 +263,7 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
   // is configured for this trigger yet (see autoEnroll).
   await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence");
   await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
+  await linkCompanySafely(db, workspaceId, id);
 
   return getLeadRowOr404(db, workspaceId, id);
 }
@@ -419,6 +423,7 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     // imported row gets it, not just leads added one at a time.
     await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (CSV import)");
     await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
+    await linkCompanySafely(db, workspaceId, id);
 
     created.push(await getLeadRowOr404(db, workspaceId, id));
   }
@@ -652,6 +657,10 @@ export async function updateLead(
       ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR),
     });
   }
+  // Relink the company when its text or the email (domain) changed; a placeholder unlinks.
+  const companyChanged = patch.company !== undefined && patch.company.trim() !== current.company;
+  const emailChanged = patch.email !== undefined && (normalizeEmail(patch.email.trim()) ?? null) !== (current.email ?? null);
+  if (companyChanged || emailChanged) await linkCompanySafely(db, workspaceId, id);
 
   return getLeadRowOr404(db, workspaceId, id);
 }
