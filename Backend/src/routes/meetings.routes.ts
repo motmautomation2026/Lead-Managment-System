@@ -40,6 +40,7 @@ const createSchema = z.object({
   durationMin: z.number().int().positive().optional(),
   url: z.string().url().optional(),
   participants: z.array(participantSchema).optional(),
+  dealId: z.string().uuid().optional(),
 });
 
 meetingsRouter.post(

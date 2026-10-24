@@ -22,6 +22,7 @@ import { normalizeEmail } from "../domain/email.js";
 import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { linkCompanySafely } from "./companies.service.js";
+import { closeOpenDealsSafely, winSingleOpenDealSafely } from "./deals.service.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
@@ -777,6 +778,7 @@ export async function markDnc(db: Queryable, actor: Actor, workspaceId: string, 
   );
 
   await cancelOpenTasksForLead(db, actor, leadId, "Lead marked Do Not Contact");
+  await closeOpenDealsSafely(db, actor, workspaceId, leadId, "do_not_contact");
   await addTimelineEvent(db, {
     leadId,
     kind: "system",
@@ -835,6 +837,7 @@ async function setTerminalLifecycle(
   timelineTitle: string,
   reason?: string,
   extraColumns?: Record<string, unknown>,
+  winSingleOpenDeal = false,
 ) {
   assertValidLifecycleState(lifecycle);
   const current = await getLeadRowOr404(db, workspaceId, leadId);
@@ -850,11 +853,18 @@ async function setTerminalLifecycle(
   );
   await cancelOpenTasksForLead(db, actor, leadId, `Lead ${timelineTitle}`);
   await addTimelineEvent(db, { leadId, kind: "system", title: timelineTitle, detail: reason, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR) });
+  if (lifecycle !== "won") await closeOpenDealsSafely(db, actor, workspaceId, leadId, lifecycle);
+  else if (winSingleOpenDeal) await winSingleOpenDealSafely(db, actor, workspaceId, leadId);
   return getLeadRowOr404(db, workspaceId, leadId);
 }
 
-export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "won", "Won", reason);
+/**
+ * `fromWonButton`: the rep's Won button also wins the contact's deal when it has
+ * exactly one open deal (design §2.2). Meeting/proposal/deal paths move their
+ * own deal and leave it false.
+ */
+export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string, fromWonButton = false) =>
+  setTerminalLifecycle(db, actor, workspaceId, leadId, "won", "Won", reason, undefined, fromWonButton);
 
 /**
  * A loss reason is required on every Lost lead (drives the reactivation
@@ -921,6 +931,7 @@ export async function mergeLead(db: Queryable, actor: Actor, workspaceId: string
     [sourceLeadId, targetLeadId],
   );
   await cancelOpenTasksForLead(db, actor, sourceLeadId, "Lead merged");
+  await closeOpenDealsSafely(db, actor, workspaceId, sourceLeadId, "merged");
   await addTimelineEvent(db, {
     leadId: sourceLeadId,
     kind: "system",

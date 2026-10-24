@@ -9,6 +9,8 @@ import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead } from "./leads.service.js";
 import { autoEnroll } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
+import { dealStageForProposalStatus } from "../domain/dealRouting.js";
+import { attachDealSafely, moveLinkedDealSafely } from "./deals.service.js";
 
 export interface ProposalRow {
   id: string;
@@ -41,6 +43,7 @@ export interface ProposalRow {
   whatsapp_attempt_count: number;
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
+  deal_id: string | null;
   created_by: string | null;
   created_by_name: string | null;
   created_at: Date;
@@ -93,6 +96,8 @@ export interface CreateProposalInput {
   whatsappTemplateId?: string;
   emailSendStatus?: EmailSendStatus;
   whatsappSendStatus?: WhatsappSendStatus;
+  /** Attach to this open deal of the contact (else the newest open deal, else a new one). */
+  dealId?: string;
 }
 
 export async function createProposal(db: Queryable, actor: Actor, workspaceId: string, input: CreateProposalInput) {
@@ -130,6 +135,7 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
   const id = result.rows[0]!.id;
 
   await addTimelineEvent(db, { leadId: input.leadId, kind: "proposal", title: "Proposal Created", detail: input.title.trim(), ...actorEvent(actor) });
+  await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, proposalId: id, amount: input.amount ?? null });
   await updateLead(db, actor, workspaceId, input.leadId, { pipelineStage: "proposal_preparation" });
 
   return getProposalOr404(db, workspaceId, id);
@@ -254,6 +260,14 @@ export async function updateProposalStatus(
   await db.query(`update public.proposals set ${sets.join(", ")} where id = $1`, params);
 
   await addTimelineEvent(db, { leadId: proposal.lead_id, kind: "proposal", title: `Proposal ${status}`, detail: proposal.title, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR), relatedProposalId: id });
+
+  // Before today's contact routing below (markWon must see the deal already won).
+  await moveLinkedDealSafely(db, actor, workspaceId, proposal.lead_id, proposal.deal_id, dealStageForProposalStatus(status), {
+    event: status,
+    lossReason: options.lossReason,
+    lossNotes: options.lossNotes,
+    ...(status === "accepted" ? { amount: proposal.amount } : {}),
+  });
 
   const routing = routeProposalStatus(status);
 

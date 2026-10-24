@@ -11,6 +11,8 @@ import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead, type LeadR
 import { autoEnroll, cancelRunsForLead } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
 import { pipelineStageIndex } from "../domain/pipeline.js";
+import { DEAL_CLOSED_LOSS_REASON, dealStageForMeetingOutcome } from "../domain/dealRouting.js";
+import { attachDealSafely, moveLinkedDealSafely } from "./deals.service.js";
 
 export interface MeetingRow {
   id: string;
@@ -25,6 +27,7 @@ export interface MeetingRow {
   status: MeetingStatus;
   outcome: MeetingOutcome | null;
   notes: string | null;
+  deal_id: string | null;
   calendar_event_id: string | null;
   meet_link: string | null;
   calendar_sync_status: "not_applicable" | "pending" | "synced" | "failed";
@@ -81,6 +84,8 @@ export interface ScheduleMeetingInput {
   durationMin?: number;
   url?: string;
   participants?: ScheduleMeetingParticipant[];
+  /** Attach to this open deal of the contact (else the newest open deal, else a new one). */
+  dealId?: string;
 }
 
 /** The meeting's owner is usually the lead's owner or the acting salesperson — both names are already on hand; only an explicit cross-assignment (input.ownerId pointing at someone else) needs a lookup. */
@@ -119,6 +124,7 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
   }
 
   await addTimelineEvent(db, { leadId: input.leadId, kind: "meeting", title: "Meeting Scheduled", detail: input.title.trim(), ...actorEvent(actor) });
+  await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, meetingId: id });
 
   // Only advance the funnel forward — a lead already past meeting_scheduled
   // (e.g. proposal_sent) must not be regressed by booking an additional
@@ -303,6 +309,12 @@ export async function recordMeetingOutcome(db: Queryable, actor: Actor, workspac
     detail: `Outcome: ${outcome}`,
     ...actorEvent(actor),
     relatedMeetingId: id,
+  });
+
+  // Before today's contact routing below (markWon must see the deal already won).
+  await moveLinkedDealSafely(db, actor, workspaceId, meeting.lead_id, meeting.deal_id, dealStageForMeetingOutcome(outcome), {
+    event: outcome,
+    ...(outcome === "not_interested" ? { lossReason: DEAL_CLOSED_LOSS_REASON, lossNotes: "Meeting outcome: not interested" } : {}),
   });
 
   const routing = routeMeetingOutcome(outcome);

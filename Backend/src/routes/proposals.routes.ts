@@ -73,6 +73,7 @@ const createSchema = z.object({
   notes: z.string().optional(),
   emailTemplateId: z.string().uuid(),
   whatsappTemplateId: z.string().uuid(),
+  dealId: z.string().uuid().optional(),
 });
 
 proposalsRouter.post(

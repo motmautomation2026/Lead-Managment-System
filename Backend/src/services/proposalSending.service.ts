@@ -112,6 +112,7 @@ export interface CreateAndSendProposalInput {
   notes?: string;
   emailTemplateId: string;
   whatsappTemplateId: string;
+  dealId?: string;
 }
 
 export interface ProposalDocumentFile {
@@ -163,6 +164,7 @@ export async function createAndSendProposal(actor: Actor, workspaceId: string, i
       whatsappTemplateId: input.whatsappTemplateId,
       emailSendStatus: emailEligible ? "pending" : "skipped",
       whatsappSendStatus: whatsappEligible ? "queued" : "skipped",
+      dealId: input.dealId,
     }),
   );
 

@@ -248,7 +248,7 @@ leadsRouter.post(
   "/:id/won",
   asyncHandler(async (req, res) => {
     const { reason } = parseBody(optionalReasonSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markWon(client, req.actor!, req.workspaceId!, req.params.id!, reason));
+    const lead = await withTransaction((client) => leadsService.markWon(client, req.actor!, req.workspaceId!, req.params.id!, reason, true));
     res.json(await withNextAction(lead));
   }),
 );

@@ -16,6 +16,7 @@ export interface AddTimelineEventInput {
   relatedProposalId?: string | null;
   relatedCallId?: string | null;
   relatedWorkflowRunId?: string | null;
+  relatedDealId?: string | null;
   metadata?: Record<string, unknown> | null;
   occurredAt?: Date;
 }
@@ -30,8 +31,8 @@ export async function addTimelineEvent(db: Queryable, input: AddTimelineEventInp
     `insert into public.timeline_events
       (lead_id, occurred_at, event_kind, title, detail, actor_id, actor_name, actor_source,
        related_task_id, related_meeting_id, related_proposal_id, related_call_id,
-       related_workflow_run_id, metadata)
-     values ($1, coalesce($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+       related_workflow_run_id, metadata, related_deal_id)
+     values ($1, coalesce($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       input.leadId,
       input.occurredAt ?? null,
@@ -47,6 +48,7 @@ export async function addTimelineEvent(db: Queryable, input: AddTimelineEventInp
       input.relatedCallId ?? null,
       input.relatedWorkflowRunId ?? null,
       input.metadata ? JSON.stringify(input.metadata) : null,
+      input.relatedDealId ?? null,
     ],
   );
 }
