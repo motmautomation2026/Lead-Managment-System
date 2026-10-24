@@ -493,8 +493,12 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
     params,
   );
 
-  // Batch-load next actions for the page rather than N+1 querying per lead.
-  const ids = result.rows.map((r) => r.id);
+  const nextActions = await loadNextActions(db, result.rows.map((r) => r.id));
+  return result.rows.map((row) => leadToDto(row, nextActions.get(row.id) ?? null));
+}
+
+/** Batch-loads next actions for a page of leads rather than N+1 querying per lead. */
+export async function loadNextActions(db: Queryable, ids: string[]) {
   const nextActions = new Map<string, Awaited<ReturnType<typeof getLeadNextAction>>>();
   if (ids.length > 0) {
     const naResult = await db.query<{
@@ -519,8 +523,7 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
       });
     }
   }
-
-  return result.rows.map((row) => leadToDto(row, nextActions.get(row.id) ?? null));
+  return nextActions;
 }
 
 export interface UpdateLeadInput {
