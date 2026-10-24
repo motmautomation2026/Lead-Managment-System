@@ -13,6 +13,7 @@ export const keys = {
   profiles: ["profiles"] as const,
   workspaces: ["workspaces"] as const,
   leads: (workspaceId: string | null) => ["leads", workspaceId] as const,
+  search: (workspaceId: string | null, q: string) => ["search", workspaceId, q] as const,
   lead: (workspaceId: string | null, id: string) => ["lead", workspaceId, id] as const,
   notes: (workspaceId: string | null, id: string) => ["notes", workspaceId, id] as const,
   contactability: (workspaceId: string | null, id: string) =>

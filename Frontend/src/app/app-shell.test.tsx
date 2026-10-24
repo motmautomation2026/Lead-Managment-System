@@ -92,6 +92,7 @@ vi.mock("@/store", () => ({
     notifications: [],
     markNotificationsRead: noop,
   }),
+  useGlobalSearch: () => ({ enabled: false, query: "", isSearching: false, isError: false }),
 }));
 
 vi.mock("@/store/workspace-context", () => ({

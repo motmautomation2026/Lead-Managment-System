@@ -21,6 +21,7 @@ import {
   type UpdateWorkflowInput,
 } from "@/lib/backend-client";
 import { initials } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type {
   AutomationMode,
   LeadLossReason,
@@ -862,3 +863,26 @@ export const useWakeLead = () =>
     (leadId: string) => backend.agent.leads.wake(leadId),
     (id) => id,
   );
+
+export const SEARCH_MIN_CHARS = 2;
+export const SEARCH_DEBOUNCE_MS = 250;
+
+/** Global search (GET /search): debounced 250 ms, runs from 2 characters, per workspace. */
+export function useGlobalSearch(input: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  const enabled = Boolean(currentWorkspaceId) && q.length >= SEARCH_MIN_CHARS;
+  const result = useQuery({
+    queryKey: keys.search(currentWorkspaceId, q),
+    queryFn: ({ signal }) => backend.search(q, signal),
+    enabled,
+    staleTime: 30_000,
+  });
+  return {
+    ...result,
+    query: q,
+    enabled,
+    /** Typing has not settled yet, or the request is in flight. */
+    isSearching: input.trim() !== q || (enabled && result.isFetching),
+  };
+}

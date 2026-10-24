@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,19 +14,12 @@ import {
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { AddLeadContext } from "@/app/add-lead-context";
+import { CommandPalette } from "@/app/command-palette";
 import { AppSidebar } from "@/app/sidebar";
 import { TopBar } from "@/app/top-bar";
 import { AddLeadDialog } from "@/features/leads/add-lead-dialog";
-import { messageFromError, useLeads } from "@/store";
+import { messageFromError } from "@/store";
 import { backend } from "@/lib/backend-client";
 import { keys } from "@/store/query";
 import { useWorkspace } from "@/store/workspace-context";
@@ -46,9 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
-  const navigate = useNavigate();
   const client = useQueryClient();
-  const { leads } = useLeads();
   const { setCurrentWorkspaceId } = useWorkspace();
 
   const createWorkspace = useMutation({
@@ -156,44 +146,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </DialogContent>
       </Dialog>
 
-      <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
-        <CommandInput placeholder="Type a command or search…" />
-        <CommandList>
-          <CommandEmpty>No results found.</CommandEmpty>
-          <CommandGroup heading="Actions">
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                setAddOpen(true);
-              }}
-            >
-              Add Lead
-            </CommandItem>
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                void navigate({ to: "/tasks" });
-              }}
-            >
-              Open Tasks
-            </CommandItem>
-          </CommandGroup>
-          <CommandGroup heading="Leads">
-            {leads.slice(0, 8).map((l) => (
-              <CommandItem
-                key={l.id}
-                value={`${l.firstName} ${l.lastName} ${l.company}`}
-                onSelect={() => {
-                  setPaletteOpen(false);
-                  void navigate({ to: "/leads/$leadId", params: { leadId: l.id } });
-                }}
-              >
-                {l.firstName} {l.lastName} · {l.company}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </CommandList>
-      </CommandDialog>
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onCreateContact={() => setAddOpen(true)}
+      />
     </AddLeadContext.Provider>
   );
 }

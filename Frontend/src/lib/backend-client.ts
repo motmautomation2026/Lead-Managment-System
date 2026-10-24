@@ -1,4 +1,5 @@
 import { backendBaseUrl, configurationError, supabase } from "./supabase-client";
+import type { SearchResults } from "@/types/search";
 import type {
   AgentStatus,
   AppNotification,
@@ -682,6 +683,8 @@ export interface GoogleCalendarConnection {
 }
 
 export const backend = {
+  /** Global search (B4): q trimmed, ≥ 2 characters. */
+  search: (q: string, signal?: AbortSignal) => get<SearchResults>(query("/search", { q }), signal),
   me: (signal?: AbortSignal) =>
     get<{ id: string; name: string; email: string; role: "admin" | "salesperson" }>("/me", signal),
   profiles: (signal?: AbortSignal) =>

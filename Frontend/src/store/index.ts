@@ -24,6 +24,7 @@ export {
   useAgentDecision,
   useAgentStats,
   useLeadAgentPanel,
+  useGlobalSearch,
   useRateDecision,
   useReportDecision,
   useResolveReport,
