@@ -22,6 +22,7 @@ import { Route as AutomationsRunsRouteImport } from './routes/automations.runs'
 import { Route as AutomationsTemplatesRouteImport } from './routes/automations.templates'
 import { Route as CompaniesIndexRouteImport } from './routes/companies.index'
 import { Route as DealsIndexRouteImport } from './routes/deals.index'
+import { Route as DevUiRouteImport } from './routes/dev.ui'
 import { Route as LeadsIndexRouteImport } from './routes/leads.index'
 import { Route as LeadsLeadIdRouteImport } from './routes/leads.$leadId'
 import { Route as ProposalsIndexRouteImport } from './routes/proposals.index'
@@ -92,6 +93,11 @@ const DealsIndexRoute = DealsIndexRouteImport.update({
   path: '/deals/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DevUiRoute = DevUiRouteImport.update({
+  id: '/dev/ui',
+  path: '/dev/ui',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LeadsIndexRoute = LeadsIndexRouteImport.update({
   id: '/leads/',
   path: '/leads/',
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
+  '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
@@ -144,6 +151,7 @@ export interface FileRoutesByTo {
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
+  '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations': typeof AutomationsIndexRoute
   '/companies': typeof CompaniesIndexRoute
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
+  '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
@@ -185,6 +194,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/automations/runs'
     | '/automations/templates'
+    | '/dev/ui'
     | '/leads/$leadId'
     | '/automations/'
     | '/companies/'
@@ -204,6 +214,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/automations/runs'
     | '/automations/templates'
+    | '/dev/ui'
     | '/leads/$leadId'
     | '/automations'
     | '/companies'
@@ -223,6 +234,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/automations/runs'
     | '/automations/templates'
+    | '/dev/ui'
     | '/leads/$leadId'
     | '/automations/'
     | '/companies/'
@@ -243,6 +255,7 @@ export interface RootRouteChildren {
   TasksRoute: typeof TasksRoute
   AutomationsRunsRoute: typeof AutomationsRunsRoute
   AutomationsTemplatesRoute: typeof AutomationsTemplatesRoute
+  DevUiRoute: typeof DevUiRoute
   LeadsLeadIdRoute: typeof LeadsLeadIdRoute
   AutomationsIndexRoute: typeof AutomationsIndexRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
@@ -345,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DealsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dev/ui': {
+      id: '/dev/ui'
+      path: '/dev/ui'
+      fullPath: '/dev/ui'
+      preLoaderRoute: typeof DevUiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/leads/': {
       id: '/leads/'
       path: '/leads'
@@ -387,6 +407,7 @@ const rootRouteChildren: RootRouteChildren = {
   TasksRoute: TasksRoute,
   AutomationsRunsRoute: AutomationsRunsRoute,
   AutomationsTemplatesRoute: AutomationsTemplatesRoute,
+  DevUiRoute: DevUiRoute,
   LeadsLeadIdRoute: LeadsLeadIdRoute,
   AutomationsIndexRoute: AutomationsIndexRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
