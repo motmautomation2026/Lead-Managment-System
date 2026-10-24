@@ -79,6 +79,30 @@ export const CONSTRAINT_MESSAGES: Record<string, { status: number; message: stri
   profiles_full_name_not_blank: { status: 400, message: "Full name can't be blank." },
   whatsapp_daily_cap_positive: { status: 400, message: "The daily WhatsApp limit must be between 1 and 10,000." },
   whatsapp_delay_valid: { status: 400, message: "Minimum message spacing must be 1–300 seconds, and the maximum must be between the minimum and 600 seconds." },
+  // companies (032)
+  companies_name_not_blank: { status: 400, message: "Company name can't be blank." },
+  companies_normalized_name_not_blank: { status: 400, message: "Company name must contain more than a legal suffix such as Pvt Ltd." },
+  companies_domain_lowercase: { status: 400, message: "The company domain must be written in lowercase, for example example.com." },
+  companies_merge_target_not_self: { status: 400, message: "A company can't be merged into itself." },
+  companies_revenue_min_le_max: { status: 400, message: "The minimum revenue can't be more than the maximum." },
+  companies_workspace_normalized_name_key: { status: 409, message: "A company with this name already exists in this workspace." },
+  companies_workspace_domain_key: { status: 409, message: "Another company in this workspace already uses this domain." },
+  // deals (032)
+  deals_name_not_blank: { status: 400, message: "Deal name can't be blank." },
+  deals_amount_non_negative: { status: 400, message: "Deal amount can't be negative." },
+  deals_currency_not_blank: { status: 400, message: "Choose a currency for the deal." },
+  deals_source_valid: { status: 400, message: "The deal source isn't valid." },
+  deals_lost_has_reason: { status: 400, message: "Choose a loss reason before marking a deal as Lost." },
+  deals_closed_at_matches_stage: { status: 400, message: "Only Won or Lost deals have a close time." },
+  // duplicate review, saved views (032)
+  company_duplicate_candidates_reason_valid: { status: 400, message: "The duplicate reason isn't valid." },
+  company_duplicate_candidates_status_valid: { status: 400, message: "The duplicate status isn't valid." },
+  company_duplicate_candidates_shape: { status: 400, message: "A duplicate suggestion needs two different companies, or a company and a contact." },
+  company_duplicate_candidates_resolved_matches_status: { status: 400, message: "Only merged or dismissed suggestions have a resolution time." },
+  company_duplicate_candidates_pair_key: { status: 409, message: "These two companies are already suggested as duplicates." },
+  company_duplicate_candidates_contact_key: { status: 409, message: "This contact is already suggested for review with this company." },
+  saved_views_object_valid: { status: 400, message: "A saved view must be for contacts, companies or deals." },
+  saved_views_name_not_blank: { status: 400, message: "View name can't be blank." },
 };
 
 /** Messages our own triggers raise with errcode 23514. They are written for users, so they pass through. */
@@ -93,6 +117,9 @@ const REFERENCE_LABELS: Record<string, string> = {
   default_lead_owner_id: "owner",
   lead_id: "lead",
   merged_into_lead_id: "lead",
+  company_id: "company",
+  merged_into_company_id: "company",
+  deal_id: "deal",
   workflow_id: "workflow",
   workflow_version_id: "workflow version",
   workflow_run_id: "workflow enrollment",
