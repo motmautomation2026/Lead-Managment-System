@@ -12,6 +12,8 @@ import type { DealStage, MeetingOutcome, ProposalStatus } from "../../src/domain
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
+// Tests that loop over several fresh contacts make many staging round-trips.
+const LOOP_TIMEOUT_MS = 120_000;
 
 describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;
@@ -158,7 +160,7 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
       expect([value, deal!.stage]).toEqual([value, expected]);
       if (expected === "lost") expect(deal).toMatchObject({ loss_reason: "other", loss_notes: "Meeting outcome: not interested" });
     }
-  });
+  }, LOOP_TIMEOUT_MS);
 
   it("second_meeting and revision_requested may move back; other events never do", async () => {
     const lead = await contact();
@@ -185,7 +187,7 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
       await proposalStatus(p.id, status);
       expect([status, (await dealsOf(lead.id))[0]!.stage]).toEqual([status, "proposal_preparation"]);
     }
-  });
+  }, LOOP_TIMEOUT_MS);
 
   it("accepted → deal won with the proposal amount; the contact is won exactly as before", async () => {
     const lead = await contact();
@@ -213,7 +215,7 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
       expect(deal!.closed_at).not.toBeNull();
       expect(await leadRow(lead.id)).toMatchObject({ lifecycle_state: "long_term_nurture", pipeline_stage: "proposal_decision_pending" });
     }
-  });
+  }, LOOP_TIMEOUT_MS);
 
   /** One won deal (created directly) + one open deal from a meeting. */
   async function contactWithWonAndOpenDeal() {
@@ -240,7 +242,7 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
       expect(rows.find((d) => d.id === openId)).toMatchObject({ stage: "lost", loss_reason: "other", loss_notes: `Contact ${state}` });
       expect(rows.find((d) => d.id === wonId)).toMatchObject({ stage: "won", loss_reason: null });
     }
-  });
+  }, LOOP_TIMEOUT_MS);
 
   it("the old Won button wins the deal only when there is exactly one open deal", async () => {
     const one = await contact();
