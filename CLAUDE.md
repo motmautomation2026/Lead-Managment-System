@@ -21,6 +21,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`) or a `DecisionModel`
   (`tests/helpers/fakeDecisionModel.ts`). The agent also reads `OPENAI_DECISION_MODEL`,
   `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none) and `OPENAI_PRICES_JSON`.
+- `CRM_COMPANY_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the company sweeper.
 
 ## Tests
 
@@ -63,7 +64,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `031`).
+  (currently `032`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -80,7 +81,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `031`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `032`).
 
 ## Way of working
 
@@ -229,6 +230,26 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `origin: 'agent'` (created_by/timeline actor "AI Agent"). B37: `recordActionResult` on a `cancelled`
   action no longer throws; success → timeline "A message was already being sent when the reply arrived"
   (provider id in detail/metadata; no column for it), failure/deferred → no-op; the run is never touched.
+- **B3a (CRM v2 foundation + Companies, backend only, no routes/UI):** migration 032 (`pg_trgm` in `extensions`;
+  `companies`, `deal_stage` + `deals` (no logic until B3b), `company_duplicate_candidates`, `saved_views`;
+  `leads.company_id` / `company_link_checked_at` / `company_link_attempts`; `meetings/proposals.deal_id`,
+  `timeline_events.related_deal_id`, `workspaces.crm_deals_backfilled_at`). Pure `domain/companyNormalize.ts`
+  (`normalizeCompanyName`: lower, & → and, punctuation out, trailing legal suffixes out; no SQL copy;
+  `isPlaceholderCompany`, `corporateDomain`, `FREE_MAIL_DOMAINS`) and `domain/companyMatch.ts` (design §2.1 steps
+  1–5). `services/companies.service.ts`: `linkCompanyForLead` (INSERT … ON CONFLICT DO NOTHING + re-lookup for
+  concurrent creates; `similar_name` pairs at trigram similarity ≥ 0.6, up to 3), `linkCompanySafely` (SAVEPOINT;
+  failure → attempts + 1, checked_at null), hooked into createLead, importLeads (per row), ingestWebsiteLead (new
+  lead) and updateLead (company or email changed); `mergeCompanies` (no route yet); `runCompanySweep` (worker
+  tick, 200/tick, one connection, SKIP LOCKED; `npm run crm:sweep -- --once`, staging only). Duplicate candidates
+  are a company PAIR (a < b) or ONE company + the contact that disagrees (`company_b_id` null, `lead_id`,
+  `observed_name/domain`; e.g. "TML" linked to "Tata Motors" by domain). Lead DTO: read-only `companyId`.
+
+## CRM v2
+
+- Design: `docs/crm-v2/B2-design.md` (approved); inventory `docs/crm-v2/B1-inventory.md`.
+- Contacts = rows in `leads` (UI says Contact). `leads.company` stays populated and is kept equal to the linked
+  company's name (placeholders such as "Not provided" → no company, text unchanged).
+- Company linking never blocks creating or editing a contact; failures are retried by the sweeper.
 
 ## AI agent (Feature 3)
 
