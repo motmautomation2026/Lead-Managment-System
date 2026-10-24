@@ -22,6 +22,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (`tests/helpers/fakeDecisionModel.ts`). The agent also reads `OPENAI_DECISION_MODEL`,
   `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none) and `OPENAI_PRICES_JSON`.
 - `CRM_COMPANY_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the company sweeper.
+- `CRM_DEAL_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the deal backfill sweeper.
 
 ## Tests
 
@@ -32,6 +33,10 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   in the AI and spend credits): only `[test] …` workspaces from `createTestWorkspace`.
   `tests/setup-env.ts` fails a file that leaves leads by test users (`@example.com`) in any other
   workspace.
+- Never pipe test or check commands through `tail`, `head` or anything else that hides the exit code.
+  Check every exit code.
+- Push ONLY after `npm run check` passes in both packages AND `npm run test:integration:staging` has
+  passed twice in a row. If a run fails, investigate, fix or report it, and do not push.
 - Run them with `npm run test:integration:staging` in `Backend/`. It loads
   `TEST_DATABASE_URL` (plus the staging `SUPABASE_URL` / service key, for Storage) from
   `Backend/.env`, refuses the prod ref, and runs `tests/integration`. Run it after every backend change.
@@ -243,6 +248,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   tick, 200/tick, one connection, SKIP LOCKED; `npm run crm:sweep -- --once`, staging only). Duplicate candidates
   are a company PAIR (a < b) or ONE company + the contact that disagrees (`company_b_id` null, `lead_id`,
   `observed_name/domain`; e.g. "TML" linked to "Tata Motors" by domain). Lead DTO: read-only `companyId`.
+- **B3b (CRM v2 deals, backend only, no list routes/UI, no migration):** pure `domain/dealRouting.ts`
+  (`dealStageForMeetingOutcome` / `dealStageForProposalStatus`, null = no change; `canMoveDealStage`: events
+  forward only except second_meeting → meeting_scheduled and revision_requested → proposal_preparation,
+  closed deals reopen only manually; `dealStageFromLeadStage`; `pickDealToAttach`; `defaultDealName`;
+  `backfillDealStage`; `DEAL_CLOSED_LOSS_REASON = 'other'`). `services/deals.service.ts`: `createDeal`,
+  `moveDealStage`, hooks in a SAVEPOINT `deal_hook` (a deal error never blocks the meeting/proposal/contact;
+  a bad requested `dealId` is rethrown → 400): `scheduleMeeting` / `createProposal` attach to the requested
+  or newest open deal (moved forward only; proposal amount fills an empty deal amount) else create at
+  meeting_scheduled / proposal_preparation; meeting outcome / proposal status move `meetings/proposals.deal_id`
+  BEFORE today's contact routing; contact lost/discarded/DNC (incl. call outcome)/merged → open deals lost
+  (`other`, "Contact <state>"); `markWon(..., fromWonButton=true)` (only the `/won` route) wins exactly one
+  open deal. Optional `dealId` on POST /meetings and POST /proposals. `runDealSweep` (worker, 100 contacts/
+  tick, one connection, SKIP LOCKED, failures skipped for the process lifetime; sets
+  `workspaces.crm_deals_backfilled_at` when a workspace has nothing left); `npm run crm:deal-sweep -- --once`
+  (staging only). Timeline deal rows: kind `system`, `related_deal_id`.
 
 ## CRM v2
 
@@ -250,6 +270,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Contacts = rows in `leads` (UI says Contact). `leads.company` stays populated and is kept equal to the linked
   company's name (placeholders such as "Not provided" → no company, text unchanged).
 - Company linking never blocks creating or editing a contact; failures are retried by the sweeper.
+- Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
+  manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
+  contact owner, `agent_status` or automation.
 
 ## AI agent (Feature 3)
 
