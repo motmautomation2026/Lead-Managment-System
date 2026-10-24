@@ -3,6 +3,20 @@ import { withTransaction } from "../db.js";
 import { jidToPhoneE164 } from "../domain/phone.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
+import { createTask } from "./tasks.service.js";
+import { extractInboundText } from "../domain/whatsappInboundText.js";
+import { encryptText } from "../security/encryption.js";
+import type { AgentStatus } from "../agent/rules.js";
+
+export const REPLY_TASK_TITLE = "Lead replied on WhatsApp — respond today";
+const IST_OFFSET_MS = 330 * 60_000;
+
+/** 23:59 today, Asia/Kolkata (fixed UTC+05:30). */
+function endOfIstDay(now = new Date()) {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  ist.setUTCHours(23, 59, 0, 0);
+  return new Date(ist.getTime() - IST_OFFSET_MS);
+}
 
 function messageTime(message: WAMessage) {
   const raw = message.messageTimestamp;
@@ -41,8 +55,9 @@ export async function processInboundUpsert(workspaceId: string, event: { message
       );
       if (inserted.rowCount === 0) return;
 
-      const matches = await db.query<{ id: string; owner_id: string | null }>(
-        `select id, owner_id from public.leads
+      const matches = await db.query<{ id: string; owner_id: string | null; owner_name: string | null; agent_status: AgentStatus }>(
+        `select id, owner_id, agent_status, (select full_name from public.profiles p where p.id = leads.owner_id) as owner_name
+           from public.leads
           where phone_e164 = $1 and workspace_id = $2 and lifecycle_state = 'active' and merged_into_lead_id is null
           for update`,
         [phone, workspaceId],
@@ -52,6 +67,20 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         `update public.whatsapp_inbound_events set match_count = $2, disposition = $3 where message_id = $1`,
         [id, matches.rowCount, disposition],
       );
+
+      // The text is stored only encrypted and only for a single matched lead; never log it.
+      if (disposition === "matched") {
+        const { text, truncated } = extractInboundText(message.message);
+        if (text) {
+          const body = encryptText(text, `whatsapp:inbound:${id}`);
+          await db.query(
+            `update public.whatsapp_inbound_events
+                set body_ciphertext = $2, body_iv = $3, body_tag = $4, body_key_version = $5, body_truncated = $6
+              where message_id = $1`,
+            [id, body.ciphertext, body.iv, body.tag, body.keyVersion, truncated],
+          );
+        }
+      }
 
       for (const lead of matches.rows) {
         await db.query(
@@ -103,6 +132,24 @@ export async function processInboundUpsert(workspaceId: string, event: { message
           );
         }
         await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
+        // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
+        if (disposition === "matched" && lead.owner_id && (lead.agent_status === "active" || lead.agent_status === "paused")) {
+          const open = await db.query(
+            `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = $2 limit 1`,
+            [lead.id, REPLY_TASK_TITLE],
+          );
+          if (!open.rowCount) {
+            await createTask(db, null, workspaceId, {
+              leadId: lead.id,
+              ownerId: lead.owner_id,
+              ownerName: lead.owner_name,
+              type: "follow_up",
+              title: REPLY_TASK_TITLE,
+              dueAt: endOfIstDay().toISOString(),
+              origin: "agent",
+            });
+          }
+        }
       }
 
       if (matches.rowCount! > 1) {

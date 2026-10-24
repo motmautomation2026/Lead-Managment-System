@@ -2,7 +2,8 @@ import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
-import type { TaskType } from "../domain/enums.js";
+import type { TaskOrigin, TaskType } from "../domain/enums.js";
+import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 
 export interface TaskRow {
   id: string;
@@ -13,7 +14,7 @@ export interface TaskRow {
   title: string;
   due_at: Date;
   status: "open" | "completed" | "cancelled";
-  origin: "manual" | "automation";
+  origin: TaskOrigin;
   created_by: string | null;
   created_by_name: string | null;
   source_workflow_run_id: string | null;
@@ -53,7 +54,7 @@ export interface CreateTaskInput {
   type: TaskType;
   title: string;
   dueAt: string;
-  origin?: "manual" | "automation";
+  origin?: TaskOrigin;
   sourceWorkflowRunId?: string | null;
   sourceWorkflowStepId?: string | null;
 }
@@ -102,12 +103,19 @@ export async function createTask(
       input.sourceWorkflowRunId ?? null,
       input.sourceWorkflowStepId ?? null,
       actor?.id ?? null,
-      actor?.fullName ?? (origin === "automation" ? "Automation" : null),
+      actor?.fullName ?? (origin === "automation" ? "Automation" : origin === "agent" ? AGENT_ACTOR_NAME : null),
     ],
   );
   const task = result.rows[0]!;
 
-  const who = origin === "automation" ? AUTOMATION_ACTOR : actor ? actorEvent(actor) : AUTOMATION_ACTOR;
+  const who =
+    origin === "agent"
+      ? { ...AUTOMATION_ACTOR, actorName: AGENT_ACTOR_NAME }
+      : origin === "automation"
+        ? AUTOMATION_ACTOR
+        : actor
+          ? actorEvent(actor)
+          : AUTOMATION_ACTOR;
   await addTimelineEvent(db, {
     leadId: input.leadId,
     kind: "task",
