@@ -27,6 +27,10 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - `npm run check` (in both `Backend/` and `Frontend/`) must pass and stays database-free.
 - Integration tests (`Backend/tests/integration`) need `TEST_DATABASE_URL` (staging), run
   serially, and refuse the prod ref.
+- Integration tests never write into real workspaces (e.g. MOTM, which may auto-enroll new leads
+  in the AI and spend credits): only `[test] …` workspaces from `createTestWorkspace`.
+  `tests/setup-env.ts` fails a file that leaves leads by test users (`@example.com`) in any other
+  workspace.
 - Run them with `npm run test:integration:staging` in `Backend/`. It loads
   `TEST_DATABASE_URL` (plus the staging `SUPABASE_URL` / service key, for Storage) from
   `Backend/.env`, refuses the prod ref, and runs `tests/integration`. Run it after every backend change.
@@ -59,7 +63,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `029`).
+  (currently `030`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -76,7 +80,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `029`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `030`).
 
 ## Way of working
 
@@ -209,6 +213,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `lead-ai-panel.tsx` (lead page "AI" tab), `enroll-in-ai-dialog.tsx`, `agent-labels.ts` (display
   labels only). Leads list: AI column + filter; admins get row checkboxes → "Enroll in AI".
   `StatusBadge` takes `display` to show text as given (no `label()` title-casing).
+- **3D-3 (cost safety):** migration 030 `agent_settings.max_decisions_per_day` (default 50, 1–10000;
+  API `maxDecisionsPerDay`, "Max AI decisions per day") + `daily_cap_alerted_on`: at the cap (today's
+  IST `agent_decisions`) the runner defers to the next IST midnight + 5 min, no attempt burned, admins
+  notified once per day. `GET/PUT /agent/settings` return read-only `activeLeadCount`, shown in the
+  Off → Shadow confirm.
 
 ## AI agent (Feature 3)
 
