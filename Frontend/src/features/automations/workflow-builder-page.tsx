@@ -466,12 +466,14 @@ function Builder({ workflow }: { workflow: Workflow }) {
                       <Switch
                         checked={step.enabled}
                         disabled={!editable}
+                        aria-label="Step enabled"
                         onCheckedChange={(value) => updateStep(step.id, { enabled: value }, true)}
                       />
                       <Button
                         size="icon"
                         variant="ghost"
                         disabled={!editable || index === 0}
+                        aria-label="Move step up"
                         onClick={() => move(index, -1)}
                       >
                         <ArrowUp className="size-4" />
@@ -480,6 +482,7 @@ function Builder({ workflow }: { workflow: Workflow }) {
                         size="icon"
                         variant="ghost"
                         disabled={!editable || index === steps.length - 1}
+                        aria-label="Move step down"
                         onClick={() => move(index, 1)}
                       >
                         <ArrowDown className="size-4" />
@@ -488,6 +491,7 @@ function Builder({ workflow }: { workflow: Workflow }) {
                         size="icon"
                         variant="ghost"
                         disabled={!editable}
+                        aria-label="Delete step"
                         onClick={() =>
                           setSteps(
                             steps.filter((item) => item.id !== step.id),

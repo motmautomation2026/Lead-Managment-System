@@ -175,7 +175,12 @@ export function ScheduleMeetingDialog({
                       value={participant.email}
                       onChange={(event) => updateParticipant(index, { email: event.target.value })}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => removeParticipant(index)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Remove participant"
+                      onClick={() => removeParticipant(index)}
+                    >
                       <X className="size-4" />
                     </Button>
                   </div>
