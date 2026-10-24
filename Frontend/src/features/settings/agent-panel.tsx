@@ -46,7 +46,8 @@ type NumberField =
   | "wakeMinDays"
   | "wakeMaxDays"
   | "repQuietHours"
-  | "monthlyBudgetUsd";
+  | "monthlyBudgetUsd"
+  | "maxDecisionsPerDay";
 
 const NUMBER_FIELDS: { key: NumberField; label: string; step?: string }[] = [
   { key: "minGapHours", label: "Minimum gap between messages (hours)" },
@@ -58,6 +59,7 @@ const NUMBER_FIELDS: { key: NumberField; label: string; step?: string }[] = [
   { key: "wakeMaxDays", label: "Check back after at most (days)" },
   { key: "repQuietHours", label: "Wait after a rep's call or note (hours)" },
   { key: "monthlyBudgetUsd", label: "Monthly budget (USD)", step: "0.01" },
+  { key: "maxDecisionsPerDay", label: "Max AI decisions per day" },
 ];
 
 const STARTER_PLAYBOOK = `# Who we are

@@ -22,6 +22,7 @@ interface SettingsRow {
   nurture_long_term: boolean;
   /** numeric comes back from pg as a string */
   monthly_budget_usd: string;
+  max_decisions_per_day: number;
   decision_model: string | null;
   grounding_model: string | null;
   email_opt_out_text: string;
@@ -49,6 +50,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   wakeMaxDays: "wake_max_days",
   nurtureLongTerm: "nurture_long_term",
   monthlyBudgetUsd: "monthly_budget_usd",
+  maxDecisionsPerDay: "max_decisions_per_day",
   decisionModel: "decision_model",
   groundingModel: "grounding_model",
   emailOptOutText: "email_opt_out_text",
@@ -76,6 +78,7 @@ function settingsToDto(row: SettingsRow) {
     wakeMaxDays: row.wake_max_days,
     nurtureLongTerm: row.nurture_long_term,
     monthlyBudgetUsd: Number(row.monthly_budget_usd),
+    maxDecisionsPerDay: row.max_decisions_per_day,
     decisionModel: row.decision_model,
     groundingModel: row.grounding_model,
     emailOptOutText: row.email_opt_out_text,

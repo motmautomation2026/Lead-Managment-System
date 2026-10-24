@@ -426,6 +426,7 @@ export interface AgentSettings {
   wakeMaxDays: number;
   nurtureLongTerm: boolean;
   monthlyBudgetUsd: number;
+  maxDecisionsPerDay: number;
   /** null = the server's default model. */
   decisionModel: string | null;
   groundingModel: string | null;

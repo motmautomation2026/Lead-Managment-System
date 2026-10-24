@@ -22,6 +22,7 @@ const settings: AgentSettingsRow = {
   decision_model: null,
   grounding_model: null,
   monthly_budget_usd: "100",
+  max_decisions_per_day: 50,
   current_playbook_version: 3,
   company_display_name: null,
 };

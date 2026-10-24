@@ -37,6 +37,7 @@ export const settingsUpdateSchema = z
     nurtureLongTerm: z.boolean(),
     // The DB requires > 0 (migration 024).
     monthlyBudgetUsd: z.number().positive().max(99_999_999),
+    maxDecisionsPerDay: z.number().int().min(1).max(10_000),
     decisionModel: modelName,
     groundingModel: modelName,
     emailOptOutText: nonBlank,

@@ -20,12 +20,15 @@ describe("agent settings update schema", () => {
   });
 
   it("rejects non-positive numbers and out-of-range quiet hours", () => {
-    for (const field of ["minGapHours", "maxTouches7d", "maxTouchesTotal", "emailMaxWords", "whatsappMaxWords", "wakeMinDays", "wakeMaxDays", "monthlyBudgetUsd"]) {
+    for (const field of ["minGapHours", "maxTouches7d", "maxTouchesTotal", "emailMaxWords", "whatsappMaxWords", "wakeMinDays", "wakeMaxDays", "monthlyBudgetUsd", "maxDecisionsPerDay"]) {
       expect(parse({ [field]: 0 }).success, field).toBe(false);
       expect(parse({ [field]: -1 }).success, field).toBe(false);
     }
     expect(parse({ minGapHours: 1.5 }).success).toBe(false);
     expect(parse({ monthlyBudgetUsd: 12.5 }).success).toBe(true);
+    expect(parse({ maxDecisionsPerDay: 1.5 }).success).toBe(false);
+    expect(parse({ maxDecisionsPerDay: 10_001 }).success).toBe(false);
+    expect(parse({ maxDecisionsPerDay: 10_000 }).success).toBe(true);
     expect(parse({ repQuietHours: -1 }).success).toBe(false);
     expect(parse({ repQuietHours: 169 }).success).toBe(false);
     expect(parse({ repQuietHours: 168 }).success).toBe(true);

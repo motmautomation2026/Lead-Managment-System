@@ -233,6 +233,32 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     expect(settings.rows[0].budget_alerted_month).not.toBeNull();
   });
 
+  it("daily decision cap reached: no model call, deferred to the next IST midnight + 5 min, one admin notification over two ticks", async () => {
+    const { ws, leadId, wakeupId } = await scenario();
+    await pool.query(`update public.agent_settings set max_decisions_per_day = 2 where workspace_id = $1`, [ws]);
+    await pool.query(
+      `insert into public.agent_decisions (workspace_id, lead_id, mode, action, cost_usd, outcome) values ($1, $2, 'shadow', 'wait', 0, 'draft'), ($1, $2, 'shadow', 'wait', 0, 'draft')`,
+      [ws, leadId],
+    );
+    const model = createFakeDecisionModel();
+    expect((await tick(ws, model))[0]).toMatchObject({ result: "deferred" });
+    const deferred = await wakeupRow(wakeupId);
+    expect(deferred).toMatchObject({ status: "pending", attempt_count: 0 });
+    // IST is a fixed UTC+05:30.
+    const IST_OFFSET = 330 * MIN;
+    const DAY = 24 * HOUR;
+    const nextIstMidnight = Math.floor((Date.now() + IST_OFFSET) / DAY) * DAY + DAY - IST_OFFSET;
+    expect(deferred.due_at.getTime()).toBe(nextIstMidnight + 5 * MIN);
+
+    await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 minute' where id = $1`, [wakeupId]);
+    expect((await tick(ws, model))[0]).toMatchObject({ result: "deferred" });
+    expect(model.calls).toEqual([]);
+    const notes = await pool.query(`select title, kind, href from public.notifications where workspace_id = $1 and recipient_id = $2`, [ws, adminId]);
+    expect(notes.rows).toEqual([{ title: "AI agent paused for today: daily decision limit reached", kind: "warning", href: "/settings" }]);
+    const settings = await pool.query(`select daily_cap_alerted_on from public.agent_settings where workspace_id = $1`, [ws]);
+    expect(settings.rows[0].daily_cap_alerted_on).not.toBeNull();
+  });
+
   it("a missing price defers 10 minutes without burning an attempt; so does a missing playbook (1 h)", async () => {
     const priced = await scenario();
     const model = createFakeDecisionModel();

@@ -29,6 +29,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   decision_model: string | null;
   grounding_model: string | null;
   monthly_budget_usd: string;
+  max_decisions_per_day: number;
   current_playbook_version: number | null;
   company_display_name: string | null;
 }

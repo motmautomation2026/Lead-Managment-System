@@ -15,6 +15,7 @@ const settings = {
   wakeMaxDays: 30,
   nurtureLongTerm: false,
   monthlyBudgetUsd: 100,
+  maxDecisionsPerDay: 50,
   decisionModel: null,
   groundingModel: null,
   emailOptOutText: "Reply stop.",

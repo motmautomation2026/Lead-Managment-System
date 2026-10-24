@@ -30,6 +30,7 @@ const HANDOFF_TITLE = "AI couldn't write a safe message";
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
+const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
 
 export interface AgentRunnerDeps {
   model: DecisionModel;
@@ -306,9 +307,27 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   );
   const budget = Number(state.monthly_budget_usd);
   if (spent >= budget) {
-    await alertBudgetOnce(wakeup.workspace_id, spent, budget);
+    await alertAdminsOnce(wakeup.workspace_id, "budget_alerted_month", IST_MONTH, "AI agent paused: monthly budget reached",
+      `Spent $${spent.toFixed(2)} of $${budget.toFixed(2)} this month. The agent resumes next month or when an admin raises the budget in Settings → AI agent.`);
     console.log(`[agent] wakeup ${wakeup.id}: workspace ${wakeup.workspace_id} reached its monthly budget; deferred 1 h.`);
     return defer(BUDGET_RETRY_MS);
+  }
+
+  // 3b. Daily decision cap (IST day); at the cap, wait for the next IST day.
+  const today = (
+    await pool.query<{ n: number; resume_at: Date }>(
+      `select count(*)::int as n, ((${IST_DAY} + interval '1 day 5 minutes') at time zone 'Asia/Kolkata') as resume_at
+         from public.agent_decisions
+        where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata')`,
+      [wakeup.workspace_id],
+    )
+  ).rows[0]!;
+  if (today.n >= state.max_decisions_per_day) {
+    await alertAdminsOnce(wakeup.workspace_id, "daily_cap_alerted_on", IST_DAY, "AI agent paused for today: daily decision limit reached",
+      `${today.n} AI decisions today (limit ${state.max_decisions_per_day}). The agent resumes after midnight IST or when an admin raises "Max AI decisions per day" in Settings → AI agent.`);
+    console.log(`[agent] wakeup ${wakeup.id}: workspace ${wakeup.workspace_id} reached its daily decision cap; deferred to the next IST day.`);
+    await retryLater(wakeup, today.resume_at, true);
+    return { ...base, result: "deferred" };
   }
 
   // 4-7. Context and the model calls (no client held).
@@ -468,21 +487,30 @@ async function recordFailure(
   });
 }
 
-/** Notifies every active admin once per IST month that the workspace's budget is reached. */
-async function alertBudgetOnce(workspaceId: string, spent: number, budget: number): Promise<void> {
+/**
+ * Notifies every active admin once per IST period (`period` = IST_MONTH or IST_DAY); `column`
+ * holds the period's date and is claimed atomically, so concurrent wakeups alert once.
+ */
+async function alertAdminsOnce(
+  workspaceId: string,
+  column: "budget_alerted_month" | "daily_cap_alerted_on",
+  period: string,
+  title: string,
+  detail: string,
+): Promise<void> {
   await withTransaction(async (client) => {
     const claimed = await client.query(
-      `update public.agent_settings set budget_alerted_month = (${IST_MONTH})::date
-        where workspace_id = $1 and budget_alerted_month is distinct from (${IST_MONTH})::date
+      `update public.agent_settings set ${column} = (${period})::date
+        where workspace_id = $1 and ${column} is distinct from (${period})::date
         returning workspace_id`,
       [workspaceId],
     );
     if (!claimed.rowCount) return;
     await client.query(
       `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, href)
-       select $1, p.id, 'AI agent paused: monthly budget reached', $2, 'warning', '/settings'
+       select $1, p.id, $2, $3, 'warning', '/settings'
          from public.profiles p where p.role = 'admin' and p.is_active`,
-      [workspaceId, `Spent $${spent.toFixed(2)} of $${budget.toFixed(2)} this month. The agent resumes next month or when an admin raises the budget in Settings → AI agent.`],
+      [workspaceId, title, detail],
     );
   });
 }
