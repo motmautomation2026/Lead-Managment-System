@@ -1,6 +1,7 @@
 /**
  * A failing internal workflow action goes through the normal failure path
- * instead of staying 'executing' forever (audit B7).
+ * instead of staying 'executing' forever (audit B7). A send whose action an
+ * inbound reply cancelled mid-flight is recorded without a Conflict (B37).
  * Skipped unless TEST_DATABASE_URL is set; commits rows in a fresh workspace
  * per run.
  */
@@ -48,12 +49,12 @@ describeIfDb("internal action failures (requires TEST_DATABASE_URL)", () => {
   }
 
   /** Enrolls a fresh lead in a one-step workflow and claims its action as the worker would. */
-  async function claimedAction(action: "change_lead_stage" | "create_call_task", config: string) {
+  async function claimedAction(action: "change_lead_stage" | "create_call_task", config: string, phone?: string) {
     const { createLead } = await import("../../src/services/leads.service.js");
     const { createWorkflow, updateDraftSteps, publishVersion, updateWorkflow } = await import("../../src/services/workflows.service.js");
     const { enrollLeadInWorkflow } = await import("../../src/services/runs.service.js");
     const lead = await inTransaction((client) =>
-      createLead(client, actor, WORKSPACE_ID, { firstName: "Bea", company: "Bea Pvt Ltd", source: "referral", email: `bea-${randomUUID()}@example.com` }),
+      createLead(client, actor, WORKSPACE_ID, { firstName: "Bea", company: "Bea Pvt Ltd", source: "referral", email: `bea-${randomUUID()}@example.com`, phone }),
     );
     const workflow = await inTransaction((client) => createWorkflow(client, actor, WORKSPACE_ID, { name: `B7 ${randomUUID()}`, trigger: "manual_enrollment" }));
     // delayDays 1 keeps a live staging worker from claiming the action before the test does.
@@ -147,5 +148,57 @@ describeIfDb("internal action failures (requires TEST_DATABASE_URL)", () => {
     const executing = await pool.query(`select count(*)::int as n from public.scheduled_actions where workspace_id = $1 and status = 'executing'`, [WORKSPACE_ID]);
     expect(executing.rows[0].n).toBe(0);
     expect((await state(healthy)).action.status).toBe("completed");
+  });
+
+  describe("B37: an inbound reply cancels an action while its send is in flight", () => {
+    async function cancelledByReply() {
+      const phone = `+9196${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
+      const ids = await claimedAction("create_call_task", "Call back", phone);
+      // The worker is mid-send of an email for this action.
+      await pool.query(`update public.scheduled_actions set action_type = 'send_email' where id = $1`, [ids.actionId]);
+      const { processInboundUpsert } = await import("../../src/services/whatsapp-inbound.service.js");
+      await processInboundUpsert(WORKSPACE_ID, {
+        type: "notify",
+        messages: [
+          {
+            key: { id: `b37-${randomUUID()}`, remoteJid: `${phone.slice(1)}@s.whatsapp.net`, fromMe: false },
+            message: { conversation: "stop" },
+            messageTimestamp: Math.floor(Date.now() / 1000),
+          },
+        ],
+      } as never);
+      expect((await state(ids)).action.status).toBe("cancelled");
+      return ids;
+    }
+
+    async function record(actionId: string, input: import("../../src/services/automation.service.js").RecordResultInput) {
+      const { recordActionResult } = await import("../../src/services/automation.service.js");
+      return inTransaction((client) => recordActionResult(client, actionId, input));
+    }
+
+    it("a send that succeeded anyway: no Conflict, action stays cancelled, run not restarted, timeline note", async () => {
+      const ids = await cancelledByReply();
+      await record(ids.actionId, { outcome: "success", providerMessageId: "<b37@test>" });
+      const { action, run, titles } = await state(ids);
+      expect(action.status).toBe("cancelled");
+      expect(run.status).toBe("cancelled");
+      expect(titles).toContain("A message was already being sent when the reply arrived");
+      expect(titles).not.toContain("Email Sent");
+      const note = await pool.query(`select detail, actor_source from public.timeline_events where lead_id = $1 and title like 'A message was already%'`, [ids.leadId]);
+      expect(note.rows[0]).toEqual({ detail: "Provider message id: <b37@test>", actor_source: "automation" });
+    });
+
+    it.each([
+      ["failed", { outcome: "failure", error: "SMTP timeout", retryable: true }],
+      ["deferred", { outcome: "deferred", error: "Provider down", retryAt: new Date(Date.now() + 60_000) }],
+    ] as const)("a %s send: no retry, no reschedule, no error", async (_label, input) => {
+      const ids = await cancelledByReply();
+      const before = await state(ids);
+      await record(ids.actionId, input);
+      const after = await state(ids);
+      expect(after.action).toEqual(before.action);
+      expect(after.run.status).toBe("cancelled");
+      expect(after.titles).toEqual(before.titles);
+    });
   });
 });

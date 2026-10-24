@@ -465,6 +465,23 @@ export interface RecordResultInput {
  */
 export async function recordActionResult(db: Queryable, actionId: string, input: RecordResultInput) {
   const action = await getActionRowOr404(db, actionId);
+  // B37: an inbound reply cancelled the action mid-send. It stays cancelled and the run isn't touched;
+  // a send that went out anyway is recorded on the timeline, a failed/deferred one is dropped.
+  if (action.status === "cancelled") {
+    const run = await getRunRowOr404(db, action.workspace_id, action.workflow_run_id);
+    if (input.outcome === "success") {
+      await addTimelineEvent(db, {
+        leadId: action.lead_id,
+        kind: "automation",
+        title: "A message was already being sent when the reply arrived",
+        detail: input.providerMessageId ? `Provider message id: ${input.providerMessageId}` : undefined,
+        ...AUTOMATION_ACTOR,
+        relatedWorkflowRunId: run.id,
+        metadata: { actionType: action.action_type, providerMessageId: input.providerMessageId ?? null },
+      });
+    }
+    return { action: (await getActionContext(db, actionId)).action, run };
+  }
   if (action.status !== "executing") {
     throw new ConflictError(`Scheduled action is "${action.status}", expected "executing".`);
   }
