@@ -172,7 +172,7 @@ export function LeadsPage() {
 
         {missing > 0 && (
           <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-            <AlertTriangle className="size-4 text-warning-foreground" />
+            <AlertTriangle className="size-4 text-warning-soft-foreground" />
             {missing} active {missing === 1 ? "lead has" : "leads have"} no next action assigned.
           </div>
         )}
@@ -260,7 +260,7 @@ export function LeadsPage() {
                         ) : hasAutomationStep(l.id) ? (
                           <span className="text-muted-foreground">Automated step scheduled</span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-warning-foreground">
+                          <span className="inline-flex items-center gap-1 text-warning-soft-foreground">
                             <AlertTriangle className="size-3.5" /> No next action
                           </span>
                         )}

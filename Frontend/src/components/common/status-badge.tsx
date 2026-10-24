@@ -6,10 +6,10 @@ type Tone = "neutral" | "info" | "success" | "warning" | "danger" | "primary" | 
 const toneClass: Record<Tone, string> = {
   neutral: "bg-secondary text-secondary-foreground border-border",
   muted: "bg-muted text-muted-foreground border-border",
-  info: "bg-info/10 text-info border-info/25",
-  success: "bg-success/10 text-success border-success/25",
-  warning: "bg-warning/15 text-warning-foreground border-warning/40",
-  danger: "bg-destructive/10 text-destructive border-destructive/25",
+  info: "bg-info-soft text-info-soft-foreground border-info/25",
+  success: "bg-success-soft text-success-soft-foreground border-success/25",
+  warning: "bg-warning-soft text-warning-soft-foreground border-warning/40",
+  danger: "bg-danger-soft text-danger-soft-foreground border-destructive/25",
   primary: "bg-primary/10 text-primary border-primary/25",
 };
 

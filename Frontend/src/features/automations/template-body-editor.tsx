@@ -70,7 +70,7 @@ export function TemplateBodyEditor({
     editorProps: {
       attributes: {
         class:
-          "template-rich-text min-w-0 min-h-[150px] max-h-[320px] overflow-y-auto [overflow-wrap:anywhere] rounded-b-md px-3 py-2 text-sm focus:outline-none [&_a]:text-blue-600 [&_a]:underline",
+          "template-rich-text min-w-0 min-h-[150px] max-h-[320px] overflow-y-auto [overflow-wrap:anywhere] rounded-b-md px-3 py-2 text-sm focus:outline-none [&_a]:text-info [&_a]:underline",
       },
     },
   });
