@@ -15,6 +15,7 @@ import { supabaseAdmin } from "./supabaseAdmin.js";
 import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
 import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
 import { runAgentTick } from "./services/agentRunner.service.js";
+import { runCompanySweep } from "./services/companies.service.js";
 
 /**
  * The automation executor: polls for due scheduled_actions and dispatches
@@ -169,6 +170,16 @@ async function tick(): Promise<void> {
   // embedding are the slow part, done outside any transaction).
   const ingested = await runKnowledgeIngestion({ embedder: getDefaultEmbedder() });
   for (const { id, outcome } of ingested) console.log(`[worker] Knowledge document ${id}: ${outcome}.`);
+
+  // CRM v2: link up to 200 unchecked contacts to companies (backfill + inline-failure safety net).
+  if (env.CRM_COMPANY_SWEEP_ENABLED) {
+    // Codes only: a pg message can quote company names.
+    const swept = await runCompanySweep().catch((err: { code?: string; name?: string }) => {
+      console.error(`[worker] Company sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+      return null;
+    });
+    if (swept && swept.processed > 0) console.log(`[worker] Company sweep: ${swept.processed} contact(s), ${swept.created} created, ${swept.linked} linked, ${swept.none} without company, ${swept.failed} failed.`);
+  }
 
   // AI agent (shadow drafts only), behind AGENT_RUNNER_ENABLED; after all other work.
   await runAgentTick(env.AGENT_RUNNER_ENABLED, {

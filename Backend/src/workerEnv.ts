@@ -7,6 +7,8 @@ const WorkerEnvSchema = z.object({
   WORKER_DRY_RUN: z.string().default("false").transform((value) => value === "true"),
   // Kill switch for the AI agent loop (3C-2, shadow only). Off unless exactly "true".
   AGENT_RUNNER_ENABLED: z.string().default("false").transform((value) => value === "true"),
+  // CRM v2 company sweeper (B3a): links unchecked contacts to companies. On unless exactly "false".
+  CRM_COMPANY_SWEEP_ENABLED: z.string().default("true").transform((value) => value !== "false"),
 });
 
 export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env) {
