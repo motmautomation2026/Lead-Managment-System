@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `032`).
+  (currently `033`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `032`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `033`).
 
 ## Way of working
 
@@ -263,10 +263,27 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   tick, one connection, SKIP LOCKED, failures skipped for the process lifetime; sets
   `workspaces.crm_deals_backfilled_at` when a workspace has nothing left); `npm run crm:deal-sweep -- --once`
   (staging only). Timeline deal rows: kind `system`, `related_deal_id`.
+- **B4 (CRM v2 list API, backend only, no UI):** migration 033 (list indexes: leads `(workspace_id, created_at|
+  last_activity_at|updated_at|last_name,first_name|company, id)`, trigram GIN on leads first/last name, company, email,
+  phone; deals `(workspace_id, updated_at|name, id)`). `lists/listQuery.ts` (the list standard, below). Routers (CRM
+  users): `/contacts` (list, `/count`, `/:id` = Lead DTO + company + deals with the text in `companyText`, `/bulk`
+  assignOwner via `updateLead` / enrollAi admin via `enrollLeads`), `/companies` (list, count, detail, POST/PATCH via
+  `services/companyRecords.service.ts`, rename syncs `leads.company`, `/:id/contacts`, `/:id/deals`, `/:id/merge` admin),
+  `/company-duplicates` (admin; list, merge, dismiss, relink; `companyDuplicates.service.ts`), `/deals` (list, count,
+  `/board`, detail, POST → `createDeal`, PATCH (INR only, no stage), `/:id/stage` → `moveDealStage` manual;
+  `dealRecords.service.ts`), `/search`, `/saved-views` (filters/sort validated by the list schemas; max 30 per user per
+  object). `mergeCompanies` re-points the source's other open suggestions (dismissed when the row exists in any status);
+  similar names use the trigram `%` operator. Old `/leads?search=` is escaped (B30). Contract: `docs/crm-v2/B4-api.md`.
+  Perf check: `RUN_PERF_TESTS=true` (`tests/integration/listPerformance.test.ts`).
 
 ## CRM v2
 
 - Design: `docs/crm-v2/B2-design.md` (approved); inventory `docs/crm-v2/B1-inventory.md`.
+- List API contract: `docs/crm-v2/B4-api.md`. Every new list uses `lists/listQuery.ts`: keyset `cursor`
+  (base64url `[sortValue, id, sort]`, 400 when invalid), `sort` from a per-object whitelist (NULLs last), `limit` 1–100
+  (default 50), flat `.strict()` filters, `q` ≥ 2 chars through `escapeLike`, `{data, nextCursor}` plus a `/count`
+  endpoint with the same filters. Every sortable field needs a `(workspace_id, field, id)` index (exception: companies
+  `contactCount`). Values only as bind parameters (`SqlBuilder.p`).
 - Contacts = rows in `leads` (UI says Contact). `leads.company` stays populated and is kept equal to the linked
   company's name (placeholders such as "Not provided" → no company, text unchanged).
 - Company linking never blocks creating or editing a contact; failures are retried by the sweeper.
