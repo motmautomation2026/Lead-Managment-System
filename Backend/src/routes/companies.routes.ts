@@ -12,6 +12,7 @@ import * as records from "../services/companyRecords.service.js";
 import * as duplicates from "../services/companyDuplicates.service.js";
 import { mergeCompanies } from "../services/companies.service.js";
 import { contactListSchema, listContacts } from "../services/contacts.service.js";
+import { dealListSchema, listDeals } from "../services/dealRecords.service.js";
 
 export const companiesRouter = Router();
 companiesRouter.param("id", uuidParam("company"));
@@ -60,6 +61,16 @@ companiesRouter.get(
     const query = parseQuery(contactListSchema.omit({ companyId: true }), req.query);
     await records.assertCompanyUsable(pool, req.workspaceId!, req.params.id!);
     res.json(await listContacts(pool, req.actor!, req.workspaceId!, { ...query, companyId: req.params.id! }));
+  }),
+);
+
+/** The company's deals: the deals list standard with companyId fixed. */
+companiesRouter.get(
+  "/:id/deals",
+  asyncHandler(async (req, res) => {
+    const query = parseQuery(dealListSchema.omit({ companyId: true }), req.query);
+    await records.assertCompanyUsable(pool, req.workspaceId!, req.params.id!);
+    res.json(await listDeals(pool, req.actor!, req.workspaceId!, { ...query, companyId: req.params.id! }));
   }),
 );
 
