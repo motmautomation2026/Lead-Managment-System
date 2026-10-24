@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { companyMatch } from "../../src/domain/companyMatch.js";
-import { corporateDomain, FREE_MAIL_DOMAINS, isPlaceholderCompany, normalizeCompanyName } from "../../src/domain/companyNormalize.js";
+import { corporateDomain, FREE_MAIL_DOMAINS, isPlaceholderCompany, normalizeCompanyName, normalizeDomain } from "../../src/domain/companyNormalize.js";
 
 describe("normalizeCompanyName", () => {
   it("treats Indian legal forms as the same company", () => {
@@ -56,6 +56,16 @@ describe("corporateDomain", () => {
     expect(corporateDomain("")).toBeNull();
     expect(corporateDomain("not-an-email")).toBeNull();
   });
+});
+
+describe("normalizeDomain", () => {
+  it.each([
+    ["Acme.in", "acme.in"],
+    ["https://www.Acme.co.in/about?x=1", "acme.co.in"],
+    ["  sub-domain.example.com. ", "sub-domain.example.com"],
+  ])("%s → %s", (input, expected) => expect(normalizeDomain(input)).toBe(expected));
+
+  it.each(["", "acme", "not a domain", "-bad.com", "a..b.com", "acme.com:8080"])("rejects %j", (input) => expect(normalizeDomain(input)).toBeNull());
 });
 
 describe("companyMatch", () => {

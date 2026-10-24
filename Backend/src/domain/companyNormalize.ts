@@ -73,3 +73,18 @@ export function corporateDomain(email: string | null | undefined): string | null
   if (!domain || FREE_MAIL.has(domain)) return null;
   return domain;
 }
+
+/**
+ * A domain typed by a user ("https://www.Acme.in/about" → "acme.in"), or null when it
+ * isn't a domain. Free-mail domains pass through; callers reject them.
+ */
+export function normalizeDomain(input: string): string | null {
+  const domain = input
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z]+:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/[/?#].*$/, "")
+    .replace(/\.$/, "");
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain) ? domain : null;
+}

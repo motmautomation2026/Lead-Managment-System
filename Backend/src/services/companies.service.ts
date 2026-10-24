@@ -75,15 +75,19 @@ async function openCandidates(db: Queryable, workspaceId: string, companyId: str
   }
 }
 
-/** Step 6: after a create, pair the new company with up to 3 existing ones whose names look alike. */
-async function openSimilarNameCandidates(db: Queryable, workspaceId: string, companyId: string, normalizedName: string) {
-  // shortcut: similarity() scans the workspace's companies (no index use); move to the % operator if workspaces reach ~100k companies.
+/**
+ * Step 6: after a create, pair the new company with up to 3 existing ones whose names look alike.
+ * The `%` operator (default threshold 0.3) lets the trigram index on normalized_name find
+ * candidates; the 0.6 cut is applied to their similarity().
+ */
+export async function openSimilarNameCandidates(db: Queryable, workspaceId: string, companyId: string, normalizedName: string) {
   await db.query(
     `insert into public.company_duplicate_candidates (workspace_id, company_a_id, company_b_id, reason, score)
      select $1, least($2::uuid, c.id), greatest($2::uuid, c.id), 'similar_name', round(c.score::numeric, 4)
        from (select id, extensions.similarity(normalized_name, $3) as score
                from public.companies
-              where workspace_id = $1 and merged_into_company_id is null and id <> $2) c
+              where normalized_name operator(extensions.%) $3
+                and workspace_id = $1 and merged_into_company_id is null and id <> $2) c
       where c.score >= $4
       order by c.score desc
       limit $5
@@ -245,7 +249,40 @@ export async function mergeCompanies(db: Queryable, actor: Actor, workspaceId: s
       where company_a_id = $1 and company_b_id = $2 and status = 'open'`,
     [a, b, actor.id],
   );
+  await repointOpenCandidates(db, actor, workspaceId, targetId, sourceId);
   return { targetId, sourceId, movedContacts: moved.rowCount ?? 0 };
+}
+
+/**
+ * After a merge, the source's other OPEN suggestions move to the target. A pair that
+ * would become (target, target), or a row that already exists for the target in any
+ * status (the unique keys ignore status), is dismissed instead.
+ */
+async function repointOpenCandidates(db: Queryable, actor: Actor, workspaceId: string, targetId: string, sourceId: string) {
+  const OTHER = `(case when c.company_a_id = $2 then c.company_b_id else c.company_a_id end)`;
+  const OPEN_PAIRS = `c.workspace_id = $1 and c.status = 'open' and c.company_b_id is not null and $2 in (c.company_a_id, c.company_b_id)`;
+  const OPEN_CONTACT_ROWS = `c.workspace_id = $1 and c.status = 'open' and c.company_b_id is null and c.company_a_id = $2`;
+  await db.query(
+    `update public.company_duplicate_candidates c set status = 'dismissed', resolved_by = $4, resolved_at = now()
+      where ${OPEN_PAIRS}
+        and (${OTHER} = $3 or exists (
+              select 1 from public.company_duplicate_candidates e
+               where e.company_a_id = least($3::uuid, ${OTHER}) and e.company_b_id = greatest($3::uuid, ${OTHER})))`,
+    [workspaceId, sourceId, targetId, actor.id],
+  );
+  await db.query(
+    `update public.company_duplicate_candidates c
+        set company_a_id = least($3::uuid, ${OTHER}), company_b_id = greatest($3::uuid, ${OTHER})
+      where ${OPEN_PAIRS}`,
+    [workspaceId, sourceId, targetId],
+  );
+  await db.query(
+    `update public.company_duplicate_candidates c set status = 'dismissed', resolved_by = $4, resolved_at = now()
+      where ${OPEN_CONTACT_ROWS}
+        and exists (select 1 from public.company_duplicate_candidates e where e.company_b_id is null and e.company_a_id = $3 and e.lead_id = c.lead_id)`,
+    [workspaceId, sourceId, targetId, actor.id],
+  );
+  await db.query(`update public.company_duplicate_candidates c set company_a_id = $3 where ${OPEN_CONTACT_ROWS}`, [workspaceId, sourceId, targetId]);
 }
 
 export interface CompanySweepCounts {
