@@ -1,4 +1,4 @@
-import { afterAll, vi } from "vitest";
+import { afterAll, beforeAll, vi } from "vitest";
 
 // Integration tests: refuse production outright, and point the app's own pool
 // (src/db.ts) at the test database so no service call can reach another DB.
@@ -13,11 +13,40 @@ if (testDatabaseUrl) {
   process.env.PGAPPNAME = "northbeam-test";
   // Every statement is a network round trip to the remote test database.
   vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+  // Guard: integration tests never write leads into a real workspace (only `[test] …` ones,
+  // see tests/helpers/testWorkspaces.ts). Database clock, so local clock skew doesn't matter.
+  let fileStartedAt: Date | undefined;
+  beforeAll(async () => {
+    const { pool } = await import("../src/db.js");
+    fileStartedAt = (await pool.query<{ now: Date }>("select now()")).rows[0]!.now;
+  });
   // Each file gets a fresh src/db.ts pool; close it so idle connections don't
   // hold session-pooler slots (15 on Supabase) into the next file.
+  // Registered first, so it runs after the file's own afterAll (cleanup).
   afterAll(async () => {
     const { pool } = await import("../src/db.js");
-    await pool.end();
+    try {
+      if (!fileStartedAt) return;
+      // Test users all have @example.com emails and are deleted in afterAll (created_by → null);
+      // real staging users have real emails, so a person adding a lead meanwhile doesn't trip this.
+      const leaks = await pool.query<{ id: string; workspace: string }>(
+        `select l.id, w.name as workspace from public.leads l
+           join public.workspaces w on w.id = l.workspace_id
+           left join public.profiles p on p.id = l.created_by
+          where l.created_at >= $1 and w.name not like '[test] %'
+            and (l.created_by is null or p.email like '%@example.com')`,
+        [fileStartedAt],
+      );
+      if (leaks.rows.length) {
+        throw new Error(
+          `This test file wrote ${leaks.rows.length} lead(s) into a real workspace (not "[test] …"): ` +
+            leaks.rows.map((r) => `${r.workspace} ${r.id}`).join(", ") +
+            ". Use createTestWorkspace (tests/helpers/testWorkspaces.ts) and delete these leads.",
+        );
+      }
+    } finally {
+      await pool.end();
+    }
   });
 }
 
