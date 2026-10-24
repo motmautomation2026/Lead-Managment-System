@@ -26,6 +26,7 @@ const settings = {
   currentPlaybookVersion: null,
   updatedBy: "admin-1",
   updatedAt: "2026-10-23T05:30:00.000Z",
+  activeLeadCount: 12,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -77,6 +78,9 @@ describe("AgentPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Shadow" }));
     expect(screen.getByText(/Nothing is sent to leads in Shadow mode/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/12 leads are enrolled in the AI and will be reviewed now/),
+    ).toBeInTheDocument();
     expect(mocks.update).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Turn on Shadow" }));

@@ -123,7 +123,7 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     const ws = await newWorkspace();
     const initial = await api(admin, ws, "GET", "/agent/settings");
     expect(initial.status).toBe(200);
-    expect(initial.body).toMatchObject({ mode: "off", sendWindowStart: "09:30", sendWindowEnd: "19:00", repQuietHours: 24, autoEnrollNewLeads: false });
+    expect(initial.body).toMatchObject({ mode: "off", sendWindowStart: "09:30", sendWindowEnd: "19:00", repQuietHours: 24, autoEnrollNewLeads: false, activeLeadCount: 0 });
 
     expect(initial.body.companyDisplayName).toBeNull();
     const saved = await api(admin, ws, "PUT", "/agent/settings", { sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5, maxDecisionsPerDay: 20, companyDisplayName: " MOTM Technologies " });
@@ -251,6 +251,8 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     await api(admin, ws, "POST", "/agent/leads/enroll", { leadIds: [a, b, paused] });
     await api(admin, ws, "POST", `/agent/leads/${paused}/pause`);
     expect(await pending(a)).toEqual([]);
+    // The Off → Shadow confirm shows this: active only (not the paused or never-enrolled lead).
+    expect((await api(admin, ws, "GET", "/agent/settings")).body.activeLeadCount).toBe(2);
 
     const before = Date.now();
     expect((await setMode(ws, "shadow")).body.mode).toBe("shadow");

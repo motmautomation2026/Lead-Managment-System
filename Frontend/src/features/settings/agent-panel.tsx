@@ -191,7 +191,7 @@ function ModeCard({ settings }: { settings: AgentSettings }) {
         open={confirmShadow}
         onOpenChange={setConfirmShadow}
         title="Turn on Shadow mode?"
-        description="The AI will start drafting messages for leads enrolled in the AI. Nothing is sent to leads in Shadow mode."
+        description={`${settings.activeLeadCount} ${settings.activeLeadCount === 1 ? "lead is" : "leads are"} enrolled in the AI and will be reviewed now. The AI will start drafting messages for them. Nothing is sent to leads in Shadow mode.`}
         confirmLabel="Turn on Shadow"
         confirmVariant="default"
         disabled={update.isPending}

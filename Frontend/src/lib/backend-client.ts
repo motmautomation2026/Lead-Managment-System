@@ -439,9 +439,11 @@ export interface AgentSettings {
   currentPlaybookVersion: number | null;
   updatedBy: string | null;
   updatedAt: string;
+  /** Read-only: leads enrolled in the AI (agent_status active). */
+  activeLeadCount: number;
 }
 export type AgentSettingsUpdate = Partial<
-  Omit<AgentSettings, "currentPlaybookVersion" | "updatedBy" | "updatedAt">
+  Omit<AgentSettings, "currentPlaybookVersion" | "updatedBy" | "updatedAt" | "activeLeadCount">
 >;
 export interface AgentPlaybook {
   id: string;

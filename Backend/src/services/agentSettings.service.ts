@@ -63,7 +63,8 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */
 const MODE_ON_SPREAD_MS = 60 * 60 * 1000;
 
-function settingsToDto(row: SettingsRow) {
+/** `activeLeadCount`: leads agent_status 'active', the ones the off → shadow switch wakes. */
+function settingsToDto(row: SettingsRow, activeLeadCount: number) {
   return {
     mode: row.mode,
     sendDays: row.send_days,
@@ -89,7 +90,16 @@ function settingsToDto(row: SettingsRow) {
     currentPlaybookVersion: row.current_playbook_version,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at.toISOString(),
+    activeLeadCount,
   };
+}
+
+async function countActiveLeads(db: Queryable, workspaceId: string): Promise<number> {
+  const result = await db.query<{ n: number }>(
+    `select count(*)::int as n from public.leads where workspace_id = $1 and agent_status = 'active'`,
+    [workspaceId],
+  );
+  return result.rows[0]!.n;
 }
 
 async function loadSettingsRow(db: Queryable, workspaceId: string, forUpdate = false): Promise<SettingsRow> {
@@ -104,7 +114,7 @@ async function loadSettingsRow(db: Queryable, workspaceId: string, forUpdate = f
 }
 
 export async function getSettings(db: Queryable, workspaceId: string) {
-  return settingsToDto(await loadSettingsRow(db, workspaceId));
+  return settingsToDto(await loadSettingsRow(db, workspaceId), await countActiveLeads(db, workspaceId));
 }
 
 /**
@@ -149,7 +159,7 @@ export async function updateSettings(actor: Actor, workspaceId: string, input: S
         { source: "mode_on" },
       );
     }
-    return settingsToDto(updated);
+    return settingsToDto(updated, await countActiveLeads(client, workspaceId));
   });
 }
 
