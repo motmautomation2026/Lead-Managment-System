@@ -16,6 +16,7 @@ import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js"
 import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
 import { runAgentTick } from "./services/agentRunner.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
+import { runDealSweep } from "./services/deals.service.js";
 
 /**
  * The automation executor: polls for due scheduled_actions and dispatches
@@ -179,6 +180,15 @@ async function tick(): Promise<void> {
       return null;
     });
     if (swept && swept.processed > 0) console.log(`[worker] Company sweep: ${swept.processed} contact(s), ${swept.created} created, ${swept.linked} linked, ${swept.none} without company, ${swept.failed} failed.`);
+  }
+
+  // CRM v2: attach up to 100 contacts' unlinked meetings/proposals to deals (backfill + inline-failure safety net).
+  if (env.CRM_DEAL_SWEEP_ENABLED) {
+    const swept = await runDealSweep().catch((err: { code?: string; name?: string }) => {
+      console.error(`[worker] Deal sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+      return null;
+    });
+    if (swept && swept.processed + swept.failed > 0) console.log(`[worker] Deal sweep: ${swept.processed} contact(s), ${swept.created} deal(s) created, ${swept.attachedMeetings} meeting(s) and ${swept.attachedProposals} proposal(s) attached, ${swept.failed} failed.`);
   }
 
   // AI agent (shadow drafts only), behind AGENT_RUNNER_ENABLED; after all other work.

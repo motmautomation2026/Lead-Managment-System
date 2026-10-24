@@ -9,6 +9,8 @@ const WorkerEnvSchema = z.object({
   AGENT_RUNNER_ENABLED: z.string().default("false").transform((value) => value === "true"),
   // CRM v2 company sweeper (B3a): links unchecked contacts to companies. On unless exactly "false".
   CRM_COMPANY_SWEEP_ENABLED: z.string().default("true").transform((value) => value !== "false"),
+  // CRM v2 deal backfill sweeper (B3b): links unlinked meetings/proposals to deals. On unless exactly "false".
+  CRM_DEAL_SWEEP_ENABLED: z.string().default("true").transform((value) => value !== "false"),
 });
 
 export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env) {

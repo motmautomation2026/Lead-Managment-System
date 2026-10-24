@@ -347,5 +347,11 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
     expect(flag.rows[0].crm_deals_backfilled_at).not.toBeNull();
 
     expect(await deals.runDealSweep({ workspaceId: bw })).toMatchObject({ processed: 0, created: 0, failed: 0, workspacesCompleted: 0 });
+
+    // The worker switch is on unless exactly "false".
+    const { loadWorkerEnv } = await import("../../src/workerEnv.js");
+    expect(loadWorkerEnv({}).CRM_DEAL_SWEEP_ENABLED).toBe(true);
+    expect(loadWorkerEnv({ CRM_DEAL_SWEEP_ENABLED: "FALSE" }).CRM_DEAL_SWEEP_ENABLED).toBe(true);
+    expect(loadWorkerEnv({ CRM_DEAL_SWEEP_ENABLED: "false" }).CRM_DEAL_SWEEP_ENABLED).toBe(false);
   });
 });
