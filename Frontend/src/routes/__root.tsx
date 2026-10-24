@@ -11,6 +11,8 @@ import { useEffect } from "react";
 
 import { reportError } from "@/lib/telemetry";
 import { AuthGate } from "@/app/auth-gate";
+import { ThemeProvider } from "@/app/theme-provider";
+import { useTheme } from "@/app/theme-context";
 import { Toaster } from "@/components/ui/sonner";
 import { BrandLogo } from "@/components/common/brand-logo";
 
@@ -108,11 +110,18 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <HeadContent />
-      <AuthGate queryClient={queryClient}>
-        <Outlet />
-      </AuthGate>
-      <Toaster richColors position="top-right" />
+      <ThemeProvider>
+        <HeadContent />
+        <AuthGate queryClient={queryClient}>
+          <Outlet />
+        </AuthGate>
+        <ThemedToaster />
+      </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+function ThemedToaster() {
+  const { resolvedTheme } = useTheme();
+  return <Toaster richColors position="top-right" theme={resolvedTheme} />;
 }
