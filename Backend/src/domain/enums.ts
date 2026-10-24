@@ -224,6 +224,19 @@ export const PROPOSAL_STATUSES = [
 ] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
+/** CRM v2 deal pipeline (migration 032), in board order. */
+export const DEAL_STAGES = [
+  "qualified",
+  "meeting_scheduled",
+  "meeting_follow_up",
+  "proposal_preparation",
+  "proposal_sent",
+  "negotiation",
+  "won",
+  "lost",
+] as const;
+export type DealStage = (typeof DEAL_STAGES)[number];
+
 /**
  * `call_outcome_maybe`/`call_outcome_negative` are intentionally omitted
  * (see CALL_CONNECTED_OUTCOMES comment) — replaced by
