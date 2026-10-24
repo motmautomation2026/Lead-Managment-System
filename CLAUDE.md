@@ -275,6 +275,15 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   object). `mergeCompanies` re-points the source's other open suggestions (dismissed when the row exists in any status);
   similar names use the trigram `%` operator. Old `/leads?search=` is escaped (B30). Contract: `docs/crm-v2/B4-api.md`.
   Perf check: `RUN_PERF_TESTS=true` (`tests/integration/listPerformance.test.ts`).
+- **C1 (CRM v2 design system + app shell, frontend only):** pinned `@tanstack/react-table` 8, `@tanstack/react-virtual`,
+  `react-hook-form` + `@hookform/resolvers`, `zod` 3, `@dnd-kit/core`/`sortable`, Radix dropdown-menu/tooltip; shadcn
+  `sheet`, `dropdown-menu`, `tooltip`, `skeleton`. `styles.css`: real `.dark`, `*-soft` tokens, `surface-raised`,
+  `focus-ring`, density vars (`data-density="compact"`), `type-*` scale; `styles-contrast.test.ts` (≥ 4.5:1 both themes).
+  `ThemeProvider` (light/dark/system + density, localStorage, pre-paint script in `index.html`). New shell
+  (`app/app-shell.tsx`, `sidebar.tsx`, `top-bar.tsx`, `nav.ts`, `command-palette.tsx`): grouped collapsible sidebar,
+  mobile Sheet, breadcrumbs, + Create, user menu, ⌘K palette over `GET /search` (`useGlobalSearch`); the old header
+  search over cached leads is gone. `/companies`, `/deals` placeholders; `/dev/ui` kit (DEV only).
+  `components/crm/*` + `useListUrlState`. Docs: `docs/crm-v2/C1-ui.md`.
 
 ## CRM v2
 
@@ -287,6 +296,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Contacts = rows in `leads` (UI says Contact). `leads.company` stays populated and is kept equal to the linked
   company's name (placeholders such as "Not provided" → no company, text unchanged).
 - Company linking never blocks creating or editing a contact; failures are retried by the sweeper.
+- Frontend (C phases, `docs/crm-v2/C1-ui.md`): build pages from `components/crm` (PageHeader, ViewTabs, FilterBar,
+  DataTable, RecordLayout, PropertyList, AssociationCard, EmptyState, StatusPill, Money…); theme tokens only, no
+  hard-coded colours; lists always server-side via the B4 endpoints (never fetch everything); list state
+  (filters/sort/view/q) in the URL via `useListUrlState`; icon-only buttons need `aria-label`; every page has
+  loading/empty/error states and works at 375 px; new forms use react-hook-form + Zod.
 - Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
   manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
   contact owner, `agent_status` or automation.
