@@ -1015,3 +1015,13 @@ export function useCompanyOptions() {
     staleTime: 60_000,
   });
 }
+
+/** POST /leads (a new contact) without loading the old 500-row leads list. */
+export function useCreateContact() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: CreateLeadInput) => backend.leads.create(input),
+    onSuccess: (lead) => refreshContact(client, ws, lead.id),
+  });
+}

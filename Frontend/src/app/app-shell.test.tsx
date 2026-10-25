@@ -93,6 +93,8 @@ vi.mock("@/store", () => ({
     markNotificationsRead: noop,
   }),
   useGlobalSearch: () => ({ enabled: false, query: "", isSearching: false, isError: false }),
+  useCreateContact: () => ({ mutateAsync: noop, isPending: false }),
+  useCompanySearch: () => ({ data: undefined }),
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -212,7 +214,7 @@ describe("AppShell nav", () => {
 });
 
 describe("AppShell top bar", () => {
-  it("+ Create → Contact opens the Add lead dialog; others are coming soon", async () => {
+  it("+ Create → Contact opens the Create contact dialog; others are coming soon", async () => {
     await renderShell();
     openMenu("Create");
     const menu = await screen.findByRole("menu");
@@ -221,7 +223,7 @@ describe("AppShell top bar", () => {
       "true",
     );
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Contact" }));
-    expect(await screen.findByRole("dialog", { name: "Add lead" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Create contact" })).toBeTruthy();
   });
 
   it("user menu switches the theme", async () => {

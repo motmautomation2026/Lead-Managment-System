@@ -18,7 +18,7 @@ import { AddLeadContext } from "@/app/add-lead-context";
 import { CommandPalette } from "@/app/command-palette";
 import { AppSidebar } from "@/app/sidebar";
 import { TopBar } from "@/app/top-bar";
-import { AddLeadDialog } from "@/features/leads/add-lead-dialog";
+import { CreateContactDialog } from "@/features/contacts/create-contact-dialog";
 import { messageFromError } from "@/store";
 import { backend } from "@/lib/backend-client";
 import { keys } from "@/store/query";
@@ -112,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </TooltipProvider>
 
-      <AddLeadDialog open={addOpen} onOpenChange={setAddOpen} />
+      <CreateContactDialog open={addOpen} onOpenChange={setAddOpen} />
 
       <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>
         <DialogContent className="sm:max-w-sm">

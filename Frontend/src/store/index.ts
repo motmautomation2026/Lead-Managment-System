@@ -45,6 +45,7 @@ export {
   useCompanySearch,
   useCompany,
   useCompanyOptions,
+  useCreateContact,
 } from "./server-hooks";
 export { messageFromError, refreshContact, keys } from "./query";
 export type {

@@ -1,5 +1,28 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { z } from "zod";
 import { LEAD_SOURCES } from "@/types";
+
+export const SERVICE_INTERESTS = [
+  "B2B Lead Generation",
+  "Market Research",
+  "Target Account Identification",
+  "Account-Based Marketing (ABM)",
+  "Cold Calling",
+  "Email Outreach",
+  "LinkedIn Outreach",
+  "WhatsApp Outreach",
+  "Lead Nurturing & Follow-Up",
+  "Sales Conversion Support",
+  "Industrial Marketing",
+  "Digital Marketing",
+  "SEO",
+  "Website Optimization",
+  "Market Expansion",
+  "Business Development",
+  "Field Marketing / Direct Visits",
+  "End-to-End Sales & Marketing",
+  "Other",
+];
 
 /**
  * Mirrors Backend/src/domain/phone.ts exactly (same library, same region
@@ -78,3 +101,29 @@ export function validateLeadForm(form: LeadFormLike): LeadFormErrors {
 
   return errors;
 }
+
+/**
+ * The same rules as `validateLeadForm` as a Zod schema, for react-hook-form
+ * (`zodResolver(leadFormSchema)`): every message comes from validateLeadForm.
+ */
+export const leadFormSchema = z
+  .object({
+    firstName: z.string(),
+    lastName: z.string(),
+    company: z.string(),
+    jobTitle: z.string(),
+    industry: z.string(),
+    email: z.string(),
+    phone: z.string(),
+    source: z.string(),
+    serviceInterest: z.string(),
+    revenueRange: z.string(),
+    /** "" = no explicit owner (assignment rules decide on create). */
+    ownerId: z.string(),
+  })
+  .superRefine((form, ctx) => {
+    for (const [path, message] of Object.entries(validateLeadForm(form))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+    }
+  });
+export type LeadFormValues = z.infer<typeof leadFormSchema>;

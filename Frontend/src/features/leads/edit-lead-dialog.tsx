@@ -25,31 +25,12 @@ import {
   normalizePhone,
   validateLeadForm,
   type LeadFormErrors,
+  SERVICE_INTERESTS,
 } from "@/lib/lead-validation";
 import { LEAD_SOURCES, type Lead, type LeadSource } from "@/types";
 import { label } from "@/lib/labels";
 
-const SERVICES = [
-  "B2B Lead Generation",
-  "Market Research",
-  "Target Account Identification",
-  "Account-Based Marketing (ABM)",
-  "Cold Calling",
-  "Email Outreach",
-  "LinkedIn Outreach",
-  "WhatsApp Outreach",
-  "Lead Nurturing & Follow-Up",
-  "Sales Conversion Support",
-  "Industrial Marketing",
-  "Digital Marketing",
-  "SEO",
-  "Website Optimization",
-  "Market Expansion",
-  "Business Development",
-  "Field Marketing / Direct Visits",
-  "End-to-End Sales & Marketing",
-  "Other",
-];
+const SERVICES = SERVICE_INTERESTS;
 
 type FormState = {
   firstName: string;
