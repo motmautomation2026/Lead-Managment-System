@@ -100,7 +100,10 @@ export function CommandPalette({
                 key={c.id}
                 value={`contact-${c.id}`}
                 onSelect={() =>
-                  close(() => void navigate({ to: "/leads/$leadId", params: { leadId: c.id } }))
+                  close(
+                    () =>
+                      void navigate({ to: "/contacts/$contactId", params: { contactId: c.id } }),
+                  )
                 }
               >
                 <User />

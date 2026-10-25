@@ -44,6 +44,7 @@ export {
   useCreateDeal,
   useCompanySearch,
   useCompany,
+  useCompanyOptions,
 } from "./server-hooks";
 export { messageFromError, refreshContact, keys } from "./query";
 export type {

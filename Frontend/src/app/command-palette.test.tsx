@@ -69,7 +69,7 @@ async function renderPalette() {
   const router = createRouter({
     routeTree: root.addChildren([
       page("/"),
-      page("/leads/$leadId"),
+      page("/contacts/$contactId"),
       page("/companies"),
       page("/deals"),
     ]),
@@ -136,7 +136,7 @@ describe("CommandPalette search", () => {
     expect(within(companies).getByRole("option")).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(input, { key: "ArrowUp" });
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(router.state.location.pathname).toBe("/leads/c1"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/contacts/c1"));
   });
 
   it("company and deal results open their pages", async () => {

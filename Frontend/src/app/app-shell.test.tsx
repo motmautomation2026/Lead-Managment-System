@@ -134,8 +134,8 @@ async function renderShell(path = "/") {
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       page("/", "home"),
-      page("/leads", "contacts page"),
-      page("/leads/$leadId", "lead detail"),
+      page("/contacts", "contacts page"),
+      page("/contacts/$contactId", "lead detail"),
       page("/tasks", "tasks page"),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -165,11 +165,11 @@ describe("AppShell nav", () => {
   });
 
   it("groups CRM, Work and Automation with the existing URLs", async () => {
-    await renderShell("/leads/lead-1");
+    await renderShell("/contacts/lead-1");
     const nav = screen.getByRole("navigation", { name: "Main" });
     const href = (name: string) => within(nav).getByRole("link", { name }).getAttribute("href");
     expect(within(nav).getByText("CRM")).toBeTruthy();
-    expect(href("Contacts")).toBe("/leads");
+    expect(href("Contacts")).toBe("/contacts");
     expect(href("Companies")).toBe("/companies");
     expect(href("Deals")).toBe("/deals");
     expect(href("Dashboard")).toBe("/");
@@ -181,11 +181,11 @@ describe("AppShell nav", () => {
   });
 
   it("shows route breadcrumbs", async () => {
-    await renderShell("/leads/lead-1");
+    await renderShell("/contacts/lead-1");
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(crumbs).getByRole("link", { name: "Contacts" })).toHaveAttribute(
       "href",
-      "/leads",
+      "/contacts",
     );
     expect(within(crumbs).getByText("Contact")).toBeTruthy();
   });

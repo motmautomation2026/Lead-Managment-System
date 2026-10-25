@@ -17,7 +17,7 @@ import {
 export interface NavItem {
   to:
     | "/"
-    | "/leads"
+    | "/contacts"
     | "/companies"
     | "/deals"
     | "/tasks"
@@ -36,8 +36,8 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "CRM",
     items: [
-      // Contacts are `leads` rows; the route moves to /contacts in C2.
-      { to: "/leads", label: "Contacts", icon: Users },
+      // Contacts are `leads` rows.
+      { to: "/contacts", label: "Contacts", icon: Users },
       { to: "/companies", label: "Companies", icon: Building2 },
       { to: "/deals", label: "Deals", icon: Handshake },
     ],
@@ -72,7 +72,7 @@ export function isNavActive(to: string, pathname: string) {
 
 /** Second-level crumbs under a nav section, by path. */
 const SUB_PAGES: Array<[RegExp, string]> = [
-  [/^\/leads\/[^/]+/, "Contact"],
+  [/^\/contacts\/[^/]+/, "Contact"],
   [/^\/automations\/templates/, "Templates"],
   [/^\/automations\/runs/, "Runs"],
   [/^\/automations\/workflows\/[^/]+/, "Workflow"],

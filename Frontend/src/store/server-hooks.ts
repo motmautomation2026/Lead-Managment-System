@@ -1004,3 +1004,14 @@ export function useCompany(id: string | null | undefined) {
     enabled: Boolean(currentWorkspaceId && id),
   });
 }
+
+/** Company filter options: the first page by name (shortcut: 100 companies max; upgrade to a searchable picker in C3). */
+export function useCompanyOptions() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.companySearch(currentWorkspaceId, ""),
+    queryFn: ({ signal }) => backend.companies.list({ sort: "name:asc", limit: 100 }, signal),
+    enabled: Boolean(currentWorkspaceId),
+    staleTime: 60_000,
+  });
+}
