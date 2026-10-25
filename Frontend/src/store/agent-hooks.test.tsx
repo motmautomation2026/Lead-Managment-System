@@ -170,7 +170,8 @@ describe("AI review hooks", () => {
       expect.arrayContaining([
         keys.lead("ws-1", "lead-1"),
         keys.leads("ws-1"),
-        keys.agentLeadPanel("ws-1"),
+        keys.agentLeadPanel("ws-1", "lead-1"),
+        keys.contact("ws-1", "lead-1"),
         keys.agentStats("ws-1"),
       ]),
     );

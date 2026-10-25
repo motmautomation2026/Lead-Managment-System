@@ -54,6 +54,7 @@ function proposalToDto(row: ProposalRow) {
   return {
     id: row.id,
     leadId: row.lead_id,
+    dealId: row.deal_id,
     ownerId: row.owner_id ?? undefined,
     ownerName: row.owner_name ?? undefined,
     title: row.title,

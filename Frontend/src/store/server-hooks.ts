@@ -24,6 +24,11 @@ import { initials } from "@/lib/format";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type {
   AutomationMode,
+  BulkResult,
+  ContactListParams,
+  CreateDealInput,
+  SavedViewInput,
+  SavedViewObject,
   LeadLossReason,
   MeetingOutcome,
   ProposalStatus,
@@ -31,7 +36,7 @@ import type {
   User,
   WorkflowStep,
 } from "@/types";
-import { keys, refreshLead } from "./query";
+import { keys, refreshContact } from "./query";
 import { useWorkspace } from "./workspace-context";
 
 export function useSession() {
@@ -82,7 +87,7 @@ export function useLeads() {
     queryFn: ({ signal }) => backend.leads.list({ limit: 500 }, signal),
     enabled: Boolean(currentWorkspaceId),
   });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
+  const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateLeadInput) => backend.leads.create(input),
     onSuccess: (lead) => refresh(lead.id),
@@ -249,7 +254,7 @@ export function useTasks() {
     queryFn: ({ signal }) => backend.tasks.list(undefined, signal),
     enabled: Boolean(currentWorkspaceId),
   });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
+  const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateTaskInput) => backend.tasks.create(input),
     onSuccess: (task) => refresh(task.leadId),
@@ -289,7 +294,7 @@ export function useMeetings() {
     queryFn: ({ signal }) => backend.meetings.list(undefined, signal),
     enabled: Boolean(currentWorkspaceId),
   });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
+  const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateMeetingInput) => backend.meetings.create(input),
     onSuccess: (meeting) => refresh(meeting.leadId),
@@ -340,7 +345,7 @@ export function useProposals() {
         ? 8000
         : false,
   });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
+  const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateProposalInput) => backend.proposals.create(input),
     onSuccess: (proposal) => refresh(proposal.leadId),
@@ -466,6 +471,9 @@ export function useAutomations() {
       backend.workflows.deleteVersion(id, version),
     onSuccess: invalidate,
   });
+  // Runs change the contact's next action, timeline and tasks too (audit B31).
+  const invalidateFor = (leadId: string) =>
+    Promise.all([invalidate(), refreshContact(client, currentWorkspaceId, leadId)]);
   const runAction = useMutation({
     mutationFn: ({
       id,
@@ -481,12 +489,12 @@ export function useAutomations() {
           : action === "cancel"
             ? backend.runs.cancel(id)
             : backend.runs.retry(id),
-    onSuccess: invalidate,
+    onSuccess: (run) => invalidateFor(run.leadId),
   });
   const enroll = useMutation({
     mutationFn: (input: { leadId: string; workflowId: string; reason?: string | undefined }) =>
       backend.runs.create(input),
-    onSuccess: invalidate,
+    onSuccess: (_, input) => invalidateFor(input.leadId),
   });
   const templateCreate = useMutation({
     mutationFn: (input: CreateTemplateInput) => backend.templates.create(input),
@@ -802,7 +810,7 @@ export const useResolveReport = () =>
 
 const ENROLL_CHUNK = 100;
 
-/** Admin: agent status changes refresh the lead(s), the leads list, the lead panels and stats. */
+/** Admin: agent status changes refresh the contact(s) (refreshContact) and the AI stats. */
 function useAgentStatusWrite<A, R>(
   fn: (arg: A) => Promise<R>,
   leadIdOf: (arg: A) => string | null,
@@ -811,20 +819,11 @@ function useAgentStatusWrite<A, R>(
   const { currentWorkspaceId: ws } = useWorkspace();
   return useMutation({
     mutationFn: fn,
-    onSuccess: (_, arg) => {
-      const leadId = leadIdOf(arg);
-      return Promise.all([
-        leadId
-          ? refreshLead(client, ws, leadId)
-          : Promise.all(
-              [keys.leads(ws), ["lead", ws], ["timeline", ws]].map((queryKey) =>
-                client.invalidateQueries({ queryKey }),
-              ),
-            ),
-        client.invalidateQueries({ queryKey: keys.agentLeadPanel(ws) }),
+    onSuccess: (_, arg) =>
+      Promise.all([
+        refreshContact(client, ws, leadIdOf(arg) ?? undefined),
         client.invalidateQueries({ queryKey: keys.agentStats(ws) }),
-      ]);
-    },
+      ]),
   });
 }
 
@@ -885,4 +884,123 @@ export function useGlobalSearch(input: string) {
     /** Typing has not settled yet, or the request is in flight. */
     isSearching: input.trim() !== q || (enabled && result.isFetching),
   };
+}
+
+// --- CRM v2 contacts (B4; UI says Contact, rows are leads) --------------------------
+
+export function useContacts(params: ContactListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey: keys.contacts(currentWorkspaceId, params),
+    queryFn: ({ pageParam, signal }) => backend.contacts.list(params, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** Same filters as `useContacts` (sort is not allowed on /count). */
+export function useContactsCount(params: ContactListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, ...filters } = params;
+  return useQuery({
+    queryKey: keys.contactsCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.contacts.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useContact(id: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.contact(currentWorkspaceId, id),
+    queryFn: ({ signal }) => backend.contacts.get(id, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+const BULK_CHUNK = 100;
+
+/** POST /contacts/bulk in chunks of 100, one after another; returns every per-id result. */
+export function useBulkContacts() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: async (input: {
+      ids: string[];
+      action: "assignOwner" | "enrollAi";
+      ownerId?: string;
+    }) => {
+      const results: BulkResult[] = [];
+      for (let i = 0; i < input.ids.length; i += BULK_CHUNK) {
+        const ids = input.ids.slice(i, i + BULK_CHUNK);
+        results.push(...(await backend.contacts.bulk({ ...input, ids })).data);
+      }
+      return results;
+    },
+    onSuccess: () =>
+      Promise.all([
+        refreshContact(client, ws),
+        client.invalidateQueries({ queryKey: keys.agentStats(ws) }),
+      ]),
+  });
+}
+
+export function useSavedViews(object: SavedViewObject) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.savedViews(currentWorkspaceId, object),
+    queryFn: ({ signal }) => backend.savedViews.list(object, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+function useSavedViewWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => client.invalidateQueries({ queryKey: ["savedViews", ws] }),
+  });
+}
+
+export const useCreateSavedView = () =>
+  useSavedViewWrite((input: Parameters<typeof backend.savedViews.create>[0]) =>
+    backend.savedViews.create(input),
+  );
+export const useUpdateSavedView = () =>
+  useSavedViewWrite(({ id, input }: { id: string; input: SavedViewInput }) =>
+    backend.savedViews.update(id, input),
+  );
+export const useDeleteSavedView = () =>
+  useSavedViewWrite((id: string) => backend.savedViews.delete(id));
+
+export function useCreateDeal() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: CreateDealInput) => backend.deals.create(input),
+    onSuccess: (_, input) => refreshContact(client, ws, input.leadId),
+  });
+}
+
+/** Company picker / "matches an existing company" hint: debounced, from 2 characters, top 5. */
+export function useCompanySearch(input: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  return useQuery({
+    queryKey: keys.companySearch(currentWorkspaceId, q),
+    queryFn: ({ signal }) => backend.companies.list({ q, limit: 5 }, signal),
+    enabled: Boolean(currentWorkspaceId) && q.length >= SEARCH_MIN_CHARS,
+    staleTime: 30_000,
+  });
+}
+
+export function useCompany(id: string | null | undefined) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.company(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.companies.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
 }

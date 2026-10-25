@@ -28,7 +28,7 @@ export interface Task {
   dueAt: string;
   status: TaskStatus;
   done: boolean;
-  origin: "manual" | "automation";
+  origin: "manual" | "automation" | "agent";
   sourceWorkflowRunId?: string;
   completedAt?: string;
   cancelledAt?: string;

@@ -2,6 +2,17 @@ import { backendBaseUrl, configurationError, supabase } from "./supabase-client"
 import type { SearchResults } from "@/types/search";
 import type {
   AgentStatus,
+  BulkResult,
+  CompanyDetail,
+  CompanyListItem,
+  ContactDetail,
+  ContactListItem,
+  ContactListParams,
+  CreateDealInput,
+  DealDetail,
+  SavedView,
+  SavedViewInput,
+  SavedViewObject,
   AppNotification,
   AutomationMode,
   Call,
@@ -111,6 +122,20 @@ function query(path: string, params?: Record<string, string | number | boolean |
   const suffix = search.toString();
   return suffix ? `${path}?${suffix}` : path;
 }
+/** B4 list params: arrays repeat the key (`ownerId=a&ownerId=b`), empty values are dropped. */
+export function listQuery(
+  path: string,
+  params: Record<string, string | string[] | number | undefined>,
+) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === "") return;
+    (Array.isArray(value) ? value : [value]).forEach((v) => search.append(key, String(v)));
+  });
+  const suffix = search.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+type Page<T> = { data: T[]; nextCursor: string | null };
 const get = <T>(path: string, signal?: AbortSignal) => request<T>(path, signal ? { signal } : {});
 const send = <T>(method: "POST" | "PATCH" | "PUT", path: string, body?: unknown) =>
   request<T>(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -685,6 +710,34 @@ export interface GoogleCalendarConnection {
 export const backend = {
   /** Global search (B4): q trimmed, ≥ 2 characters. */
   search: (q: string, signal?: AbortSignal) => get<SearchResults>(query("/search", { q }), signal),
+  /** CRM v2 contacts (B4 §2). Writes stay on `leads`. */
+  contacts: {
+    list: (params: ContactListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<ContactListItem>>(listQuery("/contacts", { ...params, cursor }), signal),
+    count: (params: Omit<ContactListParams, "sort">, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/contacts/count", params), signal),
+    get: (id: string, signal?: AbortSignal) => get<ContactDetail>(`/contacts/${id}`, signal),
+    /** At most 100 ids; `enrollAi` is admin only. */
+    bulk: (input: { ids: string[]; action: "assignOwner" | "enrollAi"; ownerId?: string }) =>
+      send<{ data: BulkResult[] }>("POST", "/contacts/bulk", input),
+  },
+  companies: {
+    list: (params: { q?: string; sort?: string; limit?: number }, signal?: AbortSignal) =>
+      get<Page<CompanyListItem>>(listQuery("/companies", params), signal),
+    get: (id: string, signal?: AbortSignal) => get<CompanyDetail>(`/companies/${id}`, signal),
+  },
+  deals: {
+    create: (input: CreateDealInput) => send<DealDetail>("POST", "/deals", input),
+  },
+  savedViews: {
+    list: (object: SavedViewObject, signal?: AbortSignal) =>
+      get<{ data: SavedView[] }>(query("/saved-views", { object }), signal),
+    create: (input: SavedViewInput & { object: SavedViewObject; name: string }) =>
+      send<SavedView>("POST", "/saved-views", input),
+    update: (id: string, input: Omit<SavedViewInput, "object">) =>
+      send<SavedView>("PATCH", `/saved-views/${id}`, input),
+    delete: (id: string) => del(`/saved-views/${id}`),
+  },
   me: (signal?: AbortSignal) =>
     get<{ id: string; name: string; email: string; role: "admin" | "salesperson" }>("/me", signal),
   profiles: (signal?: AbortSignal) =>

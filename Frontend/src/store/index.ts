@@ -33,8 +33,19 @@ export {
   useResumeLead,
   useStopLead,
   useWakeLead,
+  useContacts,
+  useContactsCount,
+  useContact,
+  useBulkContacts,
+  useSavedViews,
+  useCreateSavedView,
+  useUpdateSavedView,
+  useDeleteSavedView,
+  useCreateDeal,
+  useCompanySearch,
+  useCompany,
 } from "./server-hooks";
-export { messageFromError } from "./query";
+export { messageFromError, refreshContact, keys } from "./query";
 export type {
   SessionSlice,
   LeadsSlice,

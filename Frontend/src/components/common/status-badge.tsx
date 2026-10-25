@@ -114,3 +114,17 @@ export function StatusBadge({
     </span>
   );
 }
+
+const ORIGIN_TONE: Record<string, Tone> = { automation: "primary", agent: "info", manual: "muted" };
+const ORIGIN_TEXT: Record<string, string> = { agent: "AI Agent" };
+
+/** Who created a task: Manual, Automation (workflow) or AI Agent. */
+export function TaskOriginBadge({ origin }: { origin: string }) {
+  return (
+    <StatusBadge
+      value={origin}
+      tone={ORIGIN_TONE[origin] ?? "muted"}
+      {...(ORIGIN_TEXT[origin] ? { display: ORIGIN_TEXT[origin] } : {})}
+    />
+  );
+}

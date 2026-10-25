@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { StatusBadge } from "@/components/common/status-badge";
+import { StatusBadge, TaskOriginBadge } from "@/components/common/status-badge";
 import { isOverdue, isToday, relDay } from "@/lib/format";
 import { useLeads, useMeetings, useSession, useTasks } from "@/store";
 import { messageFromError } from "@/store";
@@ -153,10 +153,7 @@ export function TasksPage() {
                         </td>
                         <td className="px-3 py-2 text-xs">{t.ownerName ?? userName(t.ownerId)}</td>
                         <td className="px-3 py-2">
-                          <StatusBadge
-                            value={t.origin}
-                            tone={t.origin === "automation" ? "primary" : "muted"}
-                          />
+                          <TaskOriginBadge origin={t.origin} />
                         </td>
                       </tr>
                     );

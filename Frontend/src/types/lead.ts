@@ -104,7 +104,7 @@ export interface NextAction {
   dueAt: string;
   ownerId?: string;
   ownerName?: string;
-  origin: "manual" | "automation";
+  origin: "manual" | "automation" | "agent";
 }
 export interface LeadNote {
   id: string;

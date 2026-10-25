@@ -70,7 +70,7 @@ export type ContactFilters = z.infer<typeof contactFilterSchema>;
 
 /** Column ids a saved contacts view may show. */
 export const CONTACT_COLUMNS = [
-  "name", "email", "phone", "jobTitle", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt",
+  "name", "email", "phone", "jobTitle", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt", "source",
 ] as const;
 
 const DEFAULT_LIFECYCLES = ["active", "long_term_nurture"];
@@ -105,6 +105,7 @@ interface ContactListRow {
   email: string | null;
   phone: string | null;
   jobTitle: string | null;
+  source: string;
   company: { id: string; name: string } | null;
   owner: { id: string; name: string } | null;
   leadStatus: string;
@@ -119,7 +120,7 @@ export async function listContacts(db: Queryable, actor: Actor, workspaceId: str
   const b = contactWhere(workspaceId, actor, query);
   const page = await runPage<ContactListRow>(db, b, query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
     `select l.id, trim(l.first_name || ' ' || l.last_name) as name, l.first_name as "firstName", l.last_name as "lastName",
-            l.email, l.phone, l.job_title as "jobTitle",
+            l.email, l.phone, l.job_title as "jobTitle", l.source,
             case when c.id is null then null else json_build_object('id', c.id, 'name', c.name) end as company,
             case when o.id is null then null else json_build_object('id', o.id, 'name', o.full_name) end as owner,
             l.pipeline_stage as "leadStatus", l.lifecycle_state as lifecycle, od.deal as "openDeal",

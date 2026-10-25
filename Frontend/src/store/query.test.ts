@@ -1,14 +1,14 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { BackendError } from "@/lib/backend-client";
-import { keys, messageFromError, refreshLead } from "./query";
+import { keys, messageFromError, refreshContact } from "./query";
 
 describe("query invalidation", () => {
-  it("refreshes every lead-dependent aggregate after a composite mutation", async () => {
+  it("refreshes every contact-dependent aggregate after a composite mutation", async () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
 
-    await refreshLead(client, "workspace-1", "lead-1");
+    await refreshContact(client, "workspace-1", "lead-1");
 
     const invalidated = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
     expect(invalidated).toEqual(
@@ -26,6 +26,27 @@ describe("query invalidation", () => {
         keys.scheduledActions("workspace-1"),
         keys.notifications("workspace-1"),
         keys.dashboard("workspace-1"),
+        keys.contact("workspace-1", "lead-1"),
+        keys.contacts("workspace-1"),
+        keys.contactsCount("workspace-1"),
+        keys.deals("workspace-1"),
+        keys.agentLeadPanel("workspace-1", "lead-1"),
+      ]),
+    );
+  });
+
+  it("without a lead id refreshes every contact's record queries (bulk actions)", async () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
+    await refreshContact(client, "workspace-1");
+    const invalidated = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(invalidated).toEqual(
+      expect.arrayContaining([
+        ["contact", "workspace-1"],
+        ["lead", "workspace-1"],
+        ["timeline", "workspace-1"],
+        keys.contacts("workspace-1"),
+        keys.agentLeadPanel("workspace-1"),
       ]),
     );
   });

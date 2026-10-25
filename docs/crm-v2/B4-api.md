@@ -38,7 +38,7 @@ Filters: `ownerId[]`, `leadStatus[]` (pipeline stage), `lifecycle[]` (default `a
 
 Sorts: `createdAt` (**default desc**), `lastActivityAt`, `updatedAt`, `name` (last name, then first name), `company`.
 
-`ContactListItem`: `id, name, firstName, lastName, email, phone, jobTitle, company {id,name}|null, owner {id,name}|null, leadStatus, lifecycle, openDeal {id,name,stage,amount,currency}|null` (the most recently updated open deal), `agentStatus, nextAction {taskId,type,title,dueAt,ownerId,ownerName,origin}|null, lastActivityAt, createdAt`.
+`ContactListItem`: `id, name, firstName, lastName, email, phone, jobTitle, source, company {id,name}|null, owner {id,name}|null, leadStatus, lifecycle, openDeal {id,name,stage,amount,currency}|null` (the most recently updated open deal), `agentStatus, nextAction {taskId,type,title,dueAt,ownerId,ownerName,origin}|null, lastActivityAt, createdAt`.
 
 ## 3. Companies
 
@@ -99,7 +99,7 @@ Sorts: `updatedAt` (**default desc**), `createdAt`, `amount`, `expectedCloseDate
 
 `filters` are stored **exactly as the list endpoint's query params** (strings and string arrays, e.g. `{"ownerId": "me", "leadStatus": ["new"], "hasOpenDeal": "false"}`) and validated by the same Zod schema as that object's list (no `limit`/`cursor`); `sort` by the same sort whitelist; `columns` must be known column ids for the object (no repeats). Invalid → 400. The owner may edit/delete; admins may also edit/delete **shared** views; anyone else → 403 on a shared view, 404 on a private one.
 
-Column ids — contacts: `name, email, phone, jobTitle, company, owner, leadStatus, lifecycle, openDeal, agentStatus, nextAction, lastActivityAt, createdAt`; companies: `name, domain, industry, city, owner, contactCount, openDealCount, openDealAmount, createdAt, updatedAt`; deals: `name, stage, amount, expectedCloseDate, owner, company, contact, source, closedAt, createdAt, updatedAt`.
+Column ids — contacts: `name, email, phone, jobTitle, company, owner, leadStatus, lifecycle, openDeal, agentStatus, nextAction, lastActivityAt, createdAt, source`; companies: `name, domain, industry, city, owner, contactCount, openDealCount, openDealAmount, createdAt, updatedAt`; deals: `name, stage, amount, expectedCloseDate, owner, company, contact, source, closedAt, createdAt, updatedAt`.
 
 ## 8. Performance (B4 check)
 

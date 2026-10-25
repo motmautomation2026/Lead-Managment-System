@@ -19,6 +19,7 @@ import {
   BackendError,
   backend,
   getCurrentWorkspaceId,
+  listQuery,
   setCurrentWorkspaceId,
 } from "./backend-client";
 
@@ -234,5 +235,20 @@ describe("backend client", () => {
       }),
     );
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+  });
+});
+
+describe("listQuery", () => {
+  it("repeats array params and drops empty values (B4 multi-value filters)", () => {
+    expect(
+      listQuery("/contacts", {
+        ownerId: ["me", "none"],
+        q: "",
+        lifecycle: [],
+        limit: 50,
+        cursor: undefined,
+      }),
+    ).toBe("/contacts?ownerId=me&ownerId=none&limit=50");
+    expect(listQuery("/contacts", {})).toBe("/contacts");
   });
 });

@@ -48,16 +48,48 @@ export const keys = {
     leadId
       ? (["agentLeadPanel", workspaceId, leadId] as const)
       : (["agentLeadPanel", workspaceId] as const),
+  /** Without params: the prefix of every contacts list / count in the workspace. */
+  contacts: (workspaceId: string | null, params?: object) =>
+    params ? (["contacts", workspaceId, params] as const) : (["contacts", workspaceId] as const),
+  contactsCount: (workspaceId: string | null, params?: object) =>
+    params
+      ? (["contactsCount", workspaceId, params] as const)
+      : (["contactsCount", workspaceId] as const),
+  contact: (workspaceId: string | null, id: string) => ["contact", workspaceId, id] as const,
+  /** Every deal query (lists/records land in C4). */
+  deals: (workspaceId: string | null) => ["deals", workspaceId] as const,
+  company: (workspaceId: string | null, id: string) => ["company", workspaceId, id] as const,
+  companySearch: (workspaceId: string | null, q: string) =>
+    ["companySearch", workspaceId, q] as const,
+  savedViews: (workspaceId: string | null, object: string) =>
+    ["savedViews", workspaceId, object] as const,
 };
 
-export function refreshLead(client: QueryClient, workspaceId: string | null, leadId: string) {
+/**
+ * After any write that touches a contact (lead): its record, every contacts list and
+ * count, timeline, tasks, meetings, proposals, deals, automation, AI panel, dashboard.
+ * Without `leadId` (bulk actions) every contact's record queries are refreshed.
+ */
+export function refreshContact(client: QueryClient, workspaceId: string | null, leadId?: string) {
+  const perContact = leadId
+    ? [
+        keys.lead(workspaceId, leadId),
+        keys.contact(workspaceId, leadId),
+        keys.notes(workspaceId, leadId),
+        keys.contactability(workspaceId, leadId),
+        keys.calls(workspaceId, leadId),
+        keys.timeline(workspaceId, leadId),
+        keys.agentLeadPanel(workspaceId, leadId),
+      ]
+    : ["lead", "contact", "notes", "contactability", "calls", "timeline", "agentLeadPanel"].map(
+        (prefix) => [prefix, workspaceId],
+      );
   const targets = [
+    ...perContact,
     keys.leads(workspaceId),
-    keys.lead(workspaceId, leadId),
-    keys.notes(workspaceId, leadId),
-    keys.contactability(workspaceId, leadId),
-    keys.calls(workspaceId, leadId),
-    keys.timeline(workspaceId, leadId),
+    keys.contacts(workspaceId),
+    keys.contactsCount(workspaceId),
+    keys.deals(workspaceId),
     keys.tasks(workspaceId),
     keys.meetings(workspaceId),
     keys.proposals(workspaceId),

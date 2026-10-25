@@ -385,7 +385,8 @@ export function LeadDetailPage({ leadId }: { leadId: string }) {
                       <div>
                         <div className="text-sm">{task.title}</div>
                         <div className="text-xs text-muted-foreground">
-                          {label(task.type)} · {relDay(task.dueAt)} · {label(task.origin)}
+                          {label(task.type)} · {relDay(task.dueAt)} ·{" "}
+                          {task.origin === "agent" ? "AI Agent" : label(task.origin)}
                         </div>
                       </div>
                       <Button

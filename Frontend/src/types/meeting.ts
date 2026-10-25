@@ -25,6 +25,8 @@ export type CalendarSyncStatus = "not_applicable" | "pending" | "synced" | "fail
 export interface Meeting {
   id: string;
   leadId: string;
+  /** The deal this meeting is attached to (CRM v2). */
+  dealId?: string | null;
   ownerId?: string;
   ownerName?: string;
   title: string;

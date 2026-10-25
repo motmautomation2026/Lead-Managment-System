@@ -13,5 +13,6 @@ export interface TimelineEvent {
   relatedProposalId?: string;
   relatedCallId?: string;
   relatedWorkflowRunId?: string;
+  relatedDealId?: string;
   metadata?: Record<string, unknown>;
 }
