@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LeadDetailPage } from "@/features/leads/lead-detail-page";
+import { ContactRecordPage } from "@/features/contacts/contact-record-page";
 
 export const Route = createFileRoute("/contacts/$contactId")({
   head: () => ({ meta: [{ title: "Contact - MOTM Flow" }] }),
@@ -8,5 +8,5 @@ export const Route = createFileRoute("/contacts/$contactId")({
 
 function ContactRoute() {
   const { contactId } = Route.useParams();
-  return <LeadDetailPage leadId={contactId} />;
+  return <ContactRecordPage contactId={contactId} />;
 }

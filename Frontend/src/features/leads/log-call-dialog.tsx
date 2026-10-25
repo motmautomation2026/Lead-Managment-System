@@ -22,7 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { dateInputValue, toIsoFromIst } from "@/lib/dates";
 import { label } from "@/lib/labels";
-import { messageFromError, useLeads } from "@/store";
+import { messageFromError, useContact, useLeadMutations } from "@/store";
 import {
   CALL_CONNECTED_OUTCOMES,
   CALL_NOT_CONNECTED_REASONS,
@@ -55,8 +55,9 @@ export function LogCallDialog({
    */
   onScheduleMeetingPrompt?: (pendingTrigger?: WorkflowTrigger) => void;
 }) {
-  const { getLead, logCall, isPending } = useLeads();
-  const lead = getLead(leadId);
+  const { logCall, isPending } = useLeadMutations();
+  // By id, never from the cached leads list (B11).
+  const lead = useContact(leadId).data;
   const [connected, setConnected] = useState<boolean | null>(null);
   const [reason, setReason] = useState<CallNotConnectedReason>("no_answer");
   const [outcome, setOutcome] = useState<CallConnectedOutcome | null>(null);

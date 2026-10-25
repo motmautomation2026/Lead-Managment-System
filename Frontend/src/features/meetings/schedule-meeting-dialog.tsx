@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { dateInputValue, toIsoFromIst } from "@/lib/dates";
-import { useLeads } from "@/store";
+import { useLeadList } from "@/store";
 import type { Meeting } from "@/types";
 
 /**
@@ -55,7 +55,8 @@ export function ScheduleMeetingDialog({
     participants?: { name?: string | undefined; email: string }[] | undefined;
   }) => void;
 }) {
-  const { leads } = useLeads();
+  // The lead picker only; with a fixed leadId nothing is loaded (B11).
+  const leads = useLeadList(!leadId).data?.data ?? [];
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [pickedLeadId, setPickedLeadId] = useState("");
   const [title, setTitle] = useState("Discovery call");

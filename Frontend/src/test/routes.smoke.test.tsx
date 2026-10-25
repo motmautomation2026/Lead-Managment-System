@@ -89,6 +89,7 @@ vi.mock("@/store", () => {
       updateTemplate: noop,
     }),
     useIsAdmin: () => false,
+    useLeadList: () => ({ data: { data: [] } }),
     useAgentStats: () => ({ data: undefined, error: null }),
     useAgentDecisions: () => ({
       data: { pages: [] },

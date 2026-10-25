@@ -24,6 +24,7 @@ import { Route as CompaniesIndexRouteImport } from './routes/companies.index'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
 import { Route as DealsIndexRouteImport } from './routes/deals.index'
+import { Route as DealsDealIdRouteImport } from './routes/deals.$dealId'
 import { Route as DevUiRouteImport } from './routes/dev.ui'
 import { Route as LeadsIndexRouteImport } from './routes/leads.index'
 import { Route as LeadsLeadIdRouteImport } from './routes/leads.$leadId'
@@ -105,6 +106,11 @@ const DealsIndexRoute = DealsIndexRouteImport.update({
   path: '/deals/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DealsDealIdRoute = DealsDealIdRouteImport.update({
+  id: '/deals/$dealId',
+  path: '/deals/$dealId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DevUiRoute = DevUiRouteImport.update({
   id: '/dev/ui',
   path: '/dev/ui',
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
+  '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
@@ -166,6 +173,7 @@ export interface FileRoutesByTo {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
+  '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations': typeof AutomationsIndexRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
+  '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
   '/automations/': typeof AutomationsIndexRoute
@@ -213,6 +222,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/contacts/$contactId'
+    | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
     | '/automations/'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/contacts/$contactId'
+    | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
     | '/automations'
@@ -257,6 +268,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/contacts/$contactId'
+    | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
     | '/automations/'
@@ -280,6 +292,7 @@ export interface RootRouteChildren {
   AutomationsRunsRoute: typeof AutomationsRunsRoute
   AutomationsTemplatesRoute: typeof AutomationsTemplatesRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
+  DealsDealIdRoute: typeof DealsDealIdRoute
   DevUiRoute: typeof DevUiRoute
   LeadsLeadIdRoute: typeof LeadsLeadIdRoute
   AutomationsIndexRoute: typeof AutomationsIndexRoute
@@ -398,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DealsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/deals/$dealId': {
+      id: '/deals/$dealId'
+      path: '/deals/$dealId'
+      fullPath: '/deals/$dealId'
+      preLoaderRoute: typeof DealsDealIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dev/ui': {
       id: '/dev/ui'
       path: '/dev/ui'
@@ -448,6 +468,7 @@ const rootRouteChildren: RootRouteChildren = {
   AutomationsRunsRoute: AutomationsRunsRoute,
   AutomationsTemplatesRoute: AutomationsTemplatesRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,
+  DealsDealIdRoute: DealsDealIdRoute,
   DevUiRoute: DevUiRoute,
   LeadsLeadIdRoute: LeadsLeadIdRoute,
   AutomationsIndexRoute: AutomationsIndexRoute,

@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { messageFromError, useAutomations, useLeads } from "@/store";
+import { messageFromError, useAutomations, useLeadList } from "@/store";
 import type { Proposal } from "@/types";
 
 const DOCUMENT_ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp";
@@ -41,15 +41,18 @@ export interface SendProposalValue {
 }
 
 export function SendProposalDialog({
+  leadId: fixedLeadId,
   open,
   onOpenChange,
   onSend,
 }: {
+  /** From a contact record: that contact, no picker and no leads list (B11). */
+  leadId?: string;
   open: boolean;
   onOpenChange: (value: boolean) => void;
   onSend: (value: SendProposalValue) => Promise<Proposal>;
 }) {
-  const { leads } = useLeads();
+  const leads = useLeadList(!fixedLeadId).data?.data ?? [];
   const { templates } = useAutomations();
   const [leadId, setLeadId] = useState("");
   const [title, setTitle] = useState("Sales Automation Proposal");
@@ -75,7 +78,7 @@ export function SendProposalDialog({
   }
   if (!open && loadedFor) setLoadedFor(false);
 
-  const selectedLead = leadId || leads[0]?.id || "";
+  const selectedLead = fixedLeadId ?? (leadId || leads[0]?.id || "");
   const emailTemplates = templates.filter((t) => t.type === "email" && t.active);
   const whatsappTemplates = templates.filter((t) => t.type === "whatsapp" && t.active);
 
@@ -138,7 +141,7 @@ export function SendProposalDialog({
           <DialogTitle>Send proposal</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
+          <div hidden={Boolean(fixedLeadId)}>
             <Label className="mb-1.5 block text-xs">Lead</Label>
             <Select value={selectedLead} onValueChange={setLeadId}>
               <SelectTrigger>

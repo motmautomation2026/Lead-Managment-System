@@ -3,6 +3,8 @@ export {
   useSession,
   useIsAdmin,
   useLeads,
+  useLeadList,
+  useLeadMutations,
   useLead,
   useTasks,
   useMeetings,

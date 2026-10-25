@@ -18,11 +18,14 @@ export function RecordLayout({
   tabs,
   right,
   defaultTab,
+  rightLabel = "Related",
 }: {
   left: ReactNode;
   tabs: RecordTab[];
   right?: ReactNode;
   defaultTab?: string;
+  /** Tab name for the right panel below lg. */
+  rightLabel?: string;
 }) {
   const wide = useMediaQuery("(min-width: 1024px)");
   const allTabs = wide
@@ -30,7 +33,7 @@ export function RecordLayout({
     : [
         { id: "about", label: "About", content: left },
         ...tabs,
-        ...(right ? [{ id: "related", label: "Related", content: right }] : []),
+        ...(right ? [{ id: "related", label: rightLabel, content: right }] : []),
       ];
   const middle = (
     <Tabs defaultValue={defaultTab ?? allTabs[0]?.id ?? ""} className="min-w-0">

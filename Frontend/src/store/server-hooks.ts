@@ -79,14 +79,33 @@ export function useIsAdmin() {
   return useSession().currentUser?.role === "Admin";
 }
 
-export function useLeads() {
-  const client = useQueryClient();
+/** The old ≤500-row leads list (old pages and lead pickers only; never for one contact — B11). */
+export function useLeadList(enabled = true) {
   const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
+  return useQuery({
     queryKey: keys.leads(currentWorkspaceId),
     queryFn: ({ signal }) => backend.leads.list({ limit: 500 }, signal),
-    enabled: Boolean(currentWorkspaceId),
+    enabled: enabled && Boolean(currentWorkspaceId),
   });
+}
+
+export function useLeads() {
+  const query = useLeadList();
+  const leads = query.data?.data ?? [];
+  return {
+    ...useLeadMutations(),
+    leads,
+    getLead: (id: string) => leads.find((lead) => lead.id === id),
+    isLoading: query.isLoading,
+    error: query.error,
+  };
+}
+export type LeadsSlice = ReturnType<typeof useLeads>;
+
+/** Every lead/contact write (PATCH /leads/:id, notes, calls, lifecycle…) without loading a list. */
+export function useLeadMutations() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
   const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateLeadInput) => backend.leads.create(input),
@@ -177,7 +196,6 @@ export function useLeads() {
               : backend.leads.reactivate(id, reason),
     onSuccess: (lead) => refresh(lead.id),
   });
-  const leads = query.data?.data ?? [];
   const isPending = [
     create,
     importCsv,
@@ -192,10 +210,6 @@ export function useLeads() {
     lifecycle,
   ].some((mutation) => mutation.isPending);
   return {
-    leads,
-    getLead: (id: string) => leads.find((lead) => lead.id === id),
-    isLoading: query.isLoading,
-    error: query.error,
     isPending,
     addLead: (input: CreateLeadInput) => create.mutateAsync(input),
     importLeadsCsv: (rows: ImportLeadRow[]) => importCsv.mutateAsync(rows),
@@ -217,7 +231,6 @@ export function useLeads() {
     ) => lifecycle.mutateAsync({ id, action, reason, lossReason }),
   };
 }
-export type LeadsSlice = ReturnType<typeof useLeads>;
 
 export function useLead(leadId: string) {
   const { currentWorkspaceId } = useWorkspace();
