@@ -4,7 +4,7 @@
  * Merged contacts and companies are excluded.
  */
 import type { Queryable } from "../dto.js";
-import { containsPattern } from "../lists/listQuery.js";
+import { containsPattern, LEAD_FULL_NAME_SQL, leadSearchSql } from "../lists/listQuery.js";
 
 const TOP = 5;
 const sim = (column: string) => `extensions.similarity(coalesce(${column}, ''), $3)`;
@@ -16,8 +16,8 @@ export async function globalSearch(db: Queryable, workspaceId: string, q: string
       `select l.id, trim(l.first_name || ' ' || l.last_name) as name, l.email, l.company, l.lifecycle_state as lifecycle
          from public.leads l
         where l.workspace_id = $1 and l.lifecycle_state <> 'merged'
-          and (l.first_name ilike $2 or l.last_name ilike $2 or l.company ilike $2 or l.email ilike $2 or l.phone ilike $2)
-        order by greatest(${sim("l.first_name || ' ' || l.last_name")}, ${sim("l.company")}, ${sim("l.email")}) desc, l.last_activity_at desc, l.id
+          and ${leadSearchSql("$2")}
+        order by greatest(${sim(LEAD_FULL_NAME_SQL)}, ${sim("l.company")}, ${sim("l.email")}) desc, l.last_activity_at desc, l.id
         limit $4`,
       params,
     ),

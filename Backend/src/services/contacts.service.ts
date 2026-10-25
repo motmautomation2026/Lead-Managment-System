@@ -14,6 +14,7 @@ import {
   addOwnerFilter,
   addRange,
   containsPattern,
+  leadSearchSql,
   defineSorts,
   isoTimestamp,
   multi,
@@ -91,7 +92,7 @@ function contactWhere(workspaceId: string, actor: Actor, f: ContactFilters): Sql
   addRange(b, "l.last_activity_at", f.lastActivityFrom, f.lastActivityTo, "timestamptz");
   if (f.q) {
     const q = b.p(containsPattern(f.q));
-    b.and(`(l.first_name ilike ${q} or l.last_name ilike ${q} or l.company ilike ${q} or l.email ilike ${q} or l.phone ilike ${q})`);
+    b.and(leadSearchSql(q));
   }
   return b;
 }

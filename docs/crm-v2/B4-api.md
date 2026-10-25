@@ -21,7 +21,7 @@ shape `{ error: { code, message, details? } }`. **A** = admin only (403 otherwis
 Known limits (accepted 2026-10-24):
 - **2-character searches may scan.** Trigram indexes need 3 characters to narrow anything; a 2-character `q` reads the workspace's rows. Fine at current sizes.
 - **Companies `contactCount` has no index.** It is counted per row (lateral count over `leads(workspace_id, company_id)`), so sorting by it reads every company in the workspace. Fine at ~1,000 companies (see §8).
-- `q` matches each column separately: "Asha Rao" (first + last name together) does not match a contact; search "Asha" or "Rao".
+- Contact `q` also matches the full name `first_name || ' ' || last_name` (migration 034, C2): "Asha Rao" matches; the reverse order ("Rao Asha") does not.
 
 ## 2. Contacts (`leads` rows; UI says Contact)
 
@@ -34,7 +34,7 @@ Writes stay on the existing `/leads/:id/...` routes.
 | `GET /contacts/:id` | The existing Lead DTO, plus `company: {id, name, domain} \| null` and `deals: [{id, name, stage, amount, currency, closedAt}]` (newest updated first). The Lead DTO's text `company` is returned as **`companyText`** (the key `company` holds the object). 404 for another workspace. |
 | `POST /contacts/bulk` | `{ ids: uuid[1..100], action: "assignOwner" \| "enrollAi", ownerId? }` → `{ data: [{ id, ok, error? }] }` in request order (duplicates removed). One failure never stops the others. `assignOwner` needs `ownerId` of an **active** user (else 400 for the whole request) and runs the normal lead update per contact (timeline "Lead Assigned"). `enrollAi` is **A** and calls the AI enroll service (`error` explains skips: already enrolled, not eligible, no email/phone, …). A contact in another workspace → `ok: false, error: "Contact not found."` |
 
-Filters: `ownerId[]`, `leadStatus[]` (pipeline stage), `lifecycle[]` (default `active` + `long_term_nurture`; `all` = every state except merged; `merged` only when named), `source[]`, `companyId`, `agentStatus[]` (`none|active|paused|handed_off|stopped`), `hasOpenDeal`, `createdFrom/To`, `lastActivityFrom/To`, `q` (first name, last name, company, email, phone).
+Filters: `ownerId[]`, `leadStatus[]` (pipeline stage), `lifecycle[]` (default `active` + `long_term_nurture`; `all` = every state except merged; `merged` only when named), `source[]`, `companyId`, `agentStatus[]` (`none|active|paused|handed_off|stopped`), `hasOpenDeal`, `createdFrom/To`, `lastActivityFrom/To`, `q` (full name "first last", first name, last name, company, email, phone).
 
 Sorts: `createdAt` (**default desc**), `lastActivityAt`, `updatedAt`, `name` (last name, then first name), `company`.
 

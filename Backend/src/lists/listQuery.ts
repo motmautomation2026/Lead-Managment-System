@@ -41,6 +41,13 @@ export const escapeLike = (value: string) => value.replace(/[\\%_]/g, "\\$&");
 /** `%q%` for an escaped `ilike` "contains" search. */
 export const containsPattern = (q: string) => `%${escapeLike(q)}%`;
 
+/** Same expression as the trigram index in migration 034 (`l` = public.leads). */
+export const LEAD_FULL_NAME_SQL = "(l.first_name || ' ' || l.last_name)";
+
+/** Contact "contains" search over full name, first/last name, company, email, phone; `param` holds `containsPattern(q)`. */
+export const leadSearchSql = (param: string) =>
+  `(${LEAD_FULL_NAME_SQL} ilike ${param} or l.first_name ilike ${param} or l.last_name ilike ${param} or l.company ilike ${param} or l.email ilike ${param} or l.phone ilike ${param})`;
+
 // --- Filters -------------------------------------------------------------------
 
 /** One value or a repeated query param (`ownerId=a&ownerId=b`), always an array. */

@@ -24,7 +24,7 @@ import { onAgentEvent } from "./agentEvents.service.js";
 import { linkCompanySafely } from "./companies.service.js";
 import { closeOpenDealsSafely, winSingleOpenDealSafely } from "./deals.service.js";
 import type { AgentStatus } from "../agent/rules.js";
-import { containsPattern } from "../lists/listQuery.js";
+import { containsPattern, leadSearchSql } from "../lists/listQuery.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
@@ -476,9 +476,7 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
     params.push(filters.automationMode);
   }
   if (filters.search) {
-    clauses.push(
-      `(l.first_name ilike $${i} or l.last_name ilike $${i} or l.company ilike $${i} or l.email ilike $${i} or l.phone ilike $${i})`,
-    );
+    clauses.push(leadSearchSql(`$${i}`));
     params.push(containsPattern(filters.search));
     i++;
   }

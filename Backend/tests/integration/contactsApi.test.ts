@@ -153,6 +153,23 @@ describeIfDb("contacts API (requires TEST_DATABASE_URL)", () => {
     expect((await api.call(rep, ws, "GET", `/leads${qs({ search: "_" })}`)).body.data.every((l: { company: string }) => l.company.includes("_"))).toBe(true);
   });
 
+  it("q matches the full name (first then last) in /contacts, /search and the old /leads search; escaped, workspace-scoped", async () => {
+    expect(await listIds({ q: "First13 LastN" })).toEqual([ids.c13]);
+    expect(await listIds({ q: "same tie" })).toEqual([ids.c0]);
+    expect(await listIds({ q: "LastN First13" })).toEqual([]); // reverse order is not supported
+    expect(await listIds({ q: "First13_LastN" })).toEqual([]);
+    expect(await listIds({ q: "First13%LastN" })).toEqual([]);
+    expect((await get(`/count${qs({ q: "First13 LastN" })}`)).body.count).toBe(1);
+    const search = await api.call(rep, ws, "GET", `/search${qs({ q: "First13 LastN" })}`);
+    expect(search.body.contacts.map((c: { id: string }) => c.id)).toEqual([ids.c13]);
+    expect((await api.call(rep, ws, "GET", `/search${qs({ q: "First13_LastN" })}`)).body.contacts).toEqual([]);
+    const old = await api.call(rep, ws, "GET", `/leads${qs({ search: "First13 LastN" })}`);
+    expect(old.body.data.map((l: { id: string }) => l.id)).toEqual([ids.c13]);
+    expect((await api.call(rep, ws, "GET", `/leads${qs({ search: "First13_LastN" })}`)).body.data).toEqual([]);
+    expect((await api.call(rep, otherWs, "GET", `/contacts${qs({ q: "First13 LastN" })}`)).body.data).toEqual([]);
+    expect((await api.call(rep, otherWs, "GET", `/search${qs({ q: "First13 LastN" })}`)).body.contacts).toEqual([]);
+  });
+
   it("rejects bad sort, cursor and unknown params with 400", async () => {
     expect((await get(qs({ sort: "email:asc" }))).status).toBe(400);
     expect((await get(qs({ cursor: "garbage" }))).status).toBe(400);

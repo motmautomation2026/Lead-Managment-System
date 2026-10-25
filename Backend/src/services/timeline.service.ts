@@ -75,6 +75,7 @@ interface TimelineRow {
   related_proposal_id: string | null;
   related_call_id: string | null;
   related_workflow_run_id: string | null;
+  related_deal_id: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -94,6 +95,7 @@ export function timelineToDto(row: TimelineRow) {
     relatedProposalId: row.related_proposal_id ?? undefined,
     relatedCallId: row.related_call_id ?? undefined,
     relatedWorkflowRunId: row.related_workflow_run_id ?? undefined,
+    relatedDealId: row.related_deal_id ?? undefined,
     metadata: row.metadata ?? undefined,
   };
 }
