@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-/** Generic "are you sure?" dialog for destructive actions (delete, etc.) that don't need a typed reason — see ReasonDialog in lead-detail-page.tsx for the reason-required variant. */
+/** Generic "are you sure?" dialog for destructive actions (delete, etc.) that don't need a typed reason — see ReasonDialog in features/leads/lead-dialogs.tsx for the reason-required variant. */
 export function ConfirmDialog({
   open,
   onOpenChange,

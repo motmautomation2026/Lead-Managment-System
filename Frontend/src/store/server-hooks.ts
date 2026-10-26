@@ -420,6 +420,10 @@ export function useTimeline(leadId: string) {
 }
 export type TimelineSlice = ReturnType<typeof useTimeline>;
 
+/**
+ * Workflows + templates (small reference lists) and their writes. Runs and scheduled steps
+ * are paginated lists since C6b (`useRunList`, `useScheduledActionList`, `useRunAction`).
+ */
 export function useAutomations() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
@@ -432,16 +436,6 @@ export function useAutomations() {
   const templates = useQuery({
     queryKey: keys.templates(currentWorkspaceId),
     queryFn: ({ signal }) => backend.templates.list(signal),
-    enabled,
-  });
-  const runs = useQuery({
-    queryKey: keys.runs(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.runs.list(undefined, signal),
-    enabled,
-  });
-  const scheduled = useQuery({
-    queryKey: keys.scheduledActions(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.scheduledActions.list(undefined, signal),
     enabled,
   });
   const invalidate = () =>
@@ -494,23 +488,6 @@ export function useAutomations() {
   // Runs change the contact's next action, timeline and tasks too (audit B31).
   const invalidateFor = (leadId: string) =>
     Promise.all([invalidate(), refreshContact(client, currentWorkspaceId, leadId)]);
-  const runAction = useMutation({
-    mutationFn: ({
-      id,
-      action,
-    }: {
-      id: string;
-      action: "pause" | "resume" | "cancel" | "retry";
-    }) =>
-      action === "pause"
-        ? backend.runs.pause(id)
-        : action === "resume"
-          ? backend.runs.resume(id)
-          : action === "cancel"
-            ? backend.runs.cancel(id)
-            : backend.runs.retry(id),
-    onSuccess: (run) => invalidateFor(run.leadId),
-  });
   const enroll = useMutation({
     mutationFn: (input: { leadId: string; workflowId: string; reason?: string | undefined }) =>
       backend.runs.create(input),
@@ -543,10 +520,8 @@ export function useAutomations() {
   return {
     workflows: workflowList,
     templates: templates.data?.data ?? [],
-    runs: runs.data?.data ?? [],
-    scheduledActions: scheduled.data?.data ?? [],
-    isLoading: workflows.isLoading || templates.isLoading || runs.isLoading || scheduled.isLoading,
-    error: workflows.error ?? templates.error ?? runs.error ?? scheduled.error,
+    isLoading: workflows.isLoading || templates.isLoading,
+    error: workflows.error ?? templates.error,
     isPending: [
       workflowCreate,
       workflowUpdate,
@@ -556,7 +531,6 @@ export function useAutomations() {
       duplicate,
       workflowDelete,
       workflowVersionDelete,
-      runAction,
       enroll,
       templateCreate,
       templateUpdate,
@@ -584,10 +558,6 @@ export function useAutomations() {
       workflowDelete.mutateAsync(force !== undefined ? { id, force } : { id }),
     deleteWorkflowVersion: (id: string, version: number) =>
       workflowVersionDelete.mutateAsync({ id, version }),
-    pauseRun: (id: string) => runAction.mutateAsync({ id, action: "pause" }),
-    resumeRun: (id: string) => runAction.mutateAsync({ id, action: "resume" }),
-    cancelRun: (id: string) => runAction.mutateAsync({ id, action: "cancel" }),
-    retryRun: (id: string) => runAction.mutateAsync({ id, action: "retry" }),
     enrollLead: (leadId: string, workflowId: string, reason?: string) =>
       enroll.mutateAsync({ leadId, workflowId, reason }),
     addTemplate: (input: { name: string; type: TemplateType; subject: string; body: string }) =>

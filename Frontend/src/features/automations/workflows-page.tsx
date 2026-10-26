@@ -1,17 +1,17 @@
-import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useMemo, useState, type MouseEvent } from "react";
 import { toast } from "sonner";
 import { Bot, Copy, Plus, Search, Trash2 } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
+import { PageHeader } from "@/components/crm/page-header";
+import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { RelativeTime } from "@/components/crm/relative-time";
 import { AutomationTabs } from "@/features/automations/automation-tabs";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { relDay } from "@/lib/format";
-import { useAutomations, useSession } from "@/store";
-import { messageFromError } from "@/store";
+import { messageFromError, useAutomations } from "@/store";
 import {
   Dialog,
   DialogContent,
@@ -28,11 +28,116 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { workflowTriggerLabel } from "@/lib/labels";
 import { BackendError } from "@/lib/backend-client";
 import { WORKFLOW_TRIGGERS, type Workflow, type WorkflowTrigger } from "@/types";
 
+/** Columns of the workflows table; the toggle, duplicate and delete cells call back into the page. */
+function workflowColumns(actions: {
+  disabled: boolean;
+  onToggle: (w: Workflow, active: boolean) => void;
+  onDuplicate: (w: Workflow) => void;
+  onDelete: (w: Workflow) => void;
+}): DataTableColumn<Workflow>[] {
+  const stop = (e: MouseEvent) => e.stopPropagation();
+  return [
+    {
+      id: "name",
+      header: "Name",
+      size: 260,
+      hideable: false,
+      cell: (w) => (
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{w.name}</span>
+          {w.description && (
+            <span className="block truncate type-small text-muted-foreground">{w.description}</span>
+          )}
+        </span>
+      ),
+    },
+    { id: "trigger", header: "Trigger", size: 220, cell: (w) => workflowTriggerLabel(w.trigger) },
+    {
+      id: "status",
+      header: "Status",
+      size: 150,
+      cell: (w) => (
+        <span className="inline-flex items-center gap-2" onClick={stop}>
+          <Switch
+            checked={w.status === "active"}
+            disabled={actions.disabled}
+            aria-label={`${w.name} active`}
+            onCheckedChange={(v) => actions.onToggle(w, v)}
+          />
+          <StatusBadge value={w.status} />
+        </span>
+      ),
+    },
+    {
+      id: "version",
+      header: "Published",
+      size: 180,
+      cell: (w) => {
+        const draft = w.versions.find((v) => v.status === "draft");
+        return (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            <StatusBadge value={`V${w.currentVersion} published`} tone="info" />
+            {draft && <StatusBadge value={`V${draft.version} draft`} tone="warning" />}
+          </span>
+        );
+      },
+    },
+    {
+      id: "activeRuns",
+      header: "Active runs",
+      size: 140,
+      cell: (w) => (
+        <span className="num">
+          {w.activeLeads}
+          {w.failures > 0 && (
+            <span className="ml-2 type-small text-destructive">{w.failures} failed</span>
+          )}
+        </span>
+      ),
+    },
+    {
+      id: "updatedAt",
+      header: "Updated",
+      size: 170,
+      cell: (w) => <RelativeTime value={w.updatedAt} />,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      size: 100,
+      hideable: false,
+      cell: (w) => (
+        <span className="inline-flex gap-1" onClick={stop}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            disabled={actions.disabled}
+            onClick={() => actions.onDuplicate(w)}
+            aria-label={`Duplicate ${w.name}`}
+          >
+            <Copy />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            onClick={() => actions.onDelete(w)}
+            aria-label={`Delete ${w.name}`}
+          >
+            <Trash2 />
+          </Button>
+        </span>
+      ),
+    },
+  ];
+}
+
+/** /automations: every workflow (a small reference list, searched here) with the same actions as before C6b. */
 export function WorkflowsPage() {
   const {
     workflows,
@@ -44,7 +149,7 @@ export function WorkflowsPage() {
     error,
     isPending,
   } = useAutomations();
-  const { userName } = useSession();
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Workflow | null>(null);
   const [forceDeleteTarget, setForceDeleteTarget] = useState<Workflow | null>(null);
@@ -68,131 +173,66 @@ export function WorkflowsPage() {
     );
   }, [workflows, q]);
 
-  return (
-    <div className="pb-10">
-      <PageHeader
-        title="Automations"
-        description="Workflows are defined here and executed by the backend automation worker. Publishing a version changes live behaviour."
-        tabs={<AutomationTabs />}
-        actions={
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 size-4" /> New workflow
-          </Button>
-        }
-      />
+  const columns = workflowColumns({
+    disabled: isPending,
+    onToggle: (w, v) =>
+      void mutate(
+        () => updateWorkflow(w.id, { status: v ? "active" : "paused" }),
+        v ? "Workflow activated" : "Workflow paused",
+      ),
+    onDuplicate: (w) => void mutate(() => duplicateWorkflow(w.id), "Workflow duplicated"),
+    onDelete: setDeleteTarget,
+  });
+  const newButton = (
+    <Button onClick={() => setCreateOpen(true)}>
+      <Plus /> New workflow
+    </Button>
+  );
 
-      <div className="px-6 pt-6">
-        <div className="relative w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+  return (
+    <div className="pb-24">
+      <PageHeader
+        title="Workflows"
+        count={isLoading ? null : workflows.length}
+        description="Workflows are defined here and executed by the backend automation worker. Publishing a version changes live behaviour."
+        primaryAction={newButton}
+        tabs={<AutomationTabs />}
+      />
+      <div className="space-y-3 px-4 pt-4 sm:px-6">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search workflows"
+            aria-label="Search workflows"
+            data-list-search
             className="pl-8"
           />
         </div>
-      </div>
-
-      <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
-        {isLoading ? (
-          <LoadingBlock label="Loading workflows…" />
-        ) : error ? (
-          <ErrorBlock error={error} />
-        ) : filteredWorkflows.length === 0 ? (
-          <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-            No workflows match &quot;{q}&quot;.
-          </p>
-        ) : (
-          <>
-            {filteredWorkflows.map((w) => {
-              const draft = w.versions.find((v) => v.status === "draft");
-              const published = w.versions.find((v) => v.version === w.currentVersion);
-              return (
-                <Card key={w.id} className="flex flex-col">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-sm">{w.name}</CardTitle>
-                      <Switch
-                        checked={w.status === "active"}
-                        disabled={isPending}
-                        onCheckedChange={(v) => {
-                          void mutate(
-                            () => updateWorkflow(w.id, { status: v ? "active" : "paused" }),
-                            v ? "Workflow activated" : "Workflow paused",
-                          );
-                        }}
-                      />
-                    </div>
-                    <p className="pt-1 text-xs text-muted-foreground">{w.description}</p>
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col gap-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <StatusBadge value={w.status} dot />
-                      <StatusBadge value={`V${w.currentVersion} published`} tone="info" />
-                      {draft && <StatusBadge value={`V${draft.version} draft`} tone="warning" />}
-                    </div>
-
-                    <div className="rounded-md border px-3 py-2 text-xs">
-                      <div className="text-muted-foreground">Trigger</div>
-                      <div className="pt-0.5 font-medium">{workflowTriggerLabel(w.trigger)}</div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                      <Metric label="Steps" value={String(published?.steps.length ?? 0)} />
-                      <Metric label="Active leads" value={String(w.activeLeads)} />
-                      <Metric label="Failures" value={String(w.failures)} />
-                    </div>
-
-                    <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-                      <span className="text-[11px] text-muted-foreground">
-                        {userName(w.ownerId)} · {relDay(w.updatedAt)}
-                      </span>
-                      <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            void mutate(() => duplicateWorkflow(w.id), "Workflow duplicated");
-                          }}
-                          aria-label="Duplicate workflow"
-                        >
-                          <Copy className="size-4" />
-                        </Button>
-                        <Button asChild size="sm" variant="outline">
-                          <Link
-                            to="/automations/workflows/$workflowId"
-                            params={{ workflowId: w.id }}
-                          >
-                            Edit steps
-                          </Link>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDeleteTarget(w)}
-                          aria-label="Delete workflow"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-
-            <Card className="border-dashed">
-              <CardContent className="flex h-full flex-col justify-center gap-2 py-8 text-center">
-                <Bot className="mx-auto size-5 text-muted-foreground" />
-                <p className="text-sm font-medium">Managers own the automation</p>
-                <p className="text-xs text-muted-foreground">
-                  Add or reorder steps, change delays and swap templates here - no developer needs
-                  to touch code.
-                </p>
-              </CardContent>
-            </Card>
-          </>
-        )}
+        <DataTable<Workflow>
+          label="Workflows"
+          data={filteredWorkflows}
+          columns={columns}
+          getRowId={(w) => w.id}
+          getRowHref={(w) => `/automations/workflows/${w.id}`}
+          onRowClick={(w) =>
+            void navigate({
+              to: "/automations/workflows/$workflowId",
+              params: { workflowId: w.id },
+            })
+          }
+          isLoading={isLoading}
+          error={error}
+          emptyState={
+            <EmptyState
+              icon={Bot}
+              title={q.trim() ? `No workflows match "${q.trim()}"` : "No workflows yet"}
+              text="Managers own the automation: add or reorder steps, change delays and swap templates here - no developer needs to touch code."
+              action={newButton}
+            />
+          }
+        />
       </div>
       <NewWorkflowDialog
         open={createOpen}
@@ -314,14 +354,5 @@ function NewWorkflowDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border py-2">
-      <div className="num text-sm font-semibold">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-    </div>
   );
 }

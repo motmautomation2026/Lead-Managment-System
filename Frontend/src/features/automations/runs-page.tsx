@@ -1,376 +1,251 @@
-import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
-import { AutomationTabs } from "@/features/automations/automation-tabs";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Search, Workflow as WorkflowIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/crm/page-header";
+import { ViewTabs } from "@/components/crm/view-tabs";
+import { FilterBar } from "@/components/crm/filter-bar";
+import type { FilterDef } from "@/components/crm/filter-model";
+import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { RelativeTime } from "@/components/crm/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
-import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
-import { relDay } from "@/lib/format";
+import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { RefLink } from "@/features/work/ref-link";
+import { ContactFilter } from "@/features/work/work-filters";
 import { label } from "@/lib/labels";
-import { findCurrentStep } from "@/lib/workflow-timeline";
-import { messageFromError, useAutomations, useLeads } from "@/store";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useListUrlState } from "@/lib/use-list-url-state";
+import {
+  useRunCount,
+  useRunList,
+  useScheduledActionCount,
+  useScheduledActionList,
+  useWorkflowList,
+} from "@/store";
+import {
+  RUN_STATUSES,
+  SCHEDULED_ACTION_STATUSES,
+  type RunListItem,
+  type ScheduledActionListItem,
+} from "@/types";
+import { AutomationTabs } from "./automation-tabs";
+import { currentStepText } from "./run-labels";
+import { RunSheet } from "./run-sheet";
+import {
+  fromFilterValues,
+  parseSort,
+  runsSearchSchema,
+  toFilterValues,
+  toRunParams,
+  toStepParams,
+} from "./runs-search";
 
-const RUNS_PAGE_SIZE = 10;
-const ACTIONS_PAGE_SIZE = 10;
+const RUN_COLUMNS: DataTableColumn<RunListItem>[] = [
+  {
+    id: "contact",
+    header: "Contact",
+    hideable: false,
+    cell: (r) => <RefLink type="contact" value={r.contact} />,
+  },
+  { id: "workflow", header: "Workflow", cell: (r) => `${r.workflow.name} · V${r.version}` },
+  {
+    id: "step",
+    header: "Current step",
+    size: 220,
+    cell: (r) => (
+      <span className="min-w-0">
+        <span className="block truncate">{currentStepText(r)}</span>
+        {r.lastError && (
+          <span className="block truncate type-small text-destructive">{r.lastError}</span>
+        )}
+      </span>
+    ),
+  },
+  { id: "status", header: "Status", size: 130, cell: (r) => <StatusBadge value={r.status} /> },
+  {
+    id: "startedAt",
+    header: "Started",
+    sortable: true,
+    size: 170,
+    cell: (r) => <RelativeTime value={r.startedAt} />,
+  },
+  {
+    id: "next",
+    header: "Next action",
+    size: 170,
+    cell: (r) => (r.nextRunAt ? <RelativeTime value={r.nextRunAt} /> : "–"),
+  },
+];
 
+const STEP_COLUMNS: DataTableColumn<ScheduledActionListItem>[] = [
+  {
+    id: "contact",
+    header: "Contact",
+    hideable: false,
+    cell: (a) => <RefLink type="contact" value={a.contact} />,
+  },
+  { id: "workflow", header: "Workflow", cell: (a) => a.workflow.name },
+  {
+    id: "step",
+    header: "Step",
+    cell: (a) => `${a.stepOrder != null ? `${a.stepOrder + 1} · ` : ""}${label(a.actionType)}`,
+  },
+  {
+    id: "scheduledFor",
+    header: "Scheduled for",
+    sortable: true,
+    size: 170,
+    cell: (a) => <RelativeTime value={a.scheduledFor} />,
+  },
+  { id: "status", header: "Status", size: 130, cell: (a) => <StatusBadge value={a.status} /> },
+  {
+    id: "attempts",
+    header: "Attempts / error",
+    size: 220,
+    cell: (a) => (
+      <span className="truncate type-small text-muted-foreground">
+        {a.attemptCount}/{a.maxAttempts}
+        {a.lastError ? ` · ${a.lastError}` : ""}
+      </span>
+    ),
+  },
+];
+
+/** /automations/runs: Runs and Scheduled steps on the list standard (C6b). */
 export function RunsPage() {
-  const {
-    runs,
-    workflows,
-    scheduledActions,
-    pauseRun,
-    resumeRun,
-    cancelRun,
-    retryRun,
-    isLoading,
-    error,
-    isPending,
-  } = useAutomations();
-  const { leads } = useLeads();
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
-  const [actionsPage, setActionsPage] = useState(1);
+  const [state, set] = useListUrlState(runsSearchSchema);
+  const tab = state.tab ?? "runs";
+  const prefetch = usePrefetchRecord();
+  const workflows = useWorkflowList();
 
-  const filteredRuns = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return runs;
-    return runs.filter((run) => {
-      const lead = leads.find((item) => item.id === run.leadId);
-      const haystack = lead ? `${lead.firstName} ${lead.lastName} ${lead.company}` : run.leadId;
-      return haystack.toLowerCase().includes(query);
-    });
-  }, [runs, leads, q]);
+  const runParams = useMemo(() => toRunParams(state), [state]);
+  const stepParams = useMemo(() => toStepParams(state), [state]);
+  const runs = useRunList(runParams, tab === "runs");
+  const steps = useScheduledActionList(stepParams, tab === "steps");
+  const runCount = useRunCount(runParams);
+  const stepCount = useScheduledActionCount(stepParams);
+  const runRows = useMemo(() => runs.data?.pages.flatMap((p) => p.data) ?? [], [runs.data]);
+  const stepRows = useMemo(() => steps.data?.pages.flatMap((p) => p.data) ?? [], [steps.data]);
 
-  const filteredScheduledActions = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return scheduledActions;
-    return scheduledActions.filter((action) => {
-      const lead = leads.find((item) => item.id === action.leadId);
-      const haystack = lead ? `${lead.firstName} ${lead.lastName} ${lead.company}` : action.leadId;
-      return haystack.toLowerCase().includes(query);
-    });
-  }, [scheduledActions, leads, q]);
+  // The Sheet follows the row, so a Pause/Resume shows the refetched status.
+  const [sheetRun, setSheetRun] = useState<RunListItem | null>(null);
+  const sheetRow = sheetRun ? (runRows.find((r) => r.id === sheetRun.id) ?? sheetRun) : null;
 
-  const totalPages = Math.max(1, Math.ceil(filteredRuns.length / RUNS_PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pagedRuns = useMemo(
-    () => filteredRuns.slice((currentPage - 1) * RUNS_PAGE_SIZE, currentPage * RUNS_PAGE_SIZE),
-    [filteredRuns, currentPage],
-  );
+  const [qInput, setQInput] = useState(state.q ?? "");
+  const debouncedQ = useDebouncedValue(qInput, 300);
+  const lastQ = useRef(debouncedQ);
+  useEffect(() => {
+    if (lastQ.current === debouncedQ) return;
+    lastQ.current = debouncedQ;
+    void set({ q: debouncedQ || undefined }, { replace: true });
+  }, [debouncedQ, set]);
 
-  const totalActionsPages = Math.max(
-    1,
-    Math.ceil(filteredScheduledActions.length / ACTIONS_PAGE_SIZE),
-  );
-  const currentActionsPage = Math.min(actionsPage, totalActionsPages);
-  const pagedScheduledActions = useMemo(
-    () =>
-      filteredScheduledActions.slice(
-        (currentActionsPage - 1) * ACTIONS_PAGE_SIZE,
-        currentActionsPage * ACTIONS_PAGE_SIZE,
-      ),
-    [filteredScheduledActions, currentActionsPage],
+  const statuses = tab === "steps" ? SCHEDULED_ACTION_STATUSES : RUN_STATUSES;
+  const filters: FilterDef[] = [
+    {
+      id: "status",
+      label: "Status",
+      type: "multi",
+      options: statuses.map((s) => ({ value: s, label: label(s) })),
+    },
+    {
+      id: "workflowId",
+      label: "Workflow",
+      type: "multi",
+      options: (workflows.data?.data ?? []).map((w) => ({ value: w.id, label: w.name })),
+    },
+    { id: "dateRange", label: tab === "steps" ? "Due" : "Started", type: "dateRange" },
+  ];
+  const sort = parseSort(state);
+  const onSortChange = (s: { field: string; dir: "asc" | "desc" }) =>
+    void set({ sort: `${s.field}:${s.dir}` });
+  const empty = (
+    <EmptyState
+      icon={WorkflowIcon}
+      title={tab === "steps" ? "No scheduled steps" : "No workflow runs"}
+      text="Try other filters, or enroll a contact in a workflow from their record."
+    />
   );
 
   return (
-    <div className="pb-10">
+    <div className="pb-24">
       <PageHeader
-        title="Automations"
-        description="Runs and scheduled actions are authoritative backend execution state."
+        title="Runs"
+        count={(tab === "steps" ? stepCount : runCount).data?.count ?? null}
+        description="Workflow runs and their scheduled steps, as the backend worker executes them."
         tabs={<AutomationTabs />}
       />
-
-      <div className="space-y-4 p-6">
-        {isLoading ? (
-          <LoadingBlock label="Loading runs…" />
-        ) : error ? (
-          <ErrorBlock error={error} />
+      <div className="space-y-3 px-4 pt-4 sm:px-6">
+        <ViewTabs
+          views={[
+            { id: "runs", label: "Runs", count: runCount.data?.count },
+            { id: "steps", label: "Scheduled steps", count: stepCount.data?.count },
+          ]}
+          activeId={tab}
+          onChange={(id) =>
+            void set({ tab: id === "steps" ? "steps" : undefined, sort: undefined })
+          }
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              placeholder="Search by contact name"
+              aria-label="Search runs"
+              data-list-search
+              className="pl-8"
+            />
+          </div>
+          <ContactFilter
+            contactId={state.contactId}
+            onChange={(contactId) => void set({ contactId })}
+          />
+          <FilterBar
+            filters={filters}
+            values={toFilterValues(state)}
+            onChange={(values) => void set(fromFilterValues(state, values))}
+          />
+        </div>
+        {tab === "runs" ? (
+          <DataTable<RunListItem>
+            label="Workflow runs"
+            data={runRows}
+            columns={RUN_COLUMNS}
+            getRowId={(r) => r.id}
+            onRowClick={setSheetRun}
+            onRowIntent={(r) => prefetch("contact", r.contact.id)}
+            sort={sort}
+            onSortChange={onSortChange}
+            hasNextPage={runs.hasNextPage}
+            isFetchingNextPage={runs.isFetchingNextPage}
+            onLoadMore={() => void runs.fetchNextPage()}
+            isLoading={runs.isLoading}
+            error={runs.error}
+            onRetry={() => void runs.refetch()}
+            emptyState={empty}
+          />
         ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="relative w-64">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={q}
-                  onChange={(e) => {
-                    setQ(e.target.value);
-                    setPage(1);
-                    setActionsPage(1);
-                  }}
-                  placeholder="Search by lead name"
-                  className="pl-8"
-                />
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {filteredRuns.length} of {runs.length} runs
-              </div>
-            </div>
-
-            <Card className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-sm">
-                  <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
-                    <tr>
-                      {[
-                        "Lead",
-                        "Workflow",
-                        "Current step",
-                        "Status",
-                        "Started",
-                        "Next action",
-                        "",
-                      ].map((heading) => (
-                        <th key={heading} className="px-3 py-2 font-medium">
-                          {heading}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedRuns.map((run) => {
-                      const lead = leads.find((item) => item.id === run.leadId);
-                      const workflow = workflows.find((item) => item.id === run.workflowId);
-                      const currentStep = findCurrentStep(workflow, run);
-                      const currentStepLabel = currentStep
-                        ? label(currentStep.action)
-                        : ["running", "waiting"].includes(run.status)
-                          ? "No enabled steps configured"
-                          : label(run.currentStep);
-                      return (
-                        <tr key={run.id} className="border-t hover:bg-accent/40">
-                          <td className="px-3 py-2 text-xs">
-                            {lead ? (
-                              <Link
-                                to="/contacts/$contactId"
-                                params={{ contactId: lead.id }}
-                                className="hover:underline"
-                              >
-                                {lead.firstName} {lead.lastName} · {lead.company}
-                              </Link>
-                            ) : (
-                              run.leadId
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-xs">
-                            {workflow?.name ?? run.workflowId} V{run.version}
-                          </td>
-                          <td className="px-3 py-2">
-                            {currentStepLabel}
-                            {run.lastError && (
-                              <div className="text-xs text-destructive">{run.lastError}</div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <StatusBadge value={run.status} />
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
-                            {relDay(run.startedAt)}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
-                            {run.nextRunAt ? relDay(run.nextRunAt) : "-"}
-                          </td>
-                          <td className="space-x-1 px-3 py-2 text-right">
-                            {run.status === "failed" && (
-                              <Action
-                                label="Retry"
-                                disabled={isPending}
-                                onClick={() => mutate(() => retryRun(run.id), "Run retried")}
-                              />
-                            )}
-                            {(run.status === "running" || run.status === "waiting") && (
-                              <Action
-                                label="Pause"
-                                disabled={isPending}
-                                onClick={() => mutate(() => pauseRun(run.id), "Run paused")}
-                              />
-                            )}
-                            {run.status === "paused" && (
-                              <Action
-                                label="Resume"
-                                disabled={isPending}
-                                onClick={() => mutate(() => resumeRun(run.id), "Run resumed")}
-                              />
-                            )}
-                            {["running", "waiting", "paused", "failed"].includes(run.status) && (
-                              <Action
-                                label="Cancel"
-                                disabled={isPending}
-                                onClick={() => mutate(() => cancelRun(run.id), "Run cancelled")}
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {filteredRuns.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={7}
-                          className="px-3 py-10 text-center text-sm text-muted-foreground"
-                        >
-                          {runs.length === 0 ? "No workflow runs." : `No runs match "${q}".`}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              {filteredRuns.length > 0 && (
-                <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
-                  <span>
-                    Showing {(currentPage - 1) * RUNS_PAGE_SIZE + 1}-
-                    {Math.min(currentPage * RUNS_PAGE_SIZE, filteredRuns.length)} of{" "}
-                    {filteredRuns.length}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={currentPage === 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      aria-label="Previous page"
-                    >
-                      <ChevronLeft className="size-4" />
-                    </Button>
-                    <span>
-                      Page {currentPage} of {totalPages}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={currentPage === totalPages}
-                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                      aria-label="Next page"
-                    >
-                      <ChevronRight className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </Card>
-
-            <Card className="overflow-hidden">
-              <CardContent className="p-0">
-                <div className="border-b px-4 py-3 text-sm font-medium">Scheduled actions</div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-sm">
-                    <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
-                      <tr>
-                        {["Lead", "Action", "Scheduled for", "Status", "Attempts / error"].map(
-                          (heading) => (
-                            <th key={heading} className="px-3 py-2 font-medium">
-                              {heading}
-                            </th>
-                          ),
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedScheduledActions.map((action) => {
-                        const lead = leads.find((item) => item.id === action.leadId);
-                        return (
-                          <tr key={action.id} className="border-t">
-                            <td className="px-3 py-2 text-xs">
-                              {lead ? `${lead.firstName} ${lead.lastName}` : action.leadId}
-                            </td>
-                            <td className="px-3 py-2">{label(action.actionType)}</td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
-                              {relDay(action.scheduledFor)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <StatusBadge value={action.status} />
-                            </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
-                              {action.attemptCount}/{action.maxAttempts}
-                              {action.lastError ? ` · ${action.lastError}` : ""}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {filteredScheduledActions.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={5}
-                            className="px-3 py-8 text-center text-sm text-muted-foreground"
-                          >
-                            {scheduledActions.length === 0
-                              ? "No scheduled actions."
-                              : `No scheduled actions match "${q}".`}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {filteredScheduledActions.length > 0 && (
-                  <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
-                    <span>
-                      Showing {(currentActionsPage - 1) * ACTIONS_PAGE_SIZE + 1}-
-                      {Math.min(
-                        currentActionsPage * ACTIONS_PAGE_SIZE,
-                        filteredScheduledActions.length,
-                      )}{" "}
-                      of {filteredScheduledActions.length}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={currentActionsPage === 1}
-                        onClick={() => setActionsPage((p) => Math.max(1, p - 1))}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft className="size-4" />
-                      </Button>
-                      <span>
-                        Page {currentActionsPage} of {totalActionsPages}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={currentActionsPage === totalActionsPages}
-                        onClick={() => setActionsPage((p) => Math.min(totalActionsPages, p + 1))}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight className="size-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </>
+          <DataTable<ScheduledActionListItem>
+            label="Scheduled steps"
+            data={stepRows}
+            columns={STEP_COLUMNS}
+            getRowId={(a) => a.id}
+            onRowIntent={(a) => prefetch("contact", a.contact.id)}
+            sort={sort}
+            onSortChange={onSortChange}
+            hasNextPage={steps.hasNextPage}
+            isFetchingNextPage={steps.isFetchingNextPage}
+            onLoadMore={() => void steps.fetchNextPage()}
+            isLoading={steps.isLoading}
+            error={steps.error}
+            onRetry={() => void steps.refetch()}
+            emptyState={empty}
+          />
         )}
       </div>
+      <RunSheet run={sheetRow} onOpenChange={(open) => !open && setSheetRun(null)} />
     </div>
   );
-}
-
-function Action({
-  label: text,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button size="sm" variant="ghost" disabled={disabled} onClick={onClick}>
-      {text}
-    </Button>
-  );
-}
-
-async function mutate(work: () => Promise<unknown>, success: string) {
-  try {
-    await work();
-    toast.success(success);
-  } catch (failure) {
-    toast.error(messageFromError(failure));
-  }
 }

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   setStatus: vi.fn(),
   tasks: [] as unknown[],
   proposals: [] as unknown[],
+  runParams: [] as unknown[],
+  stepParams: [] as unknown[],
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
@@ -155,10 +157,39 @@ vi.mock("@/store", () => ({
   useAutomations: () => ({
     workflows: [],
     templates: [],
-    runs: [],
-    scheduledActions: [],
     enrollLead: noop,
   }),
+  // C6b: the Automation section reads the runs / scheduled steps lists filtered by contact.
+  useRunList: (params: unknown) => {
+    mocks.runParams.push(params);
+    return {
+      data: {
+        pages: [
+          {
+            data: [
+              {
+                id: "r-1",
+                workflowId: "w-1",
+                version: 2,
+                leadId: "c-1",
+                status: "waiting",
+                startedAt: "2026-10-20T10:00:00.000Z",
+                contact: { id: "c-1", name: "Asha Rao" },
+                workflow: { id: "w-1", name: "Nurture" },
+                currentStepAction: "send_email",
+              },
+            ],
+            nextCursor: null,
+          },
+        ],
+      },
+      hasNextPage: false,
+    };
+  },
+  useScheduledActionList: (params: unknown) => {
+    mocks.stepParams.push(params);
+    return { data: { pages: [{ data: [], nextCursor: null }] }, hasNextPage: false };
+  },
   useContactTimeline: (_id: string, kind: string[]) => {
     mocks.timelineKinds.push(kind);
     // Server-side filtering: the mock returns rows whose "type" is in kind.
@@ -255,6 +286,18 @@ describe("ContactRecordPage", () => {
     expect(screen.getByText(/Deal: Tata – Fleet/)).toBeTruthy();
     openTab("Automation");
     expect(screen.getByText("Workflow runs")).toBeTruthy();
+    expect(screen.getByText("Nurture · V2")).toBeTruthy();
+    expect(screen.getByText(/Current step: Send Email/)).toBeTruthy();
+    expect(mocks.runParams).toContainEqual({ contactId: "c-1", limit: 20 });
+    expect(mocks.stepParams).toContainEqual({
+      contactId: "c-1",
+      sort: "scheduledFor:asc",
+      limit: 50,
+    });
+    expect(screen.getByRole("link", { name: "View all runs" })).toHaveAttribute(
+      "href",
+      "/automations/runs?contactId=c-1",
+    );
     openTab("Associations");
     expect(screen.getByText("3 contacts")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(

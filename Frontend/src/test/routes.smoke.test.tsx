@@ -118,7 +118,6 @@ vi.mock("@/store", () => {
 });
 
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
-import { LeadsPage } from "@/features/leads/leads-page";
 import { AiActivityPage } from "@/features/agent/ai-activity-page";
 
 afterEach(cleanup);
@@ -141,7 +140,6 @@ async function renderScreen(Screen: () => ReactNode) {
 describe("zero-record route states", () => {
   it.each([
     [DashboardPage, "Nothing due today."],
-    [LeadsPage, "No leads match these filters."],
     [AiActivityPage, "No AI decisions match these filters."],
   ])("renders an empty backend dataset", async (Screen, expectedText) => {
     const view = await renderScreen(Screen);

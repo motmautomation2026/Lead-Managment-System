@@ -225,25 +225,27 @@ function StepRow({
 
 /**
  * "At a glance" view of a lead's nurture sequence: which messages already
- * went out, and exactly when the next one is due — assembled entirely from
- * data useAutomations() already loads (workflows+steps, runs, scheduled
- * actions), no extra requests.
+ * went out, and exactly when the next one is due — from the contact's runs and
+ * scheduled steps (the record page loads them from the lists, filtered by contact)
+ * plus the workflows + templates useAutomations() loads.
  */
 /** How many upcoming steps the card shows inline before collapsing the rest behind "View all". */
 const VISIBLE_STEP_COUNT = 2;
 
 export function ScheduledFollowupTimeline({
-  leadId,
+  runs: leadRuns,
+  scheduledActions,
   doNotContact,
   onEnrollClick,
 }: {
-  leadId: string;
+  /** This contact's runs and scheduled steps. */
+  runs: Run[];
+  scheduledActions: ScheduledAction[];
   doNotContact: boolean;
   onEnrollClick: () => void;
 }) {
   const [viewAllOpen, setViewAllOpen] = useState(false);
   const automationStore = useAutomations();
-  const leadRuns = automationStore.runs.filter((run: Run) => run.leadId === leadId);
   const nonTerminalRun = leadRuns.find((run) =>
     ["running", "waiting", "paused"].includes(run.status),
   );
@@ -279,9 +281,7 @@ export function ScheduledFollowupTimeline({
   const workflow = automationStore.workflows.find((item) => item.id === displayRun.workflowId);
   const version = workflow?.versions.find((item) => item.version === displayRun.version);
   const rows = stepsWithCumulativeDay(version?.steps ?? []);
-  const actionsForRun = automationStore.scheduledActions.filter(
-    (action) => action.workflowRunId === displayRun.id,
-  );
+  const actionsForRun = scheduledActions.filter((action) => action.workflowRunId === displayRun.id);
   const currentOrder = findCurrentStep(workflow, displayRun)?.order;
   const actionFor = (stepId: string) =>
     actionsForRun.find((action) => action.workflowStepId === stepId);

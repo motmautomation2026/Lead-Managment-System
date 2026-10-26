@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RunsPage } from "@/features/automations/runs-page";
+import { validateRunsSearch } from "@/features/automations/runs-search";
 
 export const Route = createFileRoute("/automations/runs")({
   head: () => ({
     meta: [
-      { title: "Automation runs - MOTM Flow" },
+      { title: "Workflow runs - MOTM Flow" },
       {
         name: "description",
         content:
@@ -17,5 +18,6 @@ export const Route = createFileRoute("/automations/runs")({
       },
     ],
   }),
+  validateSearch: validateRunsSearch,
   component: RunsPage,
 });

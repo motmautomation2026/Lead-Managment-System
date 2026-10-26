@@ -63,11 +63,12 @@ import { BackendError } from "@/lib/backend-client";
 import { fmtDateTime, isOverdue, relDay } from "@/lib/format";
 import { label } from "@/lib/labels";
 import { nurtureTriggerForStage } from "@/lib/pipeline";
-import { findCurrentStep } from "@/lib/workflow-timeline";
+import { currentStepText } from "@/features/automations/run-labels";
 import {
   messageFromError,
-  useAutomations,
   useContact,
+  useRunList,
+  useScheduledActionList,
   useLead,
   useLeadMutations,
   useCancelTask,
@@ -152,7 +153,13 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
   const { users, userName } = useSession();
   const actions = useLeadMutations();
   const extras = useLead(id);
-  const automationStore = useAutomations();
+  // C6b: the contact's runs and scheduled steps from the lists ("View all" opens Runs filtered).
+  const runList = useRunList({ contactId: contact.id, limit: 20 });
+  const stepList = useScheduledActionList({
+    contactId: contact.id,
+    sort: "scheduledFor:asc",
+    limit: 50,
+  });
   // C6a: the contact's work through the list endpoints (first 10; "View all" opens the page).
   const taskList = useTaskList({
     contactId: contact.id,
@@ -205,8 +212,8 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
   const meetings = meetingList.data?.pages.flatMap((p) => p.data) ?? [];
   const proposals = proposalList.data?.pages.flatMap((p) => p.data) ?? [];
   const openTasks = taskList.data?.pages.flatMap((p) => p.data) ?? [];
-  const runs = automationStore.runs.filter((r) => r.leadId === id);
-  const scheduled = automationStore.scheduledActions.filter((a) => a.leadId === id);
+  const runs = runList.data?.pages.flatMap((p) => p.data) ?? [];
+  const scheduled = stepList.data?.pages.flatMap((p) => p.data) ?? [];
   const nextAutomationStep = scheduled
     .filter((a) => ["pending", "due"].includes(a.status))
     .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
@@ -352,7 +359,8 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
   const overview = (
     <div className="space-y-4">
       <LeadJourneyCard
-        leadId={id}
+        runs={runs}
+        scheduledActions={scheduled}
         pipelineStage={contact.pipelineStage}
         doNotContact={dnc}
         onCallClick={() =>
@@ -688,32 +696,30 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
           {runs.length === 0 && (
             <p className="type-body text-muted-foreground">This contact is not in any workflow.</p>
           )}
-          {runs.map((run) => {
-            const workflow = automationStore.workflows.find((w) => w.id === run.workflowId);
-            const step = findCurrentStep(workflow, run);
-            return (
-              <div key={run.id} className="rounded-md border px-3 py-2">
-                <div className="flex justify-between gap-2">
-                  <div className="type-body font-medium">
-                    {workflow?.name ?? run.workflowId} · V{run.version}
-                  </div>
-                  <StatusBadge value={run.status} />
+          {runs.map((run) => (
+            <div key={run.id} className="rounded-md border px-3 py-2">
+              <div className="flex justify-between gap-2">
+                <div className="type-body font-medium">
+                  {run.workflow.name} · V{run.version}
                 </div>
-                <div className="type-small text-muted-foreground">
-                  Current step:{" "}
-                  {step
-                    ? label(step.action)
-                    : ["running", "waiting"].includes(run.status)
-                      ? "No enabled steps configured"
-                      : "-"}
-                  {run.nextRunAt ? ` · next ${relDay(run.nextRunAt)}` : ""}
-                </div>
-                {run.lastError && (
-                  <div className="type-small text-destructive">{run.lastError}</div>
-                )}
+                <StatusBadge value={run.status} />
               </div>
-            );
-          })}
+              <div className="type-small text-muted-foreground">
+                Current step: {currentStepText(run)}
+                {run.nextRunAt ? ` · next ${relDay(run.nextRunAt)}` : ""}
+              </div>
+              {run.lastError && <div className="type-small text-destructive">{run.lastError}</div>}
+            </div>
+          ))}
+          {runs.length > 0 && (
+            <Link
+              to="/automations/runs"
+              search={{ contactId: id }}
+              className="type-small text-primary hover:underline"
+            >
+              View all runs
+            </Link>
+          )}
         </CardContent>
       </Card>
       <Card>
@@ -739,6 +745,15 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
               <StatusBadge value={a.status} />
             </div>
           ))}
+          {stepList.hasNextPage && (
+            <Link
+              to="/automations/runs"
+              search={{ tab: "steps", contactId: id }}
+              className="type-small text-primary hover:underline"
+            >
+              View all scheduled steps
+            </Link>
+          )}
         </CardContent>
       </Card>
     </div>

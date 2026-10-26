@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ArrowDown, ArrowLeft, ArrowUp, Check, Pencil, Plus, Trash2, X, Zap } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
+import { PageHeader } from "@/components/crm/page-header";
+import { EmptyState } from "@/components/crm/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -46,24 +47,29 @@ export function WorkflowBuilderPage({ workflowId }: { workflowId: string }) {
   const store = useAutomations();
   if (store.isLoading)
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <LoadingBlock label="Loading workflow…" />
       </div>
     );
   if (store.error)
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock error={store.error} />
       </div>
     );
   const workflow = store.workflows.find((item) => item.id === workflowId);
   if (!workflow)
     return (
-      <div className="p-10 text-center text-sm text-muted-foreground">
-        Workflow not found.{" "}
-        <Link to="/automations" className="underline">
-          Back to automations
-        </Link>
+      <div className="p-4 sm:p-6">
+        <EmptyState
+          title="Workflow not found"
+          text="It may have been deleted."
+          action={
+            <Button asChild variant="outline">
+              <Link to="/automations">Back to workflows</Link>
+            </Button>
+          }
+        />
       </div>
     );
   return <Builder workflow={workflow} />;
@@ -371,7 +377,7 @@ function Builder({ workflow }: { workflow: Workflow }) {
           <>
             <Button asChild size="sm" variant="ghost">
               <Link to="/automations">
-                <ArrowLeft className="mr-1 size-4" /> Automations
+                <ArrowLeft className="mr-1 size-4" /> Workflows
               </Link>
             </Button>
             {editable ? (
@@ -398,7 +404,7 @@ function Builder({ workflow }: { workflow: Workflow }) {
           </>
         }
       />
-      <div className="grid gap-4 p-6 lg:grid-cols-[1fr_300px]">
+      <div className="grid gap-4 p-4 sm:p-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-3">
           <Card>
             <CardHeader className="pb-2">
