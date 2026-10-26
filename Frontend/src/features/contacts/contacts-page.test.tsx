@@ -98,6 +98,11 @@ async function renderPage(search: Record<string, unknown> = {}) {
         path: "/contacts/$contactId",
         component: () => null,
       }),
+      createRoute({
+        getParentRoute: () => root,
+        path: "/companies/$companyId",
+        component: () => null,
+      }),
     ]),
     history: createMemoryHistory({
       initialEntries: [`/contacts${defaultStringifySearch(search)}`],
@@ -177,6 +182,14 @@ describe("ContactsPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Clear company filter" }));
     await waitFor(() => expect(searchOf(router)["companyId"]).toBeUndefined());
+  });
+
+  it("the Company column opens the company, not the contact", async () => {
+    const router = await renderPage();
+    const link = screen.getAllByRole("link", { name: "Acme" })[0]!;
+    expect(link).toHaveAttribute("href", "/companies/co-1");
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co-1"));
   });
 
   it("loads more pages", async () => {

@@ -48,6 +48,7 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { Money } from "@/components/crm/money";
 import { LeadAiPanel } from "@/features/agent/lead-ai-panel";
+import { ActivityFeed } from "@/features/crm/activity-feed";
 import { LeadJourneyCard } from "@/features/leads/lead-journey-card";
 import { LogCallDialog } from "@/features/leads/log-call-dialog";
 import { EnrollWorkflowDialog } from "@/features/leads/scheduled-followups";
@@ -81,7 +82,6 @@ import {
   type WorkflowTrigger,
 } from "@/types";
 import { ContactAbout } from "./contact-about";
-import { ContactActivity } from "./contact-activity";
 import { ContactAssociations } from "./contact-associations";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
@@ -208,9 +208,20 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
       <div className="min-w-0">
         <h1 className="type-page-title break-words">{name}</h1>
         <p className="type-body text-muted-foreground">
-          {[contact.jobTitle, contact.company?.name ?? contact.companyText]
-            .filter(Boolean)
-            .join(" · ") || "–"}
+          {contact.jobTitle}
+          {contact.jobTitle && (contact.company || contact.companyText) && " · "}
+          {contact.company ? (
+            <Link
+              to="/companies/$companyId"
+              params={{ companyId: contact.company.id }}
+              className="text-primary hover:underline"
+            >
+              {contact.company.name}
+            </Link>
+          ) : (
+            contact.companyText
+          )}
+          {!contact.jobTitle && !contact.company && !contact.companyText && "–"}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <StatusBadge value={contact.pipelineStage} />
@@ -710,7 +721,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         left={<ContactAbout contact={contact} contactability={extras.contactability} />}
         tabs={[
           { id: "overview", label: "Overview", content: overview },
-          { id: "activity", label: "Activity", content: <ContactActivity leadId={id} /> },
+          { id: "activity", label: "Activity", content: <ActivityFeed contactId={id} /> },
           { id: "notes", label: "Notes", content: notes },
           { id: "meetings", label: "Meetings & proposals", content: meetingsAndProposals },
           { id: "automation", label: "Automation", content: automation },

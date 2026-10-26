@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { StatusBadge } from "@/components/common/status-badge";
 import type { DataTableColumn } from "@/components/crm/data-table";
 import { UserAvatar } from "@/components/crm/user-avatar";
@@ -26,7 +27,25 @@ export const CONTACT_COLUMNS: DataTableColumn<ContactListItem>[] = [
       </span>
     ),
   },
-  { id: "company", header: "Company", sortable: true, cell: (r) => r.company?.name ?? dash },
+  {
+    id: "company",
+    header: "Company",
+    sortable: true,
+    cell: (r) =>
+      r.company ? (
+        <Link
+          to="/companies/$companyId"
+          params={{ companyId: r.company.id }}
+          // Not the row's own link: open the company, not the contact.
+          onClick={(e) => e.stopPropagation()}
+          className="truncate hover:underline"
+        >
+          {r.company.name}
+        </Link>
+      ) : (
+        dash
+      ),
+  },
   { id: "email", header: "Email", size: 220, cell: (r) => r.email || dash },
   { id: "phone", header: "Phone", size: 150, cell: (r) => r.phone || dash },
   {

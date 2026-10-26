@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   updateLead: vi.fn(),
   createDeal: vi.fn(),
   leadList: vi.fn(),
+  timelineKinds: [] as unknown[],
+  fetchNextPage: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
@@ -141,7 +143,28 @@ vi.mock("@/store", () => ({
     scheduledActions: [],
     enrollLead: noop,
   }),
-  useTimeline: () => ({ timeline: mocks.timeline, isLoading: false, error: null }),
+  useContactTimeline: (_id: string, kind: string[]) => {
+    mocks.timelineKinds.push(kind);
+    // Server-side filtering: the mock returns rows whose "type" is in kind.
+    const rows = kind.length ? mocks.timeline.filter((e) => kind.includes(e.kind)) : mocks.timeline;
+    return {
+      data: { pages: [{ data: rows, nextCursor: "next" }] },
+      isLoading: false,
+      error: null,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextPage: mocks.fetchNextPage,
+    };
+  },
+  useCompanyTimeline: () => ({ data: undefined, isLoading: false, error: null }),
+  useCompanySearch: (input: string) => ({
+    data:
+      input.trim().length >= 2
+        ? { data: [{ id: "co-9", name: "Tata Motors Finance", domain: null }] }
+        : undefined,
+    isFetching: false,
+  }),
+  useCreateCompany: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCompany: () => ({
     data: { id: "co-1", name: "Tata Motors", industry: "Automotive", contactCount: 3 },
   }),
@@ -160,6 +183,11 @@ async function renderPage() {
         component: () => <ContactRecordPage contactId="c-1" />,
       }),
       createRoute({ getParentRoute: () => root, path: "/contacts", component: () => null }),
+      createRoute({
+        getParentRoute: () => root,
+        path: "/companies/$companyId",
+        component: () => null,
+      }),
       createRoute({ getParentRoute: () => root, path: "/deals/$dealId", component: () => null }),
       createRoute({ getParentRoute: () => root, path: "/meetings", component: () => null }),
       createRoute({ getParentRoute: () => root, path: "/proposals", component: () => null }),
@@ -189,7 +217,11 @@ afterEach(() => {
 describe("ContactRecordPage", () => {
   it("renders the header and every panel", async () => {
     await renderPage();
-    expect(screen.getByText("CTO · Tata Motors")).toBeTruthy();
+    expect(screen.getByText(/^CTO ·/)).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "Tata Motors" })[0]).toHaveAttribute(
+      "href",
+      "/companies/co-1",
+    );
     expect(screen.getByRole("tab", { name: "About" })).toBeTruthy();
     // Overview (default): journey + next action + tasks.
     expect(screen.getByText("Next action")).toBeTruthy();
@@ -294,31 +326,39 @@ describe("ContactRecordPage", () => {
     );
   });
 
-  it("activity filter chips narrow the timeline", async () => {
+  it("activity: paginated feed, chips filter server-side, Load more", async () => {
     mocks.timeline = [
-      event("1", "note", "Note added"),
-      event("2", "call", "Call logged"),
-      event("3", "system", "Deal created", { relatedDealId: "d-1" }),
-      event("4", "automation", "AI Agent Paused", { actor: "AI Agent", source: "automation" }),
-      event("5", "whatsapp", "WhatsApp reply"),
-      event("6", "stage", "Stage changed"),
+      event("1", "notes", "Note added"),
+      event("2", "deals", "Deal created", { relatedDealId: "d-1" }),
     ];
     await renderPage();
     openTab("Activity");
     expect(screen.getByText("Note added")).toBeTruthy();
-    expect(screen.getByText("Stage changed")).toBeTruthy();
-    const pick = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
-    pick("Deals");
+    expect(mocks.timelineKinds.at(-1)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Deals" }));
+    expect(mocks.timelineKinds.at(-1)).toEqual(["deals"]);
     expect(screen.getByText("Deal created")).toBeTruthy();
     expect(screen.queryByText("Note added")).toBeNull();
-    pick("AI");
-    expect(screen.getByText("AI Agent Paused")).toBeTruthy();
-    pick("Messages");
-    expect(screen.getByText("WhatsApp reply")).toBeTruthy();
-    pick("System");
-    expect(screen.getByText("Stage changed")).toBeTruthy();
-    expect(screen.queryByText("Deal created")).toBeNull();
-    pick("Tasks");
+    fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
     expect(screen.getByText("Nothing of this type yet")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(mocks.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("Change company picks a company record and saves its name (the backend relinks)", async () => {
+    mocks.updateLead.mockResolvedValue({});
+    await renderPage();
+    openTab("Associations");
+    fireEvent.click(screen.getByRole("button", { name: "Change Company" }));
+    const dialog = await screen.findByRole("dialog", { name: "Change company" });
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Company" }));
+    fireEvent.change(screen.getByLabelText("Search companies"), { target: { value: "tata" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Tata Motors Finance/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.updateLead).toHaveBeenCalledWith("c-1", { company: "Tata Motors Finance" }),
+    );
   });
 });

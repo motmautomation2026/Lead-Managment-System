@@ -27,9 +27,9 @@ import { AssociationCard } from "@/components/crm/association-card";
 import { Money } from "@/components/crm/money";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { label } from "@/lib/labels";
-import { messageFromError, useCompany, useCreateDeal } from "@/store";
-import { DEAL_STAGES, type ContactDetail, type DealStage } from "@/types";
-import { TextEditor } from "./contact-about";
+import { messageFromError, useCompany, useCreateDeal, useLeadMutations } from "@/store";
+import { DEAL_STAGES, type ContactDetail, type DealStage, type IdName } from "@/types";
+import { CompanyPicker } from "@/features/companies/company-picker";
 import { defaultDealName } from "./contact-helpers";
 
 /** Won/Lost need the deal page's close dialog (C4); a new deal starts open. */
@@ -187,8 +187,15 @@ export function ContactAssociations({ contact }: { contact: ContactDetail }) {
             ? [
                 {
                   id: contact.company.id,
-                  // Plain text until the company record page lands (C3).
-                  title: contact.company.name,
+                  title: (
+                    <Link
+                      to="/companies/$companyId"
+                      params={{ companyId: contact.company.id }}
+                      className="hover:underline"
+                    >
+                      {contact.company.name}
+                    </Link>
+                  ),
                   subtitle:
                     [contact.company.domain, c?.industry].filter(Boolean).join(" · ") || null,
                   meta: c ? (
@@ -234,20 +241,53 @@ export function ContactAssociations({ contact }: { contact: ContactDetail }) {
           <DialogHeader>
             <DialogTitle>Change company</DialogTitle>
             <DialogDescription>
-              Edit the company name; the contact is relinked to the matching company record.
+              Pick the company record. The contact&rsquo;s company text becomes its name and the
+              contact is relinked to it.
             </DialogDescription>
           </DialogHeader>
-          {changeOpen && (
-            <TextEditor
-              contact={contact}
-              field="company"
-              name="Company"
-              done={() => setChangeOpen(false)}
-            />
-          )}
+          {changeOpen && <ChangeCompanyForm contact={contact} done={() => setChangeOpen(false)} />}
         </DialogContent>
       </Dialog>
       <CreateDealDialog contact={contact} open={dealOpen} onOpenChange={setDealOpen} />
     </>
+  );
+}
+
+/** Change company: a CompanyPicker (or create); PATCH /leads/:id `company` = its name, the backend relinks. */
+function ChangeCompanyForm({ contact, done }: { contact: ContactDetail; done: () => void }) {
+  const { updateLead } = useLeadMutations();
+  const [picked, setPicked] = useState<IdName | null>(contact.company);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!picked) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateLead(contact.id, { company: picked.name });
+      toast.success("Company changed");
+      done();
+    } catch (e) {
+      setError(messageFromError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="space-y-3">
+      <CompanyPicker value={picked} onChange={setPicked} allowCreate label="Company" />
+      {error && <p className="type-small text-destructive">{error}</p>}
+      <DialogFooter>
+        <Button variant="ghost" onClick={done}>
+          Cancel
+        </Button>
+        <Button
+          disabled={!picked || picked.id === contact.company?.id || saving}
+          onClick={() => void save()}
+        >
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
