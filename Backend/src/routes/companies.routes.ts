@@ -32,6 +32,14 @@ companiesRouter.get(
   }),
 );
 
+/** Distinct industries of live companies (the Industry filter's options). Before "/:id". */
+companiesRouter.get(
+  "/industries",
+  asyncHandler(async (req, res) => {
+    res.json({ data: await records.listIndustries(pool, req.workspaceId!) });
+  }),
+);
+
 companiesRouter.post(
   "/",
   asyncHandler(async (req, res) => {

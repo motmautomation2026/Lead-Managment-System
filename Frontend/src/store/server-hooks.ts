@@ -1072,6 +1072,17 @@ export function useCompaniesCount(params: CompanyListParams) {
   });
 }
 
+/** Industry filter options (cached 5 min; refreshed with every company list). */
+export function useCompanyIndustries() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.companyIndustries(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.companies.industries(signal),
+    enabled: Boolean(currentWorkspaceId),
+    staleTime: 300_000,
+  });
+}
+
 export function useCompanyContacts(companyId: string, params: ContactListParams) {
   const { currentWorkspaceId: ws } = useWorkspace();
   return useCursorList(

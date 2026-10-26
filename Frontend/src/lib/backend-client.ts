@@ -740,6 +740,8 @@ export const backend = {
     count: (params: Omit<CompanyListParams, "sort" | "limit">, signal?: AbortSignal) =>
       get<{ count: number }>(listQuery("/companies/count", params), signal),
     get: (id: string, signal?: AbortSignal) => get<CompanyDetail>(`/companies/${id}`, signal),
+    /** Distinct industries of live companies (the Industry filter's options). */
+    industries: (signal?: AbortSignal) => get<{ data: string[] }>("/companies/industries", signal),
     /** 409 with `details.companyId` when the normalised name or domain already exists. */
     create: (input: CompanyInput & { name: string }) =>
       send<CompanyDetail>("POST", "/companies", input),

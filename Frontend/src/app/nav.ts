@@ -73,6 +73,8 @@ export function isNavActive(to: string, pathname: string) {
 /** Second-level crumbs under a nav section, by path. */
 const SUB_PAGES: Array<[RegExp, string]> = [
   [/^\/contacts\/[^/]+/, "Contact"],
+  [/^\/companies\/duplicates/, "Duplicates"],
+  [/^\/companies\/[^/]+/, "Company"],
   [/^\/automations\/templates/, "Templates"],
   [/^\/automations\/runs/, "Runs"],
   [/^\/automations\/workflows\/[^/]+/, "Workflow"],

@@ -97,6 +97,17 @@ export function listCompanies(db: Queryable, actor: Actor, workspaceId: string, 
 export const countCompanies = (db: Queryable, actor: Actor, workspaceId: string, filters: CompanyFilters) =>
   runCount(db, companyWhere(workspaceId, actor, filters), "public.companies c");
 
+/** Up to 200 distinct industry values of live companies, A–Z. */
+export async function listIndustries(db: Queryable, workspaceId: string): Promise<string[]> {
+  const { rows } = await db.query<{ industry: string }>(
+    `select distinct industry from public.companies
+      where workspace_id = $1 and merged_into_company_id is null and industry is not null and industry <> ''
+      order by industry limit 200`,
+    [workspaceId],
+  );
+  return rows.map((r) => r.industry);
+}
+
 const DETAIL_SELECT = `
   select c.id, c.name, c.domain, c.website, c.industry, c.revenue_range as "revenueRange",
          c.revenue_min_cr::float8 as "revenueMinCr", c.revenue_max_cr::float8 as "revenueMaxCr",

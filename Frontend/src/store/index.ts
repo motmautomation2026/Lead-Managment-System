@@ -49,6 +49,7 @@ export {
   useCreateContact,
   useCompanies,
   useCompaniesCount,
+  useCompanyIndustries,
   useCompanyContacts,
   useCompanyDeals,
   useCompanyTimeline,

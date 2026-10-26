@@ -81,9 +81,9 @@ export function parseSort(sort: string | undefined): SortState {
 }
 
 // Whole IST days: the API takes ISO 8601 with an offset, the date pickers YYYY-MM-DD.
-const dayStart = (d: string) => `${d}T00:00:00+05:30`;
-const dayEnd = (d: string) => `${d}T23:59:59+05:30`;
-const day = (iso: string | undefined) => iso?.slice(0, 10);
+export const dayStart = (d: string) => `${d}T00:00:00+05:30`;
+export const dayEnd = (d: string) => `${d}T23:59:59+05:30`;
+export const day = (iso: string | undefined) => iso?.slice(0, 10);
 
 export function toFilterValues(state: ContactsSearch): FilterValues {
   return {

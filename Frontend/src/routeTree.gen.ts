@@ -22,6 +22,7 @@ import { Route as AutomationsRunsRouteImport } from './routes/automations.runs'
 import { Route as AutomationsTemplatesRouteImport } from './routes/automations.templates'
 import { Route as CompaniesIndexRouteImport } from './routes/companies.index'
 import { Route as CompaniesCompanyIdRouteImport } from './routes/companies.$companyId'
+import { Route as CompaniesDuplicatesRouteImport } from './routes/companies.duplicates'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
 import { Route as DealsIndexRouteImport } from './routes/deals.index'
@@ -97,6 +98,11 @@ const CompaniesCompanyIdRoute = CompaniesCompanyIdRouteImport.update({
   path: '/companies/$companyId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CompaniesDuplicatesRoute = CompaniesDuplicatesRouteImport.update({
+  id: '/companies/duplicates',
+  path: '/companies/duplicates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ContactsIndexRoute = ContactsIndexRouteImport.update({
   id: '/contacts/',
   path: '/contacts/',
@@ -156,6 +162,7 @@ export interface FileRoutesByFullPath {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/companies/$companyId': typeof CompaniesCompanyIdRoute
+  '/companies/duplicates': typeof CompaniesDuplicatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
@@ -180,6 +187,7 @@ export interface FileRoutesByTo {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/companies/$companyId': typeof CompaniesCompanyIdRoute
+  '/companies/duplicates': typeof CompaniesDuplicatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
@@ -205,6 +213,7 @@ export interface FileRoutesById {
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
   '/companies/$companyId': typeof CompaniesCompanyIdRoute
+  '/companies/duplicates': typeof CompaniesDuplicatesRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/companies/$companyId'
+    | '/companies/duplicates'
     | '/contacts/$contactId'
     | '/deals/$dealId'
     | '/dev/ui'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/companies/$companyId'
+    | '/companies/duplicates'
     | '/contacts/$contactId'
     | '/deals/$dealId'
     | '/dev/ui'
@@ -279,6 +290,7 @@ export interface FileRouteTypes {
     | '/automations/runs'
     | '/automations/templates'
     | '/companies/$companyId'
+    | '/companies/duplicates'
     | '/contacts/$contactId'
     | '/deals/$dealId'
     | '/dev/ui'
@@ -304,6 +316,7 @@ export interface RootRouteChildren {
   AutomationsRunsRoute: typeof AutomationsRunsRoute
   AutomationsTemplatesRoute: typeof AutomationsTemplatesRoute
   CompaniesCompanyIdRoute: typeof CompaniesCompanyIdRoute
+  CompaniesDuplicatesRoute: typeof CompaniesDuplicatesRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
   DevUiRoute: typeof DevUiRoute
@@ -410,6 +423,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CompaniesCompanyIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/companies/duplicates': {
+      id: '/companies/duplicates'
+      path: '/companies/duplicates'
+      fullPath: '/companies/duplicates'
+      preLoaderRoute: typeof CompaniesDuplicatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/contacts/': {
       id: '/contacts/'
       path: '/contacts'
@@ -488,6 +508,7 @@ const rootRouteChildren: RootRouteChildren = {
   AutomationsRunsRoute: AutomationsRunsRoute,
   AutomationsTemplatesRoute: AutomationsTemplatesRoute,
   CompaniesCompanyIdRoute: CompaniesCompanyIdRoute,
+  CompaniesDuplicatesRoute: CompaniesDuplicatesRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,
   DealsDealIdRoute: DealsDealIdRoute,
   DevUiRoute: DevUiRoute,

@@ -66,6 +66,8 @@ export const keys = {
       ? (["companiesCount", workspaceId, params] as const)
       : (["companiesCount", workspaceId] as const),
   company: (workspaceId: string | null, id: string) => ["company", workspaceId, id] as const,
+  companyIndustries: (workspaceId: string | null) =>
+    ["companies", workspaceId, "industries"] as const,
   /** Per company; `extra` (params / kinds) is left off for the company-wide prefix. */
   companyContacts: (workspaceId: string | null, id: string, extra?: object) =>
     extra

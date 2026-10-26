@@ -103,6 +103,7 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
     expect(await filterIds({ q: "zetaexample" })).toEqual([]);
     expect(await filterIds({ q: "zeta.example" })).toEqual([ids[5]]);
     expect((await get(`/count${qs({ industry: "Retail" })}`)).body).toEqual({ count: 7 });
+    expect((await get("/industries")).body).toEqual({ data: ["Retail", "SaaS"] });
     expect((await get(qs({ sort: "domain:asc" }))).status).toBe(400);
     expect((await get(qs({ hasDomain: "yes" }))).status).toBe(400);
   }, 180_000);
