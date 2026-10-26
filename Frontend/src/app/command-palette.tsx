@@ -24,10 +24,12 @@ export function CommandPalette({
   open,
   onOpenChange,
   onCreateContact,
+  onCreateCompany,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreateContact: () => void;
+  onCreateCompany: () => void;
 }) {
   const [input, setInput] = useState("");
   const navigate = useNavigate();
@@ -43,6 +45,7 @@ export function CommandPalette({
 
   const actions: Array<{ id: string; label: string; icon: ReactNode; run: () => void }> = [
     { id: "create-contact", label: "Create contact", icon: <Plus />, run: onCreateContact },
+    { id: "create-company", label: "Create company", icon: <Plus />, run: onCreateCompany },
     ...NAV_GROUPS.flatMap((g) => g.items).map((item) => ({
       id: `go-${item.to}`,
       label: `Go to ${item.label}`,
@@ -121,8 +124,12 @@ export function CommandPalette({
               <CommandItem
                 key={c.id}
                 value={`company-${c.id}`}
-                // Company record pages arrive in C3; the placeholder page until then.
-                onSelect={() => close(() => void navigate({ to: "/companies" }))}
+                onSelect={() =>
+                  close(
+                    () =>
+                      void navigate({ to: "/companies/$companyId", params: { companyId: c.id } }),
+                  )
+                }
               >
                 <Building2 />
                 <Result title={c.name} meta={[c.domain]} />

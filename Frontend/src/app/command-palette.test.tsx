@@ -55,11 +55,17 @@ afterEach(() => {
 
 async function renderPalette() {
   const onCreateContact = vi.fn();
+  const onCreateCompany = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const root = createRootRoute({
     component: () => (
       <QueryClientProvider client={queryClient}>
-        <CommandPalette open onOpenChange={vi.fn()} onCreateContact={onCreateContact} />
+        <CommandPalette
+          open
+          onOpenChange={vi.fn()}
+          onCreateContact={onCreateContact}
+          onCreateCompany={onCreateCompany}
+        />
         <Outlet />
       </QueryClientProvider>
     ),
@@ -71,6 +77,7 @@ async function renderPalette() {
       page("/"),
       page("/contacts/$contactId"),
       page("/companies"),
+      page("/companies/$companyId"),
       page("/deals"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -78,7 +85,7 @@ async function renderPalette() {
   await router.load();
   render(<RouterProvider router={router} />);
   const input = await screen.findByRole("combobox");
-  return { input, router, onCreateContact, queryClient };
+  return { input, router, onCreateContact, onCreateCompany, queryClient };
 }
 
 const type = (input: HTMLElement, value: string) => fireEvent.change(input, { target: { value } });
@@ -143,6 +150,9 @@ describe("CommandPalette search", () => {
     mocks.search.mockResolvedValue(RESULTS);
     const { input, router } = await renderPalette();
     type(input, "tata");
+    fireEvent.click(await screen.findByText("tata.test"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co1"));
+    type(input, "tata");
     fireEvent.click(await screen.findByText("Tata fleet deal"));
     await waitFor(() => expect(router.state.location.pathname).toBe("/deals"));
   });
@@ -160,10 +170,12 @@ describe("CommandPalette search", () => {
 
   it("runs actions, filtered by the typed text", async () => {
     mocks.search.mockResolvedValue(EMPTY);
-    const { input, onCreateContact, router } = await renderPalette();
+    const { input, onCreateContact, onCreateCompany, router } = await renderPalette();
     expect(screen.getByRole("option", { name: "Go to Tasks" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: "Create contact" }));
     expect(onCreateContact).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("option", { name: "Create company" }));
+    expect(onCreateCompany).toHaveBeenCalled();
 
     type(input, "deals");
     expect(screen.queryByRole("option", { name: "Go to Tasks" })).toBeNull();

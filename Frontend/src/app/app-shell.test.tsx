@@ -95,6 +95,7 @@ vi.mock("@/store", () => ({
   useGlobalSearch: () => ({ enabled: false, query: "", isSearching: false, isError: false }),
   useCreateContact: () => ({ mutateAsync: noop, isPending: false }),
   useCompanySearch: () => ({ data: undefined }),
+  useCreateCompany: () => ({ mutateAsync: noop, isPending: false }),
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -214,16 +215,20 @@ describe("AppShell nav", () => {
 });
 
 describe("AppShell top bar", () => {
-  it("+ Create → Contact opens the Create contact dialog; others are coming soon", async () => {
+  it("+ Create → Contact / Company open their dialogs; others are coming soon", async () => {
     await renderShell();
     openMenu("Create");
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: /Company/ })).toHaveAttribute(
+    expect(within(menu).getByRole("menuitem", { name: /Deal/ })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Contact" }));
     expect(await screen.findByRole("dialog", { name: "Create contact" })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    openMenu("Create");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Company" }));
+    expect(await screen.findByRole("dialog", { name: "Create company" })).toBeTruthy();
   });
 
   it("user menu switches the theme", async () => {

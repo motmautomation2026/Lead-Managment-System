@@ -14,11 +14,12 @@ import {
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AddLeadContext } from "@/app/add-lead-context";
+import { AddLeadContext, CreateCompanyContext } from "@/app/add-lead-context";
 import { CommandPalette } from "@/app/command-palette";
 import { AppSidebar } from "@/app/sidebar";
 import { TopBar } from "@/app/top-bar";
 import { CreateContactDialog } from "@/features/contacts/create-contact-dialog";
+import { CreateCompanyDialog } from "@/features/companies/create-company-dialog";
 import { messageFromError } from "@/store";
 import { backend } from "@/lib/backend-client";
 import { keys } from "@/store/query";
@@ -37,6 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     () => readPreference(SIDEBAR_KEY, ["true", "false"], "false") === "true",
   );
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [companyOpen, setCompanyOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const client = useQueryClient();
   const { setCurrentWorkspaceId } = useWorkspace();
@@ -73,84 +75,89 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <AddLeadContext.Provider value={{ open: () => setAddOpen(true) }}>
-      <TooltipProvider delayDuration={300}>
-        <div className="flex min-h-screen bg-background">
-          <aside
-            className={cn(
-              "sticky top-0 hidden h-screen shrink-0 border-r border-sidebar-border transition-[width] lg:block",
-              collapsed ? "w-14" : "w-60",
-            )}
-          >
-            <AppSidebar
-              collapsed={collapsed}
-              onToggleCollapsed={toggleCollapsed}
-              onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
-            />
-          </aside>
-
-          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-            <SheetContent side="left" className="w-72 gap-0 p-0 sm:max-w-72">
-              <SheetTitle className="sr-only">Navigation</SheetTitle>
-              <AppSidebar
-                onNavigate={() => setMobileNavOpen(false)}
-                onCreateWorkspace={() => {
-                  setMobileNavOpen(false);
-                  setCreateWorkspaceOpen(true);
-                }}
-              />
-            </SheetContent>
-          </Sheet>
-
-          <div className="flex min-w-0 flex-1 flex-col">
-            <TopBar
-              onOpenMenu={() => setMobileNavOpen(true)}
-              onOpenSearch={() => setPaletteOpen(true)}
-              onCreateContact={() => setAddOpen(true)}
-            />
-            <main className="min-w-0 flex-1">{children}</main>
-          </div>
-        </div>
-      </TooltipProvider>
-
-      <CreateContactDialog open={addOpen} onOpenChange={setAddOpen} />
-
-      <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Create workspace</DialogTitle>
-            <DialogDescription>
-              Gives this brand or entity its own leads, workflows, templates, and Email/WhatsApp/
-              Calendar connections.
-            </DialogDescription>
-          </DialogHeader>
-          <div>
-            <Label className="mb-1.5 block text-xs">Name</Label>
-            <Input
-              autoFocus
-              value={newWorkspaceName}
-              onChange={(e) => setNewWorkspaceName(e.target.value)}
-              placeholder="e.g. Northbeam Labs"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateWorkspaceOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!newWorkspaceName.trim() || createWorkspace.isPending}
-              onClick={() => createWorkspace.mutate(newWorkspaceName.trim())}
+      <CreateCompanyContext.Provider value={{ open: () => setCompanyOpen(true) }}>
+        <TooltipProvider delayDuration={300}>
+          <div className="flex min-h-screen bg-background">
+            <aside
+              className={cn(
+                "sticky top-0 hidden h-screen shrink-0 border-r border-sidebar-border transition-[width] lg:block",
+                collapsed ? "w-14" : "w-60",
+              )}
             >
-              {createWorkspace.isPending ? "Creating…" : "Create workspace"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <AppSidebar
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+                onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
+              />
+            </aside>
 
-      <CommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
-        onCreateContact={() => setAddOpen(true)}
-      />
+            <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+              <SheetContent side="left" className="w-72 gap-0 p-0 sm:max-w-72">
+                <SheetTitle className="sr-only">Navigation</SheetTitle>
+                <AppSidebar
+                  onNavigate={() => setMobileNavOpen(false)}
+                  onCreateWorkspace={() => {
+                    setMobileNavOpen(false);
+                    setCreateWorkspaceOpen(true);
+                  }}
+                />
+              </SheetContent>
+            </Sheet>
+
+            <div className="flex min-w-0 flex-1 flex-col">
+              <TopBar
+                onOpenMenu={() => setMobileNavOpen(true)}
+                onOpenSearch={() => setPaletteOpen(true)}
+                onCreateContact={() => setAddOpen(true)}
+                onCreateCompany={() => setCompanyOpen(true)}
+              />
+              <main className="min-w-0 flex-1">{children}</main>
+            </div>
+          </div>
+        </TooltipProvider>
+
+        <CreateContactDialog open={addOpen} onOpenChange={setAddOpen} />
+        <CreateCompanyDialog open={companyOpen} onOpenChange={setCompanyOpen} />
+
+        <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Create workspace</DialogTitle>
+              <DialogDescription>
+                Gives this brand or entity its own leads, workflows, templates, and Email/WhatsApp/
+                Calendar connections.
+              </DialogDescription>
+            </DialogHeader>
+            <div>
+              <Label className="mb-1.5 block text-xs">Name</Label>
+              <Input
+                autoFocus
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                placeholder="e.g. Northbeam Labs"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setCreateWorkspaceOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!newWorkspaceName.trim() || createWorkspace.isPending}
+                onClick={() => createWorkspace.mutate(newWorkspaceName.trim())}
+              >
+                {createWorkspace.isPending ? "Creating…" : "Create workspace"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          onCreateContact={() => setAddOpen(true)}
+          onCreateCompany={() => setCompanyOpen(true)}
+        />
+      </CreateCompanyContext.Provider>
     </AddLeadContext.Provider>
   );
 }

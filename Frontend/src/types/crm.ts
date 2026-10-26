@@ -127,18 +127,18 @@ export interface CompanyListParams {
 
 /** POST /companies body; PATCH takes any subset ("" / null clears). */
 export interface CompanyInput {
-  name?: string;
-  domain?: string | null;
-  website?: string | null;
-  industry?: string | null;
-  revenueRange?: string | null;
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-  linkedinUrl?: string | null;
-  employeeRange?: string | null;
-  description?: string | null;
-  ownerId?: string | null;
+  name?: string | undefined;
+  domain?: string | null | undefined;
+  website?: string | null | undefined;
+  industry?: string | null | undefined;
+  revenueRange?: string | null | undefined;
+  city?: string | null | undefined;
+  state?: string | null | undefined;
+  country?: string | null | undefined;
+  linkedinUrl?: string | null | undefined;
+  employeeRange?: string | null | undefined;
+  description?: string | null | undefined;
+  ownerId?: string | null | undefined;
 }
 
 export interface CompanyMergeResult {
