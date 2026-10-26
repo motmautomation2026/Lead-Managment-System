@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,8 @@ import {
 import { CommandPalette } from "@/app/command-palette";
 import { AppSidebar } from "@/app/sidebar";
 import { TopBar } from "@/app/top-bar";
+import { ShortcutsDialog } from "@/app/shortcuts-dialog";
+import { focusListSearch, useShortcuts } from "@/app/shortcuts";
 import { CreateContactDialog } from "@/features/contacts/create-contact-dialog";
 import { CreateCompanyDialog } from "@/features/companies/create-company-dialog";
 import { CreateDealDialog } from "@/features/deals/create-deal-dialog";
@@ -70,16 +73,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     onError: (error: unknown) => toast.error(messageFromError(error)),
   });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setPaletteOpen((o) => !o);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const navigate = useNavigate();
+  useShortcuts({
+    palette: () => setPaletteOpen((o) => !o),
+    help: () => setShortcutsOpen(true),
+    search: focusListSearch,
+    create: () => setCreateMenuOpen(true),
+    goContacts: () => void navigate({ to: "/contacts" }),
+    goCompanies: () => void navigate({ to: "/companies" }),
+    goDeals: () => void navigate({ to: "/deals" }),
+    goTasks: () => void navigate({ to: "/tasks" }),
+  });
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -134,6 +140,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                   onCreateContact={() => setAddOpen(true)}
                   onCreateCompany={() => setCompanyOpen(true)}
                   onCreateDeal={() => openDeal()}
+                  createMenuOpen={createMenuOpen}
+                  onCreateMenuOpenChange={setCreateMenuOpen}
+                  onOpenShortcuts={() => setShortcutsOpen(true)}
                 />
                 <main className="min-w-0 flex-1">{children}</main>
               </div>
@@ -187,6 +196,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
           <CommandPalette
             open={paletteOpen}

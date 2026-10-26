@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Bell, ChevronRight, LogOut, Menu, Plus, Search } from "lucide-react";
+import { Bell, ChevronRight, Keyboard, LogOut, Menu, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -32,12 +32,19 @@ export function TopBar({
   onCreateContact,
   onCreateCompany,
   onCreateDeal,
+  createMenuOpen,
+  onCreateMenuOpenChange,
+  onOpenShortcuts,
 }: {
   onOpenMenu: () => void;
   onOpenSearch: () => void;
   onCreateContact: () => void;
   onCreateCompany: () => void;
   onCreateDeal: () => void;
+  /** Controlled so the `n` shortcut can open it. */
+  createMenuOpen: boolean;
+  onCreateMenuOpenChange: (open: boolean) => void;
+  onOpenShortcuts: () => void;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const crumbs = crumbsFor(pathname);
@@ -103,9 +110,11 @@ export function TopBar({
         onCreateContact={onCreateContact}
         onCreateCompany={onCreateCompany}
         onCreateDeal={onCreateDeal}
+        open={createMenuOpen}
+        onOpenChange={onCreateMenuOpenChange}
       />
       <NotificationsMenu />
-      <UserMenu />
+      <UserMenu onOpenShortcuts={onOpenShortcuts} />
     </header>
   );
 }
@@ -116,14 +125,18 @@ function CreateMenu({
   onCreateContact,
   onCreateCompany,
   onCreateDeal,
+  open,
+  onOpenChange,
 }: {
   onCreateContact: () => void;
   onCreateCompany: () => void;
   onCreateDeal: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   // Non-modal: a modal menu's focus trap fights the dialog that "Contact" opens.
   return (
-    <DropdownMenu modal={false}>
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button
           size="sm"
@@ -222,11 +235,12 @@ function NotificationsMenu() {
   );
 }
 
-function UserMenu() {
+function UserMenu({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const { currentUser } = useSession();
   const { theme, setTheme, density, setDensity } = useTheme();
+  // Non-modal: "Keyboard shortcuts" opens a dialog, and a modal menu's focus trap fights it.
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -260,6 +274,11 @@ function UserMenu() {
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onOpenShortcuts}>
+          <Keyboard /> Keyboard shortcuts
+          <kbd className="ml-auto rounded border bg-muted px-1 text-[10px] max-sm:hidden">?</kbd>
+        </DropdownMenuItem>
         {supabase && (
           <>
             <DropdownMenuSeparator />

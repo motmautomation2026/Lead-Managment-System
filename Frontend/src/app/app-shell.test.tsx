@@ -147,6 +147,13 @@ async function renderShell(path = "/") {
       page("/contacts", "contacts page"),
       page("/contacts/$contactId", "lead detail"),
       page("/tasks", "tasks page"),
+      page("/companies", "companies page"),
+      page("/deals", "deals page"),
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/list",
+        component: () => <input aria-label="List search" data-list-search />,
+      }),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
@@ -272,5 +279,81 @@ describe("AppShell top bar", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }));
     });
     expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+});
+
+describe("AppShell keyboard shortcuts (C5)", () => {
+  const press = (key: string, target: EventTarget = document.body, init: KeyboardEventInit = {}) =>
+    act(() => {
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }),
+      );
+    });
+
+  it("g then c / o / d / t go to Contacts / Companies / Deals / Tasks", async () => {
+    const { router } = await renderShell();
+    for (const [key, path] of [
+      ["c", "/contacts"],
+      ["o", "/companies"],
+      ["d", "/deals"],
+      ["t", "/tasks"],
+    ] as const) {
+      press("g");
+      press(key);
+      await screen.findByText(`${path.slice(1)} page`);
+      expect(router.state.location.pathname).toBe(path);
+    }
+  });
+
+  it("n opens the + Create menu; ? opens the help dialog listing every shortcut", async () => {
+    await renderShell();
+    press("n");
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Deal" })).toBeTruthy();
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await act(async () => undefined);
+    press("?", document.body, { shiftKey: true });
+    const help = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    for (const label of [
+      "Search and commands",
+      "Search the current list",
+      "Open the Create menu",
+      "Go to Tasks",
+    ])
+      expect(within(help).getByText(label)).toBeTruthy();
+    // With a dialog open, other shortcuts do nothing.
+    press("g");
+    press("c");
+    expect(screen.queryByText("contacts page")).toBeNull();
+  });
+
+  it("/ focuses the list's search box; keys typed in a field never trigger shortcuts", async () => {
+    const { router } = await renderShell("/list");
+    const input = await screen.findByLabelText("List search");
+    press("/");
+    expect(document.activeElement).toBe(input);
+    press("g", input);
+    press("c", input);
+    press("n", input);
+    expect(router.state.location.pathname).toBe("/list");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("ignores Ctrl/Alt/Meta (except ⌘K / Ctrl+K)", async () => {
+    const { router } = await renderShell();
+    press("g", document.body, { ctrlKey: true });
+    press("c");
+    press("n", document.body, { altKey: true });
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.queryByRole("menu")).toBeNull();
+    press("k", document.body, { metaKey: true });
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
+  it("user menu → Keyboard shortcuts opens the help dialog", async () => {
+    await renderShell();
+    openMenu("Account menu");
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Keyboard shortcuts/ }));
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
   });
 });

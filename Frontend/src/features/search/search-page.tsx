@@ -62,6 +62,7 @@ export function SearchPage() {
             onChange={(e) => setQInput(e.target.value)}
             placeholder="Search contacts, companies and deals"
             aria-label="Search"
+            data-list-search
             className="pl-8"
             autoFocus
           />

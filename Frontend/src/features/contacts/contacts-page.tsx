@@ -221,6 +221,7 @@ export function ContactsPage() {
               onChange={(e) => setQInput(e.target.value)}
               placeholder="Search name, company, email, phone"
               aria-label="Search contacts"
+              data-list-search
               className="pl-8"
             />
           </div>

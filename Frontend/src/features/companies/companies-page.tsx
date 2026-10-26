@@ -154,6 +154,7 @@ export function CompaniesPage() {
               onChange={(e) => setQInput(e.target.value)}
               placeholder="Search name or domain"
               aria-label="Search companies"
+              data-list-search
               className="pl-8"
             />
           </div>
