@@ -324,6 +324,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `useDealBoard`, `useDeal`, `useDealTimeline`, `useUpdateDeal`, `useMoveDealStage`, `useContactSearch`; every deal key
   under `keys.deals(ws)`; `refreshDeal(client, ws)` after every deal write. `ComingSoonPage` removed. Board timing (HTTP,
   1,500 deals) 103–162 → 39–43 ms; initial load 345 kB gzip.
+- **C5 (search, saved views UX, shortcuts, speed; no migration):** `POST /deals` takes `ownerId` (active user or null;
+  omitted = contact's owner; else 400); Create deal sends it (no follow-up PATCH). Prefetch on intent: `usePrefetchRecord`
+  (`features/crm/prefetch.ts`: route chunk + record query, never on touch), `RecordLink`, DataTable `onRowIntent`.
+  Palette: Recent (last 8 opened, `lib/recent-records.ts`, localStorage per workspace) + quick actions; "See all results"
+  → lazy `/search?q=&tab=` (tabs over the list endpoints + `/count`). Saved views: one shared implementation
+  (`features/crm/saved-views.ts`, `use-list-views.ts`, `saved-view-tabs.tsx`, `save-view-dialog.tsx`,
+  `manage-views-dialog.tsx`; each `*-search.ts` exports a `ListViewSpec`): Edited marker, Save / Save as new / Reset,
+  Manage views (rename, dnd-kit reorder → `position`, share, delete). Shortcut registry `app/shortcuts.ts` (`?`, `/`, `n`,
+  `g`+c/o/d/t, ⌘K) + help dialog; user menu is non-modal. Palette + create dialogs are `React.lazy`: first load 345 →
+  286 kB; `npm run check` ends with `npm run size` (fails above 350 kB). `COMPANY_COLUMNS` lives in
+  `features/companies/company-columns.tsx`.
 
 ## CRM v2
 

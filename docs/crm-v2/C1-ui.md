@@ -27,7 +27,17 @@ Live examples: `/dev/ui` (dev builds only), light and dark side by side.
    `routes/*.tsx` component becomes its own chunk, `__root` (shell + auth) stays in the entry. Keep route files thin
    (import the page from `features/`); never import a page component into the shell. `RoutePending`
    (`app/route-pending.tsx`) is the router's `defaultPendingComponent`. Budget: everything `index.html` loads up front
-   < 350 kB gzip (C3: entry 101 kB, initial total 340 kB; was one 553 kB chunk).
+   **≤ 350 kB gzip**, enforced by `npm run size` (`scripts/check-bundle-size.mjs`, the last step of `npm run check`;
+   `npm run size -- --list` prints each file). C3: 340 kB; C4: 345 kB; **C5: 286 kB** (the palette and the three create
+   dialogs are `React.lazy` in `app-shell.tsx`, mounted on first open, so cmdk, react-hook-form, libphonenumber-js and
+   Radix Select are not loaded up front). Keep shell-hosted dialogs lazy; run `npm run size -- --list` after adding a
+   dependency to anything the shell imports.
+13. **Record links prefetch on intent (C5).** Links to a contact/company/deal record use `RecordLink`
+    (`features/crm/record-link.tsx`); tables pass `onRowIntent={(r) => prefetch(type, r.id)}` from `usePrefetchRecord()`
+    (`features/crm/prefetch.ts`). Mouse/pen hover or keyboard focus (never touch, which fires while scrolling) preloads the
+    route chunk and the record page's own query (same key + fetch, 30 s stale) through the root's QueryClient (router
+    context). It never changes what the record page shows.
+14. **Index-page search boxes carry `data-list-search`** so the `/` shortcut can focus them.
 10. **Picking a company = `CompanyPicker`** (`features/companies/company-picker.tsx`), never a `<Select>` of companies.
 11. **Picking a contact = `ContactPicker`** (`features/contacts/contact-picker.tsx`, C4), never a `<Select>` of contacts.
 12. **Deal stage rules live in the backend.** The UI shows stages (`DEAL_STAGE_LABELS`, display only) and calls
@@ -66,8 +76,20 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 - `top-bar.tsx` — breadcrumbs (`crumbsFor(pathname)` in `nav.ts`: add sub-pages to `SUB_PAGES`),
   search button, + Create (Contact, Company, Deal (C4); enable Task/Meeting as their pages land), notifications,
   user menu (theme, density, sign out).
-- `command-palette.tsx` — `GET /search` via `useGlobalSearch` (250 ms debounce, ≥ 2 chars) + actions
-  (Create contact / company / deal). Company results open `/companies/$companyId`, deal results `/deals/$dealId` (C4).
+- `command-palette.tsx` (lazy, C5) — `GET /search` via `useGlobalSearch` (250 ms debounce, ≥ 2 chars) + actions.
+  Empty query: **Recent** (the last 8 records opened; `lib/recent-records.ts`, localStorage `motmflow.recent.<workspaceId>`,
+  type + id + label only, unreadable storage = none; record pages call `useRememberRecent`), then quick actions (Create
+  contact/company/deal, Go to Contacts/Companies/Deals/Tasks). With a query: grouped results (5 each), matching actions,
+  and a last row **See all results for "q"** → `/search?q=` (shown once results arrive, so the first result stays
+  highlighted).
+- `/search?q=&tab=` (`features/search/`, C5): search box (300 ms, replace), tabs Contacts · Companies · Deals with counts
+  from each `/count`, each a DataTable on its list endpoint with `q` (contacts `lifecycle=all`, deals `status=all`: the
+  same scope as `GET /search`), Load more, "Open in … list" carries the params. No endpoint of its own.
+- `shortcuts.ts` (C5) — the one registry: `SHORTCUTS` (⌘K/Ctrl+K palette, `?` help, `/` list search, `n` Create menu,
+  `g` then `c`/`o`/`d`/`t` within 1 s), `createShortcutMatcher` (pure; ignores keys typed in inputs/textareas/
+  contenteditable, with any `[role=dialog|alertdialog|menu|listbox]` open, during a dnd-kit keyboard drag, and with
+  Ctrl/Alt/Meta except ⌘K) and `useShortcuts(handlers)` (in the shell). `shortcuts-dialog.tsx` lists the registry (`?` or
+  user menu → Keyboard shortcuts). A new shortcut = one `SHORTCUTS` entry + its handler in `app-shell.tsx`.
 - App-wide create dialogs are hosted by the shell: `useAddLead().open({ company? })` (Create contact, optional
   prefilled company), `useCreateCompanyDialog().open()` and `useCreateDealDialog().open({ contact?, companyId?, stay? })`
   (C4; `app/add-lead-context.ts`). The shell remounts the deal dialog per opening (`key`) so each starts fresh.
@@ -99,8 +121,8 @@ UI primitives added: `ui/sheet`, `ui/dropdown-menu`, `ui/tooltip`, `ui/skeleton`
 DataTable behaviour: the table scrolls inside its own box (sticky header, virtualisation above 200
 rows, infinite-scroll sentinel all use it); the first column renders a real `<a href>` so
 ctrl/⌘/middle-click opens a new tab; keyboard ↑/↓ move, Enter opens, Space selects.
-Don't open a Dialog from a *modal* DropdownMenu item (focus traps fight): use `modal={false}`
-on that menu, as the + Create menu does.
+Don't open a Dialog from a *modal* DropdownMenu item (focus traps fight; in tests it hangs the worker): use
+`modal={false}` on that menu, as the + Create menu, the user menu and View options do.
 
 ## 5. Page patterns
 
@@ -121,6 +143,24 @@ const list = useInfiniteQuery({ queryKey: keys.contacts(ws, state), ... });
 **Record page**: `PageHeader heading={identity + quick actions}` → `RecordLayout left={<PropertyList/>}
 tabs={[Overview, Activity, Notes, Meetings & proposals, Automation]} right={<AssociationCard/>…}`.
 
+## 5a. Saved views (C5) — `features/crm/`
+
+One implementation for Contacts, Companies and Deals:
+- Each `*-search.ts` exports a `ListViewSpec` (`CONTACT_VIEW_SPEC`, `COMPANY_VIEW_SPEC`, `DEAL_VIEW_SPEC`: object,
+  built-ins, `NO_FILTERS`, multi keys, `toApiParams`, default columns). `saved-views.ts`: `savedViewState`,
+  `toSavedViewBody`, `matchesView` (multi values in any order; absent sort/columns = the defaults), `canEditView` (own
+  views; admins also shared ones).
+- Page: `const views = useListViews(SPEC, state, set, onApply)` → `<PageHeader tabs={<SavedViewTabs controller={views} />} />`;
+  `views.apply(id)` replaces filters, sort and columns (`view=` stays in the URL, so reload and Back work).
+- **Edited**: when the URL differs from the selected view, the tab shows "Edited" plus Save (PATCH; only if you may edit
+  it), Save as new and Reset (saved views only; built-ins offer only Save as new). "+" also saves as new.
+- **Save dialog** (`save-view-dialog.tsx`): react-hook-form + Zod name, "Share with the team"; new views get
+  `position = max + 1`; API errors (409, the 30-view limit) inline.
+- **Manage views** (View options → Manage views…, `manage-views-dialog.tsx`): inline rename, `@dnd-kit/sortable` reorder
+  (pointer + keyboard) → PATCH `position` for the views that moved, Share switch on own views, delete with confirm.
+  Controls follow the API's rights; others' views are listed without controls; errors inline. `position` is one order
+  for the workspace, so a salesperson moves only their own views (others keep theirs).
+
 ## 6. Reference implementation: Contacts (C2)
 
 Copy these when building Companies (C3) and Deals (C4). All in `Frontend/src/features/contacts/`.
@@ -133,9 +173,7 @@ Copy these when building Companies (C3) and Deals (C4). All in `Frontend/src/fea
 - `toApiParams(state)` → `useContacts` (infinite) and `useContactsCount` (same params minus `sort`). `q` is only sent
   from 2 characters; the search box writes `q` with `replace: true` after 300 ms.
 - Views = built-ins (`BUILT_IN_VIEWS`: All, My `ownerId=me`, Recently added `createdFrom = 7 days`, Unassigned
-  `ownerId=none`) + `/saved-views`. Picking a view applies `{...NO_FILTERS, ...view.state(), view: id}` (it replaces
-  the filters, sort and columns). `toSavedViewBody` / `savedViewState` convert between the URL and the stored view.
-  Rename/delete only for `isMine` (or admins on shared views); shared views are labelled "· Shared".
+  `ownerId=none`) + `/saved-views`, through the shared saved-views code (§5a); shared views are labelled "· Shared".
 - Columns: `DataTableColumn.id` = B4 column id; `sortable` only on whitelist fields; `DEFAULT_COLUMNS` when the URL
   has no `columns`. Row selection is keyed to the current params (it clears when filters change).
 - Bulk actions call `useBulkContacts` (chunks of 100) and summarise per-id failures in one toast.
@@ -228,7 +266,7 @@ and moves nothing. Show closed off: Won/Lost show "Drop here to close". Below md
 **Create — `create-deal-dialog.tsx`** (shell-hosted, `useCreateDealDialog`): react-hook-form + Zod; ContactPicker (or the
 fixed `contact` from a contact page; `companyId` limits the picker on a company page); name optional (placeholder =
 the default name from `defaultDealName(useContact(id))`; empty → backend default); stage (open stages); amount; expected
-close; owner ("Contact's owner" default, otherwise a `PATCH ownerId` right after the create — POST /deals has no owner).
+close; owner ("Contact's owner" default = `ownerId` omitted; another owner goes in the same POST, C5).
 Success opens the deal, or with `stay` toasts "Deal created" with an Open action.
 
 **Close — `close-deal-dialog.tsx`**: one component for the board, the record and lists; `mode` won | lost | reopen.
