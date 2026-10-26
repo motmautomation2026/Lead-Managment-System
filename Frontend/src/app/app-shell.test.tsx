@@ -99,6 +99,10 @@ vi.mock("@/store", () => ({
   useCreateContact: () => ({ mutateAsync: noop, isPending: false }),
   useCompanySearch: () => ({ data: undefined }),
   useCreateCompany: () => ({ mutateAsync: noop, isPending: false }),
+  useCreateDeal: () => ({ mutateAsync: noop, isPending: false }),
+  useUpdateDeal: () => ({ mutateAsync: noop, isPending: false }),
+  useContact: () => ({ data: undefined }),
+  useContactSearch: () => ({ data: undefined, isFetching: false, isError: false }),
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -234,11 +238,11 @@ describe("AppShell nav", () => {
 });
 
 describe("AppShell top bar", () => {
-  it("+ Create → Contact / Company open their dialogs; others are coming soon", async () => {
+  it("+ Create → Contact / Company / Deal open their dialogs; others are coming soon", async () => {
     await renderShell();
     openMenu("Create");
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: /Deal/ })).toHaveAttribute(
+    expect(within(menu).getByRole("menuitem", { name: /Task/ })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
@@ -248,6 +252,11 @@ describe("AppShell top bar", () => {
     openMenu("Create");
     fireEvent.click(await screen.findByRole("menuitem", { name: "Company" }));
     expect(await screen.findByRole("dialog", { name: "Create company" })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    openMenu("Create");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Deal" }));
+    const deal = await screen.findByRole("dialog", { name: "Create deal" });
+    expect(within(deal).getByRole("button", { name: "Contact" })).toBeTruthy();
   });
 
   it("user menu switches the theme", async () => {

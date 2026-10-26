@@ -25,11 +25,13 @@ export function CommandPalette({
   onOpenChange,
   onCreateContact,
   onCreateCompany,
+  onCreateDeal,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreateContact: () => void;
   onCreateCompany: () => void;
+  onCreateDeal: () => void;
 }) {
   const [input, setInput] = useState("");
   const navigate = useNavigate();
@@ -46,6 +48,7 @@ export function CommandPalette({
   const actions: Array<{ id: string; label: string; icon: ReactNode; run: () => void }> = [
     { id: "create-contact", label: "Create contact", icon: <Plus />, run: onCreateContact },
     { id: "create-company", label: "Create company", icon: <Plus />, run: onCreateCompany },
+    { id: "create-deal", label: "Create deal", icon: <Plus />, run: onCreateDeal },
     ...NAV_GROUPS.flatMap((g) => g.items).map((item) => ({
       id: `go-${item.to}`,
       label: `Go to ${item.label}`,
@@ -143,7 +146,9 @@ export function CommandPalette({
               <CommandItem
                 key={d.id}
                 value={`deal-${d.id}`}
-                onSelect={() => close(() => void navigate({ to: "/deals" }))}
+                onSelect={() =>
+                  close(() => void navigate({ to: "/deals/$dealId", params: { dealId: d.id } }))
+                }
               >
                 <Handshake />
                 <Result title={d.name} meta={[label(d.stage), d.company?.name]} />

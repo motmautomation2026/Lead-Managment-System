@@ -56,6 +56,7 @@ afterEach(() => {
 async function renderPalette() {
   const onCreateContact = vi.fn();
   const onCreateCompany = vi.fn();
+  const onCreateDeal = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const root = createRootRoute({
     component: () => (
@@ -65,6 +66,7 @@ async function renderPalette() {
           onOpenChange={vi.fn()}
           onCreateContact={onCreateContact}
           onCreateCompany={onCreateCompany}
+          onCreateDeal={onCreateDeal}
         />
         <Outlet />
       </QueryClientProvider>
@@ -79,13 +81,14 @@ async function renderPalette() {
       page("/companies"),
       page("/companies/$companyId"),
       page("/deals"),
+      page("/deals/$dealId"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   await router.load();
   render(<RouterProvider router={router} />);
   const input = await screen.findByRole("combobox");
-  return { input, router, onCreateContact, onCreateCompany, queryClient };
+  return { input, router, onCreateContact, onCreateCompany, onCreateDeal, queryClient };
 }
 
 const type = (input: HTMLElement, value: string) => fireEvent.change(input, { target: { value } });
@@ -154,7 +157,7 @@ describe("CommandPalette search", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co1"));
     type(input, "tata");
     fireEvent.click(await screen.findByText("Tata fleet deal"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/deals"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/deals/d1"));
   });
 
   it("shows searching and no-results states", async () => {
@@ -170,12 +173,14 @@ describe("CommandPalette search", () => {
 
   it("runs actions, filtered by the typed text", async () => {
     mocks.search.mockResolvedValue(EMPTY);
-    const { input, onCreateContact, onCreateCompany, router } = await renderPalette();
+    const { input, onCreateContact, onCreateCompany, onCreateDeal, router } = await renderPalette();
     expect(screen.getByRole("option", { name: "Go to Tasks" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: "Create contact" }));
     expect(onCreateContact).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("option", { name: "Create company" }));
     expect(onCreateCompany).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("option", { name: "Create deal" }));
+    expect(onCreateDeal).toHaveBeenCalled();
 
     type(input, "deals");
     expect(screen.queryByRole("option", { name: "Go to Tasks" })).toBeNull();

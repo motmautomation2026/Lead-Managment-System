@@ -75,6 +75,7 @@ const SUB_PAGES: Array<[RegExp, string]> = [
   [/^\/contacts\/[^/]+/, "Contact"],
   [/^\/companies\/duplicates/, "Duplicates"],
   [/^\/companies\/[^/]+/, "Company"],
+  [/^\/deals\/[^/]+/, "Deal"],
   [/^\/automations\/templates/, "Templates"],
   [/^\/automations\/runs/, "Runs"],
   [/^\/automations\/workflows\/[^/]+/, "Workflow"],

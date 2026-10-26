@@ -31,11 +31,13 @@ export function TopBar({
   onOpenSearch,
   onCreateContact,
   onCreateCompany,
+  onCreateDeal,
 }: {
   onOpenMenu: () => void;
   onOpenSearch: () => void;
   onCreateContact: () => void;
   onCreateCompany: () => void;
+  onCreateDeal: () => void;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const crumbs = crumbsFor(pathname);
@@ -97,21 +99,27 @@ export function TopBar({
         <Search />
       </Button>
 
-      <CreateMenu onCreateContact={onCreateContact} onCreateCompany={onCreateCompany} />
+      <CreateMenu
+        onCreateContact={onCreateContact}
+        onCreateCompany={onCreateCompany}
+        onCreateDeal={onCreateDeal}
+      />
       <NotificationsMenu />
       <UserMenu />
     </header>
   );
 }
 
-const COMING_SOON = ["Deal", "Task", "Meeting"] as const;
+const COMING_SOON = ["Task", "Meeting"] as const;
 
 function CreateMenu({
   onCreateContact,
   onCreateCompany,
+  onCreateDeal,
 }: {
   onCreateContact: () => void;
   onCreateCompany: () => void;
+  onCreateDeal: () => void;
 }) {
   // Non-modal: a modal menu's focus trap fights the dialog that "Contact" opens.
   return (
@@ -129,6 +137,7 @@ function CreateMenu({
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuItem onSelect={onCreateContact}>Contact</DropdownMenuItem>
         <DropdownMenuItem onSelect={onCreateCompany}>Company</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onCreateDeal}>Deal</DropdownMenuItem>
         {COMING_SOON.map((item) => (
           // A Radix Tooltip inside the menu fights its focus handling; a native one is enough here.
           <div key={item} title="Coming soon">
