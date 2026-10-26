@@ -3,24 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { backend, type AdminUser } from "@/lib/backend-client";
 import { keys, messageFromError } from "@/store";
-import { PageHeader } from "@/app/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function AdminPage() {
-  return (
-    <div>
-      <PageHeader title="Admin" description="Create, edit and deactivate salesperson accounts." />
-      <div className="p-6">
-        <UsersPanel />
-      </div>
-    </div>
-  );
-}
-
-function UsersPanel() {
+/** Settings → Users (admins): today's Admin page — list, create, edit, deactivate / reactivate. */
+export function UsersPanel() {
   const client = useQueryClient();
   const users = useQuery({
     queryKey: keys.adminUsers,

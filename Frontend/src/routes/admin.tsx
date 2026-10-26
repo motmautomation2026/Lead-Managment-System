@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AdminPage } from "@/features/admin/admin-page";
+import { AdminRedirect } from "@/features/settings/admin-redirect";
+import { validateAdminSearch } from "@/features/settings/settings-search";
 
 export const Route = createFileRoute("/admin")({
-  head: () => ({ meta: [{ title: "Admin - MOTM Flow" }] }),
-  component: AdminPage,
+  validateSearch: validateAdminSearch,
+  component: AdminRedirect,
 });

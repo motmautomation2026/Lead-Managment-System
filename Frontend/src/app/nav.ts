@@ -8,7 +8,6 @@ import {
   Handshake,
   ListChecks,
   Settings,
-  ShieldCheck,
   Sparkles,
   Users,
   type LucideIcon,
@@ -26,8 +25,7 @@ export interface NavItem {
     | "/automations"
     | "/ai-activity"
     | "/knowledge"
-    | "/settings"
-    | "/admin";
+    | "/settings";
   label: string;
   icon: LucideIcon;
 }
@@ -62,9 +60,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
 ];
 
 export const SETTINGS_NAV: NavItem = { to: "/settings", label: "Settings", icon: Settings };
-export const ADMIN_NAV: NavItem = { to: "/admin", label: "Admin", icon: ShieldCheck };
-
-const ALL_NAV = [...NAV_GROUPS.flatMap((g) => g.items), SETTINGS_NAV, ADMIN_NAV];
+const ALL_NAV = [...NAV_GROUPS.flatMap((g) => g.items), SETTINGS_NAV];
 
 export function isNavActive(to: string, pathname: string) {
   return to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);

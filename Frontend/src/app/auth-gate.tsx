@@ -29,7 +29,13 @@ export function AuthGate({
     enabled: Boolean(session),
     staleTime: 60_000,
   });
-  const adminPath = pathname.startsWith("/admin");
+  // Also while a navigation away from /admin is pending, so its redirect never renders for a
+  // salesperson being sent to "/".
+  const adminPath = useRouterState({
+    select: (state) =>
+      state.location.pathname.startsWith("/admin") ||
+      state.matches.some((match) => match.pathname.startsWith("/admin")),
+  });
 
   useEffect(() => {
     if (!loading && !session) queryClient.clear();
@@ -85,17 +91,10 @@ export function AuthGate({
     return <LoginPage adminMode={adminPath} />;
   }
   if (me.isError || !me.data) throw me.error;
-  if (adminPath) {
-    // The Google Calendar OAuth callback (Backend/src/routes/googleCalendarOAuth.routes.ts)
-    // always redirects the browser back to /admin?calendar=connected|error,
-    // since that's this app's one fixed frontend base URL — it doesn't know
-    // which page started the flow. Connections live at /settings for every
-    // role, so forward the landing query string there instead of dropping it.
-    if (typeof window !== "undefined" && window.location.search.includes("calendar=")) {
-      window.location.replace(`/settings${window.location.search}`);
-      return null;
-    }
-    if (me.data.role !== "admin") return <Navigate to="/" replace />;
+  // /admin redirects into Settings (routes/admin.tsx). The Google Calendar OAuth landing
+  // (A5: always /admin?calendar=…) goes there for every role; other /admin visits are admins-only.
+  if (adminPath && me.data.role !== "admin" && !window.location.search.includes("calendar=")) {
+    return <Navigate to="/" replace />;
   }
   return (
     <StoreProvider>

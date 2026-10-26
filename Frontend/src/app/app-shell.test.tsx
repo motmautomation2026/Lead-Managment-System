@@ -175,16 +175,14 @@ function openMenu(name: string) {
 }
 
 describe("AppShell nav", () => {
-  it("shows the Admin item only to admins", async () => {
-    mockRole.isAdmin = false;
-    await renderShell();
-    expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Admin" })).toBeNull();
-    cleanup();
-
-    mockRole.isAdmin = true;
-    await renderShell();
-    expect(screen.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe("/admin");
+  it("has Settings (Users live inside it) and no separate Admin item, for every role", async () => {
+    for (const isAdmin of [false, true]) {
+      mockRole.isAdmin = isAdmin;
+      await renderShell();
+      expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+      expect(screen.queryByRole("link", { name: "Admin" })).toBeNull();
+      cleanup();
+    }
     mockRole.isAdmin = false;
   });
 

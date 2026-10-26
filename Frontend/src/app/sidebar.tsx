@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ADMIN_NAV, NAV_GROUPS, SETTINGS_NAV, isNavActive, type NavItem } from "@/app/nav";
+import { NAV_GROUPS, SETTINGS_NAV, isNavActive, type NavItem } from "@/app/nav";
 import { useCompanyDuplicatesCount, useIsAdmin, useTaskCount } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,8 @@ export function AppSidebar({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isAdmin = useIsAdmin();
-  const bottom = isAdmin ? [SETTINGS_NAV, ADMIN_NAV] : [SETTINGS_NAV];
+  // Settings holds Users for admins (C6b: no separate Admin item).
+  const bottom = [SETTINGS_NAV];
   // Admins: open duplicate-company suggestions (cheap count, cached 60 s).
   const duplicates = useCompanyDuplicatesCount({}, isAdmin).data?.count ?? 0;
   // My overdue tasks: the same params (and cache) as the Tasks page's Overdue tab; refreshWork

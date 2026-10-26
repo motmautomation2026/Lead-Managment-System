@@ -30,6 +30,8 @@ vi.mock("@/app/app-shell", () => ({
 }));
 
 import { AuthGate } from "@/app/auth-gate";
+import { AdminRedirect } from "@/features/settings/admin-redirect";
+import { validateSettingsSearch } from "@/features/settings/settings-search";
 
 afterEach(() => {
   cleanup();
@@ -52,8 +54,13 @@ async function renderAt(path: string) {
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       page("/", "dashboard"),
-      page("/admin", "admin page"),
-      page("/settings", "settings"),
+      createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminRedirect }),
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/settings",
+        validateSearch: validateSettingsSearch,
+        component: () => <div>settings</div>,
+      }),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
@@ -71,30 +78,35 @@ describe("AuthGate", () => {
     expect(router.state.location.pathname).toBe("/");
   });
 
-  it("renders /admin inside the shell for an admin", async () => {
+  it("sends an admin from /admin to Settings → Users (C6b)", async () => {
     mocks.role = "admin";
-    await renderAt("/admin");
-    expect(await screen.findByText("admin page")).toBeTruthy();
+    const router = await renderAt("/admin");
+    expect(await screen.findByText("settings")).toBeTruthy();
     expect(screen.getByTestId("shell")).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.search).toEqual({ tab: "users" });
   });
 
   it("redirects a salesperson from /admin to /", async () => {
     mocks.role = "salesperson";
     const router = await renderAt("/admin");
     expect(await screen.findByText("dashboard")).toBeTruthy();
-    expect(screen.queryByText("admin page")).toBeNull();
     expect(router.state.location.pathname).toBe("/");
   });
 
   it.each(["admin", "salesperson"] as const)(
-    "forwards the Google Calendar return (?calendar=) to /settings for an %s",
+    "sends the Google Calendar return (/admin?calendar=) to Settings → Workspace with the same query, for an %s",
     async (role) => {
       mocks.role = role;
-      const replace = vi.fn();
-      vi.stubGlobal("location", { ...window.location, search: "?calendar=connected", replace });
-      await renderAt("/admin");
-      await vi.waitFor(() => expect(replace).toHaveBeenCalledWith("/settings?calendar=connected"));
-      expect(screen.queryByText("admin page")).toBeNull();
+      vi.stubGlobal("location", { ...window.location, search: "?calendar=error&message=Denied" });
+      const router = await renderAt("/admin?calendar=error&message=Denied");
+      expect(await screen.findByText("settings")).toBeTruthy();
+      expect(router.state.location.pathname).toBe("/settings");
+      expect(router.state.location.search).toEqual({
+        tab: "workspace",
+        calendar: "error",
+        message: "Denied",
+      });
     },
   );
 });
