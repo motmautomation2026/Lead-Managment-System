@@ -110,7 +110,7 @@ Column ids — contacts: `name, email, phone, jobTitle, company, owner, leadStat
 ## 7a. Tasks, Meetings, Proposals (C6a)
 
 Read-only lists on the list standard, mounted on the existing routers (new paths; the old `GET /tasks`,
-`GET /meetings`, `GET /proposals` keep their unpaginated `{ data }` shape for the unrouted lead page until C6b).
+`GET /meetings`, `GET /proposals` keep their unpaginated `{ data }` shape but are deprecated, §9).
 Writes are unchanged (`POST/PATCH /tasks…`, `/meetings…`, `/proposals…`). Every row's owner name comes from
 `profiles` (`ownerName`, null = no owner) — the denormalised `owner_name` columns are not read (B25/B26 display).
 "Today", "overdue" and "upcoming" are **IST days computed in SQL** (`date_trunc('day', now() at time zone
@@ -120,14 +120,16 @@ Writes are unchanged (`POST/PATCH /tasks…`, `/meetings…`, `/proposals…`). 
 |---|---|
 | `GET /tasks/list` · `GET /tasks/count` | Filters: `ownerId[]` (ids / `me` / `none`), `status` (`open` **default**, `completed`, `cancelled`, `all`), `due` (`overdue` = due before now; `today` = due within today IST; `upcoming` = due from tomorrow 00:00 IST), `dueFrom/To`, `type[]`, `origin[]` (`manual`, `automation`, `agent`), `contactId`, `companyId` (the contact's company), `dealId` (tasks of that deal's contact — tasks have no deal link), `q` (title or contact name). `due_at` is NOT NULL, so there is no "no due date" bucket. Sorts: `dueAt` (**default asc**), `createdAt`, `updatedAt`. Row = the Task DTO + `ownerName`, `contact {id,name}`, `company {id,name}\|null`, `deal {id,name}\|null` (the contact's most recently updated open deal), `isOverdue` (open and past due, same rule as `due=overdue`). |
 | `GET /meetings/list` · `GET /meetings/count` | Filters: `ownerId[]`, `status[]`, `when` (`upcoming` = from now, not completed/cancelled/no-show/failed; `today` = today IST, any status; `past`; `needs_outcome` = past, not cancelled/no-show/failed, no outcome), `from/to` (scheduled time), `contactId`, `companyId`, `dealId` (`meetings.deal_id`), `q`. Sorts: `at` (scheduled time, **default asc**), `createdAt`. Row = the Meeting DTO (incl. `outcome`, `calendarSyncStatus/Error`, `notifyEmail/WhatsappStatus/Error`, `meetLink`) + `ownerName`, `contact`, `company`, `deal`. Participants are still not returned (A18 unchanged). |
-| `GET /proposals/list` · `GET /proposals/count` | Filters: `ownerId[]`, `status[]`, `group` (`open` = every non-terminal status; `awaiting_decision` = `sent`; `won` = `accepted`; `lost` = `rejected`, `expired`, `withdrawn`; `PROPOSAL_STATUS_GROUPS` in `domain/proposalRouting.ts`), `contactId`, `companyId`, `dealId`, `updatedFrom/To`, `q`. Sorts: `updatedAt` (**default desc**), `sentAt`, `amount` (both nullable: NULLs last). Row = the Proposal DTO + `ownerName`, `contact`, `company`, `deal`, **`allowedNextStatuses`**. |
+| `GET /proposals/list` · `GET /proposals/count` | Filters: `ownerId[]`, `status[]`, `group` (`open` = every non-terminal status; `awaiting_decision` = `sent`; `won` = `accepted`; `lost` = `rejected`, `expired`, `withdrawn`; `PROPOSAL_STATUS_GROUPS` in `domain/proposalRouting.ts`), `contactId`, `companyId`, `dealId`, `updatedFrom/To`, `q`. Sorts: `updatedAt` (**default desc**), `sentAt`, `amount` (both nullable: NULLs last). Row = the Proposal DTO + `ownerName`, `contact`, `company`, `deal`, **`allowedNextStatuses`**, **`lossReasonStatuses`** (C6b). |
+| `GET /proposals/:id/document` | C6b. `{ url, fileName, expiresAt }`: a **5-minute signed URL** for the proposal's file in the private `proposal-documents` bucket. The row is read with the workspace check (another workspace → 404); no file, or the object is gone → 404. The client fetches it on click and opens it at once (never stored). |
 | `GET /proposals/summary` | Same filters as the list (no sort/limit/cursor) → `{ openCount, sentCount, openValue }`: open group count, `sent` count, sum of open amounts in **INR**. The page sends its filters without `group`/`status`. |
 
 **`allowedNextStatuses`** = `allowedNextProposalStatuses(status)` (`domain/proposalRouting.ts`), the same table
 `POST /proposals/:id/status` enforces: a terminal status (`accepted`, `rejected`, `withdrawn`, `expired`) allows
 nothing (409); any other status allows every other status (the same status is a no-op). `rejected` / `expired`
-need `lossReason` (`LOSS_REASON_PROPOSAL_STATUSES`; 400 without, and the DB check). Integration tests check that
-the row and the endpoint agree (`tests/integration/workListsApi.test.ts`).
+need `lossReason` (`LOSS_REASON_PROPOSAL_STATUSES`; 400 without, and the DB check). **`lossReasonStatuses`** (C6b) =
+`lossReasonStatusesFrom(status)`: which of the allowed statuses need it, so the UI keeps no copy of the rule.
+Integration tests check that the rows and the endpoint agree (`workListsApi.test.ts`, `automationHomeApi.test.ts`).
 
 Indexes (migration **036**): tasks `(workspace_id, due_at|created_at|updated_at, id)`, meetings
 `(workspace_id, scheduled_at|created_at, id)`, proposals `(workspace_id, updated_at|sent_at|amount, id)`.
@@ -136,6 +138,33 @@ Indexes (migration **036**): tasks `(workspace_id, due_at|created_at|updated_at,
 contact, company, deal, owner, origin, status, createdAt, updatedAt`; meetings: `title, at, contact, company, deal,
 owner, status, outcome, calendar, notify, link, createdAt`; proposals: `title, contact, company, deal, amount, status,
 sentAt, owner, updatedAt, sendStatus, document`.
+
+## 7b. Runs and scheduled steps (C6b)
+
+Read-only lists (`services/automationLists.service.ts`); run actions stay on `POST /runs/:id/pause|resume|cancel|retry`.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /runs/list` · `GET /runs/count` | Filters: `workflowId`, `status[]` (`running, waiting, paused, completed, failed, cancelled`), `contactId`, `startedFrom/To`, `q` (contact name). Sort: `startedAt` (**default desc**). Row = the Run DTO + `contact {id,name}`, `workflow {id,name}`, `currentStepAction` (the action of the step the run is on, or null). |
+| `GET /scheduled-actions/list` · `GET /scheduled-actions/count` | Filters: `status[]`, `runId`, `workflowId` (via the run), `contactId`, `dueFrom/To` (on `scheduled_for`), `q` (contact name). Sort: `scheduledFor` (**default asc**). Row = the scheduled action DTO + `contact`, `workflow`, `stepOrder` (0-based; null if the step is gone). The UI calls these "Scheduled steps". |
+
+Indexes (migration **037**): `workflow_runs (workspace_id, started_at, id)`, `scheduled_actions (workspace_id, scheduled_for, id)`.
+
+## 7c. Home summary — `GET /home/summary` (C6b)
+
+For the signed-in user, built from the list services so every number equals the list it links to (IST days in SQL):
+`{ tasks: { overdue, dueToday, next[5] (task list rows) }, meetings: { today[≤10], todayCount, needsOutcome },
+deals: { openCount, openAmount (INR), stages: [{ stage, count, amountTotal }] (open stages, from the board query) },
+proposals: { awaitingDecision }, ai: { mode, draftsToReview } | null }`. Tasks/meetings/deals/proposals are the caller's own
+(`ownerId=me`). "Today's meetings" are scheduled / confirmed / rescheduled only (**B38**: never cancelled, no-show, failed;
+completed ones are done). `ai` is null while the agent mode is `off`; `draftsToReview` = unrated `draft` decisions in the
+workspace (the AI Activity list is workspace-wide).
+
+## 7d. Workflows list — `GET /workflows` (C6b)
+
+Same response as before (every workflow with every version and its steps, `activeLeads`, `failures`), now built in **4 queries**
+whatever the number of workflows (audit D: it was 1 + N × (3 + versions)). Staging, 20 workflows / 29 versions: **681 → 33 ms**
+(`tests/integration/automationHomeApi.test.ts` compares the body with the old code and times both).
 
 ## 8. Performance (B4 check)
 

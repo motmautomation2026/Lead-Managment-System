@@ -78,7 +78,8 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 ## 3. App shell (`Frontend/src/app/`)
 
 - `app-shell.tsx` — layout, Add lead context, Create workspace dialog, ⌘K.
-- `sidebar.tsx` — groups from `nav.ts` (`NAV_GROUPS`, `SETTINGS_NAV`, `ADMIN_NAV`); collapsible;
+- `sidebar.tsx` — groups from `nav.ts` (`NAV_GROUPS`: CRM, Work (Home, Tasks, Meetings, Proposals), Automation
+  (Workflows, AI Activity, Knowledge); `SETTINGS_NAV` at the bottom for everyone — Users live inside Settings, C6b); collapsible;
   inside a `Sheet` below `lg`. Contacts points to `/contacts` (C2).
 - `top-bar.tsx` — breadcrumbs (`crumbsFor(pathname)` in `nav.ts`: add sub-pages to `SUB_PAGES`),
   search button, + Create (Contact, Company, Deal (C4), Task, Meeting (C6a)), notifications,
@@ -86,14 +87,16 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 - `command-palette.tsx` (lazy, C5) — `GET /search` via `useGlobalSearch` (250 ms debounce, ≥ 2 chars) + actions.
   Empty query: **Recent** (the last 8 records opened; `lib/recent-records.ts`, localStorage `motmflow.recent.<workspaceId>`,
   type + id + label only, unreadable storage = none; record pages call `useRememberRecent`), then quick actions (Create
-  contact/company/deal, Go to Contacts/Companies/Deals/Tasks). With a query: grouped results (5 each), matching actions,
+  contact/company/deal/task, Schedule meeting, Go to Contacts/Companies/Deals/Tasks/Meetings/Proposals/Workflows/AI Activity/
+  Knowledge/Settings — C6b). With a query: grouped results (5 each), matching actions,
   and a last row **See all results for "q"** → `/search?q=` (shown once results arrive, so the first result stays
   highlighted).
 - `/search?q=&tab=` (`features/search/`, C5): search box (300 ms, replace), tabs Contacts · Companies · Deals with counts
   from each `/count`, each a DataTable on its list endpoint with `q` (contacts `lifecycle=all`, deals `status=all`: the
   same scope as `GET /search`), Load more, "Open in … list" carries the params. No endpoint of its own.
 - `shortcuts.ts` (C5) — the one registry: `SHORTCUTS` (⌘K/Ctrl+K palette, `?` help, `/` list search, `n` Create menu,
-  `g` then `c`/`o`/`d`/`t`/`m`/`p` within 1 s — Meetings and Proposals since C6a), `createShortcutMatcher` (pure; ignores keys typed in inputs/textareas/
+  `g` then `c`/`o`/`d`/`t`/`m`/`p`/`w`/`a`/`k`/`s` within 1 s — Meetings and Proposals since C6a; Workflows, AI Activity,
+  Knowledge, Settings since C6b), `createShortcutMatcher` (pure; ignores keys typed in inputs/textareas/
   contenteditable, with any `[role=dialog|alertdialog|menu|listbox]` open, during a dnd-kit keyboard drag, and with
   Ctrl/Alt/Meta except ⌘K) and `useShortcuts(handlers)` (in the shell). `shortcuts-dialog.tsx` lists the registry (`?` or
   user menu → Keyboard shortcuts). A new shortcut = one `SHORTCUTS` entry + its handler in `app-shell.tsx`.
@@ -314,7 +317,8 @@ record filter (`contactId` / `companyId` / `dealId`).
 **Tasks — `/tasks`** (`tasks-search.ts`, `tasks-page.tsx`, `task-columns.tsx`, `task-sheet.tsx`, `done-toggle.tsx`)
 - Views (saved views object `tasks`): My open (**default**) · Overdue · Due today (both with counts) · Upcoming ·
   Completed — all `ownerId=me` — and All open (`everyone`). Filters: Owner, Type, Origin (Manual / Automation / AI Agent),
-  Due date (whole IST days), Status (More), Contact (`ContactFilter`), Company (`CompanyPicker` chip), Deal chip from links.
+  Due date (whole IST days), Status (More), Contact (`ContactFilter`), Company (`CompanyPicker` chip), and from a deal's
+  "View all" a chip **"Tasks of this deal's contact"** (tasks have no deal link, so task rows have no Deal column since C6b).
 - The **Done** toggle sits in the Title cell (`role=checkbox`): a plain task completes optimistically
   (`useCompleteTask`: every loaded task list updated at once, restored on error); a `call` task opens Log call (the call
   completes it), a `schedule_meeting` task opens Schedule meeting. Due is red when the row's `isOverdue`.
@@ -335,9 +339,10 @@ record filter (`contactId` / `companyId` / `dealId`).
 - Header stats Open / Sent / Open pipeline (INR, `Money compact`) from `GET /proposals/summary` with the page's
   filters minus `group`/`status`. Views (object `proposals`): Open (**default**) · Awaiting decision · Won · Lost · All —
   each a backend `group`. Filters: Owner, Status, Updated, Contact, Company, Deal chip.
-- Sheet (follows the polled row): details, document name, send statuses, **Change status** → `ProposalStatusDialog`.
-  "New proposal" = `SendProposalDialog` with a ContactPicker. There is no document download link yet (no signed-URL
-  endpoint exists).
+- Sheet (follows the polled row): details, document name, send statuses, **Change status** → `ProposalStatusDialog`,
+  **View document** (C6b, `features/work/proposal-document.tsx`: `GET /proposals/:id/document` on click → a 5-minute signed
+  URL opened in a tab opened synchronously, never cached; also on the contact and deal record proposal rows).
+  "New proposal" = `SendProposalDialog` with a ContactPicker.
 - **B19 display**: `useProposalList` polls every 8 s only while a loaded row's WhatsApp send is queued/sending and its
   `updatedAt` is under 2 minutes old (`lib/proposal-sending.ts`); older rows show "Still sending — check later".
 
@@ -354,8 +359,8 @@ record filter (`contactId` / `companyId` / `dealId`).
   record and the Tasks page.
 - `LogCallDialog` callback (**B13**): date + time (IST); default today 10:00 while ahead, else the next working day
   (Mon–Fri) 10:00; "The callback must be in the future." inline and Save disabled before sending; the backend rule stays.
-- `ProposalStatusDialog` (**B4**): offers only the row's `allowedNextStatuses`; Rejected / Expired require a loss reason
-  (existing labels) + notes (`LOSS_REASON_STATUSES` in `work-labels.ts` mirrors the backend; a 400 still shows inline);
+- `ProposalStatusDialog` (**B4**): offers only the row's `allowedNextStatuses`; the row's `lossReasonStatuses` (C6b, from the
+  backend — no React copy of the rule) require a loss reason (existing labels) + notes; a 400 still shows inline;
   a final status says "Create a new proposal instead". Replaces every per-row status `<Select>`.
 - `ContactFilter` / `DealFilterChip` (`work-filters.tsx`), `RefLink`, `RecordWorkCards` (company record Related column:
   open tasks, upcoming meetings, open proposals with counts and View all).
@@ -365,9 +370,56 @@ record filter (`contactId` / `companyId` / `dealId`).
 `useCompleteTask`, `useCreateMeeting`, `useUpdateMeeting`, `useRecordMeetingOutcome`, `useCreateProposal`,
 `useSetProposalStatus`. Keys under `keys.work(ws)` (`workList`, `workCount`, `proposalSummary`). Every write calls
 `refreshWork(client, ws)` (= `refreshDeal`: work lists, contacts, companies, deals); `refreshContact` also refreshes
-`keys.work`. The old `useTasks` / `useMeetings` / `useProposals` (unpaginated) remain only for the unrouted lead page (C6b).
+`keys.work`. The old unpaginated `useTasks` / `useMeetings` / `useProposals` were removed in C6b.
 
 **Bundle**: first load 286.2 → 291.5 kB gzip (the three routes' search schemas, which every route's `validateSearch`
 puts in the entry, and the sidebar's overdue count); every work dialog is lazy or route-split.
 `src/test/bundle-size.test.ts` proves `checkBudget` (exported by `scripts/check-bundle-size.mjs`) fails above the budget.
+
+## 10. Automation, AI Activity, Knowledge, Settings, Home (C6b)
+
+No page fetches a whole table any more. The only full lists left are small reference lists: users (`/profiles`), workflows
+(with versions + steps) and templates (`useAutomations` / `useWorkflowList`), knowledge documents and assets, admin users,
+agent playbooks, assignment rules, saved views, notifications (latest 100) and company industries (≤ 200).
+`src/test/removed-code.test.ts` fails if a removed whole-table hook (`useLeads`, `useTasks`, …), an old page or an
+unpaginated client call comes back.
+
+**Workflows — `/automations`** (`features/automations/workflows-page.tsx`): PageHeader (title, count, New workflow) +
+`AutomationTabs` (Workflows · Runs · Templates); a client-side search over the reference list; DataTable (name + description,
+trigger, active/paused `Switch`, published + draft version, active runs + failures, updated, Duplicate / Delete icon buttons).
+Delete keeps both confirms (enrollment history → Force delete). A row opens the builder. **Builder** and **Templates**: the
+same components in the new PageHeader layout, no behaviour change; the rich-text editor stays in the lazily loaded templates
+route chunk.
+
+**Runs — `/automations/runs`** (`runs-search.ts`, `runs-page.tsx`, `run-sheet.tsx`, `run-labels.ts`): `?tab=steps` switches
+Runs ↔ Scheduled steps (ViewTabs with `/count` badges). URL state: `workflowId` (Workflow filter; the last pick wins),
+`runStatus[]` / `stepStatus[]`, `contactId` (`ContactFilter`), `from`/`to` (whole IST days: started / due), `q` (contact
+name), `sort`. Load more. A run row opens a Sheet: details, Retry (failed) / Pause (running, waiting) / Resume (paused) /
+Cancel (any open or failed) — the rules of the old page — and the step history (`useScheduledActionList({ runId })`).
+The contact record's Automation section, journey card and follow-up timeline read `useRunList({ contactId })` /
+`useScheduledActionList({ contactId })` ("View all" opens Runs filtered).
+
+**AI Activity — `/ai-activity`** (`ai-activity-search.ts`): the filters of before (action, outcome, rating, open report,
+IST from/to) live in the URL, so Home links straight to `?outcome=draft&rating=unrated`. DataTable over the keyset
+endpoint; a row opens the decision **Sheet** (`decision-drawer.tsx`, same rating / reason / report calls).
+
+**Knowledge — `/knowledge`**: Documents and Assets tabs are DataTables (status with the error on hover, active switch,
+view / reprocess / delete, download); admin-only writes unchanged; Test retrieval unchanged.
+
+**Settings — `/settings?tab=`** (`settings-page.tsx`, `settings-search.ts`): a left sub-nav (a scrolling tab row below lg):
+Workspace (Email, WhatsApp, Google Calendar), Lead assignment (incl. the website-lead fallback owner), AI agent, Users
+(`users-panel.tsx`, the old Admin page) — those three for admins; others opening them see "Admins only" — and Appearance
+(theme + density, the same as the user menu). `/admin` (`admin-redirect.tsx`) opens Settings → Users; the Google Calendar
+OAuth landing `/admin?calendar=…&message=…` (A5) opens Settings → Workspace with the same query, so the Calendar panel shows
+its toast and strips it. AuthGate keeps the admin sign-in at `/admin` and still sends salespeople to `/`. Settings, Admin
+and auth query keys live in `store/query.ts` (`keys.connection`, `assignmentRules`, `adminUsers`, `authRole`; A17).
+
+**Home — `/`** (`features/home/home-page.tsx`, `useHomeSummary` → `GET /home/summary`): My day (overdue / due today / need
+an outcome, each linking to the matching Tasks or Meetings view with `ownerId=me`; the next 5 tasks; today's meetings with
+Join), My pipeline (open deals + INR value, per-stage CSS bars → `/deals?layout=board&view=mine`), Proposals awaiting
+decision, AI drafts to review (only while the agent is on). Quick actions: Contact, Task, Deal. No chart library and no
+counting in React. The sidebar item is "Home".
+
+**Bundle** (C6b): first load 291.5 → 293.5 kB gzip (the new routes' search schemas and the Home/Settings route chunks are
+split out).
 

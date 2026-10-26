@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `036`).
+  (currently `037`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `036`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `037`).
 
 ## Way of working
 
@@ -349,6 +349,27 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   View all links. **B4, B12, B13 fixed; B25/B26 fixed for display** (lists read names from `profiles`; the `owner_name`
   columns are still not written). B19 display: proposal polling stops after 2 min per row. Docs: `C1-ui.md` §9,
   `B4-api.md` §7a.
+- **C6b (Workflows, AI Activity, Knowledge, Settings, Home; old pages removed):** migration 037 (`workflow_runs
+  (workspace_id, started_at, id)`, `scheduled_actions (workspace_id, scheduled_for, id)`). Backend
+  `services/automationLists.service.ts`: `GET /runs/list|count`, `/scheduled-actions/list|count` (list standard; rows with
+  `contact`, `workflow`, `currentStepAction` / `stepOrder`); `listWorkflows` in 4 queries (same body; 681 → 33 ms on staging);
+  `services/home.service.ts` `GET /home/summary` (the caller's day from the list services, IST in SQL, B38 statuses, the
+  board query for the pipeline, AI drafts when the agent is not off); B38 fixed in the deprecated `/dashboard/summary`;
+  proposal rows `lossReasonStatuses` (`lossReasonStatusesFrom`); `GET /proposals/:id/document` (5-min signed URL, workspace
+  check, 404 without a file). Old `GET /leads|/tasks|/meetings|/proposals|/runs|/scheduled-actions|/dashboard/summary` kept,
+  deprecated (`B4-api.md` §9). Frontend: `store/automation-hooks.ts` (`useRunList`, `useRunCount`, `useScheduledActionList`,
+  `useScheduledActionCount`, `useRunAction`, `useWorkflowList`, `useHomeSummary`); Settings/Admin/auth keys in `query.ts`
+  (A17). `/automations` DataTable, `/automations/runs` (Runs · Scheduled steps, filters in the URL, run Sheet with the old
+  actions + step history), builder/templates in the new layout, `/ai-activity` (URL filters, decision Sheet), `/knowledge`
+  tables, `/settings?tab=` (Workspace, Lead assignment, AI agent, Users, Appearance; `/admin` → Users, `/admin?calendar=` →
+  Workspace with the query), Home at `/`. `useAutomations` = workflows + templates only; the contact Automation section reads
+  the lists by `contactId`. C6a fixes: ProposalStatusDialog uses the row's flags, no Deal column on tasks ("Tasks of this
+  deal's contact" chip), View document. Removed: old dashboard, lead pages/dialogs, `useLeads`/`useTasks`/`useMeetings`/
+  `useProposals`/`useTimeline`/`useDashboard` and the unpaginated client calls (`src/test/removed-code.test.ts` guards it);
+  sidebar Admin item gone; shortcuts `g w|a|k|s`. Docs: `C1-ui.md` §10, `B4-api.md` §7b–7d, §9.
+
+**Phase C complete** (C1–C6b): every page is in the new shell and no page fetches a whole table (only small reference lists,
+`C1-ui.md` §10).
 
 ## CRM v2
 
