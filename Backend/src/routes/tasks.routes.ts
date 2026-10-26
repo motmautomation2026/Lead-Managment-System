@@ -29,7 +29,7 @@ tasksRouter.get(
   }),
 );
 
-/** C6a list standard (docs/crm-v2/B4-api.md); the old GET / above keeps its shape until C6b. */
+/** C6a list standard (docs/crm-v2/B4-api.md §7a). The old GET / above is deprecated: kept for the production rollback. */
 tasksRouter.get(
   "/list",
   asyncHandler(async (req, res) => {

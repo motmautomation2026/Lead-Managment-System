@@ -22,6 +22,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
  */
 
 const PROPOSAL_DOCUMENTS_BUCKET = "proposal-documents";
+const DOCUMENT_LINK_TTL_SECONDS = 300;
 const PROPOSAL_WHATSAPP_MAX_DEFERRAL_MS = 72 * 60 * 60 * 1000;
 
 function sanitizeFileName(name: string): string {
@@ -267,4 +268,21 @@ export async function processQueuedProposalWhatsappSend(row: ProposalRow): Promi
     const message = err instanceof Error ? err.message : String(err);
     await pool.query(`update public.proposals set whatsapp_send_status = 'failed', whatsapp_send_error = $2 where id = $1`, [row.id, message]);
   }
+}
+
+/**
+ * GET /proposals/:id/document (C6b): a short-lived (5 min) signed URL for the proposal's
+ * file in the private bucket. The proposal row is read with the workspace check, so a
+ * storage path of another workspace is never touched; no file (or a missing object) → 404.
+ */
+export async function getProposalDocumentLink(db: Queryable, workspaceId: string, id: string) {
+  const row = await getProposalRowOr404(db, workspaceId, id);
+  if (!row.document_storage_path) throw new NotFoundError("Proposal document");
+  const { data, error } = await supabaseAdmin.storage.from(PROPOSAL_DOCUMENTS_BUCKET).createSignedUrl(row.document_storage_path, DOCUMENT_LINK_TTL_SECONDS);
+  if (error || !data?.signedUrl) throw new NotFoundError("Proposal document");
+  return {
+    url: data.signedUrl,
+    fileName: row.document_file_name ?? row.document_reference ?? null,
+    expiresAt: new Date(Date.now() + DOCUMENT_LINK_TTL_SECONDS * 1000).toISOString(),
+  };
 }

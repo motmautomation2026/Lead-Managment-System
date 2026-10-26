@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { MEETING_STATUSES, PROPOSAL_STATUSES, TASK_ORIGINS, TASK_TYPES } from "../domain/enums.js";
-import { allowedNextProposalStatuses, PROPOSAL_STATUS_GROUPS } from "../domain/proposalRouting.js";
+import { allowedNextProposalStatuses, lossReasonStatusesFrom, PROPOSAL_STATUS_GROUPS } from "../domain/proposalRouting.js";
 import {
   addOwnerFilter,
   addRange,
@@ -261,7 +261,12 @@ export async function listWorkProposals(db: Queryable, actor: Actor, workspaceId
   );
   return {
     ...page,
-    data: page.data.map((row) => ({ ...proposalToDto(row), ...refs(row), allowedNextStatuses: allowedNextProposalStatuses(row.status) })),
+    data: page.data.map((row) => ({
+      ...proposalToDto(row),
+      ...refs(row),
+      allowedNextStatuses: allowedNextProposalStatuses(row.status),
+      lossReasonStatuses: lossReasonStatusesFrom(row.status),
+    })),
   };
 }
 

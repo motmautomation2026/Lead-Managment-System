@@ -487,7 +487,11 @@ export async function listScheduledActions(db: Queryable, workspaceId: string, f
     `select * from public.scheduled_actions ${where} order by scheduled_for asc`,
     params,
   );
-  return result.rows.map((r) => ({
+  return result.rows.map(scheduledActionToDto);
+}
+
+export function scheduledActionToDto(r: ScheduledActionRow) {
+  return {
     id: r.id,
     leadId: r.lead_id,
     workflowRunId: r.workflow_run_id,
@@ -502,5 +506,5 @@ export async function listScheduledActions(db: Queryable, workspaceId: string, f
     executedAt: r.executed_at?.toISOString(),
     cancelledAt: r.cancelled_at?.toISOString(),
     cancelReason: r.cancel_reason ?? undefined,
-  }));
+  };
 }

@@ -72,50 +72,64 @@ async function getStepsForVersion(db: Queryable, versionId: string) {
   return result.rows.map(stepToDto);
 }
 
-async function getVersionsForWorkflow(db: Queryable, workflowId: string) {
-  const result = await db.query<WorkflowVersionRow>(
-    `select * from public.workflow_versions where workflow_id = $1 order by version_number asc`,
-    [workflowId],
+/**
+ * Workflow DTOs (every version with its steps, active/failed run counts) in a fixed
+ * number of queries whatever the workflow count: versions, steps and run counts are
+ * each one query over all the ids (audit D: listWorkflows was N+1).
+ */
+async function workflowsToDtos(db: Queryable, rows: WorkflowRow[]) {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  // Sequential: `db` may be one transaction client (createDraft, publish…), which runs one query at a time.
+  const versions = await db.query<WorkflowVersionRow>(`select * from public.workflow_versions where workflow_id = any($1::uuid[]) order by version_number asc`, [ids]);
+  const steps = await db.query<WorkflowStepRow>(
+    `select s.* from public.workflow_steps s join public.workflow_versions v on v.id = s.workflow_version_id
+      where v.workflow_id = any($1::uuid[]) order by s.step_order asc`,
+    [ids],
   );
-  const versions = [];
-  for (const v of result.rows) {
-    versions.push({
-      version: v.version_number,
-      status: v.status,
-      createdBy: v.created_by_name ?? "-",
-      createdAt: v.created_at.toISOString(),
-      publishedAt: v.published_at?.toISOString(),
-      steps: await getStepsForVersion(db, v.id),
-    });
+  const runCounts = await db.query<{ workflow_id: string; active: number; failed: number }>(
+    `select workflow_id, count(*) filter (where status in ('running','waiting','paused'))::int as active,
+            count(*) filter (where status = 'failed')::int as failed
+       from public.workflow_runs where workflow_id = any($1::uuid[]) group by workflow_id`,
+    [ids],
+  );
+  const stepsByVersion = new Map<string, ReturnType<typeof stepToDto>[]>();
+  for (const step of steps.rows) {
+    const list = stepsByVersion.get(step.workflow_version_id) ?? [];
+    list.push(stepToDto(step));
+    stepsByVersion.set(step.workflow_version_id, list);
   }
-  return versions;
+  const counts = new Map(runCounts.rows.map((r) => [r.workflow_id, r]));
+  return rows.map((row) => {
+    const own = versions.rows
+      .filter((v) => v.workflow_id === row.id)
+      .map((v) => ({
+        version: v.version_number,
+        status: v.status,
+        createdBy: v.created_by_name ?? "-",
+        createdAt: v.created_at.toISOString(),
+        publishedAt: v.published_at?.toISOString(),
+        steps: stepsByVersion.get(v.id) ?? [],
+      }));
+    const published = own.find((v) => v.status === "published");
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? "",
+      trigger: row.trigger,
+      status: row.status,
+      currentVersion: published?.version ?? own.at(-1)?.version ?? 0,
+      activeLeads: counts.get(row.id)?.active ?? 0,
+      failures: counts.get(row.id)?.failed ?? 0,
+      ownerId: row.owner_id ?? undefined,
+      updatedAt: row.updated_at.toISOString(),
+      versions: own,
+    };
+  });
 }
 
 async function workflowToDto(db: Queryable, row: WorkflowRow) {
-  const versions = await getVersionsForWorkflow(db, row.id);
-  const published = versions.find((v) => v.status === "published");
-  const activeLeads = await db.query<{ count: string }>(
-    `select count(*)::text as count from public.workflow_runs
-      where workflow_id = $1 and status in ('running','waiting','paused')`,
-    [row.id],
-  );
-  const failures = await db.query<{ count: string }>(
-    `select count(*)::text as count from public.workflow_runs where workflow_id = $1 and status = 'failed'`,
-    [row.id],
-  );
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description ?? "",
-    trigger: row.trigger,
-    status: row.status,
-    currentVersion: published?.version ?? versions.at(-1)?.version ?? 0,
-    activeLeads: Number(activeLeads.rows[0]?.count ?? 0),
-    failures: Number(failures.rows[0]?.count ?? 0),
-    ownerId: row.owner_id ?? undefined,
-    updatedAt: row.updated_at.toISOString(),
-    versions,
-  };
+  return (await workflowsToDtos(db, [row]))[0]!;
 }
 
 export async function getWorkflowRowOr404(db: Queryable, workspaceId: string, id: string): Promise<WorkflowRow> {
@@ -127,9 +141,7 @@ export async function getWorkflowRowOr404(db: Queryable, workspaceId: string, id
 
 export async function listWorkflows(db: Queryable, workspaceId: string) {
   const result = await db.query<WorkflowRow>(`select * from public.workflows where workspace_id = $1 order by updated_at desc`, [workspaceId]);
-  const out = [];
-  for (const row of result.rows) out.push(await workflowToDto(db, row));
-  return out;
+  return workflowsToDtos(db, result.rows);
 }
 
 export async function getWorkflow(db: Queryable, workspaceId: string, id: string) {

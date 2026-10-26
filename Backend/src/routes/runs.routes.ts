@@ -8,6 +8,7 @@ import { SCHEDULED_ACTION_STATUSES, WORKFLOW_RUN_STATUSES } from "../domain/enum
 import { ValidationError } from "../errors.js";
 import * as runsService from "../services/runs.service.js";
 import { autoEnroll, enrollLeadInWorkflow } from "../services/runs.service.js";
+import * as lists from "../services/automationLists.service.js";
 
 export const runsRouter = Router();
 runsRouter.use(requireAuth);
@@ -19,11 +20,27 @@ const listQuerySchema = z.object({
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
 });
 
+/** Deprecated (unpaginated): kept for the production rollback; the UI uses GET /runs/list since C6b. */
 runsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await runsService.listRuns(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6b list standard (docs/crm-v2/B4-api.md §7b). */
+runsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.listRunsPage(pool, req.workspaceId!, parseQuery(lists.runListSchema, req.query)));
+  }),
+);
+
+runsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.countRuns(pool, req.workspaceId!, parseQuery(lists.runFilterSchema, req.query)));
   }),
 );
 
@@ -90,7 +107,7 @@ runsRouter.post(
   }),
 );
 
-// --- Scheduled actions (read/cancel only — no execution in this phase) -------
+// --- Scheduled actions (read only; the worker executes them) -------------------
 
 export const scheduledActionsRouter = Router();
 scheduledActionsRouter.use(requireAuth);
@@ -101,10 +118,25 @@ const scheduledQuerySchema = z.object({
   status: z.enum(SCHEDULED_ACTION_STATUSES).optional(),
 });
 
+/** Deprecated (unpaginated): kept for the production rollback; the UI uses GET /scheduled-actions/list since C6b. */
 scheduledActionsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const filters = parseQuery(scheduledQuerySchema, req.query);
     res.json({ data: await runsService.listScheduledActions(pool, req.workspaceId!, filters) });
+  }),
+);
+
+scheduledActionsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.listScheduledActionsPage(pool, req.workspaceId!, parseQuery(lists.scheduledActionListSchema, req.query)));
+  }),
+);
+
+scheduledActionsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.countScheduledActions(pool, req.workspaceId!, parseQuery(lists.scheduledActionFilterSchema, req.query)));
   }),
 );

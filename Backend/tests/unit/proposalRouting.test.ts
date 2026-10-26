@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedNextProposalStatuses, PROPOSAL_STATUS_GROUPS, routeProposalStatus, TERMINAL_PROPOSAL_STATUSES } from "../../src/domain/proposalRouting.js";
+import { allowedNextProposalStatuses, lossReasonStatusesFrom, PROPOSAL_STATUS_GROUPS, routeProposalStatus, TERMINAL_PROPOSAL_STATUSES } from "../../src/domain/proposalRouting.js";
 import { PROPOSAL_STATUSES } from "../../src/domain/enums.js";
 
 describe("routeProposalStatus", () => {
@@ -45,5 +45,21 @@ describe("allowedNextProposalStatuses", () => {
     const { open, won, lost, awaiting_decision } = PROPOSAL_STATUS_GROUPS;
     expect([...open, ...won, ...lost].sort()).toEqual([...PROPOSAL_STATUSES].sort());
     expect(awaiting_decision.every((s) => (open as readonly string[]).includes(s))).toBe(true);
+  });
+});
+
+describe("lossReasonStatusesFrom", () => {
+  it("open statuses: rejected and expired need a loss reason", () => {
+    expect(lossReasonStatusesFrom("sent")).toEqual(["rejected", "expired"]);
+    expect(lossReasonStatusesFrom("draft")).toEqual(["rejected", "expired"]);
+  });
+  it("is always a subset of the allowed next statuses", () => {
+    for (const s of PROPOSAL_STATUSES) {
+      const allowed = allowedNextProposalStatuses(s);
+      expect(lossReasonStatusesFrom(s).every((x) => allowed.includes(x))).toBe(true);
+    }
+  });
+  it("terminal statuses need nothing", () => {
+    for (const s of TERMINAL_PROPOSAL_STATUSES) expect(lossReasonStatusesFrom(s)).toEqual([]);
   });
 });

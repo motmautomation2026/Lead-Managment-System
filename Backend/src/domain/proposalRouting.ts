@@ -16,6 +16,11 @@ export function allowedNextProposalStatuses(current: ProposalStatus): ProposalSt
   return PROPOSAL_STATUSES.filter((s) => s !== current);
 }
 
+/** Which of the statuses allowed from `current` need a lossReason (shown on list rows next to allowedNextStatuses). */
+export function lossReasonStatusesFrom(current: ProposalStatus): ProposalStatus[] {
+  return allowedNextProposalStatuses(current).filter((s) => LOSS_REASON_PROPOSAL_STATUSES.includes(s));
+}
+
 /** List groups (GET /proposals/list `group`), from the status meanings above. */
 export const PROPOSAL_STATUS_GROUPS = {
   open: PROPOSAL_STATUSES.filter((s) => !TERMINAL_PROPOSAL_STATUSES.includes(s)),
