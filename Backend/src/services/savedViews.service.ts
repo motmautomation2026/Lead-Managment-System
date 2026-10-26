@@ -11,6 +11,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { CONTACT_COLUMNS, contactFilterSchema, contactSortSchema } from "./contacts.service.js";
 import { COMPANY_COLUMNS, companyFilterSchema, companySortSchema } from "./companyRecords.service.js";
 import { DEAL_COLUMNS, dealFilterSchema, dealSortSchema } from "./dealRecords.service.js";
+import * as work from "./workLists.service.js";
 
 export const MAX_VIEWS_PER_OBJECT = 30;
 
@@ -18,8 +19,11 @@ const OBJECTS = {
   contacts: { filters: contactFilterSchema, sort: contactSortSchema, columns: CONTACT_COLUMNS as readonly string[] },
   companies: { filters: companyFilterSchema, sort: companySortSchema, columns: COMPANY_COLUMNS as readonly string[] },
   deals: { filters: dealFilterSchema, sort: dealSortSchema, columns: DEAL_COLUMNS as readonly string[] },
+  tasks: { filters: work.taskFilterSchema, sort: work.taskSortSchema, columns: work.TASK_COLUMNS as readonly string[] },
+  meetings: { filters: work.meetingFilterSchema, sort: work.meetingSortSchema, columns: work.MEETING_COLUMNS as readonly string[] },
+  proposals: { filters: work.proposalFilterSchema, sort: work.proposalSortSchema, columns: work.PROPOSAL_COLUMNS as readonly string[] },
 };
-const viewObject = z.enum(["contacts", "companies", "deals"]);
+const viewObject = z.enum(["contacts", "companies", "deals", "tasks", "meetings", "proposals"]);
 type ViewObject = z.infer<typeof viewObject>;
 
 const viewFields = {

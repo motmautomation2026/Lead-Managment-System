@@ -1,4 +1,29 @@
-import type { LifecycleState, PipelineStage, ProposalStatus, TaskType } from "./enums.js";
+import { PROPOSAL_STATUSES, type LifecycleState, type PipelineStage, type ProposalStatus, type TaskType } from "./enums.js";
+
+/**
+ * Terminal proposal statuses: their routing already moved the lead's lifecycle
+ * (accepted -> won, rejected/expired -> long_term_nurture) or ended the deal
+ * (withdrawn). Those side effects are one-way, so a terminal proposal never moves again.
+ */
+export const TERMINAL_PROPOSAL_STATUSES: readonly ProposalStatus[] = ["accepted", "rejected", "withdrawn", "expired"];
+
+/** Statuses that need a lossReason (proposals_loss_has_reason enforces it in the DB too). */
+export const LOSS_REASON_PROPOSAL_STATUSES: readonly ProposalStatus[] = ["rejected", "expired"];
+
+/** The statuses POST /proposals/:id/status accepts from `current` (the same move is a no-op, not listed). */
+export function allowedNextProposalStatuses(current: ProposalStatus): ProposalStatus[] {
+  if (TERMINAL_PROPOSAL_STATUSES.includes(current)) return [];
+  return PROPOSAL_STATUSES.filter((s) => s !== current);
+}
+
+/** List groups (GET /proposals/list `group`), from the status meanings above. */
+export const PROPOSAL_STATUS_GROUPS = {
+  open: PROPOSAL_STATUSES.filter((s) => !TERMINAL_PROPOSAL_STATUSES.includes(s)),
+  awaiting_decision: ["sent"],
+  won: ["accepted"],
+  lost: ["rejected", "expired", "withdrawn"],
+} as const satisfies Record<string, readonly ProposalStatus[]>;
+export type ProposalStatusGroup = keyof typeof PROPOSAL_STATUS_GROUPS;
 
 export interface ProposalRoutingResult {
   stage?: PipelineStage;

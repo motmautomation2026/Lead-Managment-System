@@ -3,7 +3,7 @@ import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
 import type { EmailSendStatus, LeadLossReason, ProposalStatus, WhatsappSendStatus } from "../domain/enums.js";
-import { routeProposalStatus } from "../domain/proposalRouting.js";
+import { allowedNextProposalStatuses, LOSS_REASON_PROPOSAL_STATUSES, routeProposalStatus } from "../domain/proposalRouting.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead } from "./leads.service.js";
@@ -50,7 +50,7 @@ export interface ProposalRow {
   updated_at: Date;
 }
 
-function proposalToDto(row: ProposalRow) {
+export function proposalToDto(row: ProposalRow) {
   return {
     id: row.id,
     leadId: row.lead_id,
@@ -208,15 +208,6 @@ export async function updateProposal(db: Queryable, workspaceId: string, id: str
 }
 
 /**
- * Terminal proposal statuses: their routing already moved the lead's
- * lifecycle (accepted -> won, rejected/expired -> long_term_nurture) or
- * ended the deal (withdrawn). Their side effects (cancelling tasks,
- * enrolling workflows, changing lifecycle) are one-way — re-running them by
- * transitioning back out is not a safe "undo", so it's blocked below.
- */
-const TERMINAL_PROPOSAL_STATUSES: ProposalStatus[] = ["accepted", "rejected", "withdrawn", "expired"];
-
-/**
  * Proposal status routing (product brief, "PROPOSALS"). This IS the
  * business operation — a bare PATCH on `status` would skip the required
  * lead-state cascade (Rule 16), so status changes only ever go through
@@ -238,12 +229,12 @@ export async function updateProposalStatus(
 ) {
   const proposal = await getProposalRowOr404(db, workspaceId, id);
   if (proposal.status === status) return proposalToDto(proposal);
-  if (TERMINAL_PROPOSAL_STATUSES.includes(proposal.status)) {
+  if (!allowedNextProposalStatuses(proposal.status).includes(status)) {
     throw new ConflictError(
       `Proposal is already "${proposal.status}", a terminal status - it can't be moved to "${status}". Create a new proposal instead.`,
     );
   }
-  if ((status === "rejected" || status === "expired") && !options.lossReason) {
+  if (LOSS_REASON_PROPOSAL_STATUSES.includes(status) && !options.lossReason) {
     throw new ValidationError(`lossReason is required when moving a proposal to "${status}".`);
   }
 
@@ -254,7 +245,7 @@ export async function updateProposalStatus(
     sets.push(`sent_at = now()`, `follow_up_at = $${i++}`);
     params.push(addDaysIso(3));
   }
-  if (status === "rejected" || status === "expired") {
+  if (LOSS_REASON_PROPOSAL_STATUSES.includes(status)) {
     sets.push(`loss_reason = $${i++}`, `loss_notes = $${i++}`);
     params.push(options.lossReason, options.lossNotes?.trim() || null);
   }

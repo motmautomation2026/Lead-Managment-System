@@ -6,6 +6,7 @@ import { pool, withTransaction } from "../db.js";
 import { parseBody, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { TASK_STATUSES, TASK_TYPES } from "../domain/enums.js";
 import { cancelTask, completeTask, createTask, listTasks, taskToDto, updateTask } from "../services/tasks.service.js";
+import * as work from "../services/workLists.service.js";
 
 export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
@@ -25,6 +26,21 @@ tasksRouter.get(
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await listTasks(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6a list standard (docs/crm-v2/B4-api.md); the old GET / above keeps its shape until C6b. */
+tasksRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await work.listWorkTasks(pool, req.actor!, req.workspaceId!, parseQuery(work.taskListSchema, req.query)));
+  }),
+);
+
+tasksRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await work.countWorkTasks(pool, req.actor!, req.workspaceId!, parseQuery(work.taskFilterSchema, req.query)));
   }),
 );
 

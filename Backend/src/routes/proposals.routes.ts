@@ -9,6 +9,7 @@ import { ValidationError } from "../errors.js";
 import { LEAD_LOSS_REASONS, PROPOSAL_STATUSES } from "../domain/enums.js";
 import { listProposals, updateProposal, updateProposalStatus } from "../services/proposals.service.js";
 import { createAndSendProposal } from "../services/proposalSending.service.js";
+import * as work from "../services/workLists.service.js";
 
 export const proposalsRouter = Router();
 proposalsRouter.use(requireAuth);
@@ -61,6 +62,28 @@ proposalsRouter.get(
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await listProposals(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6a list standard (docs/crm-v2/B4-api.md); the old GET / above keeps its shape until C6b. */
+proposalsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await work.listWorkProposals(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalListSchema, req.query)));
+  }),
+);
+
+proposalsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await work.countWorkProposals(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalFilterSchema, req.query)));
+  }),
+);
+
+proposalsRouter.get(
+  "/summary",
+  asyncHandler(async (req, res) => {
+    res.json(await work.proposalSummary(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalFilterSchema, req.query)));
   }),
 );
 

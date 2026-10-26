@@ -46,7 +46,7 @@ export interface MeetingRow {
   updated_at: Date;
 }
 
-function meetingToDto(row: MeetingRow) {
+export function meetingToDto(row: MeetingRow) {
   return {
     id: row.id,
     leadId: row.lead_id,

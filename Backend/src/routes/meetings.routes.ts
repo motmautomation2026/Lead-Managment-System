@@ -8,6 +8,7 @@ import { MEETING_OUTCOMES, MEETING_STATUSES } from "../domain/enums.js";
 import { getMeetingOr404, listMeetings, recordMeetingOutcome, scheduleMeeting, updateMeeting } from "../services/meetings.service.js";
 import { syncMeetingCancelled, syncMeetingCreated, syncMeetingRescheduled } from "../services/meeting-calendar-sync.service.js";
 import { notifyMeetingScheduled } from "../services/meetingScheduledNotification.service.js";
+import * as work from "../services/workLists.service.js";
 
 export const meetingsRouter = Router();
 meetingsRouter.use(requireAuth);
@@ -24,6 +25,21 @@ meetingsRouter.get(
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await listMeetings(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6a list standard (docs/crm-v2/B4-api.md); the old GET / above keeps its shape until C6b. */
+meetingsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await work.listWorkMeetings(pool, req.actor!, req.workspaceId!, parseQuery(work.meetingListSchema, req.query)));
+  }),
+);
+
+meetingsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await work.countWorkMeetings(pool, req.actor!, req.workspaceId!, parseQuery(work.meetingFilterSchema, req.query)));
   }),
 );
 
