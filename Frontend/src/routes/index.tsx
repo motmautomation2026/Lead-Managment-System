@@ -1,16 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { DashboardPage } from "@/features/dashboard/dashboard-page";
+import { HomePage } from "@/features/home/home-page";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Dashboard - MOTM Flow" },
+      { title: "Home - MOTM Flow" },
       {
         name: "description",
         content:
-          "Daily sales cockpit: active leads, calls due today, meetings, proposal follow-ups and overdue actions.",
+          "Your day: overdue and due tasks, today's meetings, your pipeline, proposals awaiting a decision and AI drafts to review.",
       },
-      { property: "og:title", content: "Dashboard - MOTM Flow" },
+      { property: "og:title", content: "Home - MOTM Flow" },
       {
         property: "og:description",
         content: "Lead management and sales automation at a glance.",
@@ -19,5 +19,5 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: DashboardPage,
+  component: HomePage,
 });

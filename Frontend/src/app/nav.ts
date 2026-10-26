@@ -4,7 +4,7 @@ import {
   Building2,
   CalendarDays,
   FileText,
-  Gauge,
+  House,
   Handshake,
   ListChecks,
   Settings,
@@ -43,7 +43,7 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Work",
     items: [
-      { to: "/", label: "Dashboard", icon: Gauge },
+      { to: "/", label: "Home", icon: House },
       { to: "/tasks", label: "Tasks", icon: ListChecks },
       { to: "/meetings", label: "Meetings", icon: CalendarDays },
       { to: "/proposals", label: "Proposals", icon: FileText },

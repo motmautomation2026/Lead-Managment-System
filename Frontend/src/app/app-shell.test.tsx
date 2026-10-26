@@ -227,7 +227,7 @@ describe("AppShell nav", () => {
     expect(href("Contacts")).toBe("/contacts");
     expect(href("Companies")).toBe("/companies");
     expect(href("Deals")).toBe("/deals");
-    expect(href("Dashboard")).toBe("/");
+    expect(href("Home")).toBe("/");
     expect(href("Workflows")).toBe("/automations");
     expect(within(nav).getByRole("link", { name: "Contacts" })).toHaveAttribute(
       "aria-current",

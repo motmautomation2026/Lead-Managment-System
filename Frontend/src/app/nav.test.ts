@@ -3,7 +3,7 @@ import { crumbsFor, isNavActive } from "@/app/nav";
 
 describe("crumbsFor", () => {
   it("names the nav section", () => {
-    expect(crumbsFor("/")).toEqual([{ label: "Dashboard" }]);
+    expect(crumbsFor("/")).toEqual([{ label: "Home" }]);
     expect(crumbsFor("/contacts")).toEqual([{ label: "Contacts" }]);
     expect(crumbsFor("/automations/")).toEqual([{ label: "Workflows" }]);
     expect(crumbsFor("/companies")).toEqual([{ label: "Companies" }]);
