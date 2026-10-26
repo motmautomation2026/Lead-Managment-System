@@ -50,11 +50,13 @@ import { Money } from "@/components/crm/money";
 import { LeadAiPanel } from "@/features/agent/lead-ai-panel";
 import { ActivityFeed } from "@/features/crm/activity-feed";
 import { LeadJourneyCard } from "@/features/leads/lead-journey-card";
-import { LogCallDialog } from "@/features/leads/log-call-dialog";
 import { EnrollWorkflowDialog } from "@/features/leads/scheduled-followups";
 import { LostReasonDialog, NextActionDialog, ReasonDialog } from "@/features/leads/lead-dialogs";
-import { ScheduleMeetingDialog } from "@/features/meetings/schedule-meeting-dialog";
 import { OutcomeDialog } from "@/features/work/meeting-outcome-dialog";
+import { LogCallFlow } from "@/features/work/log-call-flow";
+import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
+import { useCreateTaskDialog } from "@/app/add-lead-context";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
 import { BackendError } from "@/lib/backend-client";
 import { fmtDateTime, isOverdue, relDay } from "@/lib/format";
@@ -67,18 +69,23 @@ import {
   useContact,
   useLead,
   useLeadMutations,
-  useMeetings,
-  useProposals,
+  useCancelTask,
+  useCompleteTask,
+  useCreateProposal,
+  useCreateTask,
+  useMeetingList,
+  useProposalList,
+  useRecordMeetingOutcome,
   useSession,
-  useTasks,
+  useTaskList,
+  useUpdateTask,
 } from "@/store";
 import {
   AUTOMATION_MODES,
-  PROPOSAL_STATUSES,
   type AutomationMode,
   type ContactDetail,
   type LeadLossReason,
-  type ProposalStatus,
+  type ProposalListItem,
   type WorkflowTrigger,
 } from "@/types";
 import { ContactAbout } from "./contact-about";
@@ -144,21 +151,32 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
   const { users, userName } = useSession();
   const actions = useLeadMutations();
   const extras = useLead(id);
-  const taskStore = useTasks();
-  const meetingStore = useMeetings();
-  const proposalStore = useProposals();
   const automationStore = useAutomations();
+  // C6a: the contact's work through the list endpoints (first 10; "View all" opens the page).
+  const taskList = useTaskList({
+    contactId: contact.id,
+    status: "open",
+    sort: "dueAt:asc",
+    limit: 10,
+  });
+  const meetingList = useMeetingList({ contactId: contact.id, sort: "at:desc", limit: 10 });
+  const proposalList = useProposalList({ contactId: contact.id, limit: 10 });
+  const completeTaskMutation = useCompleteTask();
+  const cancelTask = useCancelTask();
+  const createTaskMutation = useCreateTask();
+  const updateTask = useUpdateTask();
+  const recordOutcome = useRecordMeetingOutcome();
+  const createProposal = useCreateProposal();
+  const createTask = useCreateTaskDialog();
+  const [statusFor, setStatusFor] = useState<ProposalListItem | null>(null);
 
   const [callOpen, setCallOpen] = useState(false);
   const [callTaskId, setCallTaskId] = useState<string | undefined>(undefined);
   const [meetingOpen, setMeetingOpen] = useState(false);
-  const [savingMeeting, setSavingMeeting] = useState(false);
-  // Meeting Agreed: enroll only after the meeting is actually saved.
-  const [pendingTrigger, setPendingTrigger] = useState<WorkflowTrigger | undefined>(undefined);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [enrollTrigger, setEnrollTrigger] = useState<WorkflowTrigger | undefined>(undefined);
   const [proposalOpen, setProposalOpen] = useState(false);
-  const [taskDialog, setTaskDialog] = useState<"next" | "new" | null>(null);
+  const [nextActionOpen, setNextActionOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [outcomeFor, setOutcomeFor] = useState<string | null>(null);
@@ -183,21 +201,19 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
     setCallOpen(true);
   };
 
-  const meetings = meetingStore.meetings.filter((m) => m.leadId === id);
-  const proposals = proposalStore.proposals.filter((p) => p.leadId === id);
-  const openTasks = taskStore.tasks.filter((t) => t.leadId === id && t.status === "open");
+  const meetings = meetingList.data?.pages.flatMap((p) => p.data) ?? [];
+  const proposals = proposalList.data?.pages.flatMap((p) => p.data) ?? [];
+  const openTasks = taskList.data?.pages.flatMap((p) => p.data) ?? [];
   const runs = automationStore.runs.filter((r) => r.leadId === id);
   const scheduled = automationStore.scheduledActions.filter((a) => a.leadId === id);
   const nextAutomationStep = scheduled
     .filter((a) => ["pending", "due"].includes(a.status))
     .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
-  const dealName = (dealId?: string | null) =>
-    contact.deals.find((d) => d.id === dealId)?.name ?? null;
 
   const completeTask = (task: { id: string; type: string }) => {
     if (task.type === "call") return openCall(task.id);
     if (task.type === "schedule_meeting") return setMeetingOpen(true);
-    void mutate(() => taskStore.completeTask(task.id), "Task completed");
+    void mutate(() => completeTaskMutation.mutateAsync(task.id), "Task completed");
   };
 
   const quick = (icon: ReactNode, text: string, onClick: () => void, blockedByDnc = true) => (
@@ -266,7 +282,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
       {quick(<Phone />, "Log call", () => openCall(undefined))}
       {quick(<StickyNote />, "Note", () => setNoteOpen(true), false)}
       {quick(<CalendarPlus />, "Meeting", () => setMeetingOpen(true))}
-      {quick(<ClipboardList />, "Task", () => setTaskDialog("new"))}
+      {quick(<ClipboardList />, "Task", () => createTask.open({ contact: { id, name } }))}
       {quick(<FileText />, "Proposal", () => setProposalOpen(true))}
       {quick(<MessageSquare />, "Log email / WhatsApp", () => setMessageOpen(true))}
       <DropdownMenu modal={false}>
@@ -389,7 +405,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
                 <Check /> Complete
               </Button>
             )}
-            <Button size="sm" onClick={() => setTaskDialog("next")} disabled={dnc}>
+            <Button size="sm" onClick={() => setNextActionOpen(true)} disabled={dnc}>
               {contact.nextAction ? "Reschedule" : "Set next action"}
             </Button>
           </div>
@@ -435,8 +451,15 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         </Card>
       )}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="type-section-title">Open tasks</CardTitle>
+          <Link
+            to="/tasks"
+            search={{ contactId: id, view: "everyone" }}
+            className="type-small text-primary hover:underline"
+          >
+            View all
+          </Link>
         </CardHeader>
         <CardContent className="space-y-2">
           {openTasks.length === 0 && (
@@ -451,7 +474,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
                 <div className="type-body">{task.title}</div>
                 <div className="flex flex-wrap items-center gap-1.5 type-small text-muted-foreground">
                   {label(task.type)} ·{" "}
-                  <span className={isOverdue(task.dueAt) ? "text-destructive" : ""}>
+                  <span className={task.isOverdue ? "text-destructive" : ""}>
                     {relDay(task.dueAt)}
                   </span>
                   <TaskOriginBadge origin={task.origin} />
@@ -464,7 +487,9 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => void mutate(() => taskStore.cancelTask(task.id), "Task cancelled")}
+                  onClick={() =>
+                    void mutate(() => cancelTask.mutateAsync({ id: task.id }), "Task cancelled")
+                  }
                 >
                   Cancel
                 </Button>
@@ -498,9 +523,18 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="type-section-title">Meetings</CardTitle>
-          <Button size="sm" variant="outline" disabled={dnc} onClick={() => setMeetingOpen(true)}>
-            <CalendarPlus /> Schedule
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/meetings"
+              search={{ contactId: id, view: "everyone", sort: "at:desc" }}
+              className="type-small text-primary hover:underline"
+            >
+              View all
+            </Link>
+            <Button size="sm" variant="outline" disabled={dnc} onClick={() => setMeetingOpen(true)}>
+              <CalendarPlus /> Schedule
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-2">
           {meetings.length === 0 && (
@@ -514,8 +548,8 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
               <div className="min-w-0">
                 <div className="type-body font-medium">{m.title}</div>
                 <div className="type-small text-muted-foreground">
-                  {fmtDateTime(m.at)} · {m.durationMin} min · {m.ownerName ?? userName(m.ownerId)}
-                  {dealName(m.dealId) && <> · Deal: {dealName(m.dealId)}</>}
+                  {fmtDateTime(m.at)} · {m.durationMin} min · {m.ownerName ?? "No owner"}
+                  {m.deal && <> · Deal: {m.deal.name}</>}
                 </div>
                 {m.outcome && (
                   <div className="type-small text-muted-foreground">
@@ -559,9 +593,23 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="type-section-title">Proposals</CardTitle>
-          <Button size="sm" variant="outline" disabled={dnc} onClick={() => setProposalOpen(true)}>
-            <FileText /> Send proposal
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/proposals"
+              search={{ contactId: id, view: "everyone" }}
+              className="type-small text-primary hover:underline"
+            >
+              View all
+            </Link>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={dnc}
+              onClick={() => setProposalOpen(true)}
+            >
+              <FileText /> Send proposal
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-2">
           {proposals.length === 0 && (
@@ -578,30 +626,15 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
                   {p.fileName || "No document"} ·{" "}
                   {p.amount ? <Money amount={p.amount} currency={p.currency} /> : "No value"} ·
                   updated {relDay(p.updatedAt)}
-                  {dealName(p.dealId) && <> · Deal: {dealName(p.dealId)}</>}
+                  {p.deal && <> · Deal: {p.deal.name}</>}
                 </div>
               </div>
-              <Select
-                value={p.status}
-                disabled={proposalStore.isPending}
-                onValueChange={(status) =>
-                  void mutate(
-                    () => proposalStore.setProposalStatus(p.id, status as ProposalStatus),
-                    `Proposal marked ${label(status)}`,
-                  )
-                }
-              >
-                <SelectTrigger className="h-8 w-44" aria-label={`Status of ${p.title}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROPOSAL_STATUSES.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {label(status)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <StatusBadge value={p.status} />
+                <Button size="sm" variant="ghost" onClick={() => setStatusFor(p)}>
+                  Change status
+                </Button>
+              </div>
             </div>
           ))}
         </CardContent>
@@ -746,7 +779,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         rightLabel="Associations"
       />
 
-      <LogCallDialog
+      <LogCallFlow
         leadId={id}
         taskId={callTaskId}
         open={callOpen}
@@ -754,41 +787,8 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
           setCallOpen(value);
           if (!value) setCallTaskId(undefined);
         }}
-        onEnrollPrompt={openEnroll}
-        onScheduleMeetingPrompt={(trigger) => {
-          setPendingTrigger(trigger);
-          setMeetingOpen(true);
-        }}
       />
-      <ScheduleMeetingDialog
-        leadId={id}
-        meeting={null}
-        open={meetingOpen}
-        isSaving={savingMeeting}
-        onOpenChange={(value) => {
-          setMeetingOpen(value);
-          if (!value) setPendingTrigger(undefined);
-        }}
-        onSave={(value) =>
-          void (async () => {
-            setSavingMeeting(true);
-            try {
-              await meetingStore.addMeeting(value);
-              toast.success("Meeting scheduled");
-              setMeetingOpen(false);
-              // Scheduling cancels the contact's runs, so enroll only after it.
-              if (pendingTrigger) {
-                openEnroll(pendingTrigger);
-                setPendingTrigger(undefined);
-              }
-            } catch (error) {
-              toast.error(messageFromError(error));
-            } finally {
-              setSavingMeeting(false);
-            }
-          })()
-        }
-      />
+      <ScheduleMeetingFlow leadId={id} open={meetingOpen} onOpenChange={setMeetingOpen} />
       <EnrollWorkflowDialog
         leadId={id}
         open={enrollOpen}
@@ -803,7 +803,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         open={proposalOpen}
         onOpenChange={setProposalOpen}
         onSend={(value) =>
-          proposalStore.addProposal({
+          createProposal.mutateAsync({
             leadId: id,
             title: value.title,
             amount: value.amount ? Number(value.amount) : undefined,
@@ -815,10 +815,10 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         }
       />
       <NextActionDialog
-        open={taskDialog !== null}
-        onOpenChange={(open) => !open && setTaskDialog(null)}
+        open={nextActionOpen}
+        onOpenChange={setNextActionOpen}
         defaultOwner={contact.ownerId ?? ""}
-        {...(taskDialog === "next" && contact.nextAction
+        {...(contact.nextAction
           ? {
               initial: {
                 taskId: contact.nextAction.taskId,
@@ -832,12 +832,18 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         onSave={(value) =>
           void mutate(
             () =>
-              taskDialog === "next" && contact.nextAction
-                ? taskStore.updateTask(contact.nextAction.taskId, value)
-                : taskStore.addTask({ leadId: id, ...value }),
-            taskDialog === "next" ? "Next action saved" : "Task created",
+              contact.nextAction
+                ? updateTask.mutateAsync({ id: contact.nextAction.taskId, input: value })
+                : createTaskMutation.mutateAsync({ leadId: id, ...value }),
+            "Next action saved",
           )
         }
+      />
+      <ProposalStatusDialog
+        key={statusFor?.id ?? "none"}
+        proposal={statusFor}
+        open={Boolean(statusFor)}
+        onOpenChange={(open) => !open && setStatusFor(null)}
       />
       <OutcomeDialog
         open={Boolean(outcomeFor)}
@@ -845,7 +851,11 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         onSave={(outcome, notesText) => {
           if (!outcomeFor) return;
           void mutate(async () => {
-            await meetingStore.recordOutcome(outcomeFor, outcome, notesText);
+            await recordOutcome.mutateAsync({
+              id: outcomeFor,
+              outcome,
+              notes: notesText || undefined,
+            });
             setOutcomeFor(null);
           }, "Outcome recorded");
         }}

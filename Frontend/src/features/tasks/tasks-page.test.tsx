@@ -63,16 +63,28 @@ vi.mock("@/features/leads/log-call-dialog", () => ({
   LogCallDialog: (props: {
     open: boolean;
     taskId?: string;
+    onOpenChange: (open: boolean) => void;
     onEnrollPrompt?: (t: WorkflowTrigger) => void;
     onScheduleMeetingPrompt?: (t?: WorkflowTrigger) => void;
   }) =>
     props.open ? (
       <div role="dialog" aria-label="Log call">
         call for task {props.taskId}
-        <button onClick={() => props.onScheduleMeetingPrompt?.("meeting_scheduled")}>
+        {/* Like the real dialog: close first, then prompt. */}
+        <button
+          onClick={() => {
+            props.onOpenChange(false);
+            props.onScheduleMeetingPrompt?.("meeting_scheduled");
+          }}
+        >
           outcome positive
         </button>
-        <button onClick={() => props.onEnrollPrompt?.("call_not_connected")}>
+        <button
+          onClick={() => {
+            props.onOpenChange(false);
+            props.onEnrollPrompt?.("call_not_connected");
+          }}
+        >
           outcome nurture
         </button>
       </div>
@@ -300,6 +312,7 @@ describe("TasksPage", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Mark First call done" }));
     fireEvent.click(await screen.findByRole("button", { name: "outcome positive" }));
     expect(await screen.findByRole("dialog", { name: "Schedule meeting" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Log call" })).toBeNull();
     cleanup();
 
     await renderPage();

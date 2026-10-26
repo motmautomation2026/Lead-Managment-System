@@ -3,7 +3,6 @@ export {
   useSession,
   useIsAdmin,
   useLeads,
-  useLeadList,
   useLeadMutations,
   useLead,
   useTasks,
@@ -100,9 +99,6 @@ export {
 export type {
   SessionSlice,
   LeadsSlice,
-  TasksSlice,
-  MeetingsSlice,
-  ProposalsSlice,
   TimelineSlice,
   AutomationsSlice,
   NotificationsSlice,

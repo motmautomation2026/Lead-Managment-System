@@ -86,8 +86,8 @@ export function useIsAdmin() {
   return useSession().currentUser?.role === "Admin";
 }
 
-/** The old ≤500-row leads list (old pages and lead pickers only; never for one contact — B11). */
-export function useLeadList(enabled = true) {
+/** The old ≤500-row leads list, only behind `useLeads` (old pages C6b removes; never for one contact — B11). */
+function useLeadList(enabled = true) {
   const { currentWorkspaceId } = useWorkspace();
   return useQuery({
     queryKey: keys.leads(currentWorkspaceId),
@@ -266,6 +266,7 @@ export function useLead(leadId: string) {
   };
 }
 
+/** Old unpaginated list: only the unrouted lead-detail page (removed in C6b). C6a pages use work-hooks. */
 export function useTasks() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
@@ -304,8 +305,8 @@ export function useTasks() {
     cancelTask: (id: string, reason?: string) => cancel.mutateAsync({ id, reason }),
   };
 }
-export type TasksSlice = ReturnType<typeof useTasks>;
 
+/** Old unpaginated list: only the unrouted lead-detail page (removed in C6b). C6a pages use work-hooks. */
 export function useMeetings() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
@@ -347,8 +348,8 @@ export function useMeetings() {
       outcome.mutateAsync({ id, outcome: value, notes }),
   };
 }
-export type MeetingsSlice = ReturnType<typeof useMeetings>;
 
+/** Old unpaginated list: only the unrouted lead-detail page (removed in C6b). C6a pages use work-hooks. */
 export function useProposals() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
@@ -407,7 +408,6 @@ export function useProposals() {
     ) => status.mutateAsync({ id, status: value, lossReason, lossNotes }),
   };
 }
-export type ProposalsSlice = ReturnType<typeof useProposals>;
 
 export function useTimeline(leadId: string) {
   const { currentWorkspaceId } = useWorkspace();

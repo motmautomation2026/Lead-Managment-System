@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   move: vi.fn(),
   addMeeting: vi.fn(),
+  openTask: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
   feedKinds: [] as unknown[],
 }));
@@ -39,6 +40,10 @@ const page = (rows: unknown[]) => ({
   error: null,
   hasNextPage: false,
 });
+vi.mock("@/app/add-lead-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/add-lead-context")>()),
+  useCreateTaskDialog: () => ({ open: mocks.openTask }),
+}));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useSession: () => ({ users: [{ id: "u-1", name: "Asha Owner", active: true }] }),
@@ -67,8 +72,34 @@ vi.mock("@/store", () => ({
   useCompanyTimeline: () => page([]),
   useUpdateDeal: () => ({ mutateAsync: mocks.update, isPending: false }),
   useMoveDealStage: () => ({ mutateAsync: mocks.move, isPending: false }),
-  useMeetings: () => ({ meetings: [], addMeeting: mocks.addMeeting }),
-  useProposals: () => ({ proposals: [], addProposal: noop }),
+  useCreateMeeting: () => ({ mutateAsync: mocks.addMeeting, isPending: false }),
+  useUpdateMeeting: () => ({ mutateAsync: noop, isPending: false }),
+  useCreateProposal: () => ({ mutateAsync: noop }),
+  useSetProposalStatus: () => ({ mutateAsync: noop }),
+  useTaskList: () =>
+    page([
+      {
+        id: "t-1",
+        title: "Chase the PO",
+        dueAt: "2026-10-26T04:30:00.000Z",
+        status: "open",
+        isOverdue: false,
+        ownerName: "Asha Owner",
+      },
+    ]),
+  useMeetingList: () =>
+    page([{ id: "m-1", title: "Intro call", at: "2099-01-05T05:30:00.000Z", status: "scheduled" }]),
+  useProposalList: () =>
+    page([
+      {
+        id: "p-1",
+        title: "SEO retainer",
+        amount: 500000,
+        currency: "INR",
+        status: "sent",
+        allowedNextStatuses: ["accepted", "rejected"],
+      },
+    ]),
   useLeadList: () => ({ data: undefined }),
   useAutomations: () => ({ templates: [] }),
   useCompanySearch: () => ({ data: undefined }),
@@ -139,6 +170,9 @@ async function renderPage() {
       stub("/deals"),
       stub("/contacts/$contactId"),
       stub("/companies/$companyId"),
+      stub("/tasks"),
+      stub("/meetings"),
+      stub("/proposals"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/deals/d-1"] }),
   });
@@ -265,6 +299,23 @@ describe("DealRecordPage", () => {
     const meetings = await screen.findByRole("heading", { name: /Meetings/ });
     expect(meetings).toBeTruthy();
     expect(screen.getAllByText("SEO retainer").length).toBeGreaterThan(0);
+    // C6a: the deal's tasks/meetings/proposals from the list endpoints, with View all links.
+    expect(screen.getByText("Chase the PO")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View all tasks" })).toHaveAttribute(
+      "href",
+      "/tasks?dealId=d-1&view=everyone",
+    );
+    expect(screen.getByRole("link", { name: "View all proposals" })).toHaveAttribute(
+      "href",
+      "/proposals?dealId=d-1&view=everyone",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Change status of SEO retainer" }));
+    expect(await screen.findByRole("dialog", { name: "Change proposal status" })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /Create task/ }));
+    expect(mocks.openTask).toHaveBeenCalledWith({
+      contact: expect.objectContaining({ id: "l-1" }),
+    });
   });
 
   it("a lost deal shows its reason and notes and offers Reopen", async () => {

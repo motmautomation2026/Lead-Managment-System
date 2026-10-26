@@ -127,6 +127,30 @@ vi.mock("@/app/add-lead-context", () => ({
 }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
+  // C6a work cards (Related column): one row each, counts from /count.
+  useTaskList: () => ({
+    data: {
+      pages: [
+        {
+          data: [
+            {
+              id: "t-1",
+              title: "Chase the PO",
+              dueAt: "2026-10-26T04:30:00.000Z",
+              isOverdue: true,
+              ownerName: "Rep One",
+              contact: { id: "l-1", name: "Ravi Kumar" },
+            },
+          ],
+        },
+      ],
+    },
+  }),
+  useTaskCount: () => ({ data: { count: 7 } }),
+  useMeetingList: () => ({ data: { pages: [{ data: [] }] } }),
+  useMeetingCount: () => ({ data: { count: 0 } }),
+  useProposalList: () => ({ data: { pages: [{ data: [] }] } }),
+  useProposalCount: () => ({ data: { count: 0 } }),
   useIsAdmin: () => mocks.isAdmin,
   useSession: () => ({ users: [{ id: "u-1", name: "Rep One", active: true }] }),
   useCompany: (id?: string) => ({
@@ -243,6 +267,13 @@ describe("CompanyRecordPage", () => {
     expect(screen.getByText("India")).toBeTruthy();
     openTab("Related");
     expect(screen.getByRole("heading", { name: /Contacts/ })).toBeTruthy();
+    // C6a work cards: the company's open tasks (count from /count) with a pre-filtered View all.
+    expect(screen.getByRole("heading", { name: /Open tasks\s*\(7\)/ })).toBeTruthy();
+    expect(screen.getByText("Chase the PO")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View all tasks" })).toHaveAttribute(
+      "href",
+      "/tasks?companyId=co-1&view=everyone",
+    );
     // Not an admin: no merge, no duplicate card.
     expect(screen.queryByRole("button", { name: /More/ })).toBeNull();
     expect(screen.queryByText("Possible duplicates")).toBeNull();

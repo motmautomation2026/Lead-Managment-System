@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   leadList: vi.fn(),
   timelineKinds: [] as unknown[],
   fetchNextPage: vi.fn(),
+  openTask: vi.fn(),
+  setStatus: vi.fn(),
+  tasks: [] as unknown[],
+  proposals: [] as unknown[],
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
@@ -77,6 +81,7 @@ vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/app/add-lead-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/add-lead-context")>()),
   useCreateDealDialog: () => ({ open: mocks.openDeal }),
+  useCreateTaskDialog: () => ({ open: mocks.openTask }),
 }));
 vi.mock("@/features/agent/lead-ai-panel", () => ({ LeadAiPanel: () => <div>AI panel</div> }));
 vi.mock("@/store", () => ({
@@ -109,37 +114,44 @@ vi.mock("@/store", () => ({
     reactivateFromDnc: noop,
     deleteLead: noop,
   }),
-  useTasks: () => ({
-    tasks: [],
-    completeTask: noop,
-    cancelTask: noop,
-    addTask: noop,
-    updateTask: noop,
+  useTaskList: () => ({ data: { pages: [{ data: mocks.tasks, nextCursor: null }] } }),
+  useMeetingList: () => ({
+    data: {
+      pages: [
+        {
+          data: [
+            {
+              id: "m-1",
+              leadId: "c-1",
+              dealId: "d-1",
+              title: "Discovery call",
+              at: "2026-10-28T05:30:00.000Z",
+              durationMin: 30,
+              status: "scheduled",
+              calendarSyncStatus: "not_applicable",
+              createdAt: "",
+              updatedAt: "",
+              ownerName: "Rep One",
+              contact: { id: "c-1", name: "Asha Rao" },
+              company: null,
+              deal: { id: "d-1", name: "Tata – Fleet" },
+            },
+          ],
+          nextCursor: null,
+        },
+      ],
+    },
   }),
-  useMeetings: () => ({
-    meetings: [
-      {
-        id: "m-1",
-        leadId: "c-1",
-        dealId: "d-1",
-        title: "Discovery call",
-        at: "2026-10-28T05:30:00.000Z",
-        durationMin: 30,
-        status: "scheduled",
-        calendarSyncStatus: "not_applicable",
-        createdAt: "",
-        updatedAt: "",
-      },
-    ],
-    addMeeting: noop,
-    recordOutcome: noop,
-  }),
-  useProposals: () => ({
-    proposals: [],
-    isPending: false,
-    addProposal: noop,
-    setProposalStatus: noop,
-  }),
+  useProposalList: () => ({ data: { pages: [{ data: mocks.proposals, nextCursor: null }] } }),
+  useCompleteTask: () => ({ mutateAsync: noop }),
+  useCancelTask: () => ({ mutateAsync: noop }),
+  useCreateTask: () => ({ mutateAsync: noop }),
+  useUpdateTask: () => ({ mutateAsync: noop }),
+  useRecordMeetingOutcome: () => ({ mutateAsync: noop }),
+  useCreateProposal: () => ({ mutateAsync: noop }),
+  useCreateMeeting: () => ({ mutateAsync: noop, isPending: false }),
+  useUpdateMeeting: () => ({ mutateAsync: noop, isPending: false }),
+  useSetProposalStatus: () => ({ mutateAsync: mocks.setStatus }),
   useAutomations: () => ({
     workflows: [],
     templates: [],
@@ -195,6 +207,7 @@ async function renderPage() {
       createRoute({ getParentRoute: () => root, path: "/deals/$dealId", component: () => null }),
       createRoute({ getParentRoute: () => root, path: "/meetings", component: () => null }),
       createRoute({ getParentRoute: () => root, path: "/proposals", component: () => null }),
+      createRoute({ getParentRoute: () => root, path: "/tasks", component: () => null }),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
@@ -212,6 +225,8 @@ const openTab = (name: string) => {
 beforeEach(() => {
   mocks.contact = baseContact();
   mocks.timeline = [];
+  mocks.tasks = [];
+  mocks.proposals = [];
 });
 afterEach(() => {
   cleanup();
@@ -289,6 +304,54 @@ describe("ContactRecordPage", () => {
     }
     expect(screen.getByRole("button", { name: /^Note/ })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Remove suppression" })).toBeTruthy();
+  });
+
+  it("work sections: list endpoints by contact, View all links, Task quick action, Change status (C6a)", async () => {
+    mocks.tasks = [
+      {
+        id: "t-1",
+        title: "Send the deck",
+        type: "follow_up",
+        dueAt: "2026-10-26T04:30:00.000Z",
+        status: "open",
+        origin: "agent",
+        isOverdue: true,
+      },
+    ];
+    mocks.proposals = [
+      {
+        id: "p-1",
+        title: "Fleet proposal",
+        status: "sent",
+        currency: "INR",
+        updatedAt: "2026-10-20T10:00:00.000Z",
+        deal: null,
+        allowedNextStatuses: ["accepted", "rejected"],
+      },
+    ];
+    await renderPage();
+    expect(screen.getByText("Send the deck")).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "View all" })[0]).toHaveAttribute(
+      "href",
+      "/tasks?contactId=c-1&view=everyone",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Task/ }));
+    expect(mocks.openTask).toHaveBeenCalledWith({ contact: { id: "c-1", name: "Asha Rao" } });
+
+    openTab("Meetings & proposals");
+    const links = screen
+      .getAllByRole("link", { name: "View all" })
+      .map((l) => l.getAttribute("href"));
+    expect(links).toContain("/meetings?contactId=c-1&view=everyone&sort=at%3Adesc");
+    expect(links).toContain("/proposals?contactId=c-1&view=everyone");
+    fireEvent.click(screen.getByRole("button", { name: "Change status" }));
+    const dialog = await screen.findByRole("dialog", { name: "Change proposal status" });
+    fireEvent.keyDown(within(dialog).getByLabelText("New status"), { key: "Enter" });
+    expect(
+      within(screen.getByRole("listbox"))
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Accepted", "Rejected"]);
   });
 
   it("dialogs get the contact by id, never from the leads list (B11)", async () => {

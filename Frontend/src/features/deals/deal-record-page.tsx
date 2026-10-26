@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { CalendarPlus, Check, ChevronDown, FileText, RotateCcw, X } from "lucide-react";
+import {
+  CalendarPlus,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  FileText,
+  Phone,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -21,21 +30,26 @@ import { RecordLayout } from "@/components/crm/record-layout";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { UserAvatar } from "@/components/crm/user-avatar";
 import { ActivityFeed } from "@/features/crm/activity-feed";
-import { ScheduleMeetingDialog } from "@/features/meetings/schedule-meeting-dialog";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
+import { useCreateTaskDialog } from "@/app/add-lead-context";
+import { LogCallFlow } from "@/features/work/log-call-flow";
+import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
 import { BackendError } from "@/lib/backend-client";
 import { fmtDateTime } from "@/lib/format";
 import { label } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import {
   messageFromError,
+  useCreateProposal,
   useDeal,
   useDeals,
-  useMeetings,
+  useMeetingList,
   useMoveDealStage,
-  useProposals,
+  useProposalList,
+  useTaskList,
 } from "@/store";
-import { DEAL_STAGES, type DealDetail, type DealStage } from "@/types";
+import { DEAL_STAGES, type DealDetail, type DealStage, type ProposalListItem } from "@/types";
 import { CloseDealDialog, type CloseMode } from "./close-deal-dialog";
 import { DealAbout, DealOwnerSelect } from "./deal-about";
 import { closeDate } from "./deal-columns";
@@ -77,12 +91,19 @@ export function DealRecordPage({ dealId }: { dealId: string }) {
 
 function DealRecord({ deal }: { deal: DealDetail }) {
   const move = useMoveDealStage();
-  const meetingStore = useMeetings();
-  const proposalStore = useProposals();
+  const createProposal = useCreateProposal();
+  const createTask = useCreateTaskDialog();
+  // C6a: the deal's work through the list endpoints (first 10; "View all" opens the page).
+  const tasks = useTaskList({ dealId: deal.id, status: "open", limit: 10 });
+  const meetings = useMeetingList({ dealId: deal.id, sort: "at:desc", limit: 10 });
+  const proposals = useProposalList({ dealId: deal.id, limit: 10 });
+  const rows = <T,>(list: { data?: { pages: { data: T[] }[] } | undefined }) =>
+    list.data?.pages.flatMap((p) => p.data) ?? [];
   const [closeMode, setCloseMode] = useState<CloseMode | null>(null);
   const [meetingOpen, setMeetingOpen] = useState(false);
-  const [savingMeeting, setSavingMeeting] = useState(false);
+  const [callOpen, setCallOpen] = useState(false);
   const [proposalOpen, setProposalOpen] = useState(false);
+  const [statusFor, setStatusFor] = useState<ProposalListItem | null>(null);
   const closed = isClosedStage(deal.stage);
   const otherDeals = useDeals({ leadId: deal.contact.id, status: "all", limit: 6 });
   const others = (otherDeals.data?.pages[0]?.data ?? []).filter((d) => d.id !== deal.id);
@@ -160,6 +181,16 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           </DropdownMenu>
         </>
       )}
+      <Button size="sm" variant="outline" onClick={() => setCallOpen(true)}>
+        <Phone /> Log call
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => createTask.open({ contact: deal.contact })}
+      >
+        <ClipboardList /> Create task
+      </Button>
       <Button size="sm" variant="outline" onClick={() => setMeetingOpen(true)}>
         <CalendarPlus /> Schedule meeting
       </Button>
@@ -216,14 +247,41 @@ function DealRecord({ deal }: { deal: DealDetail }) {
     </div>
   );
 
+  const viewAll = (to: "/tasks" | "/meetings" | "/proposals", what: string): ReactNode => (
+    <Link
+      to={to}
+      search={{ dealId: deal.id, view: "everyone" }}
+      className="type-small text-primary hover:underline"
+      aria-label={`View all ${what}`}
+    >
+      View all
+    </Link>
+  );
+
   const meetingsAndProposals = (
     <div className="space-y-4">
+      <AssociationCard
+        title="Open tasks"
+        onAdd={() => createTask.open({ contact: deal.contact })}
+        addLabel="Create"
+        emptyText="No open tasks for this deal's contact."
+        footer={viewAll("/tasks", "tasks")}
+        items={rows(tasks).map((t) => ({
+          id: t.id,
+          title: t.title,
+          subtitle: (
+            <RelativeTime value={t.dueAt} className={t.isOverdue ? "text-destructive" : ""} />
+          ),
+          meta: t.ownerName ?? "No owner",
+        }))}
+      />
       <AssociationCard
         title="Meetings"
         onAdd={() => setMeetingOpen(true)}
         addLabel="Schedule"
         emptyText="No meetings linked to this deal."
-        items={deal.meetings.map((m) => ({
+        footer={viewAll("/meetings", "meetings")}
+        items={rows(meetings).map((m) => ({
           id: m.id,
           title: m.title,
           subtitle: fmtDateTime(m.at),
@@ -240,11 +298,26 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         onAdd={() => setProposalOpen(true)}
         addLabel="Send"
         emptyText="No proposals linked to this deal."
-        items={deal.proposals.map((p) => ({
+        footer={viewAll("/proposals", "proposals")}
+        items={rows(proposals).map((p) => ({
           id: p.id,
           title: p.title,
-          subtitle: p.amount === null ? null : <Money amount={p.amount} currency={p.currency} />,
-          meta: <StatusBadge value={p.status} />,
+          subtitle:
+            p.amount === undefined ? null : <Money amount={p.amount} currency={p.currency} />,
+          meta: (
+            <span className="inline-flex items-center gap-1">
+              <StatusBadge value={p.status} />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7"
+                onClick={() => setStatusFor(p)}
+                aria-label={`Change status of ${p.title}`}
+              >
+                Change
+              </Button>
+            </span>
+          ),
         }))}
       />
     </div>
@@ -335,27 +408,23 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         open={closeMode !== null}
         onOpenChange={(open) => !open && setCloseMode(null)}
       />
-      <ScheduleMeetingDialog
+      <ScheduleMeetingFlow
         leadId={deal.contact.id}
         dealId={deal.id}
-        meeting={null}
         open={meetingOpen}
-        isSaving={savingMeeting}
         onOpenChange={setMeetingOpen}
-        onSave={(value) =>
-          void (async () => {
-            setSavingMeeting(true);
-            try {
-              await meetingStore.addMeeting(value);
-              toast.success("Meeting scheduled");
-              setMeetingOpen(false);
-            } catch (error) {
-              toast.error(messageFromError(error));
-            } finally {
-              setSavingMeeting(false);
-            }
-          })()
-        }
+      />
+      <LogCallFlow
+        leadId={deal.contact.id}
+        dealId={deal.id}
+        open={callOpen}
+        onOpenChange={setCallOpen}
+      />
+      <ProposalStatusDialog
+        key={statusFor?.id ?? "none"}
+        proposal={statusFor}
+        open={Boolean(statusFor)}
+        onOpenChange={(open) => !open && setStatusFor(null)}
       />
       <SendProposalDialog
         leadId={deal.contact.id}
@@ -363,7 +432,7 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         open={proposalOpen}
         onOpenChange={setProposalOpen}
         onSend={(value) =>
-          proposalStore.addProposal({
+          createProposal.mutateAsync({
             leadId: deal.contact.id,
             title: value.title,
             amount: value.amount ? Number(value.amount) : undefined,

@@ -33,37 +33,47 @@ export function LogCallFlow({
 
   return (
     <>
-      <LogCallDialog
-        leadId={leadId}
-        taskId={taskId}
-        open={open}
-        onOpenChange={onOpenChange}
-        onEnrollPrompt={(trigger) => setEnroll({ open: true, trigger })}
-        onScheduleMeetingPrompt={(trigger) => {
-          setPendingTrigger(trigger);
-          setMeetingOpen(true);
-        }}
-      />
-      <ScheduleMeetingFlow
-        leadId={leadId}
-        dealId={dealId}
-        open={meetingOpen}
-        onOpenChange={(value) => {
-          setMeetingOpen(value);
-          // onScheduled already holds the trigger of the save in flight.
-          if (!value) setPendingTrigger(undefined);
-        }}
-        onScheduled={() => {
-          if (pendingTrigger) setEnroll({ open: true, trigger: pendingTrigger });
-          setPendingTrigger(undefined);
-        }}
-      />
-      <EnrollWorkflowDialog
-        leadId={leadId}
-        open={enroll.open}
-        onOpenChange={(value) => setEnroll((e) => (value ? { ...e, open: true } : { open: false }))}
-        {...(enroll.trigger ? { triggerFilter: enroll.trigger } : {})}
-      />
+      {/* Each dialog mounts only while open (nothing is fetched for a closed flow); the flow itself
+          stays mounted so a prompt can follow the call dialog closing. */}
+      {open && (
+        <LogCallDialog
+          leadId={leadId}
+          taskId={taskId}
+          open
+          onOpenChange={onOpenChange}
+          onEnrollPrompt={(trigger) => setEnroll({ open: true, trigger })}
+          onScheduleMeetingPrompt={(trigger) => {
+            setPendingTrigger(trigger);
+            setMeetingOpen(true);
+          }}
+        />
+      )}
+      {meetingOpen && (
+        <ScheduleMeetingFlow
+          leadId={leadId}
+          dealId={dealId}
+          open
+          onOpenChange={(value) => {
+            setMeetingOpen(value);
+            // onScheduled already holds the trigger of the save in flight.
+            if (!value) setPendingTrigger(undefined);
+          }}
+          onScheduled={() => {
+            if (pendingTrigger) setEnroll({ open: true, trigger: pendingTrigger });
+            setPendingTrigger(undefined);
+          }}
+        />
+      )}
+      {enroll.open && (
+        <EnrollWorkflowDialog
+          leadId={leadId}
+          open
+          onOpenChange={(value) =>
+            setEnroll((e) => (value ? { ...e, open: true } : { open: false }))
+          }
+          {...(enroll.trigger ? { triggerFilter: enroll.trigger } : {})}
+        />
+      )}
     </>
   );
 }

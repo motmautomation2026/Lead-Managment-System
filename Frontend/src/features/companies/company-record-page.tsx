@@ -53,6 +53,7 @@ import { REASON_LABEL } from "./duplicates-search";
 import { RecordLink } from "@/features/crm/record-link";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
 import { useRememberRecent } from "@/features/crm/recent";
+import { RecordWorkCards } from "@/features/work/record-work-cards";
 
 const dash = <span className="text-muted-foreground">–</span>;
 const CONTACT_TAB_COLUMNS = [
@@ -422,6 +423,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
           Open total <Money amount={company.openDealAmount} compact />
         </p>
       )}
+      <RecordWorkCards companyId={id} />
       {isAdmin && (
         <AssociationCard
           title="Possible duplicates"

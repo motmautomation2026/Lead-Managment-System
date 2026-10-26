@@ -115,7 +115,8 @@ export function TasksPage() {
     setSelected([]);
   }
   const [sheetTask, setSheetTask] = useState<TaskListItem | null>(null);
-  const [call, setCall] = useState<{ leadId: string; taskId: string } | null>(null);
+  // The last call target stays set after its dialog closes: LogCallFlow's prompts need it.
+  const [call, setCall] = useState<{ leadId: string; taskId: string; open: boolean } | null>(null);
   const [meetingFor, setMeetingFor] = useState<{ leadId: string; taskId: string } | null>(null);
   const [bulkOwner, setBulkOwner] = useState("");
   const [confirm, setConfirm] = useState<"complete" | "reassign" | null>(null);
@@ -124,7 +125,8 @@ export function TasksPage() {
   /** Done toggle: a call logs the call (which completes the task); a meeting task schedules it. */
   const done = (task: TaskListItem) => {
     if (task.status !== "open") return;
-    if (task.type === "call") return setCall({ leadId: task.contact.id, taskId: task.id });
+    if (task.type === "call")
+      return setCall({ leadId: task.contact.id, taskId: task.id, open: true });
     if (task.type === "schedule_meeting")
       return setMeetingFor({ leadId: task.contact.id, taskId: task.id });
     complete.mutate(task.id, {
@@ -314,15 +316,16 @@ export function TasksPage() {
         }}
         onLogCall={(t) => {
           setSheetTask(null);
-          setCall({ leadId: t.contact.id, taskId: t.id });
+          setCall({ leadId: t.contact.id, taskId: t.id, open: true });
         }}
       />
       {call && (
         <LogCallFlow
+          key={call.taskId}
           leadId={call.leadId}
           taskId={call.taskId}
-          open
-          onOpenChange={(open) => !open && setCall(null)}
+          open={call.open}
+          onOpenChange={(open) => setCall({ ...call, open })}
         />
       )}
       {meetingFor && (

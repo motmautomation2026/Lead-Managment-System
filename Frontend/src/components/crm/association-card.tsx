@@ -19,6 +19,7 @@ export function AssociationCard({
   onAdd,
   addLabel = "Add",
   emptyText = "None yet.",
+  footer,
 }: {
   title: string;
   count?: number;
@@ -26,6 +27,8 @@ export function AssociationCard({
   onAdd?: () => void;
   addLabel?: string;
   emptyText?: string;
+  /** Below the items, e.g. a "View all" link to the pre-filtered list page. */
+  footer?: ReactNode;
 }) {
   return (
     <Card className="p-4">
@@ -59,6 +62,7 @@ export function AssociationCard({
           ))}
         </ul>
       )}
+      {footer && <div className="mt-2">{footer}</div>}
     </Card>
   );
 }
