@@ -53,7 +53,7 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 
 - `app-shell.tsx` — layout, Add lead context, Create workspace dialog, ⌘K.
 - `sidebar.tsx` — groups from `nav.ts` (`NAV_GROUPS`, `SETTINGS_NAV`, `ADMIN_NAV`); collapsible;
-  inside a `Sheet` below `lg`. Contacts still points to `/leads` (moves in C2).
+  inside a `Sheet` below `lg`. Contacts points to `/contacts` (C2).
 - `top-bar.tsx` — breadcrumbs (`crumbsFor(pathname)` in `nav.ts`: add sub-pages to `SUB_PAGES`),
   search button, + Create (enable Company/Deal/Task/Meeting as their pages land), notifications,
   user menu (theme, density, sign out).
@@ -106,3 +106,34 @@ const list = useInfiniteQuery({ queryKey: keys.contacts(ws, state), ... });
 
 **Record page**: `PageHeader heading={identity + quick actions}` → `RecordLayout left={<PropertyList/>}
 tabs={[Overview, Activity, Notes, Meetings & proposals, Automation]} right={<AssociationCard/>…}`.
+
+## 6. Reference implementation: Contacts (C2)
+
+Copy these when building Companies (C3) and Deals (C4). All in `Frontend/src/features/contacts/`.
+
+**Index — `contacts-page.tsx` + `contacts-search.ts`** (route `routes/contacts.index.tsx`)
+- `contactsSearchSchema` is both the route's `validateSearch` (via `validateContactsSearch`, which falls back to `{}`)
+  and the `useListUrlState` schema. Filter keys are the API param names; date ranges are stored as whole IST days
+  (`…T00:00:00+05:30` / `…T23:59:59+05:30`) and shown as `YYYY-MM-DD` in the FilterBar (`toFilterValues` /
+  `fromFilterValues`).
+- `toApiParams(state)` → `useContacts` (infinite) and `useContactsCount` (same params minus `sort`). `q` is only sent
+  from 2 characters; the search box writes `q` with `replace: true` after 300 ms.
+- Views = built-ins (`BUILT_IN_VIEWS`: All, My `ownerId=me`, Recently added `createdFrom = 7 days`, Unassigned
+  `ownerId=none`) + `/saved-views`. Picking a view applies `{...NO_FILTERS, ...view.state(), view: id}` (it replaces
+  the filters, sort and columns). `toSavedViewBody` / `savedViewState` convert between the URL and the stored view.
+  Rename/delete only for `isMine` (or admins on shared views); shared views are labelled "· Shared".
+- Columns: `DataTableColumn.id` = B4 column id; `sortable` only on whitelist fields; `DEFAULT_COLUMNS` when the URL
+  has no `columns`. Row selection is keyed to the current params (it clears when filters change).
+- Bulk actions call `useBulkContacts` (chunks of 100) and summarise per-id failures in one toast.
+
+**Record — `contact-record-page.tsx`** (route `routes/contacts.$contactId.tsx`)
+- Fetch the record by id (`useContact`) — never from a list cache. 404 → EmptyState with a link back.
+- `PageHeader heading={identity}` + quick actions (secondary buttons + "More" `DropdownMenu modal={false}`) →
+  optional DNC banner (`bg-danger-soft`) → `RecordLayout` (`left` = About, five tabs, `right` = associations,
+  `rightLabel="Associations"`).
+- About (`contact-about.tsx`): `PropertyList` items with `editor(done)`; text editors are tiny react-hook-form forms
+  that validate with the same rules as create and show backend errors inline; selects save on change.
+- Associations (`contact-associations.tsx`): `AssociationCard`s; create dialogs on react-hook-form + Zod.
+- Activity (`contact-activity.tsx`): type chips over `activityType(event)` (`contact-helpers.ts`).
+- Every write invalidates through `refreshContact(client, ws, id)` (`store/query.ts`).
+

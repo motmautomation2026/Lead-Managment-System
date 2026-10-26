@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `033`).
+  (currently `034`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `033`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `034`).
 
 ## Way of working
 
@@ -284,6 +284,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   mobile Sheet, breadcrumbs, + Create, user menu, ⌘K palette over `GET /search` (`useGlobalSearch`); the old header
   search over cached leads is gone. `/companies`, `/deals` placeholders; `/dev/ui` kit (DEV only).
   `components/crm/*` + `useListUrlState`. Docs: `docs/crm-v2/C1-ui.md`.
+- **C2 (Contacts list + record):** contacts UI lives at `/contacts` (`features/contacts/`); `/leads` and `/leads/$id`
+  redirect there (old `leads-page.tsx` / `lead-detail-page.tsx` stay unrouted until C6). Migration 034: trigram GIN on
+  `(first_name || ' ' || last_name)`; `/contacts?q=`, `/search`, `/leads?search=` share `leadSearchSql` (full name
+  "first last" too; not reverse order). `ContactListItem` + saved-view columns gain `source`; meeting/proposal DTOs
+  `dealId`; timeline DTO `relatedDealId`. Frontend: `useContacts`/`useContactsCount`/`useContact`/`useBulkContacts`
+  (100 per request)/`useSavedViews`+CRUD/`useCreateDeal`/`useCompanySearch`/`useCompanyOptions`/`useCreateContact`;
+  `useLeads` = `useLeadList` (≤500, pickers only) + `useLeadMutations`. One invalidation helper `refreshContact(client,
+  ws, id?)` (no id = every contact) replaces `refreshLead`, also after workflow enroll/run actions (**B31 fixed**).
+  Record page fetches by id; LogCall/ScheduleMeeting/SendProposal dialogs no longer read the leads list (**B11 fixed**).
+  `CreateContactDialog` (react-hook-form + `leadFormSchema`, which delegates to `validateLeadForm`) is the app-wide
+  "Create contact". Task origin `agent` → `TaskOriginBadge` "AI Agent". `/deals/$dealId` is a placeholder until C4.
 
 ## CRM v2
 
