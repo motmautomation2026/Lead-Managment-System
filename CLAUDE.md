@@ -309,6 +309,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (contact + company Activity tabs; `contact-activity.tsx` removed). `refreshCompany(client, ws)`; `refreshContact` also
   refreshes company views. `AddLeadContext.open({ company? })`, `CreateCompanyContext`. Route code splitting
   (`autoCodeSplitting`, `RoutePending`): entry 553 → 101 kB gzip, initial load 340 kB.
+- **C4 (Deals list + board + record + create/close dialogs, no migration):** backend `GET /deals/:id/timeline` (list
+  standard; rows with `related_deal_id` + the events of meetings/proposals linked by `deal_id`; "Meeting Scheduled" /
+  "Proposal Created" rows now carry their ids), `/deals/board` as ONE window query (same contract), `POST /deals/:id/stage`
+  `contactAction` (`keep` | `long_term_nurture` | `lost`, lost only, else 400; via `moveToLongTermNurture` / `markLost` in the
+  same transaction), activity kind `proposals` (own group; contact, company, deal feeds). Frontend (`features/deals/`):
+  `/deals` table (views All open / My / Closing this month (IST) / Won / Lost + saved `deals`, filters, `layout=board` and
+  `showClosed` in the URL), pipeline board (`@dnd-kit` pointer + keyboard ←/→, optimistic move + rollback, Won/Lost →
+  Close dialog, below md one stage + "Move to…"), `CreateDealDialog` app-wide (`useCreateDealDialog().open({ contact?,
+  companyId?, stay? })`, + Create → Deal, palette), `CloseDealDialog` (won: PATCH changed amount/close date then won;
+  lost: reason + contactAction; reopen), `/deals/$dealId` record (stage bar, About inline edit, Overview / Activity /
+  Meetings & proposals, contact/company/other deals). `ContactPicker` (`features/contacts/contact-picker.tsx`) replaces
+  every contact `<Select>`; ScheduleMeeting / SendProposal dialogs take `dealId`. Data: `useDeals`, `useDealsCount`,
+  `useDealBoard`, `useDeal`, `useDealTimeline`, `useUpdateDeal`, `useMoveDealStage`, `useContactSearch`; every deal key
+  under `keys.deals(ws)`; `refreshDeal(client, ws)` after every deal write. `ComingSoonPage` removed. Board timing (HTTP,
+  1,500 deals) 103–162 → 39–43 ms; initial load 345 kB gzip.
 
 ## CRM v2
 

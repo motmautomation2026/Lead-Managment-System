@@ -29,6 +29,9 @@ Live examples: `/dev/ui` (dev builds only), light and dark side by side.
    (`app/route-pending.tsx`) is the router's `defaultPendingComponent`. Budget: everything `index.html` loads up front
    < 350 kB gzip (C3: entry 101 kB, initial total 340 kB; was one 553 kB chunk).
 10. **Picking a company = `CompanyPicker`** (`features/companies/company-picker.tsx`), never a `<Select>` of companies.
+11. **Picking a contact = `ContactPicker`** (`features/contacts/contact-picker.tsx`, C4), never a `<Select>` of contacts.
+12. **Deal stage rules live in the backend.** The UI shows stages (`DEAL_STAGE_LABELS`, display only) and calls
+    `POST /deals/:id/stage`; Won/Lost always go through `CloseDealDialog`; errors are shown, never pre-empted.
 
 ## 2. Tokens (`Frontend/src/styles.css`)
 
@@ -61,12 +64,13 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 - `sidebar.tsx` — groups from `nav.ts` (`NAV_GROUPS`, `SETTINGS_NAV`, `ADMIN_NAV`); collapsible;
   inside a `Sheet` below `lg`. Contacts points to `/contacts` (C2).
 - `top-bar.tsx` — breadcrumbs (`crumbsFor(pathname)` in `nav.ts`: add sub-pages to `SUB_PAGES`),
-  search button, + Create (Contact, Company; enable Deal/Task/Meeting as their pages land), notifications,
+  search button, + Create (Contact, Company, Deal (C4); enable Task/Meeting as their pages land), notifications,
   user menu (theme, density, sign out).
 - `command-palette.tsx` — `GET /search` via `useGlobalSearch` (250 ms debounce, ≥ 2 chars) + actions
-  (Create contact / company). Company results open `/companies/$companyId`; point deal results at the deal page in C4.
+  (Create contact / company / deal). Company results open `/companies/$companyId`, deal results `/deals/$dealId` (C4).
 - App-wide create dialogs are hosted by the shell: `useAddLead().open({ company? })` (Create contact, optional
-  prefilled company) and `useCreateCompanyDialog().open()` (`app/add-lead-context.ts`).
+  prefilled company), `useCreateCompanyDialog().open()` and `useCreateDealDialog().open({ contact?, companyId?, stay? })`
+  (C4; `app/add-lead-context.ts`). The shell remounts the deal dialog per opening (`key`) so each starts fresh.
 - Sidebar badge: admins see the open duplicate-company count on "Companies" (`useCompanyDuplicatesCount({}, isAdmin)`,
   cached 60 s).
 
@@ -193,3 +197,58 @@ optimistically and come back with the error if the request fails.
 `useDismissDuplicate`, `useRelinkDuplicate`; keyset lists through `useCursorList`). Every company write calls
 `refreshCompany(client, ws)` (company views, duplicates, company + global search, and `refreshContact(client, ws)`);
 `refreshContact` also refreshes the company views and the paginated contact timeline.
+
+## 8. Deals (C4) — `Frontend/src/features/deals/`
+
+Same patterns as Contacts/Companies. Display labels and tones in `deal-labels.ts` (`DEAL_STAGE_LABELS`, design §1.4
+board names; `OPEN_DEAL_STAGES`; `CONTACT_ACTION_OPTIONS`); a stage renders as `<DealStagePill stage>` everywhere.
+
+**Index — `deals-page.tsx` + `deals-search.ts`** (route `routes/deals.index.tsx`)
+- `dealsSearchSchema` = route `validateSearch` + `useListUrlState` schema: view, q, sort, columns, `stage[]`, `ownerId[]`,
+  `status`, `companyId`, `amountMin/Max`, `expectedCloseFrom/To` (YYYY-MM-DD), `createdFrom/To`, plus page-only `layout`
+  (`board`; absent = table) and `showClosed` (`true`). Saved views (object `deals`) store only the API filters.
+- Views: All open deals · My deals · Closing this month (`currentIstMonth()`: first–last day of the IST month) · Won ·
+  Lost + saved views (five built-ins fill the tabs; saved ones go under "More").
+- Filters: Stage, Owner, Status (single value: the last picked wins), Amount (numberRange), Expected close; More:
+  Created; Company = `CompanyPicker variant="chip"`. Columns = `DEAL_COLUMNS` (`deal-columns.tsx`), default sort
+  `updatedAt:desc`; sortable `name, amount, expectedCloseDate, createdAt, updatedAt`.
+- Layout switch Table | Board (`layout` in the URL). The board shares the filters but drops `stage`/`sort` and takes
+  `status` from Show closed (`toBoardParams`); the header count follows the visible layout's params.
+
+**Board — `deal-board.tsx`**: `useDealBoard` (one `GET /deals/board`); columns with count + INR total (Money compact),
+cards (name link, company · contact, amount, expected close, owner avatar). "Load more" per column calls
+`GET /deals?stage=…&sort=updatedAt:desc&cursor=…` with the board's filters; loaded pages are tied to one board fetch
+(`dataUpdatedAt`) and reset when it refetches. Drag and drop: `@dnd-kit/core` (`PointerSensor` with a 6 px activation
+distance so links still click; `KeyboardSensor` whose coordinate getter jumps ←/→ one column; announcements +
+screen-reader instructions). Drop on an open stage = optimistic `setQueryData` on `keys.dealBoard` (count, total,
+card), then `useMoveDealStage`; failure restores the snapshot and toasts. Drop on Won/Lost opens `CloseDealDialog`
+and moves nothing. Show closed off: Won/Lost show "Drop here to close". Below md: one column + stage selector, and a
+"Move to…" menu per card instead of dragging. Tests fake column rects (`getBoundingClientRect`) to drive keyboard drags.
+
+**Create — `create-deal-dialog.tsx`** (shell-hosted, `useCreateDealDialog`): react-hook-form + Zod; ContactPicker (or the
+fixed `contact` from a contact page; `companyId` limits the picker on a company page); name optional (placeholder =
+the default name from `defaultDealName(useContact(id))`; empty → backend default); stage (open stages); amount; expected
+close; owner ("Contact's owner" default, otherwise a `PATCH ownerId` right after the create — POST /deals has no owner).
+Success opens the deal, or with `stay` toasts "Deal created" with an Open action.
+
+**Close — `close-deal-dialog.tsx`**: one component for the board, the record and lists; `mode` won | lost | reopen.
+Won: amount + close date (= expected close date; PATCH only what changed, then stage won) and "If this is the
+contact's only open deal, the contact is also marked Won." Lost: reason (required, existing loss-reason labels), notes,
+"What happens to the contact?" radios → one `POST /deals/:id/stage` with `contactAction`. Reopen: pick an open stage.
+Backend 400/409 render inline (`role="alert"`); the dialog stays open.
+
+**Record — `deal-record-page.tsx` + `deal-about.tsx`** (route `routes/deals.$dealId.tsx`): fetched by id (`useDeal`),
+404 → EmptyState. Header: name, stage pill, amount, close date, contact + company links, owner select; Mark won / Mark
+lost / Move stage ▾ (open stages) or Reopen; Schedule meeting / Send proposal (existing dialogs with `dealId` and the
+deal's contact). `StageProgress` bar: open stage → move at once, Won/Lost → Close dialog. Lost banner (reason + notes).
+About: inline name / amount / expected close / owner / company (CompanyPicker, "Remove company"); read-only currency,
+source, created, closed. Tabs: Overview (key facts, next meeting, latest proposal, `ActivityFeed dealId limit={5}`),
+Activity (`ActivityFeed dealId`), Meetings & proposals (from the detail's `meetings`/`proposals`). Right: contact,
+company, other deals of the contact (`useDeals({ leadId, status: "all" })`).
+
+**Data layer**: `useDeals`, `useDealsCount`, `useDealBoard`, `useDeal`, `useDealTimeline`, `useCreateDeal`,
+`useUpdateDeal`, `useMoveDealStage`, `useContactSearch`. Every deal key starts with `keys.deals(ws)` (`dealList`,
+`dealCount`, `dealBoard`, `deal`, `dealTimeline`), and every deal write calls `refreshDeal(client, ws)` (= `refreshCompany`:
+every deal query, contact and company view, global search) because a move can change the contact and company totals.
+Activity chips gained **Proposals** (server kind `proposals`); `ActivityFeed` takes `contactId | companyId | dealId`.
+
