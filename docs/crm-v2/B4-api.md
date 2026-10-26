@@ -166,6 +166,15 @@ Same response as before (every workflow with every version and its steps, `activ
 whatever the number of workflows (audit D: it was 1 + N × (3 + versions)). Staging, 20 workflows / 29 versions: **681 → 33 ms**
 (`tests/integration/automationHomeApi.test.ts` compares the body with the old code and times both).
 
+## 7e. AI decision context — `GET /agent/decisions/:decisionId`, `GET /agent/leads/:id` (D1)
+
+The decision detail and each row of the lead AI panel's `decisions` carry
+`context: { company: { id, name } | null, deal: { id, name, stage } | null }`: the company (after following a merge once)
+and the open deal the decision saw (migration 038: `agent_decisions.context_company_id` / `context_deal_id` /
+`context_deal_stage`). `name` is the current name; `stage` is the deal's stage **when the decision was made**. Both are
+null for decisions without a company / open deal and for every row from before D1. `null` also when the company or deal
+was deleted later.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

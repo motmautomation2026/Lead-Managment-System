@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `037`).
+  (currently `038`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `037`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `038`).
 
 ## Way of working
 
@@ -371,6 +371,22 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 **Phase C complete** (C1–C6b): every page is in the new shell and no page fetches a whole table (only small reference lists,
 `C1-ui.md` §10).
 
+- **D1 (agent understands the contact's company + open deal; shadow only, nothing sent):** `buildAgentContext` reads, in
+  the same lead query, the linked company (merge followed once; a merged target → no company) and the contact's deals
+  (never amount, loss reason/notes or owner). Pure `agent/companyFacts.ts` (`resolveCompany`, `companyFacts`: company
+  first, contact fallback for industry/revenue; `companyDescription` ≤500 chars) and `agent/dealContext.ts`
+  (`buildDealContext`: open deal = most recently updated (updated_at desc, id desc), stage label, days in stage from the
+  last `moveDealStage` timeline row (`metadata.to`) else `created_at`, close month, latest linked meeting/proposal status;
+  won/lost counts). `DEAL_STAGE_LABELS` moved to `domain/dealRouting.ts`. `ctx.company` (lead data) + `ctx.internal`
+  (decide only), never trimmed. Prompt: "Company record" lines inside `lead_data`; `<internal_context>` block (tag
+  neutralised) + one system rule, only when there is a description or a deal, so a contact without either gets
+  byte-identical prompts (snapshot `tests/unit/__snapshots__/agentPrompt.test.ts.snap`). Grounding: company facts in
+  lead_data, internal block never; the company record's name is an ignored claim. Migration 038:
+  `agent_decisions.context_company_id` / `context_deal_id` / `context_deal_stage` (nullable; failed rows too); decision
+  detail + lead panel rows return `context` (`B4-api.md` §7e). Frontend: `ContextUsed` ("Context used: company · deal +
+  stage pill", or "No company · no open deal") in the decision Sheet and the lead AI panel rows. `agent:preview` prints the
+  Company and Internal context blocks and the prompt token count. No change to rules, wake policy, ceilings or actions.
+
 ## CRM v2
 
 - Design: `docs/crm-v2/B2-design.md` (approved); inventory `docs/crm-v2/B1-inventory.md`.
@@ -397,5 +413,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `stop`. Code enforces the safety rules (`src/agent/rules.ts`), not the model.
 - Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live`
   (Feature 6). Nothing in Feature 3 sends messages to leads.
+- Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
+  facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
+  the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
 - The agent never marks Won/Lost/DNC, never deletes, never changes the owner; never contacts
   DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`.
