@@ -58,16 +58,59 @@ export const keys = {
   contact: (workspaceId: string | null, id: string) => ["contact", workspaceId, id] as const,
   /** Every deal query (lists/records land in C4). */
   deals: (workspaceId: string | null) => ["deals", workspaceId] as const,
+  /** Without params: the prefix of every companies list / count in the workspace. */
+  companies: (workspaceId: string | null, params?: object) =>
+    params ? (["companies", workspaceId, params] as const) : (["companies", workspaceId] as const),
+  companiesCount: (workspaceId: string | null, params?: object) =>
+    params
+      ? (["companiesCount", workspaceId, params] as const)
+      : (["companiesCount", workspaceId] as const),
   company: (workspaceId: string | null, id: string) => ["company", workspaceId, id] as const,
+  /** Per company; `extra` (params / kinds) is left off for the company-wide prefix. */
+  companyContacts: (workspaceId: string | null, id: string, extra?: object) =>
+    extra
+      ? (["companyContacts", workspaceId, id, extra] as const)
+      : (["companyContacts", workspaceId, id] as const),
+  companyDeals: (workspaceId: string | null, id: string, extra?: object) =>
+    extra
+      ? (["companyDeals", workspaceId, id, extra] as const)
+      : (["companyDeals", workspaceId, id] as const),
+  companyTimeline: (workspaceId: string | null, id: string, extra?: object) =>
+    extra
+      ? (["companyTimeline", workspaceId, id, extra] as const)
+      : (["companyTimeline", workspaceId, id] as const),
+  contactTimeline: (workspaceId: string | null, id: string, extra?: object) =>
+    extra
+      ? (["contactTimeline", workspaceId, id, extra] as const)
+      : (["contactTimeline", workspaceId, id] as const),
+  companyDuplicates: (workspaceId: string | null, params?: object) =>
+    params
+      ? (["companyDuplicates", workspaceId, params] as const)
+      : (["companyDuplicates", workspaceId] as const),
+  companyDuplicatesCount: (workspaceId: string | null, params?: object) =>
+    params
+      ? (["companyDuplicatesCount", workspaceId, params] as const)
+      : (["companyDuplicatesCount", workspaceId] as const),
   companySearch: (workspaceId: string | null, q: string) =>
     ["companySearch", workspaceId, q] as const,
   savedViews: (workspaceId: string | null, object: string) =>
     ["savedViews", workspaceId, object] as const,
 };
 
+// Company queries that show contact data (counts, last activity, contact rows, the feed).
+const COMPANY_VIEWS = [
+  "companies",
+  "companiesCount",
+  "company",
+  "companyContacts",
+  "companyDeals",
+  "companyTimeline",
+];
+
 /**
  * After any write that touches a contact (lead): its record, every contacts list and
- * count, timeline, tasks, meetings, proposals, deals, automation, AI panel, dashboard.
+ * count, timeline, tasks, meetings, proposals, deals, automation, AI panel, dashboard,
+ * and the company views that show contacts.
  * Without `leadId` (bulk actions) every contact's record queries are refreshed.
  */
 export function refreshContact(client: QueryClient, workspaceId: string | null, leadId?: string) {
@@ -79,11 +122,19 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
         keys.contactability(workspaceId, leadId),
         keys.calls(workspaceId, leadId),
         keys.timeline(workspaceId, leadId),
+        keys.contactTimeline(workspaceId, leadId),
         keys.agentLeadPanel(workspaceId, leadId),
       ]
-    : ["lead", "contact", "notes", "contactability", "calls", "timeline", "agentLeadPanel"].map(
-        (prefix) => [prefix, workspaceId],
-      );
+    : [
+        "lead",
+        "contact",
+        "notes",
+        "contactability",
+        "calls",
+        "timeline",
+        "contactTimeline",
+        "agentLeadPanel",
+      ].map((prefix) => [prefix, workspaceId]);
   const targets = [
     ...perContact,
     keys.leads(workspaceId),
@@ -97,9 +148,29 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
     keys.scheduledActions(workspaceId),
     keys.notifications(workspaceId),
     keys.dashboard(workspaceId),
+    ...COMPANY_VIEWS.map((prefix) => [prefix, workspaceId]),
   ];
   return Promise.all(targets.map((queryKey) => client.invalidateQueries({ queryKey })));
 }
+
+/**
+ * After any company write (create, edit, rename, merge, duplicate actions). A rename or
+ * merge changes other companies and contacts too, so this refreshes every company view
+ * and every contact (refreshContact), plus company search, global search and duplicates.
+ */
+export function refreshCompany(client: QueryClient, workspaceId: string | null) {
+  const targets = [
+    keys.companyDuplicates(workspaceId),
+    keys.companyDuplicatesCount(workspaceId),
+    ["companySearch", workspaceId],
+    ["search", workspaceId],
+  ];
+  return Promise.all([
+    ...targets.map((queryKey) => client.invalidateQueries({ queryKey })),
+    refreshContact(client, workspaceId),
+  ]);
+}
+
 interface ErrorDetails {
   fieldErrors?: Record<string, string[] | undefined>;
   formErrors?: string[];

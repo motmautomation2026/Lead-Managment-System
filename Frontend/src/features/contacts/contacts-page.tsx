@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import {
   messageFromError,
   useBulkContacts,
-  useCompanyOptions,
+  useCompany,
   useContacts,
   useContactsCount,
   useCreateSavedView,
@@ -63,6 +63,7 @@ import {
   type ContactView,
 } from "./contacts-search";
 import { ViewNameDialog } from "./view-name-dialog";
+import { CompanyPicker } from "@/features/companies/company-picker";
 
 const dash = <span className="text-muted-foreground">–</span>;
 
@@ -195,7 +196,7 @@ export function ContactsPage() {
   const count = useContactsCount(params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const bulk = useBulkContacts();
-  const companies = useCompanyOptions();
+  const filterCompany = useCompany(state.companyId);
   const savedViews = useSavedViews("contacts");
   const createView = useCreateSavedView();
   const updateView = useUpdateSavedView();
@@ -278,12 +279,6 @@ export function ContactsPage() {
     { id: "created", label: "Created", type: "dateRange" },
   ];
   const moreFilters: FilterDef[] = [
-    {
-      id: "companyId",
-      label: "Company",
-      type: "multi",
-      options: (companies.data?.data ?? []).map((c) => ({ value: c.id, label: c.name })),
-    },
     { id: "lastActivity", label: "Last activity", type: "dateRange" },
   ];
 
@@ -400,6 +395,15 @@ export function ContactsPage() {
               className="pl-8"
             />
           </div>
+          <CompanyPicker
+            variant="chip"
+            value={
+              state.companyId
+                ? { id: state.companyId, name: filterCompany.data?.name ?? "…" }
+                : null
+            }
+            onChange={(company) => void set({ companyId: company?.id })}
+          />
           <FilterBar
             filters={quickFilters}
             moreFilters={moreFilters}

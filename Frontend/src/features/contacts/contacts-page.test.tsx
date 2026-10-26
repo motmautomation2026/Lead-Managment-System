@@ -71,7 +71,9 @@ vi.mock("@/store", () => ({
   },
   useContactsCount: () => ({ data: { count: 2 } }),
   useBulkContacts: () => ({ mutateAsync: mocks.bulk, isPending: false }),
-  useCompanyOptions: () => ({ data: { data: [] } }),
+  useCompany: (id?: string) => ({ data: id ? { id, name: "Acme" } : undefined }),
+  useCompanySearch: () => ({ data: undefined, isFetching: false }),
+  useCreateCompany: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSavedViews: () => ({ data: { data: mocks.views } }),
   useCreateSavedView: () => ({ mutateAsync: mocks.createView, isPending: false }),
   useUpdateSavedView: () => ({ mutateAsync: mocks.updateView, isPending: false }),
@@ -165,6 +167,16 @@ describe("ContactsPage", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "New" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(searchOf(router)["leadStatus"]).toEqual(["new"]));
+  });
+
+  it("the company filter is a CompanyPicker chip; clearing it drops companyId", async () => {
+    const router = await renderPage({ companyId: "co-1" });
+    expect(lastParams()).toMatchObject({ companyId: "co-1" });
+    expect(screen.getByRole("button", { name: "Company filter" })).toHaveTextContent(
+      "Company: Acme",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear company filter" }));
+    await waitFor(() => expect(searchOf(router)["companyId"]).toBeUndefined());
   });
 
   it("loads more pages", async () => {

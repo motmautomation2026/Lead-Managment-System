@@ -3,8 +3,17 @@ import type { SearchResults } from "@/types/search";
 import type {
   AgentStatus,
   BulkResult,
+  ActivityType,
   CompanyDetail,
+  CompanyDuplicate,
+  CompanyInput,
   CompanyListItem,
+  CompanyListParams,
+  CompanyMergeResult,
+  CompanyTimelineEvent,
+  DealListItem,
+  DealListParams,
+  DuplicateListParams,
   ContactDetail,
   ContactListItem,
   ContactListParams,
@@ -720,11 +729,59 @@ export const backend = {
     /** At most 100 ids; `enrollAi` is admin only. */
     bulk: (input: { ids: string[]; action: "assignOwner" | "enrollAi"; ownerId?: string }) =>
       send<{ data: BulkResult[] }>("POST", "/contacts/bulk", input),
+    /** Paginated, newest first (C3). The old `leads.timeline` returns everything. */
+    timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
+      get<Page<TimelineEvent>>(listQuery(`/contacts/${id}/timeline`, { kind, cursor }), signal),
   },
+  /** CRM v2 companies (B4 §3). Merge is admin only. */
   companies: {
-    list: (params: { q?: string; sort?: string; limit?: number }, signal?: AbortSignal) =>
-      get<Page<CompanyListItem>>(listQuery("/companies", params), signal),
+    list: (params: CompanyListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<CompanyListItem>>(listQuery("/companies", { ...params, cursor }), signal),
+    count: (params: Omit<CompanyListParams, "sort" | "limit">, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/companies/count", params), signal),
     get: (id: string, signal?: AbortSignal) => get<CompanyDetail>(`/companies/${id}`, signal),
+    /** 409 with `details.companyId` when the normalised name or domain already exists. */
+    create: (input: CompanyInput & { name: string }) =>
+      send<CompanyDetail>("POST", "/companies", input),
+    update: (id: string, input: CompanyInput) =>
+      send<CompanyDetail>("PATCH", `/companies/${id}`, input),
+    /** `id` is kept; `sourceId` is merged into it. */
+    merge: (id: string, sourceId: string) =>
+      send<CompanyMergeResult>("POST", `/companies/${id}/merge`, { sourceId }),
+    contacts: (id: string, params: ContactListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<ContactListItem>>(
+        listQuery(`/companies/${id}/contacts`, { ...params, cursor }),
+        signal,
+      ),
+    deals: (id: string, params: DealListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<DealListItem>>(listQuery(`/companies/${id}/deals`, { ...params, cursor }), signal),
+    timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
+      get<Page<CompanyTimelineEvent>>(
+        listQuery(`/companies/${id}/timeline`, { kind, cursor }),
+        signal,
+      ),
+  },
+  /** Admin duplicate review (B4 §5). */
+  companyDuplicates: {
+    list: (params: DuplicateListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<CompanyDuplicate>>(listQuery("/company-duplicates", { ...params, cursor }), signal),
+    count: (params: DuplicateListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/company-duplicates/count", { ...params }), signal),
+    /** Pair rows: `targetId` (A or B, default A) stays. */
+    merge: (id: string, targetId?: string) =>
+      send<CompanyMergeResult>(
+        "POST",
+        `/company-duplicates/${id}/merge`,
+        targetId ? { targetId } : {},
+      ),
+    dismiss: (id: string) => request<void>(`/company-duplicates/${id}/dismiss`, { method: "POST" }),
+    /** Contact rows: link to `companyId`, or (omitted) to a new company named after the observed text. */
+    relink: (id: string, companyId?: string) =>
+      send<{ leadId: string; companyId: string }>(
+        "POST",
+        `/company-duplicates/${id}/relink`,
+        companyId ? { companyId } : {},
+      ),
   },
   deals: {
     create: (input: CreateDealInput) => send<DealDetail>("POST", "/deals", input),

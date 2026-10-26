@@ -46,10 +46,23 @@ export {
   useCreateDeal,
   useCompanySearch,
   useCompany,
-  useCompanyOptions,
   useCreateContact,
+  useCompanies,
+  useCompaniesCount,
+  useCompanyContacts,
+  useCompanyDeals,
+  useCompanyTimeline,
+  useContactTimeline,
+  useCreateCompany,
+  useUpdateCompany,
+  useMergeCompanies,
+  useCompanyDuplicates,
+  useCompanyDuplicatesCount,
+  useMergeDuplicate,
+  useDismissDuplicate,
+  useRelinkDuplicate,
 } from "./server-hooks";
-export { messageFromError, refreshContact, keys } from "./query";
+export { messageFromError, refreshCompany, refreshContact, keys } from "./query";
 export type {
   SessionSlice,
   LeadsSlice,

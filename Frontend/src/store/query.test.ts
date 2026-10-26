@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { BackendError } from "@/lib/backend-client";
-import { keys, messageFromError, refreshContact } from "./query";
+import { keys, messageFromError, refreshCompany, refreshContact } from "./query";
 
 describe("query invalidation", () => {
   it("refreshes every contact-dependent aggregate after a composite mutation", async () => {
@@ -31,6 +31,31 @@ describe("query invalidation", () => {
         keys.contactsCount("workspace-1"),
         keys.deals("workspace-1"),
         keys.agentLeadPanel("workspace-1", "lead-1"),
+        keys.contactTimeline("workspace-1", "lead-1"),
+        keys.companies("workspace-1"),
+        ["company", "workspace-1"],
+        ["companyTimeline", "workspace-1"],
+        ["companyContacts", "workspace-1"],
+      ]),
+    );
+  });
+
+  it("refreshCompany refreshes company views, duplicates, search and every contact", async () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
+    await refreshCompany(client, "workspace-1");
+    const invalidated = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(invalidated).toEqual(
+      expect.arrayContaining([
+        keys.companies("workspace-1"),
+        keys.companiesCount("workspace-1"),
+        ["company", "workspace-1"],
+        ["companyDeals", "workspace-1"],
+        keys.companyDuplicates("workspace-1"),
+        keys.companyDuplicatesCount("workspace-1"),
+        ["companySearch", "workspace-1"],
+        ["contact", "workspace-1"],
+        keys.contacts("workspace-1"),
       ]),
     );
   });

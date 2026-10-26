@@ -24,8 +24,13 @@ import { initials } from "@/lib/format";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type {
   AutomationMode,
+  ActivityType,
   BulkResult,
+  CompanyInput,
+  CompanyListParams,
   ContactListParams,
+  DealListParams,
+  DuplicateListParams,
   CreateDealInput,
   SavedViewInput,
   SavedViewObject,
@@ -36,7 +41,7 @@ import type {
   User,
   WorkflowStep,
 } from "@/types";
-import { keys, refreshContact } from "./query";
+import { keys, refreshCompany, refreshContact } from "./query";
 import { useWorkspace } from "./workspace-context";
 
 export function useSession() {
@@ -1003,7 +1008,7 @@ export function useCompanySearch(input: string) {
   const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
   return useQuery({
     queryKey: keys.companySearch(currentWorkspaceId, q),
-    queryFn: ({ signal }) => backend.companies.list({ q, limit: 5 }, signal),
+    queryFn: ({ signal }) => backend.companies.list({ q, limit: 5 }, undefined, signal),
     enabled: Boolean(currentWorkspaceId) && q.length >= SEARCH_MIN_CHARS,
     staleTime: 30_000,
   });
@@ -1018,17 +1023,6 @@ export function useCompany(id: string | null | undefined) {
   });
 }
 
-/** Company filter options: the first page by name (shortcut: 100 companies max; upgrade to a searchable picker in C3). */
-export function useCompanyOptions() {
-  const { currentWorkspaceId } = useWorkspace();
-  return useQuery({
-    queryKey: keys.companySearch(currentWorkspaceId, ""),
-    queryFn: ({ signal }) => backend.companies.list({ sort: "name:asc", limit: 100 }, signal),
-    enabled: Boolean(currentWorkspaceId),
-    staleTime: 60_000,
-  });
-}
-
 /** POST /leads (a new contact) without loading the old 500-row leads list. */
 export function useCreateContact() {
   const client = useQueryClient();
@@ -1038,3 +1032,129 @@ export function useCreateContact() {
     onSuccess: (lead) => refreshContact(client, ws, lead.id),
   });
 }
+
+// --- CRM v2 companies + duplicate review (C3) -------------------------------------
+
+/** One keyset list: `{data, nextCursor}` pages, enabled once a workspace is selected. */
+function useCursorList<T>(
+  queryKey: readonly unknown[],
+  fetchPage: (
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<{ data: T[]; nextCursor: string | null }>,
+  enabled = true,
+) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam, signal }) => fetchPage(pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId) && enabled,
+  });
+}
+
+export function useCompanies(params: CompanyListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(keys.companies(ws, params), (cursor, signal) =>
+    backend.companies.list(params, cursor, signal),
+  );
+}
+
+/** Same filters as `useCompanies` (sort/limit are not allowed on /count). */
+export function useCompaniesCount(params: CompanyListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.companiesCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.companies.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useCompanyContacts(companyId: string, params: ContactListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyContacts(ws, companyId, params),
+    (cursor, signal) => backend.companies.contacts(companyId, params, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+export function useCompanyDeals(companyId: string, params: DealListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyDeals(ws, companyId, params),
+    (cursor, signal) => backend.companies.deals(companyId, params, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+/** The company feed, newest first; `kind` filters server-side (empty = all). */
+export function useCompanyTimeline(companyId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyTimeline(ws, companyId, { kind }),
+    (cursor, signal) => backend.companies.timeline(companyId, kind, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+/** A contact's timeline, newest first, paginated; `kind` filters server-side (empty = all). */
+export function useContactTimeline(leadId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.contactTimeline(ws, leadId, { kind }),
+    (cursor, signal) => backend.contacts.timeline(leadId, kind, cursor, signal),
+    Boolean(leadId),
+  );
+}
+
+function useCompanyWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({ mutationFn: fn, onSuccess: () => refreshCompany(client, ws) });
+}
+
+export const useCreateCompany = () =>
+  useCompanyWrite((input: CompanyInput & { name: string }) => backend.companies.create(input));
+export const useUpdateCompany = () =>
+  useCompanyWrite(({ id, input }: { id: string; input: CompanyInput }) =>
+    backend.companies.update(id, input),
+  );
+/** Admin: `targetId` stays, `sourceId` is merged into it. */
+export const useMergeCompanies = () =>
+  useCompanyWrite(({ targetId, sourceId }: { targetId: string; sourceId: string }) =>
+    backend.companies.merge(targetId, sourceId),
+  );
+
+export function useCompanyDuplicates(params: DuplicateListParams, enabled = true) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyDuplicates(ws, params),
+    (cursor, signal) => backend.companyDuplicates.list(params, cursor, signal),
+    enabled,
+  );
+}
+
+/** Admin only (pass `enabled: isAdmin`): open duplicate counts for buttons and the nav badge, cached 60 s. */
+export function useCompanyDuplicatesCount(params: DuplicateListParams, enabled = true) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.companyDuplicatesCount(currentWorkspaceId, params),
+    queryFn: ({ signal }) => backend.companyDuplicates.count(params, signal),
+    enabled: Boolean(currentWorkspaceId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export const useMergeDuplicate = () =>
+  useCompanyWrite(({ id, targetId }: { id: string; targetId?: string }) =>
+    backend.companyDuplicates.merge(id, targetId),
+  );
+export const useDismissDuplicate = () =>
+  useCompanyWrite((id: string) => backend.companyDuplicates.dismiss(id));
+export const useRelinkDuplicate = () =>
+  useCompanyWrite(({ id, companyId }: { id: string; companyId?: string }) =>
+    backend.companyDuplicates.relink(id, companyId),
+  );

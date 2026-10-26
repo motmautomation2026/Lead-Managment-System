@@ -7,6 +7,7 @@ import type {
   NextAction,
   PipelineStage,
 } from "./lead";
+import type { TimelineEvent } from "./timeline";
 
 export const DEAL_STAGES = [
   "qualified",
@@ -95,9 +96,127 @@ export interface CompanyListItem {
   updatedAt: string;
 }
 
+/** GET /companies/:id. A merged company is still returned: follow `mergedIntoCompanyId`. */
 export interface CompanyDetail extends CompanyListItem {
   website: string | null;
+  revenueRange: string | null;
+  revenueMinCr: number | null;
+  revenueMaxCr: number | null;
+  state: string | null;
+  country: string | null;
+  linkedinUrl: string | null;
+  employeeRange: string | null;
+  description: string | null;
   mergedIntoCompanyId: string | null;
+  createdBy: string | null;
+  /** Latest activity across its (non-merged) contacts. */
+  lastActivityAt: string | null;
+}
+
+/** GET /companies params exactly as the API takes them (saved views store this shape). */
+export interface CompanyListParams {
+  ownerId?: string[] | undefined;
+  industry?: string[] | undefined;
+  hasDomain?: "true" | "false" | undefined;
+  createdFrom?: string | undefined;
+  createdTo?: string | undefined;
+  q?: string | undefined;
+  sort?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** POST /companies body; PATCH takes any subset ("" / null clears). */
+export interface CompanyInput {
+  name?: string;
+  domain?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  revenueRange?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  linkedinUrl?: string | null;
+  employeeRange?: string | null;
+  description?: string | null;
+  ownerId?: string | null;
+}
+
+export interface CompanyMergeResult {
+  targetId: string;
+  sourceId: string;
+  movedContacts: number;
+}
+
+export interface DealListItem {
+  id: string;
+  name: string;
+  stage: DealStage;
+  amount: number | null;
+  currency: string;
+  expectedCloseDate: string | null;
+  owner: IdName | null;
+  company: IdName | null;
+  contact: IdName;
+  source: string;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealListParams {
+  status?: "open" | "won" | "lost" | "all" | undefined;
+  sort?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** Activity chip groups; the paginated timelines filter on them server-side (`kind`). */
+export const ACTIVITY_TYPES = [
+  "notes",
+  "calls",
+  "meetings",
+  "tasks",
+  "messages",
+  "ai",
+  "deals",
+  "system",
+] as const;
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+
+/** A company feed row: whose event it is. */
+export type CompanyTimelineEvent = TimelineEvent & { contact: IdName };
+
+export type DuplicateReason =
+  "similar_name" | "same_domain_different_name" | "name_domain_conflict";
+export type DuplicateStatus = "open" | "merged" | "dismissed";
+export interface DuplicateCompany {
+  id: string;
+  name: string;
+  domain: string | null;
+  industry: string | null;
+  merged: boolean;
+  contactCount: number;
+  openDealCount: number;
+}
+/** A company pair (companyB set) or one contact that disagrees with its company (companyB null). */
+export interface CompanyDuplicate {
+  id: string;
+  kind: "pair" | "contact";
+  reason: DuplicateReason;
+  score: number | null;
+  status: DuplicateStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  companyA: DuplicateCompany;
+  companyB: DuplicateCompany | null;
+  contact: { id: string; name: string; email: string | null; company: string } | null;
+  observedName: string | null;
+  observedDomain: string | null;
+}
+export interface DuplicateListParams {
+  status?: Array<DuplicateStatus | "all"> | undefined;
+  reason?: DuplicateReason[] | undefined;
+  kind?: "pair" | "contact" | undefined;
+  companyId?: string | undefined;
 }
 
 export interface DealDetail {
