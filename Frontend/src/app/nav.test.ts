@@ -7,6 +7,7 @@ describe("crumbsFor", () => {
     expect(crumbsFor("/contacts")).toEqual([{ label: "Contacts" }]);
     expect(crumbsFor("/automations/")).toEqual([{ label: "Workflows" }]);
     expect(crumbsFor("/companies")).toEqual([{ label: "Companies" }]);
+    expect(crumbsFor("/search")).toEqual([{ label: "Search" }]);
   });
 
   it("adds a linked parent for sub-pages", () => {

@@ -42,10 +42,12 @@ import { closeDate } from "./deal-columns";
 import { DEAL_STAGE_LABELS, OPEN_DEAL_STAGES, isClosedStage } from "./deal-labels";
 import { DealStagePill } from "./deal-stage-pill";
 import { RecordLink } from "@/features/crm/record-link";
+import { useRememberRecent } from "@/features/crm/recent";
 
 /** HubSpot-style deal record, fetched by id; 404 → a way back to the list. */
 export function DealRecordPage({ dealId }: { dealId: string }) {
   const query = useDeal(dealId);
+  useRememberRecent("deal", query.data?.id, query.data?.name ?? "");
   if (query.isLoading) {
     return (
       <div className="p-6">

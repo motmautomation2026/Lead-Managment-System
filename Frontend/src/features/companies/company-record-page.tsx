@@ -52,6 +52,7 @@ import { MergeCompanyDialog } from "./merge-company-dialog";
 import { REASON_LABEL } from "./duplicates-search";
 import { RecordLink } from "@/features/crm/record-link";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { useRememberRecent } from "@/features/crm/recent";
 
 const dash = <span className="text-muted-foreground">–</span>;
 const CONTACT_TAB_COLUMNS = [
@@ -98,6 +99,11 @@ const DEAL_COLUMNS: DataTableColumn<DealListItem>[] = [
 /** HubSpot-style company record, fetched by id. A merged company points to the one it went into. */
 export function CompanyRecordPage({ companyId }: { companyId: string }) {
   const query = useCompany(companyId);
+  useRememberRecent(
+    "company",
+    query.data && !query.data.mergedIntoCompanyId ? query.data.id : undefined,
+    query.data?.name ?? "",
+  );
   if (query.isLoading) {
     return (
       <div className="p-6">

@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Building2, Handshake, Moon, Plus, User } from "lucide-react";
+import { Building2, Handshake, Moon, Plus, Search, User } from "lucide-react";
 import {
   CommandDialog,
   CommandGroup,
@@ -15,9 +15,29 @@ import { useTheme } from "@/app/theme-context";
 import { messageFromError, useGlobalSearch } from "@/store";
 import { SEARCH_MIN_CHARS } from "@/store/server-hooks";
 import { label } from "@/lib/labels";
+import { readRecents, type RecentType } from "@/lib/recent-records";
+import { useWorkspace } from "@/store/workspace-context";
+
+const RECENT_ICONS: Record<RecentType, ReactNode> = {
+  contact: <User />,
+  company: <Building2 />,
+  deal: <Handshake />,
+};
+
+/** Shown with an empty query, after the recent records. */
+const QUICK_ACTIONS = new Set([
+  "create-contact",
+  "create-company",
+  "create-deal",
+  "go-/contacts",
+  "go-/companies",
+  "go-/deals",
+  "go-/tasks",
+]);
 
 /**
- * ⌘K palette: server-side search (contacts, companies, deals; top 5 each) plus
+ * ⌘K palette: server-side search (contacts, companies, deals; top 5 each, then "See all
+ * results" → /search) plus actions. Empty query: the viewer's recent records, then quick
  * actions. Results come from GET /search, so cmdk's own filtering is off.
  */
 export function CommandPalette({
@@ -38,6 +58,12 @@ export function CommandPalette({
   const { resolvedTheme, setTheme } = useTheme();
   const search = useGlobalSearch(open ? input : "");
   const term = input.trim();
+  const { currentWorkspaceId } = useWorkspace();
+  // Read on every open (records opened since then are new); per browser + workspace.
+  const recents = useMemo(
+    () => (open ? readRecents(currentWorkspaceId) : []),
+    [open, currentWorkspaceId],
+  );
 
   const close = (then: () => void) => {
     onOpenChange(false);
@@ -62,7 +88,9 @@ export function CommandPalette({
       run: () => setTheme(resolvedTheme === "dark" ? "light" : "dark"),
     },
   ];
-  const matchingActions = actions.filter((a) => a.label.toLowerCase().includes(term.toLowerCase()));
+  const matchingActions = term
+    ? actions.filter((a) => a.label.toLowerCase().includes(term.toLowerCase()))
+    : actions.filter((a) => QUICK_ACTIONS.has(a.id));
 
   const data = search.enabled && search.query === term ? search.data : undefined;
   const hits =
@@ -98,6 +126,32 @@ export function CommandPalette({
             <Hint>No results for &ldquo;{term}&rdquo;.</Hint>
           )}
         </div>
+
+        {!term && recents.length > 0 && (
+          <CommandGroup heading="Recent">
+            {recents.map((r) => (
+              <CommandItem
+                key={`${r.type}-${r.id}`}
+                value={`recent-${r.type}-${r.id}`}
+                onSelect={() =>
+                  close(() =>
+                    r.type === "contact"
+                      ? void navigate({ to: "/contacts/$contactId", params: { contactId: r.id } })
+                      : r.type === "company"
+                        ? void navigate({
+                            to: "/companies/$companyId",
+                            params: { companyId: r.id },
+                          })
+                        : void navigate({ to: "/deals/$dealId", params: { dealId: r.id } }),
+                  )
+                }
+              >
+                {RECENT_ICONS[r.type]}
+                <Result title={r.label} meta={[label(r.type)]} />
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
 
         {data && data.contacts.length > 0 && (
           <CommandGroup heading="Contacts">
@@ -173,6 +227,19 @@ export function CommandPalette({
                 {a.label}
               </CommandItem>
             ))}
+          </CommandGroup>
+        )}
+
+        {/* After the results arrive, so cmdk keeps highlighting the first result. */}
+        {searchable && (data || search.isError) && (
+          <CommandGroup>
+            <CommandItem
+              value="see-all-results"
+              onSelect={() => close(() => void navigate({ to: "/search", search: { q: term } }))}
+            >
+              <Search />
+              See all results for &ldquo;{term}&rdquo;
+            </CommandItem>
           </CommandGroup>
         )}
       </CommandList>

@@ -90,6 +90,7 @@ export interface Crumb {
 export function crumbsFor(pathname: string): Crumb[] {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path.startsWith("/dev/ui")) return [{ label: "UI kit" }];
+  if (path === "/search") return [{ label: "Search" }];
   const section = ALL_NAV.find((item) => isNavActive(item.to, path));
   if (!section) return [];
   const sub = SUB_PAGES.find(([re]) => re.test(path))?.[1];

@@ -51,6 +51,8 @@ const EMPTY: SearchResults = { contacts: [], companies: [], deals: [] };
 afterEach(() => {
   cleanup();
   mocks.search.mockReset();
+  vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 async function renderPalette() {
@@ -82,6 +84,7 @@ async function renderPalette() {
       page("/companies/$companyId"),
       page("/deals"),
       page("/deals/$dealId"),
+      page("/search"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
@@ -186,5 +189,72 @@ describe("CommandPalette search", () => {
     expect(screen.queryByRole("option", { name: "Go to Tasks" })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: "Go to Deals" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/deals"));
+  });
+});
+
+describe("CommandPalette recents and See all (C5)", () => {
+  it("empty query: recent records (newest first) then quick actions; a recent opens its page", async () => {
+    window.localStorage.setItem(
+      "motmflow.recent.ws-1",
+      JSON.stringify([
+        { type: "deal", id: "d1", label: "Tata fleet deal" },
+        { type: "company", id: "co1", label: "Tata Motors" },
+        { type: "contact", id: "c1", label: "Asha Rao" },
+      ]),
+    );
+    const { router } = await renderPalette();
+    const recent = screen.getByRole("group", { name: "Recent" });
+    expect(
+      within(recent)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Tata fleet dealDeal", "Tata MotorsCompany", "Asha RaoContact"]);
+    const actions = within(screen.getByRole("group", { name: "Actions" }))
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(actions).toEqual([
+      "Create contact",
+      "Create company",
+      "Create deal",
+      "Go to Contacts",
+      "Go to Companies",
+      "Go to Deals",
+      "Go to Tasks",
+    ]);
+    fireEvent.click(within(recent).getByText("Tata Motors"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co1"));
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+
+  it("no recents (or broken storage) → just the quick actions", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    await renderPalette();
+    expect(screen.queryByRole("group", { name: "Recent" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Create deal" })).toBeTruthy();
+  });
+
+  it("typing hides recents; See all results is the last row and opens /search?q=", async () => {
+    window.localStorage.setItem(
+      "motmflow.recent.ws-1",
+      JSON.stringify([{ type: "contact", id: "c9", label: "Old Recent" }]),
+    );
+    mocks.search.mockResolvedValue(RESULTS);
+    const { input, router } = await renderPalette();
+    type(input, "tata");
+    await screen.findByText("Asha Rao");
+    expect(screen.queryByText("Old Recent")).toBeNull();
+    const options = screen.getAllByRole("option");
+    expect(options.at(-1)?.textContent).toBe("See all results for “tata”");
+    fireEvent.click(options.at(-1)!);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/search"));
+    expect(router.state.location.search).toEqual({ q: "tata" });
+  });
+
+  it("no See all below 2 characters", async () => {
+    const { input } = await renderPalette();
+    type(input, "t");
+    expect(screen.queryByText(/See all results/)).toBeNull();
   });
 });

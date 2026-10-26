@@ -84,6 +84,7 @@ import {
 import { ContactAbout } from "./contact-about";
 import { ContactAssociations } from "./contact-associations";
 import { RecordLink } from "@/features/crm/record-link";
+import { useRememberRecent } from "@/features/crm/recent";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
 
@@ -102,6 +103,14 @@ const mutate = async (work: () => Promise<unknown>, success: string) => {
 /** HubSpot-style contact record. The contact is always fetched by id (B11). */
 export function ContactRecordPage({ contactId }: { contactId: string }) {
   const query = useContact(contactId);
+  const contact = query.data;
+  useRememberRecent(
+    "contact",
+    contact?.id,
+    contact
+      ? `${contact.firstName} ${contact.lastName}`.trim() || contact.email || "Unnamed contact"
+      : "",
+  );
   if (query.isLoading) {
     return (
       <div className="p-6">
