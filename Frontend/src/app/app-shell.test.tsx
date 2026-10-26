@@ -280,6 +280,15 @@ describe("AppShell top bar", () => {
     });
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
+
+  it("the palette is lazy: not mounted before ⌘K, opens on the first press", async () => {
+    await renderShell();
+    expect(screen.queryByPlaceholderText(/Search contacts, companies, deals/)).toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+    });
+    expect(await screen.findByPlaceholderText(/Search contacts, companies, deals/)).toBeTruthy();
+  });
 });
 
 describe("AppShell keyboard shortcuts (C5)", () => {
