@@ -39,6 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
+  const [addCompany, setAddCompany] = useState("");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const client = useQueryClient();
   const { setCurrentWorkspaceId } = useWorkspace();
@@ -74,7 +75,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AddLeadContext.Provider value={{ open: () => setAddOpen(true) }}>
+    <AddLeadContext.Provider
+      value={{
+        open: (prefill) => {
+          setAddCompany(prefill?.company ?? "");
+          setAddOpen(true);
+        },
+      }}
+    >
       <CreateCompanyContext.Provider value={{ open: () => setCompanyOpen(true) }}>
         <TooltipProvider delayDuration={300}>
           <div className="flex min-h-screen bg-background">
@@ -116,7 +124,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </TooltipProvider>
 
-        <CreateContactDialog open={addOpen} onOpenChange={setAddOpen} />
+        <CreateContactDialog
+          open={addOpen}
+          onOpenChange={(open) => {
+            setAddOpen(open);
+            if (!open) setAddCompany("");
+          }}
+          defaultCompany={addCompany}
+        />
         <CreateCompanyDialog open={companyOpen} onOpenChange={setCompanyOpen} />
 
         <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>

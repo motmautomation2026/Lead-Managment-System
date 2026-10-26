@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
@@ -62,9 +62,12 @@ function fieldFromDetails(details: unknown): keyof LeadFormValues | null {
 export function CreateContactDialog({
   open,
   onOpenChange,
+  defaultCompany = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Prefills Company each time the dialog opens. */
+  defaultCompany?: string;
 }) {
   const navigate = useNavigate();
   const { users } = useSession();
@@ -77,6 +80,9 @@ export function CreateContactDialog({
   const { register, control, handleSubmit, setValue, setError, reset, formState, watch } = form;
   const errors = formState.errors;
   const company = watch("company");
+  useEffect(() => {
+    if (open) reset({ ...EMPTY, company: defaultCompany });
+  }, [open, defaultCompany, reset]);
   const matches = useCompanySearch(company);
   // Informational only: the backend links the company itself.
   const match = matches.data?.data.find(

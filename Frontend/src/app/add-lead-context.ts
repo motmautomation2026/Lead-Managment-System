@@ -1,7 +1,8 @@
 import { createContext, useContext } from "react";
 
 export interface AddLeadControls {
-  open: () => void;
+  /** `company` prefills the Company field (e.g. "Add contact" on a company record). */
+  open: (prefill?: { company?: string }) => void;
 }
 
 export const AddLeadContext = createContext<AddLeadControls>({ open: () => undefined });

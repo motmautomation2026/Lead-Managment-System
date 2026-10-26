@@ -74,6 +74,8 @@ export interface ContactListParams {
   lastActivityTo?: string | undefined;
   q?: string | undefined;
   sort?: string | undefined;
+  /** Page size (1–100); never sent to /count or stored in a saved view. */
+  limit?: number | undefined;
 }
 
 export interface BulkResult {

@@ -95,7 +95,7 @@ export function LeadsPage() {
             <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
               Import from CSV
             </Button>
-            <Button size="sm" onClick={addLead.open}>
+            <Button size="sm" onClick={() => addLead.open()}>
               Add lead
             </Button>
           </div>
