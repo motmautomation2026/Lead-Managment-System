@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
-import { defineSorts, multi, pageParams, runPage, sortParam, SqlBuilder } from "../lists/listQuery.js";
+import { defineSorts, multi, pageParams, runCount, runPage, sortParam, SqlBuilder } from "../lists/listQuery.js";
 import { mergeCompanies } from "./companies.service.js";
 import { assertCompanyUsable, createCompany } from "./companyRecords.service.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
@@ -18,30 +18,42 @@ export const DUPLICATE_SORTS = defineSorts({
   fields: { createdAt: { columns: ["x.created_at"], type: "timestamptz" } },
 });
 
-export const duplicateListSchema = z
+export const duplicateFilterSchema = z
   .object({
     status: multi(z.enum(["open", "merged", "dismissed", "all"])).optional(),
     reason: multi(z.enum(["similar_name", "same_domain_different_name", "name_domain_conflict"])).optional(),
     kind: z.enum(["pair", "contact"]).optional(),
-    ...pageParams,
-    sort: sortParam(DUPLICATE_SORTS),
+    companyId: z.string().uuid().optional(),
   })
   .strict();
+export const duplicateListSchema = duplicateFilterSchema.extend({ ...pageParams, sort: sortParam(DUPLICATE_SORTS) }).strict();
+type DuplicateFilters = z.infer<typeof duplicateFilterSchema>;
 
 const COMPANY_JSON = (alias: string) => `
   case when ${alias}.id is null then null else json_build_object(
-    'id', ${alias}.id, 'name', ${alias}.name, 'domain', ${alias}.domain, 'merged', ${alias}.merged_into_company_id is not null,
+    'id', ${alias}.id, 'name', ${alias}.name, 'domain', ${alias}.domain, 'industry', ${alias}.industry,
+    'merged', ${alias}.merged_into_company_id is not null,
+    'openDealCount', (select count(*)::int from public.deals d where d.company_id = ${alias}.id and d.stage not in ('won', 'lost')),
     'contactCount', (select count(*)::int from public.leads l
                       where l.workspace_id = ${alias}.workspace_id and l.company_id = ${alias}.id and l.lifecycle_state <> 'merged')) end`;
 
-/** Open rows by default; both pair and contact-level rows, with what the review screen shows. */
-export function listDuplicates(db: Queryable, workspaceId: string, query: z.infer<typeof duplicateListSchema>) {
+function duplicateWhere(workspaceId: string, f: DuplicateFilters): SqlBuilder {
   const b = new SqlBuilder();
   b.and(`x.workspace_id = ${b.p(workspaceId)}`);
-  const status = query.status ?? ["open"];
+  const status = f.status ?? ["open"];
   if (!status.includes("all")) b.and(`x.status = any(${b.p(status)}::text[])`);
-  if (query.reason) b.and(`x.reason = any(${b.p(query.reason)}::text[])`);
-  if (query.kind) b.and(`x.company_b_id is ${query.kind === "pair" ? "not " : ""}null`);
+  if (f.reason) b.and(`x.reason = any(${b.p(f.reason)}::text[])`);
+  if (f.kind) b.and(`x.company_b_id is ${f.kind === "pair" ? "not " : ""}null`);
+  if (f.companyId) {
+    const id = b.p(f.companyId);
+    b.and(`(x.company_a_id = ${id} or x.company_b_id = ${id})`);
+  }
+  return b;
+}
+
+/** Open rows by default; both pair and contact-level rows, with what the review screen shows. */
+export function listDuplicates(db: Queryable, workspaceId: string, query: z.infer<typeof duplicateListSchema>) {
+  const b = duplicateWhere(workspaceId, query);
   return runPage(db, b, query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
     `select x.id, case when x.company_b_id is null then 'contact' else 'pair' end as kind, x.reason, x.score::float8 as score,
             x.status, x.created_at as "createdAt", x.resolved_at as "resolvedAt",
@@ -58,6 +70,10 @@ export function listDuplicates(db: Queryable, workspaceId: string, query: z.infe
       limit ${limit}`,
   );
 }
+
+/** Same filters as the list (the review button, per-kind counts and the nav badge). */
+export const countDuplicates = (db: Queryable, workspaceId: string, filters: DuplicateFilters) =>
+  runCount(db, duplicateWhere(workspaceId, filters), "public.company_duplicate_candidates x");
 
 interface CandidateRow {
   id: string;

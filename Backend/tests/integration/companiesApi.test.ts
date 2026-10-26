@@ -110,7 +110,7 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
   it("create: normaliser + unique rules (409 with the existing id), placeholder and free-mail rejected", async () => {
     const acme = await company("Acme Industries Pvt Ltd", { domain: "https://www.Acme-Ind.example.com/about", industry: "Steel" });
     const detail = (await call("GET", `/companies/${acme}`)).body;
-    expect(detail).toMatchObject({ name: "Acme Industries Pvt Ltd", domain: "acme-ind.example.com", industry: "Steel", contactCount: 0, mergedIntoCompanyId: null });
+    expect(detail).toMatchObject({ name: "Acme Industries Pvt Ltd", domain: "acme-ind.example.com", industry: "Steel", contactCount: 0, mergedIntoCompanyId: null, lastActivityAt: null });
     expect(detail.owner).toEqual({ id: admin.id, name: "Admin Companies" });
     const sameName = await call("POST", "/companies", { name: "ACME industries limited" });
     expect(sameName.status).toBe(409);
@@ -139,6 +139,8 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
     const res = await call("PATCH", `/companies/${id}`, { name: "Renamed Co", city: "Pune", revenueRange: "Rs 10 to 50 cr", ownerId: null }, rep);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({ name: "Renamed Co", city: "Pune", revenueRange: "Rs 10 to 50 cr", revenueMinCr: 10, revenueMaxCr: 50, owner: null, contactCount: 2 });
+    const lastActivity = (await pool.query(`select max(last_activity_at) as at from public.leads where id = any($1)`, [[c1, c2]])).rows[0].at as Date;
+    expect(new Date(res.body.lastActivityAt).getTime()).toBe(lastActivity.getTime());
     const texts = await pool.query(`select company from public.leads where id = any($1)`, [[c1, c2]]);
     expect(texts.rows.map((r) => r.company)).toEqual(["Renamed Co", "Renamed Co"]);
     expect((await pool.query(`select normalized_name from public.companies where id = $1`, [id])).rows[0].normalized_name).toBe("renamed");
@@ -202,6 +204,15 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
     expect(contactRow.companyA).toMatchObject({ name: "Tata Motors", contactCount: 2 });
     expect(pairRow.companyA.id === bolt || pairRow.companyB.id === bolt).toBe(true);
     expect((await as("GET", `/company-duplicates${qs({ kind: "pair" })}`)).body.data).toHaveLength(1);
+    // C3: count (same filters), companyId filter, industry + open deal count on each company.
+    expect((await as("GET", "/company-duplicates/count")).body).toEqual({ count: list.body.data.length });
+    const contactRows = list.body.data.filter((r: { kind: string }) => r.kind === "contact").length;
+    expect((await as("GET", `/company-duplicates/count${qs({ kind: "contact" })}`)).body).toEqual({ count: contactRows });
+    expect((await as("GET", `/company-duplicates/count${qs({ limit: 5 })}`)).status).toBe(400);
+    expect((await as("GET", "/company-duplicates/count", undefined, rep)).status).toBe(403);
+    expect((await as("GET", `/company-duplicates${qs({ companyId: bolt2 })}`)).body.data.map((r: { id: string }) => r.id)).toEqual([pairRow.id]);
+    expect((await as("GET", `/company-duplicates/count${qs({ companyId: bolt2 })}`)).body).toEqual({ count: 1 });
+    expect(pairRow.companyA).toMatchObject({ industry: null, openDealCount: 0, merged: false });
 
     // Relink to a NEW company from the observed name; then the row is resolved.
     expect((await as("POST", `/company-duplicates/${pairRow.id}/relink`, {})).status).toBe(400);

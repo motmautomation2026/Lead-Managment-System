@@ -13,6 +13,7 @@ import * as duplicates from "../services/companyDuplicates.service.js";
 import { mergeCompanies } from "../services/companies.service.js";
 import { contactListSchema, listContacts } from "../services/contacts.service.js";
 import { dealListSchema, listDeals } from "../services/dealRecords.service.js";
+import { listCompanyTimeline, timelineListSchema } from "../services/timeline.service.js";
 
 export const companiesRouter = Router();
 companiesRouter.param("id", uuidParam("company"));
@@ -74,6 +75,16 @@ companiesRouter.get(
   }),
 );
 
+/** Events of the company's contacts and deals, newest first, each with `contact {id, name}`. */
+companiesRouter.get(
+  "/:id/timeline",
+  asyncHandler(async (req, res) => {
+    const query = parseQuery(timelineListSchema, req.query);
+    await records.assertCompanyUsable(pool, req.workspaceId!, req.params.id!);
+    res.json(await listCompanyTimeline(pool, req.workspaceId!, req.params.id!, query));
+  }),
+);
+
 companiesRouter.post(
   "/:id/merge",
   requireAdmin,
@@ -91,6 +102,13 @@ companyDuplicatesRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     res.json(await duplicates.listDuplicates(pool, req.workspaceId!, parseQuery(duplicates.duplicateListSchema, req.query)));
+  }),
+);
+
+companyDuplicatesRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await duplicates.countDuplicates(pool, req.workspaceId!, parseQuery(duplicates.duplicateFilterSchema, req.query)));
   }),
 );
 

@@ -9,6 +9,8 @@ import { pool } from "../db.js";
 import { ForbiddenError } from "../errors.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as contacts from "../services/contacts.service.js";
+import { getLeadRowOr404 } from "../services/leads.service.js";
+import { listContactTimeline, timelineListSchema } from "../services/timeline.service.js";
 
 export const contactsRouter = Router();
 contactsRouter.param("id", uuidParam("contact"));
@@ -40,5 +42,15 @@ contactsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     res.json(await contacts.getContact(pool, req.workspaceId!, req.params.id!));
+  }),
+);
+
+/** The contact's timeline, paginated newest first (the old GET /leads/:id/timeline is unchanged). */
+contactsRouter.get(
+  "/:id/timeline",
+  asyncHandler(async (req, res) => {
+    const query = parseQuery(timelineListSchema, req.query);
+    await getLeadRowOr404(pool, req.workspaceId!, req.params.id!);
+    res.json(await listContactTimeline(pool, req.workspaceId!, req.params.id!, query));
   }),
 );

@@ -1,5 +1,8 @@
+import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
+import { AGENT_ACTOR_NAME } from "../agent/constants.js";
+import { multi, pageParams, runPage, SqlBuilder, type ListSort } from "../lists/listQuery.js";
 
 export type ActorSource = "manual" | "automation" | "system";
 
@@ -110,4 +113,65 @@ export async function listTimelineForLead(db: Queryable, workspaceId: string, le
     [leadId, workspaceId],
   );
   return result.rows.map(timelineToDto);
+}
+
+// --- Paginated timelines (C3): the list standard, newest first ---------------------
+
+/** Activity filter groups, the same chips as the record pages' Activity tab. */
+export const ACTIVITY_TYPES = ["notes", "calls", "meetings", "tasks", "messages", "ai", "deals", "system"] as const;
+
+// One group per row, first match wins: deal rows, then AI agent rows, then by kind. `agent` binds AGENT_ACTOR_NAME.
+const activityTypeSql = (agent: string) => `case
+  when t.related_deal_id is not null then 'deals'
+  when t.actor_name = ${agent} then 'ai'
+  when t.event_kind = 'note' then 'notes'
+  when t.event_kind = 'call' then 'calls'
+  when t.event_kind in ('meeting', 'proposal') then 'meetings'
+  when t.event_kind = 'task' then 'tasks'
+  when t.event_kind in ('email', 'whatsapp') then 'messages'
+  else 'system' end`;
+
+// Always newest first (no sort param); index (lead_id, occurred_at, id), migration 035.
+const TIMELINE_SORT: ListSort = { key: "at", dir: "desc", field: { columns: ["t.occurred_at"], type: "timestamptz" }, idColumn: "t.id" };
+
+/** GET /contacts/:id/timeline and /companies/:id/timeline. */
+export const timelineListSchema = z.object({ kind: multi(z.enum(ACTIVITY_TYPES)).optional(), ...pageParams }).strict();
+type TimelineQuery = z.infer<typeof timelineListSchema>;
+
+function timelinePage<R extends TimelineRow>(db: Queryable, b: SqlBuilder, query: TimelineQuery, extraSelect = "") {
+  if (query.kind) b.and(`${activityTypeSql(b.p(AGENT_ACTOR_NAME))} = any(${b.p(query.kind)}::text[])`);
+  return runPage<R>(db, b, TIMELINE_SORT, query, ({ where, orderBy, limit, cursorSelect }) =>
+    `select t.*${extraSelect}, ${cursorSelect}
+       from public.timeline_events t
+       join public.leads l on l.id = t.lead_id
+      ${where}
+      order by ${orderBy}
+      limit ${limit}`,
+  );
+}
+
+/** One contact's events (404 handled by the caller's lookup). */
+export async function listContactTimeline(db: Queryable, workspaceId: string, leadId: string, query: TimelineQuery) {
+  const b = new SqlBuilder();
+  b.and(`l.workspace_id = ${b.p(workspaceId)}`).and(`t.lead_id = ${b.p(leadId)}`);
+  const page = await timelinePage(db, b, query);
+  return { data: page.data.map(timelineToDto), nextCursor: page.nextCursor };
+}
+
+/** Events of the company's non-merged contacts plus every event of its deals, each with whose event it is. */
+export async function listCompanyTimeline(db: Queryable, workspaceId: string, companyId: string, query: TimelineQuery) {
+  const b = new SqlBuilder();
+  const ws = b.p(workspaceId);
+  const company = b.p(companyId);
+  b.and(`l.workspace_id = ${ws}`).and(
+    `((l.company_id = ${company} and l.lifecycle_state <> 'merged')
+      or t.related_deal_id in (select d.id from public.deals d where d.workspace_id = ${ws} and d.company_id = ${company}))`,
+  );
+  const page = await timelinePage<TimelineRow & { contact: { id: string; name: string } }>(
+    db,
+    b,
+    query,
+    `, json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name)) as contact`,
+  );
+  return { data: page.data.map((row) => ({ ...timelineToDto(row), contact: row.contact })), nextCursor: page.nextCursor };
 }

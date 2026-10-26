@@ -59,7 +59,7 @@ export const COMPANY_COLUMNS = ["name", "domain", "industry", "city", "owner", "
 // Contacts exclude merged ones; open deal amounts are INR only (the only currency for now).
 const COUNTS = `
   cross join lateral (
-    select count(*)::int as contact_count from public.leads l
+    select count(*)::int as contact_count, max(l.last_activity_at) as last_activity_at from public.leads l
      where l.workspace_id = c.workspace_id and l.company_id = c.id and l.lifecycle_state <> 'merged') cc
   cross join lateral (
     select count(*)::int as open_deal_count, coalesce(sum(d.amount) filter (where d.currency = 'INR'), 0)::float8 as open_deal_amount
@@ -103,13 +103,14 @@ const DETAIL_SELECT = `
          c.city, c.state, c.country, c.linkedin_url as "linkedinUrl", c.employee_range as "employeeRange",
          c.description, ${OWNER_JSON} as owner, c.merged_into_company_id as "mergedIntoCompanyId",
          c.created_by_name as "createdBy", c.created_at as "createdAt", c.updated_at as "updatedAt",
-         cc.contact_count as "contactCount", dd.open_deal_count as "openDealCount", dd.open_deal_amount as "openDealAmount"
+         cc.contact_count as "contactCount", dd.open_deal_count as "openDealCount", dd.open_deal_amount as "openDealAmount",
+         cc.last_activity_at as "lastActivityAt"
     from public.companies c
     left join public.profiles o on o.id = c.owner_id
     ${COUNTS}
    where c.id = $1 and c.workspace_id = $2`;
 
-/** All fields + counts. A merged company is still returned (with mergedIntoCompanyId) so old links can follow it. */
+/** All fields + counts + the latest activity across its contacts. A merged company is still returned (with mergedIntoCompanyId) so old links can follow it. */
 export async function getCompany(db: Queryable, workspaceId: string, id: string) {
   const { rows } = await db.query(DETAIL_SELECT, [id, workspaceId]);
   if (!rows[0]) throw new NotFoundError("Company");
