@@ -51,7 +51,7 @@ const SELECT_ID = "__select";
  * is "Load more" plus infinite scroll (`onLoadMore` while `hasNextPage`).
  * Rows: click → `onRowClick`; ctrl/⌘/middle-click opens `getRowHref` in a new
  * tab (the first column renders a real link). Keyboard: ↑/↓ move, Enter opens,
- * Space toggles selection.
+ * Space toggles selection. `onRowIntent` fires on mouse/pen hover and focus (prefetch).
  */
 export function DataTable<T>({
   label,
@@ -60,6 +60,7 @@ export function DataTable<T>({
   getRowId,
   getRowHref,
   onRowClick,
+  onRowIntent,
   sort = null,
   onSortChange,
   visibleColumns,
@@ -83,6 +84,7 @@ export function DataTable<T>({
   getRowId: (row: T) => string;
   getRowHref?: (row: T) => string;
   onRowClick?: (row: T) => void;
+  onRowIntent?: (row: T) => void;
   sort?: SortState | null;
   onSortChange?: (sort: SortState) => void;
   visibleColumns?: string[];
@@ -392,7 +394,14 @@ export function DataTable<T>({
                   aria-rowindex={index + 1}
                   aria-selected={selectable ? row.getIsSelected() : undefined}
                   tabIndex={index === focusIndex ? 0 : -1}
-                  onFocus={() => setFocusIndex(index)}
+                  onFocus={() => {
+                    setFocusIndex(index);
+                    onRowIntent?.(row.original);
+                  }}
+                  onPointerEnter={(e) => {
+                    // Touch "hovers" fire while scrolling: no prefetch for them.
+                    if (e.pointerType !== "touch") onRowIntent?.(row.original);
+                  }}
                   onKeyDown={(e) => onRowKeyDown(e, index)}
                   onClick={(e) => {
                     const target = e.target as HTMLElement;

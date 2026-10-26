@@ -53,6 +53,7 @@ import {
   toSavedViewBody,
   type DealView,
 } from "./deals-search";
+import { usePrefetchRecord } from "@/features/crm/prefetch";
 
 const EMPTY_TEXT: Record<string, string> = {
   mine: "You own no open deals.",
@@ -64,6 +65,7 @@ const EMPTY_TEXT: Record<string, string> = {
 export function DealsPage() {
   const [state, set] = useListUrlState(dealsSearchSchema);
   const navigate = useNavigate();
+  const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const createDeal = useCreateDealDialog();
@@ -265,6 +267,7 @@ export function DealsPage() {
             columns={DEAL_COLUMNS}
             getRowId={(r) => r.id}
             getRowHref={(r) => `/deals/${r.id}`}
+            onRowIntent={(r) => prefetch("deal", r.id)}
             onRowClick={(r) => void navigate({ to: "/deals/$dealId", params: { dealId: r.id } })}
             sort={parseSort(state.sort)}
             onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}

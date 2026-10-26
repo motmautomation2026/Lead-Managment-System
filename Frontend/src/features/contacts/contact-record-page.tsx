@@ -83,6 +83,7 @@ import {
 } from "@/types";
 import { ContactAbout } from "./contact-about";
 import { ContactAssociations } from "./contact-associations";
+import { RecordLink } from "@/features/crm/record-link";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
 
@@ -211,13 +212,13 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
           {contact.jobTitle}
           {contact.jobTitle && (contact.company || contact.companyText) && " · "}
           {contact.company ? (
-            <Link
-              to="/companies/$companyId"
-              params={{ companyId: contact.company.id }}
+            <RecordLink
+              type="company"
+              id={contact.company.id}
               className="text-primary hover:underline"
             >
               {contact.company.name}
-            </Link>
+            </RecordLink>
           ) : (
             contact.companyText
           )}

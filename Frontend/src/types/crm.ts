@@ -282,6 +282,8 @@ export interface CreateDealInput {
   amount?: number | undefined;
   currency?: "INR" | undefined;
   expectedCloseDate?: string | undefined;
+  /** Omitted = the contact's owner; null = no owner. */
+  ownerId?: string | null | undefined;
 }
 
 /** PATCH /deals/:id (stage moves go through POST /deals/:id/stage). */

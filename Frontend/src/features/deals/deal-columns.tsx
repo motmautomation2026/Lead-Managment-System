@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import type { DataTableColumn } from "@/components/crm/data-table";
 import { Money } from "@/components/crm/money";
 import { RelativeTime } from "@/components/crm/relative-time";
@@ -6,6 +5,7 @@ import { UserAvatar } from "@/components/crm/user-avatar";
 import { fmtDate } from "@/lib/format";
 import type { DealListItem } from "@/types";
 import { DealStagePill } from "./deal-stage-pill";
+import { RecordLink } from "@/features/crm/record-link";
 
 const dash = <span className="text-muted-foreground">–</span>;
 
@@ -52,14 +52,14 @@ export const DEAL_COLUMNS: DataTableColumn<DealListItem>[] = [
     header: "Company",
     cell: (d) =>
       d.company ? (
-        <Link
-          to="/companies/$companyId"
-          params={{ companyId: d.company.id }}
+        <RecordLink
+          type="company"
+          id={d.company.id}
           className="truncate hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
           {d.company.name}
-        </Link>
+        </RecordLink>
       ) : (
         dash
       ),
@@ -68,14 +68,14 @@ export const DEAL_COLUMNS: DataTableColumn<DealListItem>[] = [
     id: "contact",
     header: "Contact",
     cell: (d) => (
-      <Link
-        to="/contacts/$contactId"
-        params={{ contactId: d.contact.id }}
+      <RecordLink
+        type="contact"
+        id={d.contact.id}
         className="truncate hover:underline"
         onClick={(e) => e.stopPropagation()}
       >
         {d.contact.name || "Unnamed contact"}
-      </Link>
+      </RecordLink>
     ),
   },
   {

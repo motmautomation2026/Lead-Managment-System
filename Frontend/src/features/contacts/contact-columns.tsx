@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import { StatusBadge } from "@/components/common/status-badge";
 import type { DataTableColumn } from "@/components/crm/data-table";
 import { UserAvatar } from "@/components/crm/user-avatar";
@@ -9,6 +8,7 @@ import { isOverdue } from "@/lib/format";
 import { label } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { ContactListItem } from "@/types";
+import { RecordLink } from "@/features/crm/record-link";
 
 const dash = <span className="text-muted-foreground">–</span>;
 
@@ -33,15 +33,15 @@ export const CONTACT_COLUMNS: DataTableColumn<ContactListItem>[] = [
     sortable: true,
     cell: (r) =>
       r.company ? (
-        <Link
-          to="/companies/$companyId"
-          params={{ companyId: r.company.id }}
+        <RecordLink
+          type="company"
+          id={r.company.id}
           // Not the row's own link: open the company, not the contact.
           onClick={(e) => e.stopPropagation()}
           className="truncate hover:underline"
         >
           {r.company.name}
-        </Link>
+        </RecordLink>
       ) : (
         dash
       ),

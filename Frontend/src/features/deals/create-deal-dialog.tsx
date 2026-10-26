@@ -24,7 +24,7 @@ import {
 import type { CreateDealOptions } from "@/app/add-lead-context";
 import { ContactPicker } from "@/features/contacts/contact-picker";
 import { defaultDealName } from "@/features/contacts/contact-helpers";
-import { messageFromError, useContact, useCreateDeal, useSession, useUpdateDeal } from "@/store";
+import { messageFromError, useContact, useCreateDeal, useSession } from "@/store";
 import { DEAL_STAGES } from "@/types";
 import { DEAL_STAGE_LABELS, OPEN_DEAL_STAGES } from "./deal-labels";
 
@@ -50,7 +50,7 @@ type DealForm = z.infer<typeof dealSchema>;
 /**
  * Create deal (POST /deals), app-wide. `contact` fixes the contact (contact page); `companyId`
  * limits the picker to that company's contacts (company page). An empty name = the backend's
- * default; owner defaults to the contact's owner (another owner is set with a PATCH right after).
+ * default; owner defaults to the contact's owner (another owner goes in the same POST).
  * On success it opens the new deal, or with `stay` shows a toast with a link instead.
  * The host remounts it (`key`) per opening, so every opening starts from its own options.
  */
@@ -65,7 +65,6 @@ export function CreateDealDialog({
 }) {
   const navigate = useNavigate();
   const create = useCreateDeal();
-  const update = useUpdateDeal();
   const { users } = useSession();
   const defaults: DealForm = {
     contact: options.contact ?? null,
@@ -92,18 +91,12 @@ export function CreateDealDialog({
         stage: v.stage,
         ...(v.amount ? { amount: Number(v.amount), currency: "INR" as const } : {}),
         ...(v.expectedCloseDate ? { expectedCloseDate: v.expectedCloseDate } : {}),
+        ...(v.ownerId !== CONTACT_OWNER ? { ownerId: v.ownerId } : {}),
       });
       dealId = deal.id;
     } catch (error) {
       form.setError("root", { message: messageFromError(error) });
       return;
-    }
-    if (v.ownerId !== CONTACT_OWNER) {
-      await update
-        .mutateAsync({ id: dealId, input: { ownerId: v.ownerId } })
-        .catch((error: unknown) =>
-          toast.error(`Deal created, but the owner wasn't changed: ${messageFromError(error)}`),
-        );
     }
     onOpenChange(false);
     const openDeal = () => void navigate({ to: "/deals/$dealId", params: { dealId } });

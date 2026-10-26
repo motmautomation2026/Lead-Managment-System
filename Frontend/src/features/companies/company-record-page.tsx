@@ -50,6 +50,8 @@ import { CompanyAbout } from "./company-about";
 import { NO_OWNER } from "./company-helpers";
 import { MergeCompanyDialog } from "./merge-company-dialog";
 import { REASON_LABEL } from "./duplicates-search";
+import { RecordLink } from "@/features/crm/record-link";
+import { usePrefetchRecord } from "@/features/crm/prefetch";
 
 const dash = <span className="text-muted-foreground">–</span>;
 const CONTACT_TAB_COLUMNS = [
@@ -134,9 +136,9 @@ function MergedNotice({ company, targetId }: { company: CompanyDetail; targetId:
       text="Its contacts and deals now belong to that company."
       action={
         <Button asChild>
-          <Link to="/companies/$companyId" params={{ companyId: targetId }}>
+          <RecordLink type="company" id={targetId}>
             Open {target.data ? name : "the company"}
-          </Link>
+          </RecordLink>
         </Button>
       }
     />
@@ -146,6 +148,7 @@ function MergedNotice({ company, targetId }: { company: CompanyDetail; targetId:
 function CompanyRecord({ company }: { company: CompanyDetail }) {
   const id = company.id;
   const navigate = useNavigate();
+  const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const update = useUpdateCompany();
@@ -288,13 +291,13 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
                 key={d.id}
                 className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
               >
-                <Link
-                  to="/deals/$dealId"
-                  params={{ dealId: d.id }}
+                <RecordLink
+                  type="deal"
+                  id={d.id}
                   className="min-w-0 truncate type-body font-medium hover:underline"
                 >
                   {d.name}
-                </Link>
+                </RecordLink>
                 <span className="inline-flex items-center gap-2">
                   <StatusBadge value={d.stage} />
                   <Money amount={d.amount} currency={d.currency} compact />
@@ -325,6 +328,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
         visibleColumns={CONTACT_TAB_COLUMNS}
         getRowId={(r) => r.id}
         getRowHref={(r) => `/contacts/${r.id}`}
+        onRowIntent={(r) => prefetch("contact", r.id)}
         onRowClick={(r) =>
           void navigate({ to: "/contacts/$contactId", params: { contactId: r.id } })
         }
@@ -349,6 +353,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
       columns={DEAL_COLUMNS}
       getRowId={(d) => d.id}
       getRowHref={(d) => `/deals/${d.id}`}
+      onRowIntent={(d) => prefetch("deal", d.id)}
       onRowClick={(d) => void navigate({ to: "/deals/$dealId", params: { dealId: d.id } })}
       sort={dealSort}
       onSortChange={setDealSort}
@@ -373,13 +378,9 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
         items={topContactRows.map((c) => ({
           id: c.id,
           title: (
-            <Link
-              to="/contacts/$contactId"
-              params={{ contactId: c.id }}
-              className="hover:underline"
-            >
+            <RecordLink type="contact" id={c.id} className="hover:underline">
               {c.name || "Unnamed contact"}
-            </Link>
+            </RecordLink>
           ),
           subtitle: [c.jobTitle, c.email].filter(Boolean).join(" · ") || null,
           meta: <StatusBadge value={c.leadStatus} />,
@@ -402,9 +403,9 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
         items={openDealRows.map((d) => ({
           id: d.id,
           title: (
-            <Link to="/deals/$dealId" params={{ dealId: d.id }} className="hover:underline">
+            <RecordLink type="deal" id={d.id} className="hover:underline">
               {d.name}
-            </Link>
+            </RecordLink>
           ),
           subtitle: label(d.stage),
           meta: <Money amount={d.amount} currency={d.currency} compact />,

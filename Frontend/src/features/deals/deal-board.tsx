@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -52,6 +51,7 @@ import {
 import { CloseDealDialog } from "./close-deal-dialog";
 import { closeDate } from "./deal-columns";
 import { DEAL_STAGE_LABELS, isClosedStage } from "./deal-labels";
+import { RecordLink } from "@/features/crm/record-link";
 
 type BoardData = { data: DealBoardColumn[] };
 /** Cards a column loaded with "Load more", plus where to continue. Keyed to one board fetch. */
@@ -408,13 +408,13 @@ function DealCard({
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <Link
-          to="/deals/$dealId"
-          params={{ dealId: deal.id }}
+        <RecordLink
+          type="deal"
+          id={deal.id}
           className="min-w-0 type-body font-medium break-words hover:underline"
         >
           {deal.name}
-        </Link>
+        </RecordLink>
         {!draggable && <MoveToMenu deal={deal} onMoveTo={onMoveTo} />}
       </div>
       <p className="truncate type-small text-muted-foreground">

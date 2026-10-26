@@ -15,11 +15,8 @@ import { PageHeader } from "@/components/crm/page-header";
 import { ViewTabs } from "@/components/crm/view-tabs";
 import { FilterBar } from "@/components/crm/filter-bar";
 import type { FilterDef } from "@/components/crm/filter-model";
-import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
+import { DataTable } from "@/components/crm/data-table";
 import { EmptyState } from "@/components/crm/empty-state";
-import { UserAvatar } from "@/components/crm/user-avatar";
-import { Money } from "@/components/crm/money";
-import { RelativeTime } from "@/components/crm/relative-time";
 import { useCreateCompanyDialog } from "@/app/add-lead-context";
 import { ViewNameDialog } from "@/features/contacts/view-name-dialog";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -51,70 +48,8 @@ import {
   toSavedViewBody,
   type CompanyView,
 } from "./companies-search";
-
-const dash = <span className="text-muted-foreground">–</span>;
-
-const COMPANY_COLUMNS: DataTableColumn<CompanyListItem>[] = [
-  {
-    id: "name",
-    header: "Name",
-    sortable: true,
-    hideable: false,
-    size: 240,
-    cell: (r) => (
-      <span className="inline-flex min-w-0 items-center gap-2 font-medium">
-        <UserAvatar name={r.name} size="sm" className="rounded-md" />
-        <span className="truncate">{r.name}</span>
-      </span>
-    ),
-  },
-  { id: "domain", header: "Domain", size: 180, cell: (r) => r.domain || dash },
-  { id: "industry", header: "Industry", cell: (r) => r.industry || dash },
-  { id: "city", header: "City", size: 130, cell: (r) => r.city || dash },
-  {
-    id: "owner",
-    header: "Owner",
-    cell: (r) => (
-      <span className="inline-flex min-w-0 items-center gap-2">
-        <UserAvatar name={r.owner?.name} size="sm" />
-        <span className="truncate">{r.owner?.name ?? "No owner"}</span>
-      </span>
-    ),
-  },
-  {
-    id: "contactCount",
-    header: "Contacts",
-    sortable: true,
-    size: 110,
-    cell: (r) => <span className="num">{r.contactCount}</span>,
-  },
-  {
-    id: "openDealCount",
-    header: "Open deals",
-    size: 160,
-    cell: (r) =>
-      r.openDealCount ? (
-        <span className="inline-flex items-center gap-2">
-          <span className="num">{r.openDealCount}</span>
-          <Money amount={r.openDealAmount} compact className="text-muted-foreground" />
-        </span>
-      ) : (
-        dash
-      ),
-  },
-  {
-    id: "createdAt",
-    header: "Created",
-    sortable: true,
-    cell: (r) => <RelativeTime value={r.createdAt} />,
-  },
-  {
-    id: "updatedAt",
-    header: "Updated",
-    sortable: true,
-    cell: (r) => <RelativeTime value={r.updatedAt} />,
-  },
-];
+import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { COMPANY_COLUMNS } from "./company-columns";
 
 const EMPTY_TEXT: Record<string, string> = {
   mine: "No companies are assigned to you.",
@@ -124,6 +59,7 @@ const EMPTY_TEXT: Record<string, string> = {
 export function CompaniesPage() {
   const [state, set] = useListUrlState(companiesSearchSchema);
   const navigate = useNavigate();
+  const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const createCompany = useCreateCompanyDialog();
@@ -303,6 +239,7 @@ export function CompaniesPage() {
           columns={COMPANY_COLUMNS}
           getRowId={(r) => r.id}
           getRowHref={(r) => `/companies/${r.id}`}
+          onRowIntent={(r) => prefetch("company", r.id)}
           onRowClick={(r) =>
             void navigate({ to: "/companies/$companyId", params: { companyId: r.id } })
           }

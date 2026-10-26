@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +17,7 @@ import { messageFromError, useCompany, useLeadMutations } from "@/store";
 import type { ContactDetail, IdName } from "@/types";
 import { CompanyPicker } from "@/features/companies/company-picker";
 import { DealStagePill } from "@/features/deals/deal-stage-pill";
+import { RecordLink } from "@/features/crm/record-link";
 
 /** Right panel: the contact's company and deals. */
 export function ContactAssociations({ contact }: { contact: ContactDetail }) {
@@ -44,13 +44,9 @@ export function ContactAssociations({ contact }: { contact: ContactDetail }) {
                 {
                   id: contact.company.id,
                   title: (
-                    <Link
-                      to="/companies/$companyId"
-                      params={{ companyId: contact.company.id }}
-                      className="hover:underline"
-                    >
+                    <RecordLink type="company" id={contact.company.id} className="hover:underline">
                       {contact.company.name}
-                    </Link>
+                    </RecordLink>
                   ),
                   subtitle:
                     [contact.company.domain, c?.industry].filter(Boolean).join(" · ") || null,
@@ -77,9 +73,9 @@ export function ContactAssociations({ contact }: { contact: ContactDetail }) {
         items={contact.deals.map((d) => ({
           id: d.id,
           title: (
-            <Link to="/deals/$dealId" params={{ dealId: d.id }} className="hover:underline">
+            <RecordLink type="deal" id={d.id} className="hover:underline">
               {d.name}
-            </Link>
+            </RecordLink>
           ),
           subtitle: (
             <span className="inline-flex items-center gap-2">

@@ -41,6 +41,7 @@ import { DealAbout, DealOwnerSelect } from "./deal-about";
 import { closeDate } from "./deal-columns";
 import { DEAL_STAGE_LABELS, OPEN_DEAL_STAGES, isClosedStage } from "./deal-labels";
 import { DealStagePill } from "./deal-stage-pill";
+import { RecordLink } from "@/features/crm/record-link";
 
 /** HubSpot-style deal record, fetched by id; 404 → a way back to the list. */
 export function DealRecordPage({ dealId }: { dealId: string }) {
@@ -111,21 +112,13 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         <span>
           {deal.expectedCloseDate ? `Close ${closeDate(deal.expectedCloseDate)}` : "No close date"}
         </span>
-        <Link
-          to="/contacts/$contactId"
-          params={{ contactId: deal.contact.id }}
-          className="text-primary hover:underline"
-        >
+        <RecordLink type="contact" id={deal.contact.id} className="text-primary hover:underline">
           {deal.contact.name || "Unnamed contact"}
-        </Link>
+        </RecordLink>
         {deal.company && (
-          <Link
-            to="/companies/$companyId"
-            params={{ companyId: deal.company.id }}
-            className="text-primary hover:underline"
-          >
+          <RecordLink type="company" id={deal.company.id} className="text-primary hover:underline">
             {deal.company.name}
-          </Link>
+          </RecordLink>
         )}
       </p>
       <div className="flex items-center gap-1.5">
@@ -264,13 +257,9 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           {
             id: deal.contact.id,
             title: (
-              <Link
-                to="/contacts/$contactId"
-                params={{ contactId: deal.contact.id }}
-                className="hover:underline"
-              >
+              <RecordLink type="contact" id={deal.contact.id} className="hover:underline">
                 {deal.contact.name || "Unnamed contact"}
-              </Link>
+              </RecordLink>
             ),
             subtitle: [deal.contact.email, deal.contact.phone].filter(Boolean).join(" · ") || null,
             meta: <StatusBadge value={deal.contact.lifecycle} />,
@@ -287,13 +276,9 @@ function DealRecord({ deal }: { deal: DealDetail }) {
                 {
                   id: deal.company.id,
                   title: (
-                    <Link
-                      to="/companies/$companyId"
-                      params={{ companyId: deal.company.id }}
-                      className="hover:underline"
-                    >
+                    <RecordLink type="company" id={deal.company.id} className="hover:underline">
                       {deal.company.name}
-                    </Link>
+                    </RecordLink>
                   ),
                 },
               ]
@@ -307,9 +292,9 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         items={others.map((d) => ({
           id: d.id,
           title: (
-            <Link to="/deals/$dealId" params={{ dealId: d.id }} className="hover:underline">
+            <RecordLink type="deal" id={d.id} className="hover:underline">
               {d.name}
-            </Link>
+            </RecordLink>
           ),
           subtitle: DEAL_STAGE_LABELS[d.stage],
           meta: <Money amount={d.amount} currency={d.currency} compact />,

@@ -12,7 +12,6 @@ import type { CreateDealOptions } from "@/app/add-lead-context";
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
-  update: vi.fn(),
   searchArgs: [] as unknown[],
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -21,7 +20,6 @@ vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useCreateDeal: () => ({ mutateAsync: mocks.create }),
-  useUpdateDeal: () => ({ mutateAsync: mocks.update }),
   useSession: () => ({
     users: [
       { id: "u-1", name: "Asha Owner", active: true },
@@ -116,7 +114,6 @@ describe("CreateDealDialog", () => {
         expectedCloseDate: "2026-12-31",
       }),
     );
-    expect(mocks.update).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
     // Opened from + Create: goes to the new deal.
     await waitFor(() => expect(router.state.location.pathname).toBe("/deals/d-9"));
@@ -129,9 +126,8 @@ describe("CreateDealDialog", () => {
     expect(mocks.searchArgs.at(-1)).toEqual({ input: "", companyId: "co-1" });
   });
 
-  it("from a contact: fixed contact, another owner is set after creating, stays with a toast", async () => {
+  it("from a contact: fixed contact, another owner goes in the one POST, stays with a toast", async () => {
     mocks.create.mockResolvedValue({ id: "d-7" });
-    mocks.update.mockResolvedValue({});
     const { router } = await renderDialog({ contact: { id: "c-1", name: "Asha Rao" }, stay: true });
     expect(screen.queryByRole("button", { name: "Contact" })).toBeNull();
     expect(screen.getByText("Asha Rao")).toBeTruthy();
@@ -141,11 +137,11 @@ describe("CreateDealDialog", () => {
     fireEvent.click(screen.getByRole("option", { name: "Asha Owner" }));
     fireEvent.click(screen.getByRole("button", { name: "Create deal" }));
     await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith({ id: "d-7", input: { ownerId: "u-1" } }),
+      expect(mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({ leadId: "c-1", name: "Fleet renewal", ownerId: "u-1" }),
+      ),
     );
-    expect(mocks.create).toHaveBeenCalledWith(
-      expect.objectContaining({ leadId: "c-1", name: "Fleet renewal" }),
-    );
+    expect(mocks.create).toHaveBeenCalledTimes(1);
     expect(mocks.toast.success).toHaveBeenCalledWith("Deal created", expect.anything());
     expect(router.state.location.pathname).toBe("/");
   });

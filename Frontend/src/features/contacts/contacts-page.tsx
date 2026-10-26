@@ -59,6 +59,7 @@ import {
 import { ViewNameDialog } from "./view-name-dialog";
 import { CONTACT_COLUMNS as COLUMNS } from "./contact-columns";
 import { CompanyPicker } from "@/features/companies/company-picker";
+import { usePrefetchRecord } from "@/features/crm/prefetch";
 
 const options = (values: readonly string[]) =>
   values.map((value) => ({ value, label: label(value) }));
@@ -72,6 +73,7 @@ const EMPTY_TEXT: Record<string, string> = {
 export function ContactsPage() {
   const [state, set] = useListUrlState(contactsSearchSchema);
   const navigate = useNavigate();
+  const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const createContact = useAddLead();
@@ -306,6 +308,7 @@ export function ContactsPage() {
           columns={COLUMNS}
           getRowId={(r) => r.id}
           getRowHref={(r) => `/contacts/${r.id}`}
+          onRowIntent={(r) => prefetch("contact", r.id)}
           onRowClick={(r) =>
             void navigate({ to: "/contacts/$contactId", params: { contactId: r.id } })
           }
