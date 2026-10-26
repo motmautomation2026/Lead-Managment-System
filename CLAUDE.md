@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `034`).
+  (currently `035`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `034`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `035`).
 
 ## Way of working
 
@@ -295,6 +295,20 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   Record page fetches by id; LogCall/ScheduleMeeting/SendProposal dialogs no longer read the leads list (**B11 fixed**).
   `CreateContactDialog` (react-hook-form + `leadFormSchema`, which delegates to `validateLeadForm`) is the app-wide
   "Create contact". Task origin `agent` → `TaskOriginBadge` "AI Agent". `/deals/$dealId` is a placeholder until C4.
+- **C3 (Companies list + record + duplicate review, paginated timelines, code splitting):** migration 035
+  (`timeline_events (lead_id, occurred_at, id)`). Backend: `GET /contacts/:id/timeline` and `GET /companies/:id/timeline`
+  (list standard, newest first on `occurred_at, id`, no sort, `kind[]` = Activity groups; company feed = non-merged
+  contacts' events + its deals' events, each with `contact {id,name}`; `timeline.service.ts`), `GET /companies/industries`,
+  `GET /company-duplicates/count` + `companyId` filter, duplicate companies gain `industry`/`openDealCount`, company
+  detail `lastActivityAt`. Old `/leads/:id/timeline` unchanged. Frontend (`features/companies/`): `/companies` index
+  (views, Owner/Industry/Domain/Created filters, saved views `companies`), `CreateCompanyDialog` (409 → link to the
+  existing one; + Create → Company, palette), `/companies/$companyId` record (About inline edit, rename confirm, Overview/
+  Activity/Contacts/Deals tabs, merge dialog for admins, merged → "Merged into X"), `/companies/duplicates` (admins;
+  pair merge/dismiss, contact keep/move/create, optimistic removal), sidebar duplicate badge for admins. `CompanyPicker`
+  replaces the Contacts Company filter and the contact's Change company. Shared `features/crm/activity-feed.tsx`
+  (contact + company Activity tabs; `contact-activity.tsx` removed). `refreshCompany(client, ws)`; `refreshContact` also
+  refreshes company views. `AddLeadContext.open({ company? })`, `CreateCompanyContext`. Route code splitting
+  (`autoCodeSplitting`, `RoutePending`): entry 553 → 101 kB gzip, initial load 340 kB.
 
 ## CRM v2
 

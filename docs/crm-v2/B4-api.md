@@ -32,6 +32,7 @@ Writes stay on the existing `/leads/:id/...` routes.
 | `GET /contacts` | List standard. |
 | `GET /contacts/count` | `{ count }`. |
 | `GET /contacts/:id` | The existing Lead DTO, plus `company: {id, name, domain} \| null` and `deals: [{id, name, stage, amount, currency, closedAt}]` (newest updated first). The Lead DTO's text `company` is returned as **`companyText`** (the key `company` holds the object). 404 for another workspace. |
+| `GET /contacts/:id/timeline` | C3. The contact's timeline, **newest first**, list standard on `(occurred_at, id)` (index `(lead_id, occurred_at, id)`, migration 035): `limit` 1–100, `cursor`, no `sort` (400). Optional `kind[]` = Activity groups `notes, calls, meetings, tasks, messages, ai, deals, system` (first match wins: `related_deal_id` → deals; actor "AI Agent" → ai; then by `event_kind`: note, call, meeting/proposal, task, email/whatsapp; else system). Rows = the timeline DTO (`id, leadId, at, kind, title, detail, actor, source, related…Id, metadata`). 404 for another workspace. The old `GET /leads/:id/timeline` (everything, oldest first) is unchanged. |
 | `POST /contacts/bulk` | `{ ids: uuid[1..100], action: "assignOwner" \| "enrollAi", ownerId? }` → `{ data: [{ id, ok, error? }] }` in request order (duplicates removed). One failure never stops the others. `assignOwner` needs `ownerId` of an **active** user (else 400 for the whole request) and runs the normal lead update per contact (timeline "Lead Assigned"). `enrollAi` is **A** and calls the AI enroll service (`error` explains skips: already enrolled, not eligible, no email/phone, …). A contact in another workspace → `ok: false, error: "Contact not found."` |
 
 Filters: `ownerId[]`, `leadStatus[]` (pipeline stage), `lifecycle[]` (default `active` + `long_term_nurture`; `all` = every state except merged; `merged` only when named), `source[]`, `companyId`, `agentStatus[]` (`none|active|paused|handed_off|stopped`), `hasOpenDeal`, `createdFrom/To`, `lastActivityFrom/To`, `q` (full name "first last", first name, last name, company, email, phone).
@@ -45,11 +46,13 @@ Sorts: `createdAt` (**default desc**), `lastActivityAt`, `updatedAt`, `name` (la
 | Endpoint | Notes |
 |---|---|
 | `GET /companies` · `GET /companies/count` | List standard; merged companies excluded. |
-| `GET /companies/:id` | All fields + `contactCount, openDealCount, openDealAmount`. A merged company is still returned with `mergedIntoCompanyId` (follow it). |
+| `GET /companies/:id` | All fields + `contactCount, openDealCount, openDealAmount`, `lastActivityAt` (latest `last_activity_at` of its non-merged contacts, C3). A merged company is still returned with `mergedIntoCompanyId` (follow it). |
+| `GET /companies/industries` | C3. `{ data: string[] }`: up to 200 distinct industries of live companies, A–Z (the Industry filter's options). |
 | `POST /companies` | `{ name, domain?, website?, industry?, revenueRange?, city?, state?, country?, linkedinUrl?, employeeRange?, description?, ownerId? }` → 201 detail. Same normaliser and unique rules as automatic linking: a placeholder name ("Not provided", "NA", …) → 400; a domain is normalised (`https://www.Acme.in/x` → `acme.in`), invalid or free-mail → 400. Same normalized name or domain as a live company → **409 with `details.companyId`** of that company. Owner defaults to the caller; `null` = no owner; must be active. Opens `similar_name` suggestions like an automatic create. |
 | `PATCH /companies/:id` | Any field above (`""`/`null` clears). A **rename** re-normalizes and updates every linked contact's `leads.company` text in the same transaction; a name/domain that belongs to another live company → 409 with `details.companyId`. Merged company → 409. |
 | `GET /companies/:id/contacts` | The contacts list standard with `companyId` fixed (passing `companyId` is a 400). 404 for a merged / other-workspace company. |
 | `GET /companies/:id/deals` | The deals list standard with `companyId` fixed. |
+| `GET /companies/:id/timeline` | C3. Same contract as `GET /contacts/:id/timeline`. Rows = events of the company's **non-merged** contacts plus every event with `related_deal_id` of one of its deals (even when that deal's contact is elsewhere), each with `contact {id, name}`. 404 for a merged / other-workspace company. |
 | `POST /companies/:id/merge` **A** | `{ sourceId }` → `{ targetId, sourceId, movedContacts }`. `:id` is kept. See §5. |
 
 Filters: `ownerId[]`, `industry[]` (exact text), `hasDomain`, `createdFrom/To`, `q` (name, domain).
@@ -77,7 +80,8 @@ Sorts: `updatedAt` (**default desc**), `createdAt`, `amount`, `expectedCloseDate
 
 | Endpoint | Notes |
 |---|---|
-| `GET /company-duplicates` | List standard (sort `createdAt`, default desc). Filters: `status[]` (`open` default, `merged`, `dismissed`, `all`), `reason[]`, `kind` (`pair` \| `contact`). Row: `id, kind, reason, score, status, createdAt, resolvedAt, companyA {id,name,domain,merged,contactCount}, companyB {…}\|null, contact {id,name,email,company}\|null, observedName, observedDomain`. |
+| `GET /company-duplicates` | List standard (sort `createdAt`, default desc). Filters: `status[]` (`open` default, `merged`, `dismissed`, `all`), `reason[]`, `kind` (`pair` \| `contact`), `companyId` (C3: rows where it is company A or B). Row: `id, kind, reason, score, status, createdAt, resolvedAt, companyA {id,name,domain,industry,merged,contactCount,openDealCount}, companyB {…}\|null, contact {id,name,email,company}\|null, observedName, observedDomain`. |
+| `GET /company-duplicates/count` | C3. `{ count }` with the same filters (no `limit`/`cursor`/`sort`). Used for the review button, the per-kind tabs and the admin nav badge. |
 | `POST /company-duplicates/:id/merge` | Pair rows only (contact row → 400). `{ targetId? }` (default company A; must be A or B, else 400) → the merge result. Not open → 409. |
 | `POST /company-duplicates/:id/dismiss` | → 204. Not open → 409. |
 | `POST /company-duplicates/:id/relink` | Contact rows only. `{ companyId? }`: link the contact to that live company, or (omitted) to a **new** company named after `observedName` (same rules as `POST /companies`, a clash → 409 with `details.companyId`; created without a domain, which belongs to the company it was matched to). The contact's company text follows; timeline "Company changed". The row is resolved as `dismissed` (there is no separate "relinked" status). |
