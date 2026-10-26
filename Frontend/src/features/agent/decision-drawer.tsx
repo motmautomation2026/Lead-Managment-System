@@ -8,7 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
+import { RecordLink } from "@/features/crm/record-link";
+import { DealStagePill } from "@/features/deals/deal-stage-pill";
 import type {
+  AgentDecisionContext,
   AgentDecisionDetail,
   AgentDecisionReport,
   AgentRatingReason,
@@ -85,6 +88,7 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
         {d.regenerated && <StatusBadge value="" display="Regenerated" tone="warning" />}
         <span className="text-xs text-muted-foreground">{istDateTime(d.createdAt)}</span>
       </div>
+      <ContextUsed context={d.context} />
 
       <Section title="Message">
         <DecisionMessage decision={d} />
@@ -144,6 +148,35 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       />
       <ReportsSection key={d.id} decisionId={d.id} reports={d.reports} />
     </div>
+  );
+}
+
+/** The company and open deal the decision saw (D1). */
+export function ContextUsed({ context }: { context: AgentDecisionContext | null | undefined }) {
+  const company = context?.company;
+  const deal = context?.deal;
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Context used:</span>
+      {company ? (
+        <RecordLink type="company" id={company.id} className="hover:underline">
+          {company.name}
+        </RecordLink>
+      ) : (
+        <span>No company</span>
+      )}
+      <span aria-hidden="true">·</span>
+      {deal ? (
+        <>
+          <RecordLink type="deal" id={deal.id} className="hover:underline">
+            {deal.name}
+          </RecordLink>
+          {deal.stage && <DealStagePill stage={deal.stage} />}
+        </>
+      ) : (
+        <span>no open deal</span>
+      )}
+    </p>
   );
 }
 

@@ -37,7 +37,13 @@ import {
   statusReasonLabel,
   wakeReasonLabel,
 } from "./agent-labels";
-import { ChecksSummary, DecisionDrawer, DecisionMessage, Section } from "./decision-drawer";
+import {
+  ChecksSummary,
+  ContextUsed,
+  DecisionDrawer,
+  DecisionMessage,
+  Section,
+} from "./decision-drawer";
 
 type ConfirmAction = "pause" | "resume" | "stop";
 const CONFIRM_TEXT: Record<ConfirmAction, { title: string; body: string }> = {
@@ -151,6 +157,7 @@ function PanelDecision({
       </button>
       {expanded && (
         <div className="mt-3 space-y-3 pl-6">
+          <ContextUsed context={d.context} />
           <DecisionMessage decision={d} />
           {d.error && <p className="text-destructive">{d.error}</p>}
           <Section title="Why">

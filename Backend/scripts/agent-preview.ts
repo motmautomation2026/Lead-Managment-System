@@ -41,6 +41,7 @@ async function main(id: string) {
   const { draftDecision } = await import("../src/services/agentRunner.service.js");
   const { composeOutgoing } = await import("../src/agent/composeMessage.js");
   const { parsePrices } = await import("../src/agent/pricing.js");
+  const { countTokens } = await import("../src/knowledge/chunkText.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
   try {
@@ -61,6 +62,13 @@ async function main(id: string) {
     console.log(`Trimmed: ${ctx.meta.trimmedTimelineEvents} timeline event(s), ${ctx.meta.trimmedDecisionSummaries} decision summary(ies)`);
     console.log(`KB query:\n  ${ctx.knowledge.query.replace(/\n/g, "\n  ")}`);
     console.log(`KB chunks: ${ctx.knowledge.chunks.map((c, i) => `[K${i + 1}] ${c.title}`).join(", ") || "none"}`);
+    console.log(`Prompt tokens (cl100k, all messages): ${countTokens(messages.map((m) => m.content).join("\n"))}`);
+
+    const userText = messages.find((m) => m.role === "user")!.content;
+    section("Company (lead data: an approved grounding source)");
+    console.log(ctx.company ? userText.slice(userText.lastIndexOf("Company record:"), userText.indexOf("</lead_data>")).trim() : "No company: the prompt is the same as before D1.");
+    section("Internal context (decide only, never stated, not a grounding source)");
+    console.log(/<internal_context>\n([\s\S]*?)\n<\/internal_context>/.exec(userText)?.[1] ?? "None (no company description, no deals).");
 
     for (const message of messages) {
       section(`Prompt: ${message.role}`);

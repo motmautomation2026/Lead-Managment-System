@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 const mocks = vi.hoisted(() => ({
   isAdmin: false,
@@ -22,7 +23,44 @@ vi.mock("@/store", () => {
   };
 });
 
-import { RatingControls, ReportsSection } from "./decision-drawer";
+vi.mock("@/features/crm/record-link", () => ({
+  RecordLink: ({ type, id, children }: { type: string; id: string; children: ReactNode }) => (
+    <a href={`/${type}/${id}`}>{children}</a>
+  ),
+}));
+
+import { ContextUsed, RatingControls, ReportsSection } from "./decision-drawer";
+
+describe("ContextUsed", () => {
+  it("links the company and the deal, with the deal's stage at the time", () => {
+    render(
+      <ContextUsed
+        context={{
+          company: { id: "co-1", name: "Acme Steel" },
+          deal: { id: "d-1", name: "Acme – pilot", stage: "proposal_sent" },
+        }}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Acme Steel" }).getAttribute("href")).toBe(
+      "/company/co-1",
+    );
+    expect(screen.getByRole("link", { name: "Acme – pilot" }).getAttribute("href")).toBe(
+      "/deal/d-1",
+    );
+    expect(screen.getByText("Proposal sent")).toBeTruthy();
+    expect(screen.queryByText("No company")).toBeNull();
+  });
+
+  it("says so when the decision saw no company and no open deal (or predates D1)", () => {
+    const { unmount } = render(<ContextUsed context={{ company: null, deal: null }} />);
+    expect(screen.getByText("No company")).toBeTruthy();
+    expect(screen.getByText("no open deal")).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
+    unmount();
+    render(<ContextUsed context={undefined} />);
+    expect(screen.getByText("No company")).toBeTruthy();
+  });
+});
 
 const decision = {
   id: "d-1",

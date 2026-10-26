@@ -20,6 +20,7 @@ import type {
   CreateDealInput,
   DealBoardColumn,
   DealDetail,
+  DealStage,
   MoveDealStageInput,
   UpdateDealInput,
   SavedView,
@@ -540,6 +541,11 @@ export interface AgentDecisionReport {
 export type AgentComposedMessage =
   | { channel: "email"; subject: string; text: string; html: string }
   | { channel: "whatsapp"; text: string };
+/** The company and open deal the decision saw (D1); null on decisions from before D1 or without one. */
+export interface AgentDecisionContext {
+  company: { id: string; name: string } | null;
+  deal: { id: string; name: string; stage: DealStage | null } | null;
+}
 export interface AgentDecisionDetail {
   id: string;
   createdAt: string;
@@ -581,6 +587,7 @@ export interface AgentDecisionDetail {
   ratedAt: string | null;
   leadId: string;
   lead: { id: string; name: string; company: string; ownerId: string | null };
+  context: AgentDecisionContext;
   /** The message exactly as it would go out; null for non-send actions. */
   composed: AgentComposedMessage | null;
   chunks: { id: string; deleted: boolean; title: string; text: string }[];
@@ -639,6 +646,7 @@ export interface LeadAgentPanel {
     | "rating"
     | "ratingReason"
     | "ratingNote"
+    | "context"
   > & {
     rules: AgentDecisionDetail["rulesResult"];
     grounding: AgentDecisionDetail["groundingResult"];
