@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { MoreHorizontal, Search, Sparkles, Upload, UserPlus, Users } from "lucide-react";
+import { Search, Sparkles, Upload, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -10,9 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { PageHeader } from "@/components/crm/page-header";
-import { ViewTabs } from "@/components/crm/view-tabs";
 import { FilterBar } from "@/components/crm/filter-bar";
 import type { FilterDef } from "@/components/crm/filter-model";
 import { DataTable } from "@/components/crm/data-table";
@@ -29,12 +27,8 @@ import {
   useCompany,
   useContacts,
   useContactsCount,
-  useCreateSavedView,
-  useDeleteSavedView,
   useIsAdmin,
-  useSavedViews,
   useSession,
-  useUpdateSavedView,
 } from "@/store";
 import {
   LEAD_SOURCES,
@@ -44,22 +38,21 @@ import {
   type ContactListItem,
 } from "@/types";
 import {
-  BUILT_IN_VIEWS,
   DEFAULT_COLUMNS,
   NO_FILTERS,
   contactsSearchSchema,
   fromFilterValues,
   parseSort,
-  savedViewState,
   toApiParams,
   toFilterValues,
-  toSavedViewBody,
-  type ContactView,
+  CONTACT_VIEW_SPEC,
 } from "./contacts-search";
-import { ViewNameDialog } from "./view-name-dialog";
 import { CONTACT_COLUMNS as COLUMNS } from "./contact-columns";
 import { CompanyPicker } from "@/features/companies/company-picker";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
+import { toSavedViewBody } from "@/features/crm/saved-views";
+import { useListViews } from "@/features/crm/use-list-views";
 
 const options = (values: readonly string[]) =>
   values.map((value) => ({ value, label: label(value) }));
@@ -78,9 +71,6 @@ export function ContactsPage() {
   const { users } = useSession();
   const createContact = useAddLead();
   const [importOpen, setImportOpen] = useState(false);
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const params = useMemo(() => toApiParams(state), [state]);
   const list = useContacts(params);
@@ -88,10 +78,6 @@ export function ContactsPage() {
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const bulk = useBulkContacts();
   const filterCompany = useCompany(state.companyId);
-  const savedViews = useSavedViews("contacts");
-  const createView = useCreateSavedView();
-  const updateView = useUpdateSavedView();
-  const deleteView = useDeleteSavedView();
 
   // Selection belongs to one list (filters + sort); it clears when they change.
   const listKey = JSON.stringify(params);
@@ -110,27 +96,12 @@ export function ContactsPage() {
     void set({ q: debouncedQ || undefined }, { replace: true });
   }, [debouncedQ, set]);
 
-  const views: ContactView[] = [
-    ...BUILT_IN_VIEWS,
-    ...(savedViews.data?.data ?? []).map((v) => ({
-      id: v.id,
-      label: v.isShared ? `${v.name} · Shared` : v.name,
-      state: () => savedViewState(v),
-      saved: v,
-    })),
-  ];
-  const activeId = state.view ?? "all";
-  const activeSaved = views.find((v) => v.id === activeId)?.saved;
-  const canManageView = Boolean(
-    activeSaved && (activeSaved.isMine || (isAdmin && activeSaved.isShared)),
-  );
-  const applyView = (id: string) => {
-    const view = views.find((v) => v.id === id) ?? BUILT_IN_VIEWS[0]!;
-    const next = view.state();
+  const viewsCtl = useListViews(CONTACT_VIEW_SPEC, state, set, (next) => {
     setQInput(next.q ?? "");
     lastQ.current = next.q ?? "";
-    void set({ ...NO_FILTERS, ...next, view: id === "all" ? undefined : id });
-  };
+  });
+  const activeId = viewsCtl.activeId;
+  const applyView = viewsCtl.apply;
 
   const quickFilters: FilterDef[] = [
     {
@@ -200,7 +171,7 @@ export function ContactsPage() {
     }
   };
 
-  const hasFilters = Object.keys(toSavedViewBody(state).filters).length > 0;
+  const hasFilters = Object.keys(toSavedViewBody(state, toApiParams).filters).length > 0;
   const emptyState = !hasFilters ? (
     <EmptyState
       icon={Users}
@@ -239,40 +210,7 @@ export function ContactsPage() {
           </Button>
         }
         primaryAction={<Button onClick={() => createContact.open()}>Create contact</Button>}
-        tabs={
-          <div className="flex items-end gap-1">
-            <div className="min-w-0 flex-1">
-              <ViewTabs
-                views={views}
-                activeId={activeId}
-                onChange={applyView}
-                onSaveView={() => setSaveOpen(true)}
-              />
-            </div>
-            {canManageView && (
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="mb-1 size-8 shrink-0"
-                    aria-label="View options"
-                  >
-                    <MoreHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-                    Rename view…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setDeleteOpen(true)}>
-                    Delete view
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        }
+        tabs={<SavedViewTabs controller={viewsCtl} />}
       />
       <div className="space-y-3 px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
@@ -362,66 +300,6 @@ export function ContactsPage() {
       </div>
 
       <ImportLeadsDialog open={importOpen} onOpenChange={setImportOpen} />
-      <ViewNameDialog
-        open={saveOpen}
-        onOpenChange={setSaveOpen}
-        title="Save view"
-        showShare
-        saving={createView.isPending}
-        onSave={(value) =>
-          void createView
-            .mutateAsync({ object: "contacts", ...value, ...toSavedViewBody(state) })
-            .then((view) => {
-              toast.success("View saved");
-              setSaveOpen(false);
-              void set({ view: view.id });
-            })
-            .catch((error: unknown) => toast.error(messageFromError(error)))
-        }
-      />
-      {activeSaved && (
-        <>
-          <ViewNameDialog
-            open={renameOpen}
-            onOpenChange={setRenameOpen}
-            title="Rename view"
-            initialName={activeSaved.name}
-            initialShared={activeSaved.isShared}
-            showShare={activeSaved.isMine}
-            saving={updateView.isPending}
-            onSave={(value) =>
-              void updateView
-                .mutateAsync({ id: activeSaved.id, input: value })
-                .then(() => {
-                  toast.success("View renamed");
-                  setRenameOpen(false);
-                })
-                .catch((error: unknown) => toast.error(messageFromError(error)))
-            }
-          />
-          <ConfirmDialog
-            open={deleteOpen}
-            onOpenChange={setDeleteOpen}
-            title={`Delete the view "${activeSaved.name}"?`}
-            description={
-              activeSaved.isShared
-                ? "It is shared, so it disappears for everyone in this workspace. Contacts are not affected."
-                : "Contacts are not affected."
-            }
-            disabled={deleteView.isPending}
-            onConfirm={() =>
-              void deleteView
-                .mutateAsync(activeSaved.id)
-                .then(() => {
-                  toast.success("View deleted");
-                  setDeleteOpen(false);
-                  applyView("all");
-                })
-                .catch((error: unknown) => toast.error(messageFromError(error)))
-            }
-          />
-        </>
-      )}
     </div>
   );
 }

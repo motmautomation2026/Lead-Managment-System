@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  fromFilterValues,
-  savedViewState,
-  toApiParams,
-  toFilterValues,
-  toSavedViewBody,
-} from "./contacts-search";
-import type { SavedView } from "@/types";
+import { fromFilterValues, toApiParams, toFilterValues } from "./contacts-search";
 
 describe("contacts list state", () => {
   it("date filters are whole IST days in the API and YYYY-MM-DD in the pickers", () => {
@@ -33,27 +26,6 @@ describe("contacts list state", () => {
     expect(toApiParams({ view: "mine", columns: ["name"], ownerId: ["me"] })).toEqual({
       ownerId: ["me"],
       sort: "createdAt:desc",
-    });
-  });
-
-  it("saved views round-trip: stored params → URL state → stored params", () => {
-    const view = {
-      filters: { ownerId: "me", leadStatus: ["new"], hasOpenDeal: "true" },
-      sort: "name:asc",
-      columns: null,
-    } as unknown as SavedView;
-    const state = savedViewState(view);
-    expect(state).toEqual({
-      ownerId: ["me"],
-      leadStatus: ["new"],
-      hasOpenDeal: "true",
-      sort: "name:asc",
-      columns: undefined,
-    });
-    expect(toSavedViewBody(state)).toEqual({
-      filters: { ownerId: ["me"], leadStatus: ["new"], hasOpenDeal: "true" },
-      sort: "name:asc",
-      columns: null,
     });
   });
 });

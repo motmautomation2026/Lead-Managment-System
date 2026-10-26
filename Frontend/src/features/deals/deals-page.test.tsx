@@ -267,6 +267,8 @@ describe("DealsPage", () => {
         filters: { ownerId: ["me"] },
         sort: "name:asc",
         columns: null,
+        // After the existing views (positions 0…).
+        position: 1,
       }),
     );
     await waitFor(() => expect(searchOf(router)["view"]).toBe("v-new"));

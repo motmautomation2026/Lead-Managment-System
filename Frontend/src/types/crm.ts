@@ -327,4 +327,5 @@ export interface SavedViewInput {
   sort?: string | null;
   columns?: string[] | null;
   isShared?: boolean;
+  position?: number;
 }

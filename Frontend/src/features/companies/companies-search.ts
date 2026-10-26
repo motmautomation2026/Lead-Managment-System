@@ -3,7 +3,8 @@ import type { FilterValues } from "@/components/crm/filter-model";
 import type { SortState } from "@/components/crm/data-table";
 import { dateInputValue } from "@/lib/dates";
 import { day, dayEnd, dayStart } from "@/features/contacts/contacts-search";
-import type { CompanyListParams, SavedView } from "@/types";
+import type { CompanyListParams } from "@/types";
+import type { BuiltInView, ListViewSpec } from "@/features/crm/saved-views";
 
 const list = z.array(z.string()).optional();
 
@@ -95,15 +96,7 @@ export function fromFilterValues(values: FilterValues): Partial<CompaniesSearch>
   };
 }
 
-export interface CompanyView {
-  id: string;
-  label: string;
-  /** URL patch applied after NO_FILTERS. */
-  state: () => Partial<CompaniesSearch>;
-  saved?: SavedView;
-}
-
-export const BUILT_IN_VIEWS: CompanyView[] = [
+export const BUILT_IN_VIEWS: BuiltInView<CompaniesSearch>[] = [
   { id: "all", label: "All companies", state: () => ({}) },
   { id: "mine", label: "My companies", state: () => ({ ownerId: ["me"] }) },
   {
@@ -113,28 +106,12 @@ export const BUILT_IN_VIEWS: CompanyView[] = [
   },
 ];
 
-/** A saved view's stored params → URL state (multi params may come back as one string). */
-export function savedViewState(view: SavedView): Partial<CompaniesSearch> {
-  const state: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(view.filters)) {
-    state[key] =
-      (MULTI_KEYS as readonly string[]).includes(key) && !Array.isArray(value) ? [value] : value;
-  }
-  return {
-    ...(state as Partial<CompaniesSearch>),
-    sort: view.sort ?? undefined,
-    columns: view.columns ?? undefined,
-  };
-}
-
-/** The current list as a saved view body (filters exactly as the API params). */
-export function toSavedViewBody(state: CompaniesSearch) {
-  const { sort: _sort, ...filters } = toApiParams(state);
-  return {
-    filters: Object.fromEntries(
-      Object.entries(filters).filter(([, v]) => v !== undefined),
-    ) as Record<string, string | string[]>,
-    sort: state.sort ?? null,
-    columns: state.columns ?? null,
-  };
-}
+/** Everything the shared saved-views code needs about this list (features/crm/saved-views.ts). */
+export const COMPANY_VIEW_SPEC: ListViewSpec<CompaniesSearch> = {
+  object: "companies",
+  builtIns: BUILT_IN_VIEWS,
+  noFilters: NO_FILTERS,
+  multiKeys: MULTI_KEYS,
+  toApiParams,
+  defaultColumns: DEFAULT_COLUMNS,
+};

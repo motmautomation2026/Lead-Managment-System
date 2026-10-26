@@ -250,6 +250,7 @@ describe("ContactsPage", () => {
         filters: { ownerId: ["me"] },
         sort: "name:asc",
         columns: null,
+        position: 0,
       }),
     );
     await waitFor(() => expect(searchOf(router)["view"]).toBe("v-new"));
@@ -293,19 +294,16 @@ describe("ContactsPage", () => {
     );
 
     openMenu("View options");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename view…" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Manage views…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Hot" }));
     fireEvent.change(screen.getByLabelText("View name"), { target: { value: "Hotter" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
     await waitFor(() =>
-      expect(mocks.updateView).toHaveBeenCalledWith({
-        id: "v-1",
-        input: { name: "Hotter", isShared: false },
-      }),
+      expect(mocks.updateView).toHaveBeenCalledWith({ id: "v-1", input: { name: "Hotter" } }),
     );
 
-    openMenu("View options");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete view" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Hot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete view" }));
     await waitFor(() => expect(mocks.deleteView).toHaveBeenCalledWith("v-1"));
     await waitFor(() => expect(searchOf(router)).toEqual({}));
   });
@@ -328,6 +326,11 @@ describe("ContactsPage", () => {
       },
     ];
     await renderPage({ view: "v-2" });
-    expect(screen.queryByRole("button", { name: "View options" })).toBeNull();
+    openMenu("View options");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Manage views…" }));
+    expect(await screen.findByText("Shared by a teammate")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rename Team" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete Team" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reorder Team" })).toBeNull();
   });
 });

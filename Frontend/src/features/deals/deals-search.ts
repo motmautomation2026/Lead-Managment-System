@@ -3,7 +3,8 @@ import type { FilterValues, NumberRange } from "@/components/crm/filter-model";
 import type { SortState } from "@/components/crm/data-table";
 import { dateInputValue } from "@/lib/dates";
 import { day, dayEnd, dayStart } from "@/features/contacts/contacts-search";
-import { DEAL_STAGES, type DealListParams, type SavedView } from "@/types";
+import { DEAL_STAGES, type DealListParams } from "@/types";
+import type { BuiltInView, ListViewSpec } from "@/features/crm/saved-views";
 
 const list = z.array(z.string()).optional();
 
@@ -149,15 +150,7 @@ export function currentIstMonth(): { from: string; to: string } {
   return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` };
 }
 
-export interface DealView {
-  id: string;
-  label: string;
-  /** URL patch applied after NO_FILTERS. */
-  state: () => Partial<DealsSearch>;
-  saved?: SavedView;
-}
-
-export const BUILT_IN_VIEWS: DealView[] = [
+export const BUILT_IN_VIEWS: BuiltInView<DealsSearch>[] = [
   { id: "all", label: "All open deals", state: () => ({}) },
   { id: "mine", label: "My deals", state: () => ({ ownerId: ["me"] }) },
   {
@@ -172,28 +165,12 @@ export const BUILT_IN_VIEWS: DealView[] = [
   { id: "lost", label: "Lost", state: () => ({ status: "lost" }) },
 ];
 
-/** A saved view's stored params → URL state (multi params may come back as one string). */
-export function savedViewState(view: SavedView): Partial<DealsSearch> {
-  const state: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(view.filters)) {
-    state[key] =
-      (MULTI_KEYS as readonly string[]).includes(key) && !Array.isArray(value) ? [value] : value;
-  }
-  return {
-    ...(state as Partial<DealsSearch>),
-    sort: view.sort ?? undefined,
-    columns: view.columns ?? undefined,
-  };
-}
-
-/** The current list as a saved view body (filters exactly as the API params). */
-export function toSavedViewBody(state: DealsSearch) {
-  const { sort: _sort, ...filters } = toApiParams(state);
-  return {
-    filters: Object.fromEntries(
-      Object.entries(filters).filter(([, v]) => v !== undefined),
-    ) as Record<string, string | string[]>,
-    sort: state.sort ?? null,
-    columns: state.columns ?? null,
-  };
-}
+/** Everything the shared saved-views code needs about this list (features/crm/saved-views.ts). */
+export const DEAL_VIEW_SPEC: ListViewSpec<DealsSearch> = {
+  object: "deals",
+  builtIns: BUILT_IN_VIEWS,
+  noFilters: NO_FILTERS,
+  multiKeys: MULTI_KEYS,
+  toApiParams,
+  defaultColumns: DEFAULT_COLUMNS,
+};

@@ -1,54 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
-import { Building2, CopyCheck, MoreHorizontal, Search } from "lucide-react";
+import { Building2, CopyCheck, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { PageHeader } from "@/components/crm/page-header";
-import { ViewTabs } from "@/components/crm/view-tabs";
 import { FilterBar } from "@/components/crm/filter-bar";
 import type { FilterDef } from "@/components/crm/filter-model";
 import { DataTable } from "@/components/crm/data-table";
 import { EmptyState } from "@/components/crm/empty-state";
 import { useCreateCompanyDialog } from "@/app/add-lead-context";
-import { ViewNameDialog } from "@/features/contacts/view-name-dialog";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
 import {
-  messageFromError,
   useCompanies,
   useCompaniesCount,
   useCompanyDuplicatesCount,
   useCompanyIndustries,
-  useCreateSavedView,
-  useDeleteSavedView,
   useIsAdmin,
-  useSavedViews,
   useSession,
-  useUpdateSavedView,
 } from "@/store";
 import type { CompanyListItem } from "@/types";
 import {
-  BUILT_IN_VIEWS,
   DEFAULT_COLUMNS,
   NO_FILTERS,
   companiesSearchSchema,
   fromFilterValues,
   parseSort,
-  savedViewState,
   toApiParams,
   toFilterValues,
-  toSavedViewBody,
-  type CompanyView,
+  COMPANY_VIEW_SPEC,
 } from "./companies-search";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
+import { toSavedViewBody } from "@/features/crm/saved-views";
+import { useListViews } from "@/features/crm/use-list-views";
 import { COMPANY_COLUMNS } from "./company-columns";
 
 const EMPTY_TEXT: Record<string, string> = {
@@ -63,9 +48,6 @@ export function CompaniesPage() {
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const createCompany = useCreateCompanyDialog();
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const params = useMemo(() => toApiParams(state), [state]);
   const list = useCompanies(params);
@@ -73,10 +55,6 @@ export function CompaniesPage() {
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const industries = useCompanyIndustries();
   const duplicates = useCompanyDuplicatesCount({}, isAdmin);
-  const savedViews = useSavedViews("companies");
-  const createView = useCreateSavedView();
-  const updateView = useUpdateSavedView();
-  const deleteView = useDeleteSavedView();
 
   // The search box writes `q` once typing settles (only when the text changed, so
   // Back/Forward still restore older URLs).
@@ -89,27 +67,12 @@ export function CompaniesPage() {
     void set({ q: debouncedQ || undefined }, { replace: true });
   }, [debouncedQ, set]);
 
-  const views: CompanyView[] = [
-    ...BUILT_IN_VIEWS,
-    ...(savedViews.data?.data ?? []).map((v) => ({
-      id: v.id,
-      label: v.isShared ? `${v.name} · Shared` : v.name,
-      state: () => savedViewState(v),
-      saved: v,
-    })),
-  ];
-  const activeId = state.view ?? "all";
-  const activeSaved = views.find((v) => v.id === activeId)?.saved;
-  const canManageView = Boolean(
-    activeSaved && (activeSaved.isMine || (isAdmin && activeSaved.isShared)),
-  );
-  const applyView = (id: string) => {
-    const view = views.find((v) => v.id === id) ?? BUILT_IN_VIEWS[0]!;
-    const next = view.state();
+  const viewsCtl = useListViews(COMPANY_VIEW_SPEC, state, set, (next) => {
     setQInput(next.q ?? "");
     lastQ.current = next.q ?? "";
-    void set({ ...NO_FILTERS, ...next, view: id === "all" ? undefined : id });
-  };
+  });
+  const activeId = viewsCtl.activeId;
+  const applyView = viewsCtl.apply;
 
   // Selected values stay listed even if no live company uses them any more.
   const industryOptions = [
@@ -142,7 +105,7 @@ export function CompaniesPage() {
     { id: "created", label: "Created", type: "dateRange" },
   ];
 
-  const hasFilters = Object.keys(toSavedViewBody(state).filters).length > 0;
+  const hasFilters = Object.keys(toSavedViewBody(state, toApiParams).filters).length > 0;
   const emptyState = !hasFilters ? (
     <EmptyState
       icon={Building2}
@@ -180,40 +143,7 @@ export function CompaniesPage() {
           )
         }
         primaryAction={<Button onClick={createCompany.open}>Create company</Button>}
-        tabs={
-          <div className="flex items-end gap-1">
-            <div className="min-w-0 flex-1">
-              <ViewTabs
-                views={views}
-                activeId={activeId}
-                onChange={applyView}
-                onSaveView={() => setSaveOpen(true)}
-              />
-            </div>
-            {canManageView && (
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="mb-1 size-8 shrink-0"
-                    aria-label="View options"
-                  >
-                    <MoreHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-                    Rename view…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setDeleteOpen(true)}>
-                    Delete view
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        }
+        tabs={<SavedViewTabs controller={viewsCtl} />}
       />
       <div className="space-y-3 px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
@@ -256,67 +186,6 @@ export function CompaniesPage() {
           emptyState={emptyState}
         />
       </div>
-
-      <ViewNameDialog
-        open={saveOpen}
-        onOpenChange={setSaveOpen}
-        title="Save view"
-        showShare
-        saving={createView.isPending}
-        onSave={(value) =>
-          void createView
-            .mutateAsync({ object: "companies", ...value, ...toSavedViewBody(state) })
-            .then((view) => {
-              toast.success("View saved");
-              setSaveOpen(false);
-              void set({ view: view.id });
-            })
-            .catch((error: unknown) => toast.error(messageFromError(error)))
-        }
-      />
-      {activeSaved && (
-        <>
-          <ViewNameDialog
-            open={renameOpen}
-            onOpenChange={setRenameOpen}
-            title="Rename view"
-            initialName={activeSaved.name}
-            initialShared={activeSaved.isShared}
-            showShare={activeSaved.isMine}
-            saving={updateView.isPending}
-            onSave={(value) =>
-              void updateView
-                .mutateAsync({ id: activeSaved.id, input: value })
-                .then(() => {
-                  toast.success("View renamed");
-                  setRenameOpen(false);
-                })
-                .catch((error: unknown) => toast.error(messageFromError(error)))
-            }
-          />
-          <ConfirmDialog
-            open={deleteOpen}
-            onOpenChange={setDeleteOpen}
-            title={`Delete the view "${activeSaved.name}"?`}
-            description={
-              activeSaved.isShared
-                ? "It is shared, so it disappears for everyone in this workspace. Companies are not affected."
-                : "Companies are not affected."
-            }
-            disabled={deleteView.isPending}
-            onConfirm={() =>
-              void deleteView
-                .mutateAsync(activeSaved.id)
-                .then(() => {
-                  toast.success("View deleted");
-                  setDeleteOpen(false);
-                  applyView("all");
-                })
-                .catch((error: unknown) => toast.error(messageFromError(error)))
-            }
-          />
-        </>
-      )}
     </div>
   );
 }

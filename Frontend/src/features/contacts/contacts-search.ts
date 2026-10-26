@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { FilterValues } from "@/components/crm/filter-model";
 import type { SortState } from "@/components/crm/data-table";
 import { dateInputValue } from "@/lib/dates";
-import type { ContactListParams, SavedView } from "@/types";
+import type { ContactListParams } from "@/types";
+import type { BuiltInView, ListViewSpec } from "@/features/crm/saved-views";
 
 const list = z.array(z.string()).optional();
 
@@ -128,15 +129,7 @@ export function fromFilterValues(values: FilterValues): Partial<ContactsSearch> 
   };
 }
 
-export interface ContactView {
-  id: string;
-  label: string;
-  /** URL patch applied after NO_FILTERS. */
-  state: () => Partial<ContactsSearch>;
-  saved?: SavedView;
-}
-
-export const BUILT_IN_VIEWS: ContactView[] = [
+export const BUILT_IN_VIEWS: BuiltInView<ContactsSearch>[] = [
   { id: "all", label: "All contacts", state: () => ({}) },
   { id: "mine", label: "My contacts", state: () => ({ ownerId: ["me"] }) },
   {
@@ -147,28 +140,12 @@ export const BUILT_IN_VIEWS: ContactView[] = [
   { id: "unassigned", label: "Unassigned", state: () => ({ ownerId: ["none"] }) },
 ];
 
-/** A saved view's stored params → URL state (multi params may come back as one string). */
-export function savedViewState(view: SavedView): Partial<ContactsSearch> {
-  const state: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(view.filters)) {
-    state[key] =
-      (MULTI_KEYS as readonly string[]).includes(key) && !Array.isArray(value) ? [value] : value;
-  }
-  return {
-    ...(state as Partial<ContactsSearch>),
-    sort: view.sort ?? undefined,
-    columns: view.columns ?? undefined,
-  };
-}
-
-/** The current list as a saved view body (filters exactly as the API params). */
-export function toSavedViewBody(state: ContactsSearch) {
-  const { sort: _sort, ...filters } = toApiParams(state);
-  return {
-    filters: Object.fromEntries(
-      Object.entries(filters).filter(([, v]) => v !== undefined),
-    ) as Record<string, string | string[]>,
-    sort: state.sort ?? null,
-    columns: state.columns ?? null,
-  };
-}
+/** Everything the shared saved-views code needs about this list (features/crm/saved-views.ts). */
+export const CONTACT_VIEW_SPEC: ListViewSpec<ContactsSearch> = {
+  object: "contacts",
+  builtIns: BUILT_IN_VIEWS,
+  noFilters: NO_FILTERS,
+  multiKeys: MULTI_KEYS,
+  toApiParams,
+  defaultColumns: DEFAULT_COLUMNS,
+};

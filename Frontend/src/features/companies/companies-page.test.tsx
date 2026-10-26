@@ -197,6 +197,7 @@ describe("CompaniesPage", () => {
         filters: { industry: ["Steel"] },
         sort: "name:desc",
         columns: null,
+        position: 0,
       }),
     );
     await waitFor(() => expect(searchOf(router)["view"]).toBe("v-new"));
@@ -229,7 +230,8 @@ describe("CompaniesPage", () => {
         columns: ["name", "industry"],
       }),
     );
-    expect(screen.queryByRole("button", { name: "View options" })).toBeNull();
+    // Someone else's view: no Save, only Save as new once edited.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 
   it("Create company opens the dialog; duplicates button only for admins", async () => {

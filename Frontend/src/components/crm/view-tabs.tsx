@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
 export interface ViewTab {
   id: string;
   label: string;
+  /** The list differs from what the view stores: shows a small "Edited" marker. */
+  edited?: boolean;
 }
 
 /**
@@ -53,6 +55,11 @@ export function ViewTabs({
           )}
         >
           {view.label}
+          {view.edited && (
+            <span className="ml-1.5 rounded bg-muted px-1 py-0.5 type-small font-normal text-muted-foreground">
+              Edited
+            </span>
+          )}
         </button>
       ))}
       {overflow.length > 0 && (
