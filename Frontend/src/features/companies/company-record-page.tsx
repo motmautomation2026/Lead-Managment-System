@@ -5,20 +5,11 @@ import { ChevronDown, Globe, Handshake, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -38,7 +29,6 @@ import { Money } from "@/components/crm/money";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { useAddLead } from "@/app/add-lead-context";
 import { CONTACT_COLUMNS } from "@/features/contacts/contact-columns";
-import { CreateDealDialog } from "@/features/contacts/contact-associations";
 import { ActivityFeed } from "@/features/crm/activity-feed";
 import { BackendError } from "@/lib/backend-client";
 import { fmtDate } from "@/lib/format";
@@ -49,13 +39,13 @@ import {
   useCompanyContacts,
   useCompanyDeals,
   useCompanyDuplicates,
-  useContact,
   useIsAdmin,
   useSession,
   useUpdateCompany,
 } from "@/store";
-import type { CompanyDetail, DealListItem, IdName } from "@/types";
-import { ContactPicker } from "@/features/contacts/contact-picker";
+import type { CompanyDetail, DealListItem } from "@/types";
+import { useCreateDealDialog } from "@/app/add-lead-context";
+import { DealStagePill } from "@/features/deals/deal-stage-pill";
 import { CompanyAbout } from "./company-about";
 import { NO_OWNER } from "./company-helpers";
 import { MergeCompanyDialog } from "./merge-company-dialog";
@@ -84,7 +74,7 @@ const DEAL_COLUMNS: DataTableColumn<DealListItem>[] = [
     size: 220,
     cell: (d) => <span className="truncate font-medium">{d.name}</span>,
   },
-  { id: "stage", header: "Stage", size: 150, cell: (d) => <StatusBadge value={d.stage} /> },
+  { id: "stage", header: "Stage", size: 170, cell: (d) => <DealStagePill stage={d.stage} /> },
   {
     id: "amount",
     header: "Amount",
@@ -161,7 +151,8 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
   const update = useUpdateCompany();
   const addContact = useAddLead();
   const [mergeOpen, setMergeOpen] = useState(false);
-  const [dealOpen, setDealOpen] = useState(false);
+  const createDeal = useCreateDealDialog();
+  const openCreateDeal = () => createDeal.open({ companyId: id, stay: true });
   const [contactSort, setContactSort] = useState(DEFAULT_CONTACT_SORT);
   const [dealSort, setDealSort] = useState(DEFAULT_DEAL_SORT);
 
@@ -232,7 +223,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
       >
         <UserPlus /> Add contact
       </Button>
-      <Button size="sm" variant="outline" onClick={() => setDealOpen(true)}>
+      <Button size="sm" variant="outline" onClick={openCreateDeal}>
         <Handshake /> Create deal
       </Button>
       {isAdmin && (
@@ -406,7 +397,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
       <AssociationCard
         title="Open deals"
         count={company.openDealCount}
-        onAdd={() => setDealOpen(true)}
+        onAdd={openCreateDeal}
         emptyText="No open deals."
         items={openDealRows.map((d) => ({
           id: d.id,
@@ -467,84 +458,9 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
         right={right}
         rightLabel="Related"
       />
-      <CompanyCreateDeal company={company} open={dealOpen} onOpenChange={setDealOpen} />
       {isAdmin && (
         <MergeCompanyDialog company={company} open={mergeOpen} onOpenChange={setMergeOpen} />
       )}
     </div>
-  );
-}
-
-/** "Create deal": pick one of the company's contacts, then the contact's Create deal dialog (C2). */
-function CompanyCreateDeal({
-  company,
-  open,
-  onOpenChange,
-}: {
-  company: CompanyDetail;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [chosen, setChosen] = useState<IdName | null>(null);
-  const [picked, setPicked] = useState(false);
-  const contact = useContact(picked ? (chosen?.id ?? "") : "");
-  const reset = () => {
-    setChosen(null);
-    setPicked(false);
-  };
-
-  if (picked && contact.data)
-    return (
-      <CreateDealDialog
-        contact={contact.data}
-        open={open}
-        onOpenChange={(value) => {
-          onOpenChange(value);
-          if (!value) reset();
-        }}
-      />
-    );
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        onOpenChange(value);
-        if (!value) reset();
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Create deal</DialogTitle>
-          <DialogDescription>
-            A deal belongs to one contact. Who is it with at {company.name}?
-          </DialogDescription>
-        </DialogHeader>
-        <div>
-          <Label htmlFor="deal-contact" className="mb-1.5 block text-xs">
-            Contact
-          </Label>
-          <ContactPicker
-            id="deal-contact"
-            value={chosen}
-            onChange={setChosen}
-            companyId={company.id}
-          />
-          {picked && contact.error && (
-            <p className="mt-1 text-xs text-destructive">{messageFromError(contact.error)}</p>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!chosen || (picked && contact.isLoading)}
-            onClick={() => setPicked(true)}
-          >
-            {picked && contact.isLoading ? "Loading…" : "Next"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

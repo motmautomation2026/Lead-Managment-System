@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   contact: null as unknown as ContactDetail,
   timeline: [] as TimelineEvent[],
   updateLead: vi.fn(),
-  createDeal: vi.fn(),
+  openDeal: vi.fn(),
   leadList: vi.fn(),
   timelineKinds: [] as unknown[],
   fetchNextPage: vi.fn(),
@@ -74,6 +74,10 @@ const event = (id: string, kind: string, title: string, extra: Partial<TimelineE
 
 const noop = vi.fn(async () => undefined);
 vi.mock("sonner", () => ({ toast: mocks.toast }));
+vi.mock("@/app/add-lead-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/add-lead-context")>()),
+  useCreateDealDialog: () => ({ open: mocks.openDeal }),
+}));
 vi.mock("@/features/agent/lead-ai-panel", () => ({ LeadAiPanel: () => <div>AI panel</div> }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
@@ -169,7 +173,6 @@ vi.mock("@/store", () => ({
   useCompany: () => ({
     data: { id: "co-1", name: "Tata Motors", industry: "Automotive", contactCount: 3 },
   }),
-  useCreateDeal: () => ({ mutateAsync: mocks.createDeal, isPending: false }),
 }));
 
 import { ContactRecordPage } from "./contact-record-page";
@@ -298,33 +301,18 @@ describe("ContactRecordPage", () => {
     expect(mocks.leadList.mock.calls.every(([enabled]) => enabled === false)).toBe(true);
   });
 
-  it("creates a deal with the default name", async () => {
-    mocks.createDeal.mockResolvedValue({ id: "d-2" });
+  it("Create deal opens the app-wide dialog for this contact; deal rows link to the deal", async () => {
     await renderPage();
     openTab("Associations");
-    fireEvent.click(screen.getByRole("button", { name: "Create deal Deals" }));
-    const dialog = await screen.findByRole("dialog", { name: "Create deal" });
-    expect(within(dialog).getByLabelText("Deal name")).toHaveValue("Tata Motors – Cold Calling");
-    fireEvent.change(within(dialog).getByLabelText("Amount (INR)"), { target: { value: "-5" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create deal" }));
-    expect(await within(dialog).findByText("Enter an amount of 0 or more.")).toBeTruthy();
-    fireEvent.change(within(dialog).getByLabelText("Amount (INR)"), {
-      target: { value: "250000" },
-    });
-    fireEvent.change(within(dialog).getByLabelText("Expected close date"), {
-      target: { value: "2026-12-31" },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create deal" }));
-    await waitFor(() =>
-      expect(mocks.createDeal).toHaveBeenCalledWith({
-        leadId: "c-1",
-        name: "Tata Motors – Cold Calling",
-        stage: "qualified",
-        amount: 250000,
-        currency: "INR",
-        expectedCloseDate: "2026-12-31",
-      }),
+    expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
+      "href",
+      "/deals/d-1",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Create deal Deals" }));
+    expect(mocks.openDeal).toHaveBeenCalledWith({
+      contact: { id: "c-1", name: "Asha Rao" },
+      stay: true,
+    });
   });
 
   it("activity: paginated feed, chips filter server-side, Load more", async () => {

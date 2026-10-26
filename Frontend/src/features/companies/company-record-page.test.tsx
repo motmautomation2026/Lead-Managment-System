@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   merge: vi.fn(),
   openAdd: vi.fn(),
+  openDeal: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
@@ -120,7 +121,10 @@ const page = <T,>(rows: T[]) => ({
 });
 
 vi.mock("sonner", () => ({ toast: mocks.toast }));
-vi.mock("@/app/add-lead-context", () => ({ useAddLead: () => ({ open: mocks.openAdd }) }));
+vi.mock("@/app/add-lead-context", () => ({
+  useAddLead: () => ({ open: mocks.openAdd }),
+  useCreateDealDialog: () => ({ open: mocks.openDeal }),
+}));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
@@ -248,6 +252,16 @@ describe("CompanyRecordPage", () => {
     await renderPage();
     fireEvent.click((await screen.findAllByRole("button", { name: /Add contact/ }))[0]!);
     expect(mocks.openAdd).toHaveBeenCalledWith({ company: "Tata Motors" });
+  });
+
+  it("Create deal opens the app-wide dialog limited to this company; deals link to the deal", async () => {
+    await renderPage();
+    fireEvent.click((await screen.findAllByRole("button", { name: /Create deal/ }))[0]!);
+    expect(mocks.openDeal).toHaveBeenCalledWith({ companyId: "co-1", stay: true });
+    expect(screen.getAllByRole("link", { name: "Tata – Fleet" })[0]).toHaveAttribute(
+      "href",
+      "/deals/d-1",
+    );
   });
 
   it("inline edit saves with PATCH and shows a 409 inline", async () => {
