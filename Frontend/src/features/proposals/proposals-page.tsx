@@ -23,6 +23,7 @@ import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ViewDocumentButton } from "@/features/work/proposal-document";
 import { RefLink } from "@/features/work/ref-link";
 import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
 import { label } from "@/lib/labels";
@@ -255,9 +256,12 @@ export function ProposalsPage() {
                     ...(sheet.notes ? [{ id: "notes", label: "Notes", value: sheet.notes }] : []),
                   ]}
                 />
-                <Button size="sm" variant="outline" onClick={() => setStatusFor(sheet)}>
-                  Change status
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setStatusFor(sheet)}>
+                    Change status
+                  </Button>
+                  <ViewDocumentButton proposal={sheet} />
+                </div>
               </div>
             </>
           )}

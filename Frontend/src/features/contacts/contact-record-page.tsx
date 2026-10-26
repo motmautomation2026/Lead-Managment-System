@@ -55,6 +55,7 @@ import { LostReasonDialog, NextActionDialog, ReasonDialog } from "@/features/lea
 import { OutcomeDialog } from "@/features/work/meeting-outcome-dialog";
 import { LogCallFlow } from "@/features/work/log-call-flow";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ViewDocumentButton } from "@/features/work/proposal-document";
 import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
 import { useCreateTaskDialog } from "@/app/add-lead-context";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
@@ -631,6 +632,7 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
               </div>
               <div className="flex items-center gap-2">
                 <StatusBadge value={p.status} />
+                <ViewDocumentButton proposal={p} />
                 <Button size="sm" variant="ghost" onClick={() => setStatusFor(p)}>
                   Change status
                 </Button>

@@ -46,7 +46,6 @@ const task = (id: string, title: string, extra: Partial<TaskListItem> = {}): Tas
   updatedAt: "2026-10-20T10:00:00.000Z",
   contact: { id: "l-1", name: "Ravi Kumar" },
   company: { id: "co-1", name: "Acme" },
-  deal: null,
   isOverdue: false,
   ...extra,
 });
@@ -254,6 +253,14 @@ describe("TasksPage", () => {
 
     fireEvent.click(within(screen.getByRole("columnheader", { name: /^Due/ })).getByRole("button"));
     await waitFor(() => expect(searchOf(router)["sort"]).toBe("dueAt:asc"));
+  });
+
+  it("has no Deal column (tasks have no deal link); a deal's View all is labelled as its contact's tasks", async () => {
+    await renderPage({ view: "everyone", dealId: "d-1", columns: ["title", "contact", "deal"] });
+    expect(lastList().dealId).toBe("d-1");
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent ?? "");
+    expect(headers.some((h) => h.includes("Deal"))).toBe(false);
+    expect(screen.getByText("Tasks of this deal's contact: Acme deal")).toBeTruthy();
   });
 
   it("shows overdue due dates in red, loads more, and has empty and error states", async () => {

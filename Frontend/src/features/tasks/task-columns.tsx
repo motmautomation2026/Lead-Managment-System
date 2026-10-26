@@ -49,7 +49,6 @@ export function taskColumns(onDone: (task: TaskListItem) => void): DataTableColu
     },
     { id: "contact", header: "Contact", cell: (t) => <RefLink type="contact" value={t.contact} /> },
     { id: "company", header: "Company", cell: (t) => <RefLink type="company" value={t.company} /> },
-    { id: "deal", header: "Deal", cell: (t) => <RefLink type="deal" value={t.deal} /> },
     {
       id: "owner",
       header: "Owner",

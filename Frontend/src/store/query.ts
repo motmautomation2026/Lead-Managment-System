@@ -118,6 +118,22 @@ export const keys = {
     ["work", workspaceId, "proposals", "summary", params] as const,
   savedViews: (workspaceId: string | null, object: string) =>
     ["savedViews", workspaceId, object] as const,
+  /** Runs + Scheduled steps lists (C6b) share the old `runs` / `scheduledActions` prefixes. */
+  runList: (workspaceId: string | null, params: object) =>
+    ["runs", workspaceId, "list", params] as const,
+  runCount: (workspaceId: string | null, params: object) =>
+    ["runs", workspaceId, "count", params] as const,
+  scheduledActionList: (workspaceId: string | null, params: object) =>
+    ["scheduledActions", workspaceId, "list", params] as const,
+  scheduledActionCount: (workspaceId: string | null, params: object) =>
+    ["scheduledActions", workspaceId, "count", params] as const,
+  home: (workspaceId: string | null) => ["home", workspaceId] as const,
+  // Settings / Admin / auth (A17: these used to be defined in the pages).
+  connection: (workspaceId: string | null, kind: "email" | "whatsapp" | "google-calendar") =>
+    ["connections", kind, workspaceId] as const,
+  assignmentRules: (workspaceId: string | null) => ["assignment-rules", workspaceId] as const,
+  adminUsers: ["admin", "users"] as const,
+  authRole: (userId: string | undefined) => ["auth", "role", userId] as const,
 };
 
 // Company queries that show contact data (counts, last activity, contact rows, the feed).
@@ -133,7 +149,7 @@ const COMPANY_VIEWS = [
 /**
  * After any write that touches a contact (lead): its record, every contacts list and
  * count, timeline, tasks, meetings, proposals (old lists and the C6a work lists), deals,
- * automation, AI panel, dashboard,
+ * automation (runs, scheduled steps), AI panel, Home (and the old dashboard),
  * and the company views that show contacts.
  * Without `leadId` (bulk actions) every contact's record queries are refreshed.
  */
@@ -174,6 +190,7 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
     keys.scheduledActions(workspaceId),
     keys.notifications(workspaceId),
     keys.dashboard(workspaceId),
+    keys.home(workspaceId),
     ...COMPANY_VIEWS.map((prefix) => [prefix, workspaceId]),
   ];
   return Promise.all(targets.map((queryKey) => client.invalidateQueries({ queryKey })));

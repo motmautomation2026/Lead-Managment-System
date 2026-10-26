@@ -8,12 +8,13 @@ export interface WorkRefs {
   ownerName: string | null;
   contact: IdName;
   company: IdName | null;
-  /** Meetings/proposals: their deal. Tasks: the contact's most recently updated open deal. */
+  /** Meetings/proposals: their deal. */
   deal: IdName | null;
 }
 
+/** Tasks have no deal link, so task rows carry no deal (C6b; the API's guessed `deal` is not used). */
 export type TaskListItem = Omit<Task, "ownerName"> &
-  WorkRefs & {
+  Omit<WorkRefs, "deal"> & {
     /** Open and past due (backend clock). */
     isOverdue: boolean;
   };
@@ -22,6 +23,8 @@ export type ProposalListItem = Omit<Proposal, "ownerName"> &
   WorkRefs & {
     /** What POST /proposals/:id/status accepts from the current status (backend domain). */
     allowedNextStatuses: ProposalStatus[];
+    /** Which of `allowedNextStatuses` need a loss reason (backend domain; the status endpoint still enforces it). */
+    lossReasonStatuses: ProposalStatus[];
   };
 
 /** GET /tasks/list params exactly as the API takes them (saved views store this shape). */

@@ -15,11 +15,16 @@ vi.mock("@/store", () => ({
 
 import { ProposalStatusDialog } from "./proposal-status-dialog";
 
-const proposal = (status: ProposalStatus, allowedNextStatuses: ProposalStatus[]) => ({
+const proposal = (
+  status: ProposalStatus,
+  allowedNextStatuses: ProposalStatus[],
+  lossReasonStatuses: ProposalStatus[] = [],
+) => ({
   id: "p-1",
   title: "Fleet proposal",
   status,
   allowedNextStatuses,
+  lossReasonStatuses,
 });
 
 const pick = (label: string, option: string) => {
@@ -50,7 +55,7 @@ describe("ProposalStatusDialog (B4)", () => {
     const onOpenChange = vi.fn();
     render(
       <ProposalStatusDialog
-        proposal={proposal("sent", ["accepted", "rejected", "expired"])}
+        proposal={proposal("sent", ["accepted", "rejected", "expired"], ["rejected", "expired"])}
         open
         onOpenChange={onOpenChange}
       />,
@@ -78,7 +83,7 @@ describe("ProposalStatusDialog (B4)", () => {
     mocks.setStatus.mockResolvedValue({});
     render(
       <ProposalStatusDialog
-        proposal={proposal("sent", ["accepted", "expired"])}
+        proposal={proposal("sent", ["accepted", "expired"], ["expired"])}
         open
         onOpenChange={vi.fn()}
       />,
@@ -91,6 +96,20 @@ describe("ProposalStatusDialog (B4)", () => {
     await waitFor(() =>
       expect(mocks.setStatus).toHaveBeenCalledWith({ id: "p-1", status: "accepted" }),
     );
+  });
+
+  it("asks for a reason exactly for the row's lossReasonStatuses (backend flags, no React copy)", () => {
+    render(
+      <ProposalStatusDialog
+        proposal={proposal("sent", ["revised", "rejected"], ["revised"])}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+    pick("New status", "Revised");
+    expect(screen.getByLabelText("Loss reason")).toBeTruthy();
+    pick("New status", "Rejected");
+    expect(screen.queryByLabelText("Loss reason")).toBeNull();
   });
 
   it("a final status offers nothing; a backend error shows inline", async () => {

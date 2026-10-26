@@ -13,3 +13,4 @@ export * from "./timeline";
 export * from "./user";
 export * from "./workflow";
 export * from "./work";
+export * from "./automation";

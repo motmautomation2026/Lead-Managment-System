@@ -98,6 +98,7 @@ vi.mock("@/store", () => ({
         currency: "INR",
         status: "sent",
         allowedNextStatuses: ["accepted", "rejected"],
+        lossReasonStatuses: ["rejected"],
       },
     ]),
   useLeadList: () => ({ data: undefined }),

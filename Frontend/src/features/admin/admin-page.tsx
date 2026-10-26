@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { backend, type AdminUser } from "@/lib/backend-client";
-import { messageFromError } from "@/store";
+import { keys, messageFromError } from "@/store";
 import { PageHeader } from "@/app/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ export function AdminPage() {
 function UsersPanel() {
   const client = useQueryClient();
   const users = useQuery({
-    queryKey: ["admin", "users"],
+    queryKey: keys.adminUsers,
     queryFn: ({ signal }) => backend.admin.users.list(signal),
   });
   const [name, setName] = useState("");
@@ -32,7 +32,7 @@ function UsersPanel() {
   const create = useMutation({
     mutationFn: backend.admin.users.create,
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["admin", "users"] });
+      void client.invalidateQueries({ queryKey: keys.adminUsers });
       setName("");
       setEmail("");
       setPassword("");
@@ -108,7 +108,7 @@ function UserEditor({ user }: { user: AdminUser }) {
     mutationFn: (input: { name?: string; email?: string; password?: string; active?: boolean }) =>
       backend.admin.users.update(user.id, input),
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["admin", "users"] });
+      void client.invalidateQueries({ queryKey: keys.adminUsers });
       setPassword("");
       toast.success("Account updated.");
     },

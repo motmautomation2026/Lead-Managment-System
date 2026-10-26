@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { messageFromError, useIsAdmin, useSession } from "@/store";
+import { keys } from "@/store/query";
 import { previewOwner, ruleRowsProblem, rowsToRules, type RuleRow } from "./lead-assignment-rules";
 
 const UNASSIGNED = "";
@@ -28,7 +29,7 @@ export function LeadAssignmentPanel({ workspaceId }: { workspaceId: string }) {
 function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const { users, userName } = useSession();
-  const queryKey = ["assignment-rules", workspaceId];
+  const queryKey = keys.assignmentRules(workspaceId);
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) => backend.assignmentRules.get(signal),

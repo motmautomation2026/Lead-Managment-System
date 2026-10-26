@@ -241,7 +241,11 @@ export function TasksPage() {
             contactId={state.contactId}
             onChange={(contactId) => void set({ contactId })}
           />
-          <DealFilterChip dealId={state.dealId} onClear={() => void set({ dealId: undefined })} />
+          <DealFilterChip
+            dealId={state.dealId}
+            label="Tasks of this deal's contact"
+            onClear={() => void set({ dealId: undefined })}
+          />
           <CompanyPicker
             variant="chip"
             value={

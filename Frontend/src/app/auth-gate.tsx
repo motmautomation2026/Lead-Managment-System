@@ -3,6 +3,7 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { Navigate, useRouterState } from "@tanstack/react-router";
 import { AppShell } from "@/app/app-shell";
 import { StoreProvider } from "@/store";
+import { keys } from "@/store/query";
 import { configurationError } from "@/lib/supabase-client";
 import { useSupabaseSession } from "@/lib/use-supabase-session";
 import { LoginPage } from "@/features/auth/login-page";
@@ -23,7 +24,7 @@ export function AuthGate({
   const { loading, session } = useSupabaseSession();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const me = useQuery({
-    queryKey: ["auth", "role", session?.user.id],
+    queryKey: keys.authRole(session?.user.id),
     queryFn: ({ signal }) => backend.me(signal),
     enabled: Boolean(session),
     staleTime: 60_000,

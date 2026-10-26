@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { messageFromError, useSession } from "@/store";
+import { keys, messageFromError, useSession } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { LeadAssignmentPanel } from "./lead-assignment-panel";
 import { AgentPanel } from "./agent-panel";
@@ -56,7 +56,7 @@ export function WorkspaceSettingsPage() {
 function EmailPanel({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const query = useQuery({
-    queryKey: ["connections", "email", workspaceId],
+    queryKey: keys.connection(workspaceId, "email"),
     queryFn: ({ signal }) => backend.connections.email.get(signal),
   });
   const [form, setForm] = useState<EmailConnection | null>(null);
@@ -68,7 +68,7 @@ function EmailPanel({ workspaceId }: { workspaceId: string }) {
     if (query.data) setForm(query.data);
   }, [query.data]);
   const refresh = () =>
-    void client.invalidateQueries({ queryKey: ["connections", "email", workspaceId] });
+    void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "email") });
   const save = useMutation({
     mutationFn: () =>
       backend.connections.email.update({
@@ -234,7 +234,7 @@ function EmailPanel({ workspaceId }: { workspaceId: string }) {
 function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const query = useQuery({
-    queryKey: ["connections", "whatsapp", workspaceId],
+    queryKey: keys.connection(workspaceId, "whatsapp"),
     queryFn: ({ signal }) => backend.connections.whatsapp.get(signal),
     refetchInterval: 5_000,
   });
@@ -256,7 +256,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
     setSettings((prev) => ({ ...prev, ...patch }));
   };
   const refresh = () =>
-    void client.invalidateQueries({ queryKey: ["connections", "whatsapp", workspaceId] });
+    void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "whatsapp") });
   const save = useMutation({
     mutationFn: () => backend.connections.whatsapp.update(settings),
     onSuccess: () => {
@@ -411,7 +411,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
 function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const query = useQuery({
-    queryKey: ["connections", "google-calendar", workspaceId],
+    queryKey: keys.connection(workspaceId, "google-calendar"),
     queryFn: ({ signal }) => backend.connections.googleCalendar.get(signal),
     refetchInterval: 5_000,
   });
@@ -421,7 +421,7 @@ function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
   const [clientSecret, setClientSecret] = useState("");
   const [redirectUri, setRedirectUri] = useState("");
   const refresh = () =>
-    void client.invalidateQueries({ queryKey: ["connections", "google-calendar", workspaceId] });
+    void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "google-calendar") });
 
   const suggestedRedirectUri = backendBaseUrl
     ? `${backendBaseUrl}/api/v1/connections/google-calendar/oauth/callback`

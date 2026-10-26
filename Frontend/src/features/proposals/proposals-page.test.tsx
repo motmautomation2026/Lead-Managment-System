@@ -45,6 +45,7 @@ const proposal = (
   company: { id: "co-1", name: "Acme" },
   deal: null,
   allowedNextStatuses: ["accepted", "rejected", "expired"],
+  lossReasonStatuses: ["rejected", "expired"],
   ...extra,
 });
 
@@ -125,7 +126,11 @@ beforeEach(() => {
   mocks.views = [];
   mocks.rows = [
     proposal("p-1", "Fleet proposal"),
-    proposal("p-2", "Old deal", { status: "accepted", allowedNextStatuses: [] }),
+    proposal("p-2", "Old deal", {
+      status: "accepted",
+      allowedNextStatuses: [],
+      lossReasonStatuses: [],
+    }),
   ];
 });
 afterEach(() => {

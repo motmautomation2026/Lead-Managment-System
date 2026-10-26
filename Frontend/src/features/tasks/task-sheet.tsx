@@ -130,7 +130,6 @@ function TaskDetails({
               label: "Company",
               value: <RefLink type="company" value={task.company} />,
             },
-            { id: "deal", label: "Open deal", value: <RefLink type="deal" value={task.deal} /> },
             ...(task.cancelReason
               ? [{ id: "reason", label: "Cancel reason", value: task.cancelReason }]
               : []),

@@ -47,6 +47,12 @@ import type {
   ProposalListParams,
   ProposalStatus,
   ProposalSummary,
+  HomeSummary,
+  ProposalDocumentLink,
+  RunListItem,
+  RunListParams,
+  ScheduledActionListItem,
+  ScheduledActionListParams,
   ResponseState,
   Run,
   ScheduledAction,
@@ -1062,6 +1068,8 @@ export const backend = {
       get<{ count: number }>(listQuery("/proposals/count", { ...params }), signal),
     summary: (params: ProposalListParams, signal?: AbortSignal) =>
       get<ProposalSummary>(listQuery("/proposals/summary", { ...params }), signal),
+    /** A 5-minute signed URL for the proposal's file (C6b); open it at once, never store it. */
+    document: (id: string) => get<ProposalDocumentLink>(`/proposals/${id}/document`),
     create: (input: CreateProposalInput) => {
       const formData = new FormData();
       formData.append("leadId", input.leadId);
@@ -1127,6 +1135,11 @@ export const backend = {
   runs: {
     list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
       get<{ data: Run[] }>(query("/runs", params), signal),
+    /** List standard (C6b). */
+    page: (params: RunListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<RunListItem>>(listQuery("/runs/list", { ...params, cursor }), signal),
+    count: (params: RunListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/runs/count", { ...params }), signal),
     create: (input: { leadId: string; workflowId: string; reason?: string | undefined }) =>
       send<{ data: Run[] }>("POST", "/runs", input),
     pause: (id: string, reason?: string) => send<Run>("POST", `/runs/${id}/pause`, { reason }),
@@ -1137,9 +1150,19 @@ export const backend = {
   scheduledActions: {
     list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
       get<{ data: ScheduledAction[] }>(query("/scheduled-actions", params), signal),
+    page: (params: ScheduledActionListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<ScheduledActionListItem>>(
+        listQuery("/scheduled-actions/list", { ...params, cursor }),
+        signal,
+      ),
+    count: (params: ScheduledActionListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/scheduled-actions/count", { ...params }), signal),
   },
   dashboard: {
     summary: (signal?: AbortSignal) => get<DashboardSummary>("/dashboard/summary", signal),
+  },
+  home: {
+    summary: (signal?: AbortSignal) => get<HomeSummary>("/home/summary", signal),
   },
   notifications: {
     list: (signal?: AbortSignal) => get<{ data: AppNotification[] }>("/notifications", signal),

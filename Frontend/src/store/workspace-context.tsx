@@ -43,6 +43,7 @@ const WorkspaceContext = createContext<WorkspaceControls>({
   isLoading: true,
 });
 
+// eslint-disable-next-line react-refresh/only-export-components -- the hook belongs with its provider
 export function useWorkspace() {
   return useContext(WorkspaceContext);
 }

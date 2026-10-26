@@ -327,6 +327,7 @@ describe("ContactRecordPage", () => {
         updatedAt: "2026-10-20T10:00:00.000Z",
         deal: null,
         allowedNextStatuses: ["accepted", "rejected"],
+        lossReasonStatuses: ["rejected"],
       },
     ];
     await renderPage();

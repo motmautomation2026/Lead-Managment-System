@@ -34,6 +34,7 @@ import { SendProposalDialog } from "@/features/proposals/components/send-proposa
 import { useCreateTaskDialog } from "@/app/add-lead-context";
 import { LogCallFlow } from "@/features/work/log-call-flow";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ViewDocumentButton } from "@/features/work/proposal-document";
 import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
 import { BackendError } from "@/lib/backend-client";
 import { fmtDateTime } from "@/lib/format";
@@ -307,6 +308,7 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           meta: (
             <span className="inline-flex items-center gap-1">
               <StatusBadge value={p.status} />
+              <ViewDocumentButton proposal={p} className="h-7" />
               <Button
                 size="sm"
                 variant="ghost"

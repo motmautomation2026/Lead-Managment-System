@@ -40,15 +40,18 @@ export function ContactFilter({
 export function DealFilterChip({
   dealId,
   onClear,
+  label = "Deal",
 }: {
   dealId: string | undefined;
   onClear: () => void;
+  /** Tasks have no deal link: their chip says "Tasks of this deal's contact". */
+  label?: string;
 }) {
   const deal = useDeal(dealId);
   if (!dealId) return null;
   return (
     <span className="inline-flex h-8 items-center gap-1 rounded-md border bg-accent pl-2.5 text-sm text-accent-foreground">
-      Deal: {deal.data?.name ?? "…"}
+      {label}: {deal.data?.name ?? "…"}
       <Button
         variant="ghost"
         size="icon"

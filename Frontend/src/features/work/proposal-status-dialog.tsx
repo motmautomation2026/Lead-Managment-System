@@ -23,20 +23,21 @@ import {
 import { label } from "@/lib/labels";
 import { messageFromError, useSetProposalStatus } from "@/store";
 import { LEAD_LOSS_REASONS, PROPOSAL_STATUSES, type ProposalStatus } from "@/types";
-import { LOSS_REASON_STATUSES } from "./work-labels";
 
-const statusSchema = z
-  .object({
-    status: z.enum(PROPOSAL_STATUSES).nullable(),
-    lossReason: z.enum(LEAD_LOSS_REASONS).nullable(),
-    lossNotes: z.string().max(2000),
-  })
-  .superRefine((v, ctx) => {
-    if (!v.status) ctx.addIssue({ code: "custom", path: ["status"], message: "Pick a status." });
-    else if (LOSS_REASON_STATUSES.includes(v.status) && !v.lossReason)
-      ctx.addIssue({ code: "custom", path: ["lossReason"], message: "Pick a loss reason." });
-  });
-type StatusForm = z.infer<typeof statusSchema>;
+/** `lossReasonStatuses` comes from the row (backend domain); the status endpoint still enforces it. */
+const statusSchema = (lossReasonStatuses: readonly ProposalStatus[]) =>
+  z
+    .object({
+      status: z.enum(PROPOSAL_STATUSES).nullable(),
+      lossReason: z.enum(LEAD_LOSS_REASONS).nullable(),
+      lossNotes: z.string().max(2000),
+    })
+    .superRefine((v, ctx) => {
+      if (!v.status) ctx.addIssue({ code: "custom", path: ["status"], message: "Pick a status." });
+      else if (lossReasonStatuses.includes(v.status) && !v.lossReason)
+        ctx.addIssue({ code: "custom", path: ["lossReason"], message: "Pick a loss reason." });
+    });
+type StatusForm = z.infer<ReturnType<typeof statusSchema>>;
 
 export interface ProposalStatusTarget {
   id: string;
@@ -44,9 +45,11 @@ export interface ProposalStatusTarget {
   status: ProposalStatus;
   /** From the list row (backend domain); the dialog offers nothing else (B4). */
   allowedNextStatuses: ProposalStatus[];
+  /** From the list row: which of those statuses ask for a loss reason (C6b). */
+  lossReasonStatuses: ProposalStatus[];
 }
 
-/** Change a proposal's status: only the row's `allowedNextStatuses`; Rejected/Expired ask for a loss reason (B4). */
+/** Change a proposal's status: only the row's `allowedNextStatuses`; the row's `lossReasonStatuses` ask for a reason (B4). */
 export function ProposalStatusDialog({
   proposal,
   open,
@@ -57,13 +60,15 @@ export function ProposalStatusDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const setStatus = useSetProposalStatus();
+  const lossReasonStatuses = proposal?.lossReasonStatuses ?? [];
   const form = useForm<StatusForm>({
-    resolver: zodResolver(statusSchema),
+    // The dialog is keyed per proposal, so the schema is fixed for its lifetime.
+    resolver: zodResolver(statusSchema(lossReasonStatuses)),
     defaultValues: { status: null, lossReason: null, lossNotes: "" },
   });
   const errors = form.formState.errors;
   const status = form.watch("status");
-  const needsReason = Boolean(status && LOSS_REASON_STATUSES.includes(status));
+  const needsReason = Boolean(status && lossReasonStatuses.includes(status));
   const allowed = proposal?.allowedNextStatuses ?? [];
 
   const submit = form.handleSubmit(async (v) => {
