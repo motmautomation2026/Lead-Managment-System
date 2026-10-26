@@ -168,7 +168,7 @@ describeIfDb("deals C4 API (requires TEST_DATABASE_URL)", () => {
     expect(more.body.data).toHaveLength(3);
     expect(new Set([...open[0].items, ...more.body.data].map((d: { id: string }) => d.id)).size).toBe(23);
     expect((await call("GET", `/deals/board${qs({ stage: "won" })}`, undefined, boardWs)).status).toBe(400);
-  });
+  }, 120_000); // many list/count calls per stage and filter set: slow on the staging pooler
 
   describe("POST /deals/:id/stage contactAction", () => {
     it("keep (default and explicit): the contact stays active", async () => {

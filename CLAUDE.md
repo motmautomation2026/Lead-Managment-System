@@ -33,6 +33,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   in the AI and spend credits): only `[test] …` workspaces from `createTestWorkspace`.
   `tests/setup-env.ts` fails a file that leaves leads by test users (`@example.com`) in any other
   workspace.
+- Run the staging integration suite one at a time; never overlap runs; read the result from the run's exit code/log.
 - Never pipe test or check commands through `tail`, `head` or anything else that hides the exit code.
   Check every exit code.
 - Push ONLY after `npm run check` passes in both packages AND `npm run test:integration:staging` has

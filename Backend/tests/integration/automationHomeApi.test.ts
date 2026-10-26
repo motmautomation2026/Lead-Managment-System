@@ -243,7 +243,7 @@ describeIfDb("automation lists, workflows list, home summary, proposal flags + d
       process.stderr.write(`[C6b] listWorkflows, 20 workflows / 29 versions: old N+1 ${before} ms → batched ${after} ms
 `);
       expect(after).toBeLessThan(before);
-    });
+    }, 120_000); // seeds 18 workflows and times both versions: slow on the staging pooler
   });
 
   describe("home summary", () => {
