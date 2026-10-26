@@ -179,6 +179,27 @@ describeIfDb("deals API (requires TEST_DATABASE_URL)", () => {
     expect((await call("POST", "/deals", {})).status).toBe(400);
   });
 
+  it("create with ownerId (C5): omitted = contact's owner, an active user, null; inactive/unknown 400; other workspace untouched", async () => {
+    const owner = async (body: Record<string, unknown>) => {
+      const res = await call("POST", "/deals", { leadId: contactB, ...body });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      return res.body.owner;
+    };
+    expect(await owner({})).toEqual({ id: admin.id, name: "Admin Deals" });
+    expect(await owner({ ownerId: rep.id })).toEqual({ id: rep.id, name: "Rep Deals" });
+    expect(await owner({ ownerId: null })).toBeNull();
+    const before = (await pool.query(`select count(*)::int as n from public.deals where workspace_id = $1`, [ws])).rows[0].n;
+    for (const ownerId of [inactive.id, "00000000-0000-4000-8000-000000000000"]) {
+      const res = await call("POST", "/deals", { leadId: contactB, ownerId });
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toContain("active user");
+    }
+    expect((await call("POST", "/deals", { leadId: contactB, ownerId: "me" })).status).toBe(400);
+    expect((await pool.query(`select count(*)::int as n from public.deals where workspace_id = $1`, [ws])).rows[0].n).toBe(before);
+    const foreign = await pool.query(`select owner_id from public.deals where id = $1`, [otherDeal]);
+    expect(foreign.rows[0].owner_id).toBe(rep.id);
+  });
+
   it("PATCH: fields; stage → 400 with a hint; non-INR → 400; owner must be active; company must be in the workspace", async () => {
     const id = deals.a8!;
     const res = await call("PATCH", `/deals/${id}`, { name: "Renamed deal", amount: null, expectedCloseDate: "2027-02-02", ownerId: admin.id, companyId: null });

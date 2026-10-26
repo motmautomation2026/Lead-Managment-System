@@ -208,6 +208,7 @@ export const createDealSchema = z
     expectedCloseDate: closeDate,
     lossReason: z.enum(LEAD_LOSS_REASONS).optional(),
     lossNotes: z.string().trim().max(2000).optional(),
+    ownerId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
@@ -237,18 +238,21 @@ export const moveStageSchema = z
 
 /** Manual deal for a contact (stage default qualified). */
 export async function createManualDeal(db: Queryable, actor: Actor, workspaceId: string, input: z.infer<typeof createDealSchema>) {
+  if (input.ownerId) await assertActiveOwner(db, input.ownerId);
   const deal = await createDeal(db, actor, workspaceId, { ...input, source: "manual" });
   return getDeal(db, workspaceId, deal.id);
+}
+
+async function assertActiveOwner(db: Queryable, ownerId: string) {
+  const owner = await getProfile(db, ownerId);
+  if (!owner?.active) throw new ValidationError("The owner must be an active user.", { field: "ownerId" });
 }
 
 /** Edits a deal's fields; stage moves go through moveDeal (POST /deals/:id/stage). */
 export async function updateDeal(db: Queryable, workspaceId: string, id: string, patch: z.infer<typeof updateDealSchema>) {
   const exists = await db.query(`select 1 from public.deals where id = $1 and workspace_id = $2 for update`, [id, workspaceId]);
   if (!exists.rowCount) throw new NotFoundError("Deal");
-  if (patch.ownerId) {
-    const owner = await getProfile(db, patch.ownerId);
-    if (!owner?.active) throw new ValidationError("The owner must be an active user.", { field: "ownerId" });
-  }
+  if (patch.ownerId) await assertActiveOwner(db, patch.ownerId);
   if (patch.companyId) await assertCompanyUsable(db, workspaceId, patch.companyId);
 
   const b = new SqlBuilder();

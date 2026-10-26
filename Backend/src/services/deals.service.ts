@@ -62,11 +62,13 @@ export interface CreateDealInput {
   expectedCloseDate?: string | null;
   lossReason?: LeadLossReason | null;
   lossNotes?: string | null;
+  /** Manual create only (already validated): a user id or null; omitted = the contact's owner. */
+  ownerId?: string | null;
   /** Backfill only: when a closed deal closed. Defaults to now. */
   closedAt?: Date | null;
 }
 
-/** Company, owner and service interest come from the contact (design §1.3). */
+/** Company, owner (unless `ownerId` is given) and service interest come from the contact (design §1.3). */
 export async function createDeal(db: Queryable, actor: Actor | null, workspaceId: string, input: CreateDealInput, lead?: LeadRow): Promise<DealRow> {
   const contact = lead ?? (await getLeadRowOr404(db, workspaceId, input.leadId));
   const stage = input.stage ?? "qualified";
@@ -85,7 +87,7 @@ export async function createDeal(db: Queryable, actor: Actor | null, workspaceId
       name,
       contact.id,
       contact.company_id,
-      contact.owner_id,
+      input.ownerId === undefined ? contact.owner_id : input.ownerId,
       stage,
       input.amount ?? null,
       input.currency ?? null,
