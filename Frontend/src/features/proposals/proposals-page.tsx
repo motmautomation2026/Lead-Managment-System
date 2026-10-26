@@ -105,8 +105,8 @@ export function ProposalsPage() {
                         <td className="px-3 py-2 text-xs">
                           {lead && (
                             <Link
-                              to="/leads/$leadId"
-                              params={{ leadId: lead.id }}
+                              to="/contacts/$contactId"
+                              params={{ contactId: lead.id }}
                               className="hover:underline"
                             >
                               {lead.firstName} {lead.lastName} · {lead.company}

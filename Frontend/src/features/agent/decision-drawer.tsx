@@ -72,8 +72,8 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
     <div className="space-y-5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Link
-          to="/leads/$leadId"
-          params={{ leadId: d.lead.id }}
+          to="/contacts/$contactId"
+          params={{ contactId: d.lead.id }}
           className="font-medium hover:underline"
         >
           {d.lead.name}

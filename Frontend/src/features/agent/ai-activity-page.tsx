@@ -251,8 +251,8 @@ function DecisionListRow({ row, onOpen }: { row: AgentDecisionRow; onOpen: () =>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-xs text-muted-foreground">{istDateTime(row.createdAt)}</span>
         <Link
-          to="/leads/$leadId"
-          params={{ leadId: row.lead.id }}
+          to="/contacts/$contactId"
+          params={{ contactId: row.lead.id }}
           className="font-medium hover:underline"
           onClick={(e) => e.stopPropagation()}
         >

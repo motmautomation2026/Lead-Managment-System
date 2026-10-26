@@ -1,26 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { LeadDetailPage } from "@/features/leads/lead-detail-page";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// The old lead page (features/leads/lead-detail-page.tsx, unrouted until C6) moved to /contacts/$id.
 export const Route = createFileRoute("/leads/$leadId")({
-  head: () => ({
-    meta: [
-      { title: "Lead detail - MOTM Flow" },
-      {
-        name: "description",
-        content:
-          "Full lead record: next action, activity history, meetings, proposals and automation state.",
-      },
-      { property: "og:title", content: "Lead detail - MOTM Flow" },
-      {
-        property: "og:description",
-        content: "One screen for everything that happened with a lead.",
-      },
-    ],
-  }),
-  component: LeadDetailRoute,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/contacts/$contactId",
+      params: { contactId: params.leadId },
+      replace: true,
+    });
+  },
 });
-
-function LeadDetailRoute() {
-  const { leadId } = Route.useParams();
-  return <LeadDetailPage leadId={leadId} />;
-}

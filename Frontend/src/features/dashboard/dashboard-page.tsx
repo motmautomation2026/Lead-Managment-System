@@ -26,7 +26,7 @@ export function DashboardPage() {
     );
   const max = Math.max(...summary.pipelineFunnel.map((item) => item.value), 1);
   const cards = [
-    { label: "Active leads", value: summary.activeLeads, icon: Users, to: "/leads" as const },
+    { label: "Active leads", value: summary.activeLeads, icon: Users, to: "/contacts" as const },
     {
       label: "Tasks / calls due today",
       value: summary.tasksDueToday,
@@ -59,7 +59,7 @@ export function DashboardPage() {
         description="Everything due today, plus anything that needs a decision."
         actions={
           <Button asChild size="sm" variant="outline">
-            <Link to="/leads">Open leads</Link>
+            <Link to="/contacts">Open contacts</Link>
           </Button>
         }
       />
@@ -117,7 +117,7 @@ export function DashboardPage() {
                 label="Leads without a next action"
                 count={summary.leadsWithNoNextAction}
                 detail="Every active lead must have one"
-                to="/leads"
+                to="/contacts"
                 tone="warning"
               />
               <Attention
@@ -161,8 +161,8 @@ export function DashboardPage() {
                         <td className="px-4 py-2">
                           {lead && (
                             <Link
-                              to="/leads/$leadId"
-                              params={{ leadId: lead.id }}
+                              to="/contacts/$contactId"
+                              params={{ contactId: lead.id }}
                               className="hover:underline"
                             >
                               {lead.firstName} {lead.lastName} · {lead.company}
@@ -215,7 +215,7 @@ function Attention({
   count: number;
   detail: string;
   tone: "danger" | "warning" | "info";
-  to: "/tasks" | "/leads" | "/proposals" | "/automations";
+  to: "/tasks" | "/contacts" | "/proposals" | "/automations";
 }) {
   return (
     <Link

@@ -171,11 +171,13 @@ function NotificationsMenu() {
               key={n.id}
               className="flex w-full gap-2 border-b px-3 py-2.5 text-left last:border-0 hover:bg-accent"
               onClick={() => {
-                if (n.leadId) void navigate({ to: "/leads/$leadId", params: { leadId: n.leadId } });
+                if (n.leadId)
+                  void navigate({ to: "/contacts/$contactId", params: { contactId: n.leadId } });
                 else if (n.href === "/automations/runs") void navigate({ to: "/automations/runs" });
                 else if (n.href === "/automations") void navigate({ to: "/automations" });
                 else if (n.href === "/meetings") void navigate({ to: "/meetings" });
-                else if (n.href === "/leads") void navigate({ to: "/leads" });
+                else if (n.href === "/leads" || n.href === "/contacts")
+                  void navigate({ to: "/contacts" });
               }}
             >
               <span
