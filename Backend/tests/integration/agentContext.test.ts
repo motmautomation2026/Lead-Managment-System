@@ -238,7 +238,7 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     await pool.query(
       `insert into public.deals (workspace_id, name, lead_id, company_id, stage, amount, source, expected_close_date, loss_reason, loss_notes, closed_at, updated_at)
        values ($1, 'Old win', $2, $3, 'won', 4242421, 'manual', null, null, null, now(), now()),
-              ($1, 'Old loss', $2, $3, 'lost', 4242421, 'manual', null, 'price', 'SECRET-LOSS-NOTE', now(), now()),
+              ($1, 'Old loss', $2, $3, 'lost', 4242421, 'manual', null, 'price_budget', 'SECRET-LOSS-NOTE', now(), now()),
               ($1, 'Older open', $2, $3, 'qualified', 7373731, 'manual', null, null, null, null, now() - interval '3 days'),
               ($1, 'Pilot', $2, $3, 'negotiation', 7373731, 'manual', '2026-12-15', null, null, null, now() - interval '1 day')`,
       [WS, lead, company],
