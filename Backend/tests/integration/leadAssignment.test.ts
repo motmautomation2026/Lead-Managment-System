@@ -186,7 +186,8 @@ describeIfDb("lead assignment by revenue (requires TEST_DATABASE_URL)", () => {
   });
 
   it("a CSV import assigns each row by revenue and sends one summary notification per owner", async () => {
-    const before = new Date();
+    // DB clock, not the laptop's: a laptop running ahead would skip the new notifications.
+    const before = (await pool.query<{ now: Date }>(`select now()`)).rows[0]!.now;
     const row = (rowNumber: number, revenueRange?: string) => ({ rowNumber, firstName: `Csv${rowNumber}`, company: "Csv Co", source: "referral", email: email(), ...(revenueRange ? { revenueRange } : {}) });
     const res = await api(rep, "POST", "/leads/import", { rows: [row(2, "2 Cr"), row(3, "50L-1Cr"), row(4, "60 Cr"), row(5)] });
     expect(res.status).toBe(201);
