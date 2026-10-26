@@ -69,7 +69,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `035`).
+  (currently `036`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,7 +86,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `035`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `036`).
 
 ## Way of working
 
@@ -335,6 +335,20 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `g`+c/o/d/t, ⌘K) + help dialog; user menu is non-modal. Palette + create dialogs are `React.lazy`: first load 345 →
   286 kB; `npm run check` ends with `npm run size` (fails above 350 kB). `COMPANY_COLUMNS` lives in
   `features/companies/company-columns.tsx`.
+- **C6a (Tasks, Meetings, Proposals in the new shell):** migration 036 (`(workspace_id, field, id)` indexes on tasks
+  `due_at|created_at|updated_at`, meetings `scheduled_at|created_at`, proposals `updated_at|sent_at|amount`; saved views
+  objects `tasks|meetings|proposals`). Backend `services/workLists.service.ts`: `GET /tasks/list|count`,
+  `/meetings/list|count`, `/proposals/list|count|summary` (list standard; IST `due`/`when` buckets in SQL; owner names
+  joined from `profiles`; task rows `isOverdue` and the contact's open deal; proposal `group` + `allowedNextStatuses`).
+  `domain/proposalRouting.ts` `allowedNextProposalStatuses` / `LOSS_REASON_PROPOSAL_STATUSES` / `PROPOSAL_STATUS_GROUPS` —
+  `updateProposalStatus` enforces the same table. Old `GET /tasks|/meetings|/proposals` unchanged (unrouted lead page, C6b).
+  Frontend: `/tasks`, `/meetings`, `/proposals` pages (default view written to the URL on a bare landing,
+  `ListViewSpec.defaultView`), row Sheets, bulk tasks, sidebar overdue badge, + Create → Task / Meeting, palette
+  actions, `g m` / `g p`; shared `features/work/` (`CreateTaskDialog`, `ScheduleMeetingFlow`, `LogCallFlow`,
+  `ProposalStatusDialog`, `RecordWorkCards`), `store/work-hooks.ts`, `refreshWork`. Record pages use the work lists with
+  View all links. **B4, B12, B13 fixed; B25/B26 fixed for display** (lists read names from `profiles`; the `owner_name`
+  columns are still not written). B19 display: proposal polling stops after 2 min per row. Docs: `C1-ui.md` §9,
+  `B4-api.md` §7a.
 
 ## CRM v2
 

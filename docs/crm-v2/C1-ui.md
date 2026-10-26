@@ -40,6 +40,13 @@ Live examples: `/dev/ui` (dev builds only), light and dark side by side.
 14. **Index-page search boxes carry `data-list-search`** so the `/` shortcut can focus them.
 10. **Picking a company = `CompanyPicker`** (`features/companies/company-picker.tsx`), never a `<Select>` of companies.
 11. **Picking a contact = `ContactPicker`** (`features/contacts/contact-picker.tsx`, C4), never a `<Select>` of contacts.
+15. **IST and business rules come from the backend (C6a).** "Today", "overdue", "upcoming", "needs outcome" and
+    proposal groups are list params the backend computes in SQL (IST days); rows carry what the UI shows
+    (`isOverdue`, `allowedNextStatuses`). The UI only collects IST date + time (`toIsoFromIst`, `istParts`,
+    `defaultCallbackSlot` in `lib/dates.ts`) and shows backend errors; it never decides which moves are allowed.
+16. **List rows open a Sheet (C6a).** Rows without a record page (tasks, meetings, proposals) open a right-hand
+    `Sheet` (`PropertyList` details + actions); links inside rows use `RefLink` (`features/work/ref-link.tsx`, stops the
+    row click). Dialogs the Sheet starts live on the page, so the Sheet closes first.
 12. **Deal stage rules live in the backend.** The UI shows stages (`DEAL_STAGE_LABELS`, display only) and calls
     `POST /deals/:id/stage`; Won/Lost always go through `CloseDealDialog`; errors are shown, never pre-empted.
 
@@ -74,7 +81,7 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
 - `sidebar.tsx` — groups from `nav.ts` (`NAV_GROUPS`, `SETTINGS_NAV`, `ADMIN_NAV`); collapsible;
   inside a `Sheet` below `lg`. Contacts points to `/contacts` (C2).
 - `top-bar.tsx` — breadcrumbs (`crumbsFor(pathname)` in `nav.ts`: add sub-pages to `SUB_PAGES`),
-  search button, + Create (Contact, Company, Deal (C4); enable Task/Meeting as their pages land), notifications,
+  search button, + Create (Contact, Company, Deal (C4), Task, Meeting (C6a)), notifications,
   user menu (theme, density, sign out).
 - `command-palette.tsx` (lazy, C5) — `GET /search` via `useGlobalSearch` (250 ms debounce, ≥ 2 chars) + actions.
   Empty query: **Recent** (the last 8 records opened; `lib/recent-records.ts`, localStorage `motmflow.recent.<workspaceId>`,
@@ -86,28 +93,31 @@ localStorage `motmflow.theme` (light/dark/system, default system) and `motmflow.
   from each `/count`, each a DataTable on its list endpoint with `q` (contacts `lifecycle=all`, deals `status=all`: the
   same scope as `GET /search`), Load more, "Open in … list" carries the params. No endpoint of its own.
 - `shortcuts.ts` (C5) — the one registry: `SHORTCUTS` (⌘K/Ctrl+K palette, `?` help, `/` list search, `n` Create menu,
-  `g` then `c`/`o`/`d`/`t` within 1 s), `createShortcutMatcher` (pure; ignores keys typed in inputs/textareas/
+  `g` then `c`/`o`/`d`/`t`/`m`/`p` within 1 s — Meetings and Proposals since C6a), `createShortcutMatcher` (pure; ignores keys typed in inputs/textareas/
   contenteditable, with any `[role=dialog|alertdialog|menu|listbox]` open, during a dnd-kit keyboard drag, and with
   Ctrl/Alt/Meta except ⌘K) and `useShortcuts(handlers)` (in the shell). `shortcuts-dialog.tsx` lists the registry (`?` or
   user menu → Keyboard shortcuts). A new shortcut = one `SHORTCUTS` entry + its handler in `app-shell.tsx`.
 - App-wide create dialogs are hosted by the shell: `useAddLead().open({ company? })` (Create contact, optional
   prefilled company), `useCreateCompanyDialog().open()` and `useCreateDealDialog().open({ contact?, companyId?, stay? })`
-  (C4; `app/add-lead-context.ts`). The shell remounts the deal dialog per opening (`key`) so each starts fresh.
+  (C4; `app/add-lead-context.ts`), `useCreateTaskDialog().open({ contact? })` and
+  `useScheduleMeetingDialog().open({ leadId?, dealId? })` (C6a). The shell remounts each per opening (`key`, distinct
+  per dialog) so each starts fresh; all are `React.lazy`, mounted on first open.
 - Sidebar badge: admins see the open duplicate-company count on "Companies" (`useCompanyDuplicatesCount({}, isAdmin)`,
-  cached 60 s).
+  cached 60 s). Everyone sees **my overdue tasks** on "Tasks" (`useTaskCount({ ownerId: ["me"], due: "overdue" })`, the
+  same key as the Tasks page's Overdue tab, refreshed by `refreshWork`).
 
 ## 4. Components (`Frontend/src/components/crm/`)
 
 | Component | Props (main) |
 |---|---|
 | `PageHeader` | `title`, `count?`, `description?`, `actions?` (secondary), `primaryAction?`, `tabs?`, `heading?` (replaces the title block) |
-| `ViewTabs` | `views: {id,label}[]`, `activeId`, `onChange(id)`, `onSaveView?` (shows "+"), `maxVisible=5` (rest in "More") |
+| `ViewTabs` | `views: {id,label,edited?,count?}[]` (`count` = small badge, C6a), `activeId`, `onChange(id)`, `onSaveView?` (shows "+"), `maxVisible=5` (rest in "More") |
 | `FilterBar` | `filters: FilterDef[]` (chips), `moreFilters?` (Sheet), `values: FilterValues`, `onChange(values)`. `FilterDef.type`: `multi` (`options`), `dateRange` (`{from,to}` YYYY-MM-DD), `numberRange` (`{min,max}`), `boolean`. Helpers in `filter-model.ts` |
 | `DataTable<T>` | `label`, `data`, `columns: {id, header, cell(row), sortable?, size?, hideable?}[]`, `getRowId`, `getRowHref?`, `onRowClick?`, `sort?`/`onSortChange?` (`{field, dir}`), `visibleColumns?`/`onColumnsChange?` (picker), `enableResizing?`, `selectedIds?`/`onSelectionChange?`/`bulkActions?`, `hasNextPage?`/`isFetchingNextPage?`/`onLoadMore?`, `isLoading?`, `error?`/`onRetry?`, `emptyState?`, `className?` (scroll box height; default `max-h-[calc(100dvh-14rem)]`) |
 | `BulkActionBar` | `count`, `actions?`, `onClear` (DataTable renders it when `bulkActions` is set) |
 | `RecordLayout` | `left`, `tabs: {id,label,content}[]`, `right?`, `defaultTab?` (below lg: About · tabs · Related) |
 | `PropertyList` | `items: {id, label, value, editor?(done)}[]` |
-| `AssociationCard` | `title`, `count?`, `items: {id,title,subtitle?,meta?}[]`, `onAdd?`, `addLabel?`, `emptyText?` |
+| `AssociationCard` | `title`, `count?`, `items: {id,title,subtitle?,meta?}[]`, `onAdd?`, `addLabel?`, `emptyText?`, `footer?` (C6a: "View all" link) |
 | `EmptyState` | `icon?`, `title`, `text?`, `action?` |
 | `StatusPill` | `tone` (neutral/primary/info/success/warning/danger), `dot?` |
 | `UserAvatar` | `name` (null → "–"), `size` sm/md |
@@ -289,4 +299,75 @@ company, other deals of the contact (`useDeals({ leadId, status: "all" })`).
 `dealCount`, `dealBoard`, `deal`, `dealTimeline`), and every deal write calls `refreshDeal(client, ws)` (= `refreshCompany`:
 every deal query, contact and company view, global search) because a move can change the contact and company totals.
 Activity chips gained **Proposals** (server kind `proposals`); `ActivityFeed` takes `contactId | companyId | dealId`.
+
+## 9. Work pages (C6a) — Tasks, Meetings, Proposals
+
+Same index pattern (§5, §5a) over the C6a list endpoints (`B4-api.md` §7a). Files: `features/tasks/`, `features/meetings/`,
+`features/proposals/`, shared pieces in `features/work/`.
+
+**Default view on a bare URL.** A `ListViewSpec` may set `defaultView`: a URL with no params at all is replaced
+(history `replace`) by that built-in view with `view=` written, and the page waits (`landing`) instead of fetching
+everything first. With a default view no built-in may use the id `all` (applying it would clear the URL and land on
+the default again) — the "everything" views are `everyone`. Record pages' "View all" links pass `view=everyone` plus the
+record filter (`contactId` / `companyId` / `dealId`).
+
+**Tasks — `/tasks`** (`tasks-search.ts`, `tasks-page.tsx`, `task-columns.tsx`, `task-sheet.tsx`, `done-toggle.tsx`)
+- Views (saved views object `tasks`): My open (**default**) · Overdue · Due today (both with counts) · Upcoming ·
+  Completed — all `ownerId=me` — and All open (`everyone`). Filters: Owner, Type, Origin (Manual / Automation / AI Agent),
+  Due date (whole IST days), Status (More), Contact (`ContactFilter`), Company (`CompanyPicker` chip), Deal chip from links.
+- The **Done** toggle sits in the Title cell (`role=checkbox`): a plain task completes optimistically
+  (`useCompleteTask`: every loaded task list updated at once, restored on error); a `call` task opens Log call (the call
+  completes it), a `schedule_meeting` task opens Schedule meeting. Due is red when the row's `isOverdue`.
+- Sheet: details, Complete, Log call, Reschedule (IST date + time), Reassign, Cancel (optional reason).
+- Bulk: Complete and Reassign to… with a confirm naming the count; per-task failures summarised in one toast.
+
+**Meetings — `/meetings`** (`meetings-search.ts`, `meetings-page.tsx`, `meeting-columns.tsx`, `meeting-sheet.tsx`,
+`meeting-status-icons.tsx`, `meeting-labels.ts`)
+- Views (object `meetings`): Upcoming (**default**) · Today · Needs outcome (count) · Completed · Cancelled · All.
+  Filters: Owner, Status, Date, Contact, Company, Deal chip.
+- Calendar / Notify columns are icons with the status and error as `title` + `aria-label` (`StatusIcon`); Link = Join.
+- Sheet: details, Join, Edit / reschedule (`ScheduleMeetingFlow` with the meeting), Record outcome
+  (`features/work/meeting-outcome-dialog.tsx`; hidden once completed or cancelled — B33 unchanged), Cancel meeting
+  (confirm → PATCH `status: cancelled`). Participants are not shown (the API does not return them — A18).
+- Below md (`useMediaQuery("(max-width: 767px)")`) rows are cards (date, status, title, contact) + Load more.
+
+**Proposals — `/proposals`** (`proposals-search.ts`, `proposals-page.tsx`, `proposal-columns.tsx`, `proposal-send-icons.tsx`)
+- Header stats Open / Sent / Open pipeline (INR, `Money compact`) from `GET /proposals/summary` with the page's
+  filters minus `group`/`status`. Views (object `proposals`): Open (**default**) · Awaiting decision · Won · Lost · All —
+  each a backend `group`. Filters: Owner, Status, Updated, Contact, Company, Deal chip.
+- Sheet (follows the polled row): details, document name, send statuses, **Change status** → `ProposalStatusDialog`.
+  "New proposal" = `SendProposalDialog` with a ContactPicker. There is no document download link yet (no signed-URL
+  endpoint exists).
+- **B19 display**: `useProposalList` polls every 8 s only while a loaded row's WhatsApp send is queued/sending and its
+  `updatedAt` is under 2 minutes old (`lib/proposal-sending.ts`); older rows show "Still sending — check later".
+
+**Shared work dialogs (`features/work/`)**
+- `CreateTaskDialog` (shell-hosted, `useCreateTaskDialog().open({ contact? })`): react-hook-form + Zod; ContactPicker or
+  the fixed contact (contact record; the deal's contact on a deal record); type; title; due date + time (IST, default
+  tomorrow 10:00); owner ("Contact's owner" default, resolved from `useContact`). Errors inline.
+- `ScheduleMeetingFlow`: `ScheduleMeetingDialog` + save (create, or reschedule = PATCH with `status: rescheduled`). Without
+  `leadId` the dialog asks with a ContactPicker (+ Create → Meeting). `ScheduleMeetingDialog` / `SendProposalDialog` no
+  longer load the leads list.
+- `LogCallFlow` (**B12**): the one place `LogCallDialog` mounts, with its prompts — nurture outcome → Enroll; Positive /
+  Meeting Agreed → Schedule meeting, then (Meeting Agreed) Enroll after the meeting is saved. Each dialog mounts only
+  while open; the flow stays mounted so a prompt can follow the call dialog closing. Used by the contact record, the deal
+  record and the Tasks page.
+- `LogCallDialog` callback (**B13**): date + time (IST); default today 10:00 while ahead, else the next working day
+  (Mon–Fri) 10:00; "The callback must be in the future." inline and Save disabled before sending; the backend rule stays.
+- `ProposalStatusDialog` (**B4**): offers only the row's `allowedNextStatuses`; Rejected / Expired require a loss reason
+  (existing labels) + notes (`LOSS_REASON_STATUSES` in `work-labels.ts` mirrors the backend; a 400 still shows inline);
+  a final status says "Create a new proposal instead". Replaces every per-row status `<Select>`.
+- `ContactFilter` / `DealFilterChip` (`work-filters.tsx`), `RefLink`, `RecordWorkCards` (company record Related column:
+  open tasks, upcoming meetings, open proposals with counts and View all).
+
+**Data layer** (`store/work-hooks.ts`): `useTaskList`, `useTaskCount`, `useMeetingList`, `useMeetingCount`,
+`useProposalList`, `useProposalCount`, `useProposalSummary`, `useCreateTask`, `useUpdateTask`, `useCancelTask`,
+`useCompleteTask`, `useCreateMeeting`, `useUpdateMeeting`, `useRecordMeetingOutcome`, `useCreateProposal`,
+`useSetProposalStatus`. Keys under `keys.work(ws)` (`workList`, `workCount`, `proposalSummary`). Every write calls
+`refreshWork(client, ws)` (= `refreshDeal`: work lists, contacts, companies, deals); `refreshContact` also refreshes
+`keys.work`. The old `useTasks` / `useMeetings` / `useProposals` (unpaginated) remain only for the unrouted lead page (C6b).
+
+**Bundle**: first load 286.2 → 291.5 kB gzip (the three routes' search schemas, which every route's `validateSearch`
+puts in the entry, and the sidebar's overdue count); every work dialog is lazy or route-split.
+`src/test/bundle-size.test.ts` proves `checkBudget` (exported by `scripts/check-bundle-size.mjs`) fails above the budget.
 

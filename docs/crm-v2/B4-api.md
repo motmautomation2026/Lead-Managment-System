@@ -98,7 +98,7 @@ Sorts: `updatedAt` (**default desc**), `createdAt`, `amount`, `expectedCloseDate
 
 | Endpoint | Notes |
 |---|---|
-| `GET /saved-views?object=contacts\|companies\|deals` | `{ data }`: the caller's views plus views shared in the workspace, by `position`. Row: `id, object, name, filters, sort, columns, isShared, position, ownerId, isMine, createdAt, updatedAt`. |
+| `GET /saved-views?object=contacts\|companies\|deals\|tasks\|meetings\|proposals` | `{ data }`: the caller's views plus views shared in the workspace, by `position`. Row: `id, object, name, filters, sort, columns, isShared, position, ownerId, isMine, createdAt, updatedAt`. |
 | `POST /saved-views` | `{ object, name, filters?, sort?, columns?, isShared?, position? }` → 201. **Max 30 per user per object** (409). |
 | `PATCH /saved-views/:id` | Any field except `object`. |
 | `DELETE /saved-views/:id` | → 204. |
@@ -106,6 +106,36 @@ Sorts: `updatedAt` (**default desc**), `createdAt`, `amount`, `expectedCloseDate
 `filters` are stored **exactly as the list endpoint's query params** (strings and string arrays, e.g. `{"ownerId": "me", "leadStatus": ["new"], "hasOpenDeal": "false"}`) and validated by the same Zod schema as that object's list (no `limit`/`cursor`); `sort` by the same sort whitelist; `columns` must be known column ids for the object (no repeats). Invalid → 400. The owner may edit/delete; admins may also edit/delete **shared** views; anyone else → 403 on a shared view, 404 on a private one.
 
 Column ids — contacts: `name, email, phone, jobTitle, company, owner, leadStatus, lifecycle, openDeal, agentStatus, nextAction, lastActivityAt, createdAt, source`; companies: `name, domain, industry, city, owner, contactCount, openDealCount, openDealAmount, createdAt, updatedAt`; deals: `name, stage, amount, expectedCloseDate, owner, company, contact, source, closedAt, createdAt, updatedAt`.
+
+## 7a. Tasks, Meetings, Proposals (C6a)
+
+Read-only lists on the list standard, mounted on the existing routers (new paths; the old `GET /tasks`,
+`GET /meetings`, `GET /proposals` keep their unpaginated `{ data }` shape for the unrouted lead page until C6b).
+Writes are unchanged (`POST/PATCH /tasks…`, `/meetings…`, `/proposals…`). Every row's owner name comes from
+`profiles` (`ownerName`, null = no owner) — the denormalised `owner_name` columns are not read (B25/B26 display).
+"Today", "overdue" and "upcoming" are **IST days computed in SQL** (`date_trunc('day', now() at time zone
+'Asia/Kolkata')`, the dashboard's expression); the client only passes the bucket.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /tasks/list` · `GET /tasks/count` | Filters: `ownerId[]` (ids / `me` / `none`), `status` (`open` **default**, `completed`, `cancelled`, `all`), `due` (`overdue` = due before now; `today` = due within today IST; `upcoming` = due from tomorrow 00:00 IST), `dueFrom/To`, `type[]`, `origin[]` (`manual`, `automation`, `agent`), `contactId`, `companyId` (the contact's company), `dealId` (tasks of that deal's contact — tasks have no deal link), `q` (title or contact name). `due_at` is NOT NULL, so there is no "no due date" bucket. Sorts: `dueAt` (**default asc**), `createdAt`, `updatedAt`. Row = the Task DTO + `ownerName`, `contact {id,name}`, `company {id,name}\|null`, `deal {id,name}\|null` (the contact's most recently updated open deal), `isOverdue` (open and past due, same rule as `due=overdue`). |
+| `GET /meetings/list` · `GET /meetings/count` | Filters: `ownerId[]`, `status[]`, `when` (`upcoming` = from now, not completed/cancelled/no-show/failed; `today` = today IST, any status; `past`; `needs_outcome` = past, not cancelled/no-show/failed, no outcome), `from/to` (scheduled time), `contactId`, `companyId`, `dealId` (`meetings.deal_id`), `q`. Sorts: `at` (scheduled time, **default asc**), `createdAt`. Row = the Meeting DTO (incl. `outcome`, `calendarSyncStatus/Error`, `notifyEmail/WhatsappStatus/Error`, `meetLink`) + `ownerName`, `contact`, `company`, `deal`. Participants are still not returned (A18 unchanged). |
+| `GET /proposals/list` · `GET /proposals/count` | Filters: `ownerId[]`, `status[]`, `group` (`open` = every non-terminal status; `awaiting_decision` = `sent`; `won` = `accepted`; `lost` = `rejected`, `expired`, `withdrawn`; `PROPOSAL_STATUS_GROUPS` in `domain/proposalRouting.ts`), `contactId`, `companyId`, `dealId`, `updatedFrom/To`, `q`. Sorts: `updatedAt` (**default desc**), `sentAt`, `amount` (both nullable: NULLs last). Row = the Proposal DTO + `ownerName`, `contact`, `company`, `deal`, **`allowedNextStatuses`**. |
+| `GET /proposals/summary` | Same filters as the list (no sort/limit/cursor) → `{ openCount, sentCount, openValue }`: open group count, `sent` count, sum of open amounts in **INR**. The page sends its filters without `group`/`status`. |
+
+**`allowedNextStatuses`** = `allowedNextProposalStatuses(status)` (`domain/proposalRouting.ts`), the same table
+`POST /proposals/:id/status` enforces: a terminal status (`accepted`, `rejected`, `withdrawn`, `expired`) allows
+nothing (409); any other status allows every other status (the same status is a no-op). `rejected` / `expired`
+need `lossReason` (`LOSS_REASON_PROPOSAL_STATUSES`; 400 without, and the DB check). Integration tests check that
+the row and the endpoint agree (`tests/integration/workListsApi.test.ts`).
+
+Indexes (migration **036**): tasks `(workspace_id, due_at|created_at|updated_at, id)`, meetings
+`(workspace_id, scheduled_at|created_at, id)`, proposals `(workspace_id, updated_at|sent_at|amount, id)`.
+`q` has no trigram index on titles (an OR with the contact name, small tables). Saved views accept the objects
+`tasks`, `meetings`, `proposals` (036 widens `saved_views_object_valid`); column ids — tasks: `title, type, dueAt,
+contact, company, deal, owner, origin, status, createdAt, updatedAt`; meetings: `title, at, contact, company, deal,
+owner, status, outcome, calendar, notify, link, createdAt`; proposals: `title, contact, company, deal, amount, status,
+sentAt, owner, updatedAt, sendStatus, document`.
 
 ## 8. Performance (B4 check)
 
