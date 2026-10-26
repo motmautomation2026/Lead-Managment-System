@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,7 +34,7 @@ import {
   usd,
 } from "./agent-labels";
 
-/** Right-hand drawer with one decision in full: message, checks, knowledge, rating, reports. */
+/** The row Sheet with one decision in full: message, checks, knowledge, rating, reports. */
 export function DecisionDrawer({
   decisionId,
   onClose,
@@ -45,25 +45,27 @@ export function DecisionDrawer({
   const query = useAgentDecision(decisionId);
   const d = query.data;
   return (
-    <Dialog open={Boolean(decisionId)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
+    <Sheet open={Boolean(decisionId)} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent
         aria-describedby={undefined}
-        className="left-auto right-0 top-0 h-dvh w-full max-w-xl translate-x-0 translate-y-0 content-start overflow-y-auto sm:rounded-none"
+        className="w-full gap-0 overflow-y-auto sm:max-w-xl"
       >
-        <DialogHeader>
-          <DialogTitle>
+        <SheetHeader className="border-b">
+          <SheetTitle className="pr-6">
             {d ? `${ACTION_LABEL[d.action]} for ${d.lead.name}` : "AI decision"}
-          </DialogTitle>
-        </DialogHeader>
-        {query.isLoading ? (
-          <LoadingBlock label="Loading decision…" />
-        ) : query.error ? (
-          <ErrorBlock error={query.error} />
-        ) : d ? (
-          <DecisionBody decision={d} />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+          </SheetTitle>
+        </SheetHeader>
+        <div className="p-4">
+          {query.isLoading ? (
+            <LoadingBlock label="Loading decision…" />
+          ) : query.error ? (
+            <ErrorBlock error={query.error} />
+          ) : d ? (
+            <DecisionBody decision={d} />
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Info } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
-import { Button } from "@/components/ui/button";
+import { Info, Sparkles } from "lucide-react";
+import { PageHeader } from "@/components/crm/page-header";
+import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -15,15 +15,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/common/status-badge";
-import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
-import type {
-  AgentAction,
-  AgentDecisionFilters,
-  AgentDecisionRow,
-  AgentOutcome,
-} from "@/lib/backend-client";
-import { toIsoFromIst } from "@/lib/dates";
+import { ErrorBlock } from "@/components/common/server-state";
+import type { AgentDecisionRow } from "@/lib/backend-client";
+import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { RefLink } from "@/features/work/ref-link";
+import { useListUrlState } from "@/lib/use-list-url-state";
 import { useAgentDecisions, useAgentStats } from "@/store";
+import {
+  aiActivitySearchSchema,
+  toDecisionFilters,
+  type AiActivitySearch,
+} from "./ai-activity-search";
 import {
   ACTION_LABEL,
   OUTCOME_LABEL,
@@ -39,40 +41,28 @@ const MIN_RATED = 50;
 
 export function AiActivityPage() {
   const stats = useAgentStats();
-  const [action, setAction] = useState("all");
-  const [outcome, setOutcome] = useState("all");
-  const [rating, setRating] = useState("all");
-  const [openReport, setOpenReport] = useState(false);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [state, set] = useListUrlState(aiActivitySearchSchema);
   const [selected, setSelected] = useState<string | null>(null);
+  const prefetch = usePrefetchRecord();
+  // "all" in a Select = the filter is absent from the URL.
+  const pick = (key: "action" | "outcome" | "rating") => (value: string) =>
+    void set({ [key]: value === "all" ? undefined : value } as Partial<AiActivitySearch>);
 
-  const filters = useMemo<AgentDecisionFilters>(
-    () => ({
-      action: action === "all" ? undefined : (action as AgentAction),
-      outcome: outcome === "all" ? undefined : (outcome as AgentOutcome),
-      rating: rating === "all" ? undefined : (rating as AgentDecisionFilters["rating"]),
-      hasOpenReport: openReport || undefined,
-      // Whole IST days.
-      from: from ? toIsoFromIst(from, "00:00:00") : undefined,
-      to: to ? toIsoFromIst(to, "23:59:59") : undefined,
-    }),
-    [action, outcome, rating, openReport, from, to],
-  );
+  const filters = useMemo(() => toDecisionFilters(state), [state]);
   const decisions = useAgentDecisions(filters);
   const rows = decisions.data?.pages.flatMap((page) => page.data) ?? [];
   const s = stats.data;
 
   return (
-    <div className="pb-10">
+    <div className="pb-24">
       <PageHeader
         title="AI Activity"
         description="Everything the AI agent decided, for review. Rate drafts so we know when it's safe to go live."
       />
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className="space-y-4 px-4 pt-4 sm:px-6">
         {s?.mode === "shadow" && (
-          <div className="flex items-center gap-2 rounded-md border border-info/40 bg-info/10 px-3 py-2 text-sm">
-            <Info className="size-4 shrink-0 text-info" />
+          <div className="flex items-center gap-2 rounded-md border border-info/40 bg-info-soft px-3 py-2 text-sm text-info-soft-foreground">
+            <Info className="size-4 shrink-0" />
             Shadow mode: drafts only, nothing is sent to leads.
           </div>
         )}
@@ -128,7 +118,7 @@ export function AiActivityPage() {
               <button
                 type="button"
                 className="text-left"
-                onClick={() => setOpenReport(true)}
+                onClick={() => void set({ openReport: true })}
                 title="Show decisions with an open report"
               >
                 <Card className="h-full transition-colors hover:bg-accent/40">
@@ -145,20 +135,20 @@ export function AiActivityPage() {
 
         <div className="flex flex-wrap items-end gap-2">
           <Filter
-            value={action}
-            onChange={setAction}
+            value={state.action ?? "all"}
+            onChange={pick("action")}
             label="Action"
             options={[["all", "All actions"], ...Object.entries(ACTION_LABEL)]}
           />
           <Filter
-            value={outcome}
-            onChange={setOutcome}
+            value={state.outcome ?? "all"}
+            onChange={pick("outcome")}
             label="Outcome"
             options={[["all", "All outcomes"], ...Object.entries(OUTCOME_LABEL)]}
           />
           <Filter
-            value={rating}
-            onChange={setRating}
+            value={state.rating ?? "all"}
+            onChange={pick("rating")}
             label="Rating"
             options={[
               ["all", "Any rating"],
@@ -168,57 +158,59 @@ export function AiActivityPage() {
             ]}
           />
           <div>
-            <Label className="mb-1 block text-xs text-muted-foreground">From</Label>
+            <Label htmlFor="ai-from" className="mb-1 block text-xs text-muted-foreground">
+              From
+            </Label>
             <Input
+              id="ai-from"
               type="date"
               className="w-40"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              value={state.from ?? ""}
+              onChange={(e) => void set({ from: e.target.value || undefined })}
             />
           </div>
           <div>
-            <Label className="mb-1 block text-xs text-muted-foreground">To</Label>
+            <Label htmlFor="ai-to" className="mb-1 block text-xs text-muted-foreground">
+              To
+            </Label>
             <Input
+              id="ai-to"
               type="date"
               className="w-40"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
+              value={state.to ?? ""}
+              onChange={(e) => void set({ to: e.target.value || undefined })}
             />
           </div>
           <label className="flex h-9 items-center gap-2 text-sm">
-            <Checkbox checked={openReport} onCheckedChange={(v) => setOpenReport(v === true)} />
+            <Checkbox
+              checked={state.openReport === true}
+              onCheckedChange={(v) => void set({ openReport: v === true ? true : undefined })}
+            />
             Has open report
           </label>
         </div>
 
-        {decisions.isLoading ? (
-          <LoadingBlock label="Loading AI decisions…" />
-        ) : decisions.error ? (
-          <ErrorBlock error={decisions.error} />
-        ) : rows.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              No AI decisions match these filters.
-            </CardContent>
-          </Card>
-        ) : (
-          <Card className="divide-y p-0">
-            {rows.map((row) => (
-              <DecisionListRow key={row.id} row={row} onOpen={() => setSelected(row.id)} />
-            ))}
-          </Card>
-        )}
-        {decisions.hasNextPage && (
-          <div className="text-center">
-            <Button
-              variant="outline"
-              disabled={decisions.isFetchingNextPage}
-              onClick={() => void decisions.fetchNextPage()}
-            >
-              {decisions.isFetchingNextPage ? "Loading…" : "Load more"}
-            </Button>
-          </div>
-        )}
+        <DataTable<AgentDecisionRow>
+          label="AI decisions"
+          data={rows}
+          columns={DECISION_COLUMNS}
+          getRowId={(r) => r.id}
+          onRowClick={(r) => setSelected(r.id)}
+          onRowIntent={(r) => prefetch("contact", r.lead.id)}
+          hasNextPage={decisions.hasNextPage}
+          isFetchingNextPage={decisions.isFetchingNextPage}
+          onLoadMore={() => void decisions.fetchNextPage()}
+          isLoading={decisions.isLoading}
+          error={decisions.error}
+          onRetry={() => void decisions.refetch()}
+          emptyState={
+            <EmptyState
+              icon={Sparkles}
+              title="No AI decisions match these filters."
+              text="Change the filters, or wait for the agent's next wake-up."
+            />
+          }
+        />
       </div>
       <DecisionDrawer decisionId={selected} onClose={() => setSelected(null)} />
     </div>
@@ -234,69 +226,70 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DecisionListRow({ row, onOpen }: { row: AgentDecisionRow; onOpen: () => void }) {
+function DecisionBadges({ row }: { row: AgentDecisionRow }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
-      className="cursor-pointer space-y-1.5 px-4 py-3 text-sm hover:bg-accent/40"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-xs text-muted-foreground">{istDateTime(row.createdAt)}</span>
-        <Link
-          to="/contacts/$contactId"
-          params={{ contactId: row.lead.id }}
-          className="font-medium hover:underline"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {row.lead.name}
-        </Link>
-        <span className="text-xs text-muted-foreground">{row.lead.company}</span>
-        <span className="text-xs text-muted-foreground">
-          Owner: {row.ownerName ?? "Unassigned"}
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <StatusBadge value="" display={ACTION_LABEL[row.action]} tone="info" />
+    <span className="flex flex-wrap items-center gap-1.5">
+      <StatusBadge value="" display={ACTION_LABEL[row.action]} tone="info" />
+      <StatusBadge value="" display={OUTCOME_LABEL[row.outcome]} tone={OUTCOME_TONE[row.outcome]} />
+      {row.regenerated && <StatusBadge value="" display="Regenerated" tone="warning" />}
+      {row.rating && (
         <StatusBadge
           value=""
-          display={OUTCOME_LABEL[row.outcome]}
-          tone={OUTCOME_TONE[row.outcome]}
+          display={
+            row.rating === "good"
+              ? "Rated good"
+              : `Rated bad${row.ratingReason ? `: ${RATING_REASON_LABEL[row.ratingReason]}` : ""}`
+          }
+          tone={row.rating === "good" ? "success" : "danger"}
         />
-        {row.regenerated && <StatusBadge value="" display="Regenerated" tone="warning" />}
-        {row.rating && (
-          <StatusBadge
-            value=""
-            display={
-              row.rating === "good"
-                ? "Rated good"
-                : `Rated bad${row.ratingReason ? `: ${RATING_REASON_LABEL[row.ratingReason]}` : ""}`
-            }
-            tone={row.rating === "good" ? "success" : "danger"}
-          />
-        )}
-        {row.openReports > 0 && (
-          <StatusBadge
-            value=""
-            display={`${row.openReports} open ${row.openReports === 1 ? "report" : "reports"}`}
-            tone="danger"
-          />
-        )}
-      </div>
-      {row.subject && <div className="font-medium">{row.subject}</div>}
-      {row.bodyPreview && (
-        <p className="line-clamp-2 text-xs text-muted-foreground">{row.bodyPreview}</p>
       )}
-    </div>
+      {row.openReports > 0 && (
+        <StatusBadge
+          value=""
+          display={`${row.openReports} open ${row.openReports === 1 ? "report" : "reports"}`}
+          tone="danger"
+        />
+      )}
+    </span>
   );
 }
+
+const DECISION_COLUMNS: DataTableColumn<AgentDecisionRow>[] = [
+  {
+    id: "createdAt",
+    header: "When (IST)",
+    size: 170,
+    hideable: false,
+    cell: (r) => (
+      <span className="type-small text-muted-foreground">{istDateTime(r.createdAt)}</span>
+    ),
+  },
+  {
+    id: "contact",
+    header: "Contact",
+    cell: (r) => (
+      <span className="min-w-0">
+        <RefLink type="contact" value={{ id: r.lead.id, name: r.lead.name }} />
+        <span className="block truncate type-small text-muted-foreground">{r.lead.company}</span>
+      </span>
+    ),
+  },
+  { id: "owner", header: "Owner", size: 150, cell: (r) => r.ownerName ?? "Unassigned" },
+  { id: "decision", header: "Decision", size: 300, cell: (r) => <DecisionBadges row={r} /> },
+  {
+    id: "message",
+    header: "Message",
+    size: 320,
+    cell: (r) => (
+      <span className="min-w-0">
+        {r.subject && <span className="block truncate font-medium">{r.subject}</span>}
+        {r.bodyPreview && (
+          <span className="block truncate type-small text-muted-foreground">{r.bodyPreview}</span>
+        )}
+      </span>
+    ),
+  },
+];
 
 function Filter({
   value,

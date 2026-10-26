@@ -55,9 +55,6 @@ const asset: KnowledgeAsset = {
   updatedAt: "2026-10-01T00:00:00.000Z",
 };
 
-vi.mock("@/app/app-shell", () => ({
-  PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
@@ -89,7 +86,10 @@ describe("Knowledge page", () => {
   it("salespeople see the documents but no write controls", () => {
     mocks.isAdmin = false;
     render(<KnowledgePage />);
-    expect(screen.getAllByTestId("document-row")).toHaveLength(3);
+    const table = screen.getByRole("table", { name: "Knowledge documents" });
+    expect(within(table).getByText("Pricing FAQ")).toBeInTheDocument();
+    expect(within(table).getByText("Scan")).toBeInTheDocument();
+    expect(within(table).getByText("Case study deck")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add knowledge/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Reprocess/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
@@ -110,6 +110,27 @@ describe("Knowledge page", () => {
     expect(screen.getByRole("button", { name: "Delete Pricing FAQ" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete Case study deck" })).toBeNull();
     expect(screen.getAllByRole("switch")).toHaveLength(2);
+  });
+
+  it("assets are a table: download for everyone, active toggle and delete for admins", () => {
+    mocks.isAdmin = true;
+    render(<KnowledgePage />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Assets" }), { button: 0, ctrlKey: false });
+    const table = screen.getByRole("table", { name: "Assets" });
+    expect(within(table).getByText("the lead asks for proof")).toBeInTheDocument();
+    expect(within(table).getByRole("link", { name: "Download Case study deck" })).toHaveAttribute(
+      "href",
+      "https://example.test/deck.pdf",
+    );
+    expect(within(table).getByRole("switch", { name: "Active: Case study deck" })).toBeTruthy();
+    expect(within(table).getByRole("button", { name: "Delete Case study deck" })).toBeTruthy();
+    cleanup();
+    mocks.isAdmin = false;
+    render(<KnowledgePage />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Assets" }), { button: 0, ctrlKey: false });
+    const readOnly = screen.getByRole("table", { name: "Assets" });
+    expect(within(readOnly).queryByRole("switch")).toBeNull();
+    expect(within(readOnly).getAllByText("Active")).toHaveLength(2); // header + the read-only value
   });
 });
 

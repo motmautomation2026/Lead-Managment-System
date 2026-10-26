@@ -1,7 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { Download, Eye, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { BookOpen, Download, Eye, Paperclip, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/app/app-shell";
+import { PageHeader } from "@/components/crm/page-header";
+import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { RelativeTime } from "@/components/crm/relative-time";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -26,7 +29,6 @@ import type {
   KnowledgeHit,
   KnowledgeStatus,
 } from "@/lib/backend-client";
-import { relDay } from "@/lib/format";
 import {
   messageFromError,
   useIsAdmin,
@@ -97,12 +99,12 @@ async function attempt(action: () => Promise<unknown>, success: string) {
 export function KnowledgePage() {
   const knowledge = useKnowledge();
   return (
-    <div>
+    <div className="pb-24">
       <PageHeader
         title="Knowledge"
         description="What the AI agent may say (knowledge base) and attach (asset library) for this workspace."
       />
-      <div className="p-6">
+      <div className="px-4 pt-4 sm:px-6">
         {knowledge.error ? (
           <ErrorBlock error={knowledge.error} />
         ) : knowledge.isLoading ? (
@@ -134,6 +136,120 @@ type Knowledge = ReturnType<typeof useKnowledge>;
 
 // --- Documents ------------------------------------------------------------------
 
+const stopRowClick = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+function documentColumns(
+  knowledge: Knowledge,
+  isAdmin: boolean,
+  onView: (id: string) => void,
+  onDelete: (doc: KnowledgeDocument) => void,
+): DataTableColumn<KnowledgeDocument>[] {
+  return [
+    {
+      id: "title",
+      header: "Title",
+      size: 240,
+      hideable: false,
+      cell: (doc) => (
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{doc.title}</span>
+          {doc.fileName && (
+            <span className="block truncate type-small text-muted-foreground">{doc.fileName}</span>
+          )}
+        </span>
+      ),
+    },
+    { id: "type", header: "Type", size: 130, cell: (doc) => docTypeLabel(doc.docType) },
+    {
+      id: "tags",
+      header: "Tags",
+      size: 160,
+      cell: (doc) => (
+        <span className="truncate type-small text-muted-foreground">
+          {doc.tags.join(", ") || "-"}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      size: 120,
+      cell: (doc) => <IngestStatus status={doc.status} error={doc.error} />,
+    },
+    { id: "chunks", header: "Chunks", size: 90, cell: (doc) => doc.chunkCount },
+    {
+      id: "active",
+      header: "Active",
+      size: 90,
+      cell: (doc) =>
+        isAdmin && !doc.assetId ? (
+          <span onClick={stopRowClick}>
+            <Switch
+              aria-label={`Active: ${doc.title}`}
+              checked={doc.isActive}
+              onCheckedChange={(isActive) =>
+                void attempt(
+                  () => knowledge.updateDocument(doc.id, { isActive }),
+                  isActive ? "Document activated." : "Document deactivated.",
+                )
+              }
+            />
+          </span>
+        ) : (
+          <span className="type-small">{doc.isActive ? "Yes" : "No"}</span>
+        ),
+    },
+    {
+      id: "updatedAt",
+      header: "Updated",
+      size: 160,
+      cell: (doc) => <RelativeTime value={doc.updatedAt} />,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      size: 140,
+      hideable: false,
+      cell: (doc) => (
+        <span className="inline-flex" onClick={stopRowClick}>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={`View ${doc.title}`}
+            onClick={() => onView(doc.id)}
+          >
+            <Eye />
+          </Button>
+          {isAdmin && (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Reprocess ${doc.title}`}
+                onClick={() =>
+                  void attempt(() => knowledge.reprocess(doc.id), "Queued for reprocessing.")
+                }
+              >
+                <RefreshCw />
+              </Button>
+              {!doc.assetId && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Delete ${doc.title}`}
+                  onClick={() => onDelete(doc)}
+                >
+                  <Trash2 />
+                </Button>
+              )}
+            </>
+          )}
+        </span>
+      ),
+    },
+  ];
+}
+
 function DocumentsTab({ knowledge }: { knowledge: Knowledge }) {
   const isAdmin = useIsAdmin();
   const [adding, setAdding] = useState(false);
@@ -149,110 +265,20 @@ function DocumentsTab({ knowledge }: { knowledge: Knowledge }) {
           </Button>
         </div>
       )}
-      <Card>
-        <CardContent className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead className="border-b text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2 font-medium">Title</th>
-                <th className="px-4 py-2 font-medium">Type</th>
-                <th className="px-4 py-2 font-medium">Tags</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Chunks</th>
-                <th className="px-4 py-2 font-medium">Active</th>
-                <th className="px-4 py-2 font-medium">Updated</th>
-                <th className="px-4 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {knowledge.documents.map((doc) => (
-                <tr key={doc.id} className="border-b last:border-0" data-testid="document-row">
-                  <td className="px-4 py-2 font-medium">
-                    {doc.title}
-                    {doc.fileName && (
-                      <div className="text-xs font-normal text-muted-foreground">
-                        {doc.fileName}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">{docTypeLabel(doc.docType)}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {doc.tags.join(", ") || "-"}
-                  </td>
-                  <td className="px-4 py-2">
-                    <IngestStatus status={doc.status} error={doc.error} />
-                  </td>
-                  <td className="px-4 py-2">{doc.chunkCount}</td>
-                  <td className="px-4 py-2">
-                    {isAdmin && !doc.assetId ? (
-                      <Switch
-                        aria-label={`Active: ${doc.title}`}
-                        checked={doc.isActive}
-                        onCheckedChange={(isActive) =>
-                          void attempt(
-                            () => knowledge.updateDocument(doc.id, { isActive }),
-                            isActive ? "Document activated." : "Document deactivated.",
-                          )
-                        }
-                      />
-                    ) : (
-                      <span className="text-xs">{doc.isActive ? "Yes" : "No"}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {relDay(doc.updatedAt)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2 text-right">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`View ${doc.title}`}
-                      onClick={() => setViewing(doc.id)}
-                    >
-                      <Eye />
-                    </Button>
-                    {isAdmin && (
-                      <>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label={`Reprocess ${doc.title}`}
-                          onClick={() =>
-                            void attempt(
-                              () => knowledge.reprocess(doc.id),
-                              "Queued for reprocessing.",
-                            )
-                          }
-                        >
-                          <RefreshCw />
-                        </Button>
-                        {!doc.assetId && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label={`Delete ${doc.title}`}
-                            onClick={() => setDeleting(doc)}
-                          >
-                            <Trash2 />
-                          </Button>
-                        )}
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {knowledge.documents.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
-                    No knowledge yet.
-                    {isAdmin ? " Add a document or paste text to get started." : ""}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
+      <DataTable<KnowledgeDocument>
+        label="Knowledge documents"
+        data={knowledge.documents}
+        columns={documentColumns(knowledge, isAdmin, setViewing, setDeleting)}
+        getRowId={(doc) => doc.id}
+        onRowClick={(doc) => setViewing(doc.id)}
+        emptyState={
+          <EmptyState
+            icon={BookOpen}
+            title="No knowledge yet."
+            text={isAdmin ? "Add a document or paste text to get started." : undefined}
+          />
+        }
+      />
       {isAdmin && (
         <AddKnowledgeDialog open={adding} onOpenChange={setAdding} knowledge={knowledge} />
       )}
@@ -466,14 +492,114 @@ function DocumentDialog({ id, onClose }: { id: string | null; onClose: () => voi
 
 // --- Assets ---------------------------------------------------------------------
 
+function assetColumns(
+  knowledge: Knowledge,
+  isAdmin: boolean,
+  onDelete: (asset: KnowledgeAsset) => void,
+): DataTableColumn<KnowledgeAsset>[] {
+  return [
+    {
+      id: "title",
+      header: "Asset",
+      size: 240,
+      hideable: false,
+      cell: (asset) => (
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{asset.title}</span>
+          <span className="block truncate type-small text-muted-foreground">
+            {asset.fileName ?? "-"} · {formatBytes(asset.sizeBytes)}
+          </span>
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      size: 120,
+      cell: (asset) => <IngestStatus status={asset.status} error={asset.error} />,
+    },
+    {
+      id: "useWhen",
+      header: "Use when",
+      size: 260,
+      cell: (asset) => <span className="truncate">{asset.useWhen}</span>,
+    },
+    {
+      id: "channels",
+      header: "Channels",
+      size: 200,
+      cell: (asset) => (
+        <span className="truncate type-small text-muted-foreground">
+          {asset.channels.map((c) => (c === "whatsapp" ? "WhatsApp" : "Email")).join(", ")}
+          {asset.tags.length > 0 && ` · Tags: ${asset.tags.join(", ")}`}
+        </span>
+      ),
+    },
+    {
+      id: "active",
+      header: "Active",
+      size: 90,
+      cell: (asset) =>
+        isAdmin ? (
+          <span onClick={stopRowClick}>
+            <Switch
+              aria-label={`Active: ${asset.title}`}
+              checked={asset.isActive}
+              onCheckedChange={(isActive) =>
+                void attempt(
+                  () => knowledge.updateAsset(asset.id, { isActive }),
+                  isActive ? "Asset activated." : "Asset deactivated.",
+                )
+              }
+            />
+          </span>
+        ) : (
+          <span className="type-small">{asset.isActive ? "Active" : "Inactive"}</span>
+        ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      size: 130,
+      hideable: false,
+      cell: (asset) => (
+        <span className="inline-flex" onClick={stopRowClick}>
+          {asset.downloadUrl && (
+            <Button asChild size="icon" variant="ghost">
+              <a
+                href={asset.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Download ${asset.title}`}
+              >
+                <Download />
+              </a>
+            </Button>
+          )}
+          {isAdmin && (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`Delete ${asset.title}`}
+              onClick={() => onDelete(asset)}
+            >
+              <Trash2 />
+            </Button>
+          )}
+        </span>
+      ),
+    },
+  ];
+}
+
 function AssetsTab({ knowledge }: { knowledge: Knowledge }) {
   const isAdmin = useIsAdmin();
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<KnowledgeAsset | null>(null);
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <p className="text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="type-small text-muted-foreground">
           The agent may only attach files from this library. For WhatsApp, PDFs work best (max 10
           MB).
         </p>
@@ -483,75 +609,13 @@ function AssetsTab({ knowledge }: { knowledge: Knowledge }) {
           </Button>
         )}
       </div>
-      {knowledge.assets.length === 0 && (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No assets yet.
-          </CardContent>
-        </Card>
-      )}
-      <div className="grid gap-3 md:grid-cols-2">
-        {knowledge.assets.map((asset) => (
-          <Card key={asset.id} data-testid="asset-card">
-            <CardContent className="space-y-2 p-4 text-sm">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{asset.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {asset.fileName ?? "-"} · {formatBytes(asset.sizeBytes)}
-                  </p>
-                </div>
-                <IngestStatus status={asset.status} error={asset.error} />
-              </div>
-              <p>
-                <span className="text-muted-foreground">Use when: </span>
-                {asset.useWhen}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Channels:{" "}
-                {asset.channels.map((c) => (c === "whatsapp" ? "WhatsApp" : "Email")).join(", ")}
-                {asset.tags.length > 0 && ` · Tags: ${asset.tags.join(", ")}`}
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                {asset.downloadUrl && (
-                  <Button asChild size="sm" variant="outline">
-                    <a href={asset.downloadUrl} target="_blank" rel="noreferrer">
-                      <Download /> Download
-                    </a>
-                  </Button>
-                )}
-                {isAdmin ? (
-                  <>
-                    <label className="ml-auto flex items-center gap-2 text-xs">
-                      Active
-                      <Switch
-                        aria-label={`Active: ${asset.title}`}
-                        checked={asset.isActive}
-                        onCheckedChange={(isActive) =>
-                          void attempt(
-                            () => knowledge.updateAsset(asset.id, { isActive }),
-                            isActive ? "Asset activated." : "Asset deactivated.",
-                          )
-                        }
-                      />
-                    </label>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Delete ${asset.title}`}
-                      onClick={() => setDeleting(asset)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </>
-                ) : (
-                  <span className="ml-auto text-xs">{asset.isActive ? "Active" : "Inactive"}</span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <DataTable<KnowledgeAsset>
+        label="Assets"
+        data={knowledge.assets}
+        columns={assetColumns(knowledge, isAdmin, setDeleting)}
+        getRowId={(asset) => asset.id}
+        emptyState={<EmptyState icon={Paperclip} title="No assets yet." />}
+      />
       {isAdmin && <AddAssetDialog open={adding} onOpenChange={setAdding} knowledge={knowledge} />}
       <ConfirmDialog
         open={Boolean(deleting)}
