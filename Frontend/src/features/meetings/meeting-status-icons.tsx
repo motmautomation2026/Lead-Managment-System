@@ -13,7 +13,7 @@ const TONE: Record<string, string> = {
 };
 
 /** Icon + accessible text; the error (if any) is the hover tooltip. */
-function StatusIcon({
+export function StatusIcon({
   icon: Icon,
   what,
   status,

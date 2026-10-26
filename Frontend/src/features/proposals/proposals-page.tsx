@@ -1,199 +1,279 @@
-import { useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { toast } from "sonner";
-import { Send } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FileText, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/common/status-badge";
-import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
-import { money, relDay } from "@/lib/format";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { PageHeader } from "@/components/crm/page-header";
+import { FilterBar } from "@/components/crm/filter-bar";
+import type { FilterDef } from "@/components/crm/filter-model";
+import { DataTable } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { Money } from "@/components/crm/money";
+import { PropertyList } from "@/components/crm/property-list";
+import { RelativeTime } from "@/components/crm/relative-time";
+import { StatusPill } from "@/components/crm/status-pill";
+import { CompanyPicker } from "@/features/companies/company-picker";
+import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
+import { toSavedViewBody } from "@/features/crm/saved-views";
+import { useListViews } from "@/features/crm/use-list-views";
+import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { RefLink } from "@/features/work/ref-link";
+import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
 import { label } from "@/lib/labels";
-import { messageFromError, useLeads, useProposals, useSession } from "@/store";
-import { PROPOSAL_STATUSES, type ProposalStatus } from "@/types";
-import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useListUrlState } from "@/lib/use-list-url-state";
+import {
+  useCompany,
+  useCreateProposal,
+  useProposalCount,
+  useProposalList,
+  useProposalSummary,
+  useSession,
+} from "@/store";
+import { PROPOSAL_STATUSES, type ProposalListItem } from "@/types";
+import { SendProposalDialog } from "./components/send-proposal-dialog";
+import { PROPOSAL_COLUMNS } from "./proposal-columns";
+import { ProposalSendIcons } from "./proposal-send-icons";
+import {
+  DEFAULT_COLUMNS,
+  PROPOSAL_STATUS_TONE,
+  PROPOSAL_VIEW_SPEC,
+  fromFilterValues,
+  parseSort,
+  proposalsSearchSchema,
+  toApiParams,
+  toFilterValues,
+  toSummaryParams,
+} from "./proposals-search";
+
+const EMPTY_TEXT: Record<string, string> = {
+  open: "No open proposals.",
+  awaiting: "No proposals are waiting for a decision.",
+  won: "No accepted proposals yet.",
+  lost: "No lost proposals.",
+};
 
 export function ProposalsPage() {
-  const store = useProposals();
-  const { leads } = useLeads();
-  const { userName } = useSession();
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const pipelineValue = store.proposals
-    .filter((proposal) => ["sent", "revision_requested", "revised"].includes(proposal.status))
-    .reduce((sum, proposal) => sum + (proposal.amount ?? 0), 0);
-  const setStatus = async (id: string, status: ProposalStatus) => {
-    try {
-      await store.setProposalStatus(id, status);
-      toast.success(`Proposal marked ${label(status)}`);
-    } catch (error) {
-      toast.error(messageFromError(error));
-    }
-  };
+  const [state, set] = useListUrlState(proposalsSearchSchema);
+  const { users } = useSession();
+  const params = useMemo(() => toApiParams(state), [state]);
+  // A bare /proposals is rewritten to Open first (useListViews); don't fetch "all" meanwhile.
+  const landing = Object.keys(state).length === 0;
+  const list = useProposalList(params, !landing);
+  const count = useProposalCount(params, !landing);
+  const summary = useProposalSummary(useMemo(() => toSummaryParams(state), [state]));
+  const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
+  const filterCompany = useCompany(state.companyId);
+  const create = useCreateProposal();
+
+  const [qInput, setQInput] = useState(state.q ?? "");
+  const debouncedQ = useDebouncedValue(qInput, 300);
+  const lastQ = useRef(debouncedQ);
+  useEffect(() => {
+    if (lastQ.current === debouncedQ) return;
+    lastQ.current = debouncedQ;
+    void set({ q: debouncedQ || undefined }, { replace: true });
+  }, [debouncedQ, set]);
+
+  const viewsCtl = useListViews(PROPOSAL_VIEW_SPEC, state, set, (next) => {
+    setQInput(next.q ?? "");
+    lastQ.current = next.q ?? "";
+  });
+
+  const [newOpen, setNewOpen] = useState(false);
+  const [sheetId, setSheetId] = useState<string | null>(null);
+  // The Sheet follows the list row, so it shows send-status updates from the polling.
+  const sheet = rows.find((r) => r.id === sheetId) ?? null;
+  const [statusFor, setStatusFor] = useState<ProposalListItem | null>(null);
+
+  const quickFilters: FilterDef[] = [
+    {
+      id: "ownerId",
+      label: "Owner",
+      type: "multi",
+      options: [
+        { value: "me", label: "Me" },
+        { value: "none", label: "No owner" },
+        ...users.map((u) => ({ value: u.id, label: u.name })),
+      ],
+    },
+    {
+      id: "status",
+      label: "Status",
+      type: "multi",
+      options: PROPOSAL_STATUSES.map((s) => ({ value: s, label: label(s) })),
+    },
+    { id: "updated", label: "Updated", type: "dateRange" },
+  ];
+
+  const hasFilters = Object.keys(toSavedViewBody(state, toApiParams).filters).length > 0;
+  const newButton = <Button onClick={() => setNewOpen(true)}>New proposal</Button>;
+  const stats = summary.data;
+
   return (
-    <div className="pb-10">
+    <div className="pb-24">
       <PageHeader
         title="Proposals"
-        description="Attach a document, pick an email and WhatsApp template, and send both in one click."
-        actions={
-          <Button size="sm" onClick={() => setUploadOpen(true)}>
-            <Send className="mr-1 size-4" /> Send proposal
-          </Button>
-        }
+        count={count.data?.count ?? null}
+        primaryAction={newButton}
+        tabs={<SavedViewTabs controller={viewsCtl} />}
       />
-      <div className="space-y-4 p-6">
-        <div className="grid gap-3 sm:grid-cols-3">
+      <div className="space-y-3 px-4 pt-4 sm:px-6">
+        <dl className="grid grid-cols-3 gap-2 sm:max-w-xl" aria-label="Proposal summary">
+          <Stat label="Open" value={stats ? String(stats.openCount) : "–"} />
+          <Stat label="Sent" value={stats ? String(stats.sentCount) : "–"} />
           <Stat
-            label="Open proposals"
-            value={String(
-              store.proposals.filter(
-                (proposal) =>
-                  !["accepted", "rejected", "withdrawn", "expired"].includes(proposal.status),
-              ).length,
-            )}
+            label="Open pipeline"
+            value={stats ? <Money amount={stats.openValue} compact /> : "–"}
           />
-          <Stat
-            label="Awaiting decision"
-            value={String(store.proposals.filter((proposal) => proposal.status === "sent").length)}
+        </dl>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              placeholder="Search title or contact"
+              aria-label="Search proposals"
+              data-list-search
+              className="pl-8"
+            />
+          </div>
+          <ContactFilter
+            contactId={state.contactId}
+            onChange={(contactId) => void set({ contactId })}
           />
-          <Stat label="Value in play" value={money(pipelineValue)} />
+          <CompanyPicker
+            variant="chip"
+            value={
+              state.companyId
+                ? { id: state.companyId, name: filterCompany.data?.name ?? "…" }
+                : null
+            }
+            onChange={(company) => void set({ companyId: company?.id })}
+          />
+          <DealFilterChip dealId={state.dealId} onClear={() => void set({ dealId: undefined })} />
+          <FilterBar
+            filters={quickFilters}
+            values={toFilterValues(state)}
+            onChange={(values) => void set(fromFilterValues(values))}
+          />
         </div>
-        {store.isLoading ? (
-          <LoadingBlock label="Loading proposals…" />
-        ) : store.error ? (
-          <ErrorBlock error={store.error} />
-        ) : (
-          <Card className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[960px] text-sm">
-                <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
-                  <tr>
-                    {[
-                      "Proposal",
-                      "Lead",
-                      "Owner",
-                      "Amount",
-                      "Status",
-                      "Channels",
-                      "Sent",
-                      "Follow-up",
-                      "Decision",
-                    ].map((heading) => (
-                      <th key={heading} className="px-3 py-2 font-medium">
-                        {heading}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {store.proposals.map((proposal) => {
-                    const lead = leads.find((item) => item.id === proposal.leadId);
-                    return (
-                      <tr key={proposal.id} className="border-t hover:bg-accent/40">
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{proposal.title}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {proposal.fileName || "No document"}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {lead && (
-                            <Link
-                              to="/contacts/$contactId"
-                              params={{ contactId: lead.id }}
-                              className="hover:underline"
-                            >
-                              {lead.firstName} {lead.lastName} · {lead.company}
-                            </Link>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {proposal.ownerName ?? userName(proposal.ownerId)}
-                        </td>
-                        <td className="num px-3 py-2">
-                          {proposal.amount ? money(proposal.amount) : "-"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <StatusBadge value={proposal.status} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-col gap-1 text-xs">
-                            {proposal.emailSendStatus !== "not_applicable" && (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-muted-foreground">Email</span>
-                                <StatusBadge
-                                  value={proposal.emailSendStatus}
-                                  tone={channelTone(proposal.emailSendStatus)}
-                                />
-                              </div>
-                            )}
-                            {proposal.whatsappSendStatus !== "not_applicable" && (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-muted-foreground">WhatsApp</span>
-                                <StatusBadge
-                                  value={proposal.whatsappSendStatus}
-                                  tone={channelTone(proposal.whatsappSendStatus)}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {proposal.sentDate ? relDay(proposal.sentDate) : "-"}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {proposal.followUpDate ? relDay(proposal.followUpDate) : "-"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <Select
-                            value={proposal.status}
-                            disabled={store.isPending}
-                            onValueChange={(value) =>
-                              void setStatus(proposal.id, value as ProposalStatus)
-                            }
-                          >
-                            <SelectTrigger className="h-8 w-44">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {PROPOSAL_STATUSES.map((status) => (
-                                <SelectItem key={status} value={status}>
-                                  {label(status)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {store.proposals.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={9}
-                        className="px-3 py-10 text-center text-sm text-muted-foreground"
-                      >
-                        No proposals.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
+        <DataTable<ProposalListItem>
+          label="Proposals"
+          data={rows}
+          columns={PROPOSAL_COLUMNS}
+          getRowId={(r) => r.id}
+          onRowClick={(r) => setSheetId(r.id)}
+          sort={parseSort(state.sort)}
+          onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
+          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
+          onColumnsChange={(columns) => void set({ columns })}
+          hasNextPage={list.hasNextPage}
+          isFetchingNextPage={list.isFetchingNextPage}
+          onLoadMore={() => void list.fetchNextPage()}
+          isLoading={list.isLoading}
+          error={list.error}
+          onRetry={() => void list.refetch()}
+          emptyState={
+            <EmptyState
+              icon={FileText}
+              title={hasFilters ? "No proposals here" : "No proposals yet"}
+              text={EMPTY_TEXT[viewsCtl.activeId] ?? "Try other filters or a different search."}
+              action={newButton}
+            />
+          }
+        />
       </div>
+
+      <Sheet open={Boolean(sheet)} onOpenChange={(open) => !open && setSheetId(null)}>
+        <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
+          {sheet && (
+            <>
+              <SheetHeader className="border-b">
+                <SheetTitle className="pr-6">{sheet.title}</SheetTitle>
+                <SheetDescription>
+                  <StatusPill tone={PROPOSAL_STATUS_TONE[sheet.status]}>
+                    {label(sheet.status)}
+                  </StatusPill>
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 p-4">
+                <PropertyList
+                  items={[
+                    {
+                      id: "amount",
+                      label: "Amount",
+                      value:
+                        sheet.amount === undefined ? null : (
+                          <Money amount={sheet.amount} currency={sheet.currency} />
+                        ),
+                    },
+                    { id: "document", label: "Document", value: sheet.fileName ?? null },
+                    { id: "owner", label: "Owner", value: sheet.ownerName ?? "No owner" },
+                    {
+                      id: "contact",
+                      label: "Contact",
+                      value: <RefLink type="contact" value={sheet.contact} />,
+                    },
+                    {
+                      id: "company",
+                      label: "Company",
+                      value: <RefLink type="company" value={sheet.company} />,
+                    },
+                    {
+                      id: "deal",
+                      label: "Deal",
+                      value: <RefLink type="deal" value={sheet.deal} />,
+                    },
+                    {
+                      id: "sent",
+                      label: "Sent",
+                      value: sheet.sentDate ? <RelativeTime value={sheet.sentDate} /> : null,
+                    },
+                    {
+                      id: "followUp",
+                      label: "Follow-up",
+                      value: sheet.followUpDate ? (
+                        <RelativeTime value={sheet.followUpDate} />
+                      ) : null,
+                    },
+                    {
+                      id: "send",
+                      label: "Sent via",
+                      value: <ProposalSendIcons proposal={sheet} />,
+                    },
+                    ...(sheet.lossReason
+                      ? [{ id: "loss", label: "Loss reason", value: label(sheet.lossReason) }]
+                      : []),
+                    ...(sheet.notes ? [{ id: "notes", label: "Notes", value: sheet.notes }] : []),
+                  ]}
+                />
+                <Button size="sm" variant="outline" onClick={() => setStatusFor(sheet)}>
+                  Change status
+                </Button>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+      <ProposalStatusDialog
+        key={statusFor?.id ?? "none"}
+        proposal={statusFor}
+        open={Boolean(statusFor)}
+        onOpenChange={(open) => !open && setStatusFor(null)}
+      />
       <SendProposalDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
+        open={newOpen}
+        onOpenChange={setNewOpen}
         onSend={(value) =>
-          store.addProposal({
+          create.mutateAsync({
             leadId: value.leadId,
             title: value.title,
             amount: value.amount ? Number(value.amount) : undefined,
@@ -208,20 +288,11 @@ export function ProposalsPage() {
   );
 }
 
-function channelTone(status: string): "success" | "danger" | "muted" | "info" {
-  if (status === "sent") return "success";
-  if (status === "failed") return "danger";
-  if (status === "skipped") return "muted";
-  return "info";
-}
-
-function Stat({ label: name, value }: { label: string; value: string }) {
+function Stat({ label: name, value }: { label: string; value: ReactNode }) {
   return (
-    <Card>
-      <CardContent className="py-4">
-        <div className="num text-2xl font-semibold leading-none">{value}</div>
-        <div className="pt-1 text-xs text-muted-foreground">{name}</div>
-      </CardContent>
-    </Card>
+    <div className="rounded-lg border bg-card px-3 py-2">
+      <dt className="type-small text-muted-foreground">{name}</dt>
+      <dd className="type-section-title num">{value}</dd>
+    </div>
   );
 }
