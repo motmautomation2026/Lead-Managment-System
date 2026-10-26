@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { BackendError } from "@/lib/backend-client";
-import { keys, messageFromError, refreshCompany, refreshContact } from "./query";
+import { keys, messageFromError, refreshCompany, refreshContact, refreshDeal } from "./query";
 
 describe("query invalidation", () => {
   it("refreshes every contact-dependent aggregate after a composite mutation", async () => {
@@ -58,6 +58,34 @@ describe("query invalidation", () => {
         keys.contacts("workspace-1"),
       ]),
     );
+  });
+
+  it("refreshDeal refreshes every deal query (one prefix), contacts, companies and search", async () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockResolvedValue();
+    await refreshDeal(client, "workspace-1");
+    const invalidated = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(invalidated).toEqual(
+      expect.arrayContaining([
+        keys.deals("workspace-1"),
+        ["contact", "workspace-1"],
+        ["contactTimeline", "workspace-1"],
+        keys.contacts("workspace-1"),
+        ["company", "workspace-1"],
+        ["companyDeals", "workspace-1"],
+        ["companyTimeline", "workspace-1"],
+        ["search", "workspace-1"],
+      ]),
+    );
+    // Every deal key lives under the one prefix that refreshDeal invalidates.
+    for (const key of [
+      keys.dealList("workspace-1", {}),
+      keys.dealCount("workspace-1", {}),
+      keys.dealBoard("workspace-1", {}),
+      keys.deal("workspace-1", "d1"),
+      keys.dealTimeline("workspace-1", "d1", {}),
+    ])
+      expect(key.slice(0, 2)).toEqual(keys.deals("workspace-1"));
   });
 
   it("without a lead id refreshes every contact's record queries (bulk actions)", async () => {

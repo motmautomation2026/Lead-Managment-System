@@ -157,6 +157,7 @@ vi.mock("@/store", () => ({
     };
   },
   useCompanyTimeline: () => ({ data: undefined, isLoading: false, error: null }),
+  useDealTimeline: () => ({ data: undefined, isLoading: false, error: null }),
   useCompanySearch: (input: string) => ({
     data:
       input.trim().length >= 2

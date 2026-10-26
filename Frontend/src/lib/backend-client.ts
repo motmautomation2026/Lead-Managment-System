@@ -18,7 +18,10 @@ import type {
   ContactListItem,
   ContactListParams,
   CreateDealInput,
+  DealBoardColumn,
   DealDetail,
+  MoveDealStageInput,
+  UpdateDealInput,
   SavedView,
   SavedViewInput,
   SavedViewObject,
@@ -285,6 +288,8 @@ export interface CreateMeetingInput {
   durationMin?: number | undefined;
   url?: string | undefined;
   participants?: { name?: string | undefined; email: string }[] | undefined;
+  /** Attach to this deal (else the contact's newest open deal, else a new one). */
+  dealId?: string | undefined;
 }
 export interface UpdateMeetingInput {
   title?: string | undefined;
@@ -302,6 +307,8 @@ export interface CreateProposalInput {
   emailTemplateId: string;
   whatsappTemplateId: string;
   document: File;
+  /** Attach to this deal (else the contact's newest open deal, else a new one). */
+  dealId?: string | undefined;
 }
 export interface UpdateProposalInput {
   title?: string | undefined;
@@ -785,8 +792,25 @@ export const backend = {
         companyId ? { companyId } : {},
       ),
   },
+  /** CRM v2 deals (B4 §4). Stage moves only through `moveStage`. */
   deals: {
+    list: (params: DealListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<DealListItem>>(listQuery("/deals", { ...params, cursor }), signal),
+    count: (params: Omit<DealListParams, "sort" | "limit">, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/deals/count", params), signal),
+    /** Every stage in pipeline order; `stage` is not allowed (400). */
+    board: (params: Omit<DealListParams, "stage" | "sort" | "limit">, signal?: AbortSignal) =>
+      get<{ data: DealBoardColumn[] }>(listQuery("/deals/board", params), signal),
+    get: (id: string, signal?: AbortSignal) => get<DealDetail>(`/deals/${id}`, signal),
     create: (input: CreateDealInput) => send<DealDetail>("POST", "/deals", input),
+    update: (id: string, input: UpdateDealInput) =>
+      send<DealDetail>("PATCH", `/deals/${id}`, input),
+    /** Lost needs `lossReason`; `contactAction` only with lost; the current stage → 409. */
+    moveStage: (id: string, input: MoveDealStageInput) =>
+      send<DealDetail>("POST", `/deals/${id}/stage`, input),
+    /** Its own events + its linked meetings' and proposals', newest first (C4). */
+    timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
+      get<Page<CompanyTimelineEvent>>(listQuery(`/deals/${id}/timeline`, { kind, cursor }), signal),
   },
   savedViews: {
     list: (object: SavedViewObject, signal?: AbortSignal) =>
@@ -1025,6 +1049,7 @@ export const backend = {
       formData.append("emailTemplateId", input.emailTemplateId);
       formData.append("whatsappTemplateId", input.whatsappTemplateId);
       formData.append("document", input.document);
+      if (input.dealId) formData.append("dealId", input.dealId);
       return uploadFile<Proposal>("/proposals", formData);
     },
     update: (id: string, input: UpdateProposalInput) =>

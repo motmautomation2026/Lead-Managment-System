@@ -56,8 +56,19 @@ export const keys = {
       ? (["contactsCount", workspaceId, params] as const)
       : (["contactsCount", workspaceId] as const),
   contact: (workspaceId: string | null, id: string) => ["contact", workspaceId, id] as const,
-  /** Every deal query (lists/records land in C4). */
+  /** Every deal query shares this prefix: `deals(ws)` alone invalidates lists, counts, board, records, feeds. */
   deals: (workspaceId: string | null) => ["deals", workspaceId] as const,
+  dealList: (workspaceId: string | null, params: object) =>
+    ["deals", workspaceId, "list", params] as const,
+  dealCount: (workspaceId: string | null, params: object) =>
+    ["deals", workspaceId, "count", params] as const,
+  dealBoard: (workspaceId: string | null, params: object) =>
+    ["deals", workspaceId, "board", params] as const,
+  deal: (workspaceId: string | null, id: string) => ["deals", workspaceId, "detail", id] as const,
+  dealTimeline: (workspaceId: string | null, id: string, extra: object) =>
+    ["deals", workspaceId, "timeline", id, extra] as const,
+  contactSearch: (workspaceId: string | null, q: string, companyId?: string) =>
+    ["contactSearch", workspaceId, q, companyId ?? null] as const,
   /** Without params: the prefix of every companies list / count in the workspace. */
   companies: (workspaceId: string | null, params?: object) =>
     params ? (["companies", workspaceId, params] as const) : (["companies", workspaceId] as const),
@@ -142,6 +153,7 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
     keys.leads(workspaceId),
     keys.contacts(workspaceId),
     keys.contactsCount(workspaceId),
+    ["contactSearch", workspaceId],
     keys.deals(workspaceId),
     keys.tasks(workspaceId),
     keys.meetings(workspaceId),
@@ -171,6 +183,15 @@ export function refreshCompany(client: QueryClient, workspaceId: string | null) 
     ...targets.map((queryKey) => client.invalidateQueries({ queryKey })),
     refreshContact(client, workspaceId),
   ]);
+}
+
+/**
+ * After any deal write (create, edit, stage move): every deal query (lists, counts, board,
+ * records, feeds), and — since a move can change its contact (won, lost, nurture) and the
+ * company's open totals — every contact and company view (refreshCompany), plus global search.
+ */
+export function refreshDeal(client: QueryClient, workspaceId: string | null) {
+  return refreshCompany(client, workspaceId);
 }
 
 interface ErrorDetails {

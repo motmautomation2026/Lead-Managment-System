@@ -8,23 +8,27 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { ACTIVITY_FILTERS, type ActivityFilter } from "@/features/contacts/contact-helpers";
 import { cn } from "@/lib/utils";
-import { useCompanyTimeline, useContactTimeline } from "@/store";
+import { useCompanyTimeline, useContactTimeline, useDealTimeline } from "@/store";
 import type { CompanyTimelineEvent, TimelineEvent } from "@/types";
 
-type Source = { contactId: string; companyId?: never } | { companyId: string; contactId?: never };
+type Source =
+  | { contactId: string; companyId?: never; dealId?: never }
+  | { companyId: string; contactId?: never; dealId?: never }
+  | { dealId: string; contactId?: never; companyId?: never };
 
 /**
- * A paginated timeline (GET /contacts/:id/timeline or /companies/:id/timeline), newest
- * first, with the Activity type chips filtering server-side and "Load more". Company feeds
- * show whose event each row is. `limit` renders only the first N rows, without chips (Overview).
+ * A paginated timeline (GET /contacts|companies|deals/:id/timeline), newest first, with the
+ * Activity type chips filtering server-side and "Load more". Company and deal feeds show whose
+ * event each row is. `limit` renders only the first N rows, without chips (Overview).
  */
 export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const kind = filter === "all" ? [] : [filter];
-  // Both hooks run; the one without an id stays disabled.
+  // All hooks run; the ones without an id stay disabled.
   const contactFeed = useContactTimeline(source.contactId ?? "", kind);
   const companyFeed = useCompanyTimeline(source.companyId ?? "", kind);
-  const feed = source.companyId ? companyFeed : contactFeed;
+  const dealFeed = useDealTimeline(source.dealId ?? "", kind);
+  const feed = source.dealId ? dealFeed : source.companyId ? companyFeed : contactFeed;
   const all: Array<TimelineEvent | CompanyTimelineEvent> =
     feed.data?.pages.flatMap((p) => p.data) ?? [];
   const events = limit ? all.slice(0, limit) : all;

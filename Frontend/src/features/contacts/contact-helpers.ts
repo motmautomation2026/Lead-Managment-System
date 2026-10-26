@@ -9,6 +9,7 @@ export const ACTIVITY_FILTERS = [
   { id: "notes", label: "Notes" },
   { id: "calls", label: "Calls" },
   { id: "meetings", label: "Meetings" },
+  { id: "proposals", label: "Proposals" },
   { id: "tasks", label: "Tasks" },
   { id: "messages", label: "Messages" },
   { id: "ai", label: "AI" },

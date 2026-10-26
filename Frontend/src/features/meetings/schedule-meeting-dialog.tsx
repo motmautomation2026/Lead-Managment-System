@@ -34,6 +34,7 @@ import type { Meeting } from "@/types";
  */
 export function ScheduleMeetingDialog({
   leadId,
+  dealId,
   open,
   meeting,
   isSaving,
@@ -41,6 +42,8 @@ export function ScheduleMeetingDialog({
   onSave,
 }: {
   leadId?: string;
+  /** New meetings only: attach to this deal (from a deal record). */
+  dealId?: string;
   open: boolean;
   meeting: Meeting | null;
   isSaving?: boolean;
@@ -53,6 +56,7 @@ export function ScheduleMeetingDialog({
     durationMin: number;
     url?: string | undefined;
     participants?: { name?: string | undefined; email: string }[] | undefined;
+    dealId?: string | undefined;
   }) => void;
 }) {
   // The lead picker only; with a fixed leadId nothing is loaded (B11).
@@ -211,6 +215,7 @@ export function ScheduleMeetingDialog({
                   : participants
                       .filter((p) => p.email.trim())
                       .map((p) => ({ name: p.name.trim() || undefined, email: p.email.trim() })),
+                dealId: meeting ? undefined : dealId,
               });
               onOpenChange(false);
             }}

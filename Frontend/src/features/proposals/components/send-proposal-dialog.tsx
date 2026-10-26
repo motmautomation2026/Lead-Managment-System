@@ -38,16 +38,21 @@ export interface SendProposalValue {
   emailTemplateId: string;
   whatsappTemplateId: string;
   document: File;
+  /** Set when opened from a deal record: the proposal attaches to that deal. */
+  dealId?: string | undefined;
 }
 
 export function SendProposalDialog({
   leadId: fixedLeadId,
+  dealId,
   open,
   onOpenChange,
   onSend,
 }: {
   /** From a contact record: that contact, no picker and no leads list (B11). */
   leadId?: string;
+  /** From a deal record: attach the proposal to this deal. */
+  dealId?: string;
   open: boolean;
   onOpenChange: (value: boolean) => void;
   onSend: (value: SendProposalValue) => Promise<Proposal>;
@@ -114,6 +119,7 @@ export function SendProposalDialog({
         emailTemplateId,
         whatsappTemplateId,
         document: documentFile,
+        dealId,
       });
       onOpenChange(false);
       toast.success("Proposal sent");

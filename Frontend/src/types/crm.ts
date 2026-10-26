@@ -2,6 +2,7 @@
 import type {
   AgentStatus,
   Lead,
+  LeadLossReason,
   LeadSource,
   LifecycleState,
   NextAction,
@@ -165,10 +166,36 @@ export interface DealListItem {
   updatedAt: string;
 }
 
+export type DealStatus = "open" | "won" | "lost" | "all";
+
+/** GET /deals params exactly as the API takes them (saved views store this shape). */
 export interface DealListParams {
-  status?: "open" | "won" | "lost" | "all" | undefined;
+  stage?: DealStage[] | undefined;
+  ownerId?: string[] | undefined;
+  companyId?: string | undefined;
+  leadId?: string | undefined;
+  /** Default `open` (or `all` when `stage` is given). */
+  status?: DealStatus | undefined;
+  amountMin?: string | undefined;
+  amountMax?: string | undefined;
+  expectedCloseFrom?: string | undefined;
+  expectedCloseTo?: string | undefined;
+  createdFrom?: string | undefined;
+  createdTo?: string | undefined;
+  q?: string | undefined;
   sort?: string | undefined;
   limit?: number | undefined;
+}
+
+/** GET /deals/board: one column per stage, in pipeline order. */
+export interface DealBoardColumn {
+  stage: DealStage;
+  count: number;
+  /** INR only. */
+  amountTotal: number;
+  /** First 20 by updatedAt desc; more via GET /deals?stage=…&cursor=nextCursor. */
+  items: DealListItem[];
+  nextCursor: string | null;
 }
 
 /** Activity chip groups; the paginated timelines filter on them server-side (`kind`). */
@@ -176,6 +203,7 @@ export const ACTIVITY_TYPES = [
   "notes",
   "calls",
   "meetings",
+  "proposals",
   "tasks",
   "messages",
   "ai",
@@ -184,7 +212,7 @@ export const ACTIVITY_TYPES = [
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
-/** A company feed row: whose event it is. */
+/** A company or deal feed row: whose event it is. */
 export type CompanyTimelineEvent = TimelineEvent & { contact: IdName };
 
 export type DuplicateReason =
@@ -221,23 +249,58 @@ export interface DuplicateListParams {
   companyId?: string | undefined;
 }
 
-export interface DealDetail {
-  id: string;
-  name: string;
-  stage: DealStage;
-  amount: number | null;
-  currency: string;
-  expectedCloseDate: string | null;
-  closedAt: string | null;
+/** GET /deals/:id: all fields + contact, company, owner, and the meetings/proposals linked by deal_id. */
+export interface DealDetail extends Omit<DealListItem, "contact"> {
+  serviceInterest: string | null;
+  lossReason: LeadLossReason | null;
+  lossNotes: string | null;
+  createdBy: string | null;
+  contact: IdName & { email: string | null; phone: string | null; lifecycle: LifecycleState };
+  meetings: Array<{
+    id: string;
+    title: string;
+    at: string;
+    status: string;
+    outcome: string | null;
+  }>;
+  proposals: Array<{
+    id: string;
+    title: string;
+    amount: number | null;
+    currency: string;
+    status: string;
+    sentAt: string | null;
+    updatedAt: string;
+  }>;
 }
 
 export interface CreateDealInput {
   leadId: string;
+  /** Empty = the backend's default name ("<Company> – <service interest>"). */
   name?: string | undefined;
   stage?: DealStage | undefined;
   amount?: number | undefined;
   currency?: "INR" | undefined;
   expectedCloseDate?: string | undefined;
+}
+
+/** PATCH /deals/:id (stage moves go through POST /deals/:id/stage). */
+export interface UpdateDealInput {
+  name?: string | undefined;
+  amount?: number | null | undefined;
+  expectedCloseDate?: string | null | undefined;
+  ownerId?: string | null | undefined;
+  companyId?: string | null | undefined;
+}
+
+/** What closing a deal as lost does to its contact (only with stage `lost`). */
+export type ContactAction = "keep" | "long_term_nurture" | "lost";
+
+export interface MoveDealStageInput {
+  stage: DealStage;
+  lossReason?: LeadLossReason | undefined;
+  lossNotes?: string | undefined;
+  contactAction?: ContactAction | undefined;
 }
 
 export type SavedViewObject = "contacts" | "companies" | "deals";

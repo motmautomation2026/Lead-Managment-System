@@ -62,8 +62,16 @@ export {
   useMergeDuplicate,
   useDismissDuplicate,
   useRelinkDuplicate,
+  useDeals,
+  useDealsCount,
+  useDealBoard,
+  useDeal,
+  useDealTimeline,
+  useUpdateDeal,
+  useMoveDealStage,
+  useContactSearch,
 } from "./server-hooks";
-export { messageFromError, refreshCompany, refreshContact, keys } from "./query";
+export { messageFromError, refreshCompany, refreshContact, refreshDeal, keys } from "./query";
 export type {
   SessionSlice,
   LeadsSlice,

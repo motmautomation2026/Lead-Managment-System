@@ -54,7 +54,8 @@ import {
   useSession,
   useUpdateCompany,
 } from "@/store";
-import type { CompanyDetail, DealListItem } from "@/types";
+import type { CompanyDetail, DealListItem, IdName } from "@/types";
+import { ContactPicker } from "@/features/contacts/contact-picker";
 import { CompanyAbout } from "./company-about";
 import { NO_OWNER } from "./company-helpers";
 import { MergeCompanyDialog } from "./merge-company-dialog";
@@ -484,14 +485,11 @@ function CompanyCreateDeal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [contactId, setContactId] = useState("");
+  const [chosen, setChosen] = useState<IdName | null>(null);
   const [picked, setPicked] = useState(false);
-  // shortcut: the picker lists the first 100 contacts by name; upgrade to a search box past that.
-  const contacts = useCompanyContacts(open ? company.id : "", { sort: "name:asc", limit: 100 });
-  const contact = useContact(picked ? contactId : "");
-  const rows = contacts.data?.pages[0]?.data ?? [];
+  const contact = useContact(picked ? (chosen?.id ?? "") : "");
   const reset = () => {
-    setContactId("");
+    setChosen(null);
     setPicked(false);
   };
 
@@ -521,36 +519,26 @@ function CompanyCreateDeal({
             A deal belongs to one contact. Who is it with at {company.name}?
           </DialogDescription>
         </DialogHeader>
-        {rows.length === 0 && !contacts.isLoading ? (
-          <p className="type-body text-muted-foreground">Add a contact to this company first.</p>
-        ) : (
-          <div>
-            <Label htmlFor="deal-contact" className="mb-1.5 block text-xs">
-              Contact
-            </Label>
-            <Select value={contactId} onValueChange={setContactId}>
-              <SelectTrigger id="deal-contact">
-                <SelectValue placeholder={contacts.isLoading ? "Loading…" : "Choose a contact"} />
-              </SelectTrigger>
-              <SelectContent>
-                {rows.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name || c.email || "Unnamed contact"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {picked && contact.error && (
-              <p className="mt-1 text-xs text-destructive">{messageFromError(contact.error)}</p>
-            )}
-          </div>
-        )}
+        <div>
+          <Label htmlFor="deal-contact" className="mb-1.5 block text-xs">
+            Contact
+          </Label>
+          <ContactPicker
+            id="deal-contact"
+            value={chosen}
+            onChange={setChosen}
+            companyId={company.id}
+          />
+          {picked && contact.error && (
+            <p className="mt-1 text-xs text-destructive">{messageFromError(contact.error)}</p>
+          )}
+        </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
-            disabled={!contactId || (picked && contact.isLoading)}
+            disabled={!chosen || (picked && contact.isLoading)}
             onClick={() => setPicked(true)}
           >
             {picked && contact.isLoading ? "Loading…" : "Next"}

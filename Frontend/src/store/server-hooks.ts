@@ -32,6 +32,8 @@ import type {
   DealListParams,
   DuplicateListParams,
   CreateDealInput,
+  MoveDealStageInput,
+  UpdateDealInput,
   SavedViewInput,
   SavedViewObject,
   LeadLossReason,
@@ -41,7 +43,7 @@ import type {
   User,
   WorkflowStep,
 } from "@/types";
-import { keys, refreshCompany, refreshContact } from "./query";
+import { keys, refreshCompany, refreshContact, refreshDeal } from "./query";
 import { useWorkspace } from "./workspace-context";
 
 export function useSession() {
@@ -993,15 +995,6 @@ export const useUpdateSavedView = () =>
 export const useDeleteSavedView = () =>
   useSavedViewWrite((id: string) => backend.savedViews.delete(id));
 
-export function useCreateDeal() {
-  const client = useQueryClient();
-  const { currentWorkspaceId: ws } = useWorkspace();
-  return useMutation({
-    mutationFn: (input: CreateDealInput) => backend.deals.create(input),
-    onSuccess: (_, input) => refreshContact(client, ws, input.leadId),
-  });
-}
-
 /** Company picker / "matches an existing company" hint: debounced, from 2 characters, top 5. */
 export function useCompanySearch(input: string) {
   const { currentWorkspaceId } = useWorkspace();
@@ -1169,3 +1162,94 @@ export const useRelinkDuplicate = () =>
   useCompanyWrite(({ id, companyId }: { id: string; companyId?: string }) =>
     backend.companyDuplicates.relink(id, companyId),
   );
+
+// --- CRM v2 deals (C4) -------------------------------------------------------------
+
+export function useDeals(params: DealListParams, enabled = true) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.dealList(ws, params),
+    (cursor, signal) => backend.deals.list(params, cursor, signal),
+    enabled,
+  );
+}
+
+/** Same filters as `useDeals` (sort/limit are not allowed on /count). */
+export function useDealsCount(params: DealListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.dealCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.deals.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** The pipeline board (every stage; `stage`, `sort` and `limit` are not sent). */
+export function useDealBoard(params: DealListParams, enabled = true) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { stage: _stage, sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.dealBoard(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.deals.board(filters, signal),
+    enabled: Boolean(currentWorkspaceId) && enabled,
+  });
+}
+
+export function useDeal(id: string | null | undefined) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.deal(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.deals.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+/** The deal feed, newest first; `kind` filters server-side (empty = all). */
+export function useDealTimeline(dealId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.dealTimeline(ws, dealId, { kind }),
+    (cursor, signal) => backend.deals.timeline(dealId, kind, cursor, signal),
+    Boolean(dealId),
+  );
+}
+
+function useDealWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({ mutationFn: fn, onSuccess: () => refreshDeal(client, ws) });
+}
+
+export const useCreateDeal = () =>
+  useDealWrite((input: CreateDealInput) => backend.deals.create(input));
+export const useUpdateDeal = () =>
+  useDealWrite(({ id, input }: { id: string; input: UpdateDealInput }) =>
+    backend.deals.update(id, input),
+  );
+/** POST /deals/:id/stage; the backend decides what is allowed and what happens to the contact. */
+export const useMoveDealStage = () =>
+  useDealWrite(({ id, ...input }: MoveDealStageInput & { id: string }) =>
+    backend.deals.moveStage(id, input),
+  );
+
+/**
+ * Contact picker search over GET /contacts: debounced, from 2 characters, top 8 by name.
+ * With `companyId` it lists that company's contacts even before typing (first 20 by name).
+ */
+export function useContactSearch(input: string, companyId?: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  const term = q.length >= SEARCH_MIN_CHARS ? q : undefined;
+  return useQuery({
+    queryKey: keys.contactSearch(currentWorkspaceId, term ?? "", companyId),
+    queryFn: ({ signal }) =>
+      backend.contacts.list(
+        { q: term, companyId, sort: "name:asc", limit: companyId ? 20 : 8 },
+        undefined,
+        signal,
+      ),
+    enabled: Boolean(currentWorkspaceId) && (Boolean(term) || Boolean(companyId)),
+    staleTime: 30_000,
+  });
+}
