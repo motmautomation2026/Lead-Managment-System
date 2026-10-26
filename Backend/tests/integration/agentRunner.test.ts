@@ -324,6 +324,53 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     expect(merged.payload.events.map((e: { reason: string }) => e.reason)).toEqual(["call_logged", "timer"]);
   });
 
+  it("D1: a decision records the company and open deal it saw; review detail and the lead panel return them", async () => {
+    const { ws, leadId, wakeupId } = await scenario();
+    const company = (
+      await pool.query(
+        `insert into public.companies (workspace_id, name, normalized_name, city, description) values ($1, 'Acme Steel Pvt Ltd', 'acme steel', 'Pune', 'Family-owned mill.') returning id`,
+        [ws],
+      )
+    ).rows[0].id as string;
+    await pool.query(`update public.leads set company_id = $2 where id = $1`, [leadId, company]);
+    const deal = (
+      await pool.query(
+        `insert into public.deals (workspace_id, name, lead_id, company_id, stage, amount, source) values ($1, 'Acme – pilot', $2, $3, 'proposal_sent', 4242421, 'manual') returning id`,
+        [ws, leadId, company],
+      )
+    ).rows[0].id as string;
+
+    const model = createFakeDecisionModel({ decisions: [EMAIL] });
+    expect(await tick(ws, model)).toEqual([{ wakeupId, leadId, result: "draft", action: "send_email" }]);
+    const prompt = decideCalls(model)[0]!.input.messages.map((m) => m.content).join("\n");
+    expect(prompt).toContain("- Name: Acme Steel Pvt Ltd");
+    expect(prompt).toContain("Company description: Family-owned mill.");
+    expect(prompt).toContain("Open deal: Acme – pilot");
+    expect(prompt).not.toContain("4242421");
+    const grounding = model.calls.find((c) => c.kind === "grounding")!.input.messages.map((m) => m.content).join("\n");
+    expect(grounding).toContain("- Location: Pune");
+    expect(grounding).not.toContain("Family-owned");
+
+    const [row] = await decisions(leadId);
+    expect(row).toMatchObject({ outcome: "draft", context_company_id: company, context_deal_id: deal, context_deal_stage: "proposal_sent" });
+
+    // The deal moves on later: the decision keeps the stage it saw.
+    await pool.query(`update public.deals set stage = 'negotiation' where id = $1`, [deal]);
+    const { getDecision, getLeadAgentPanel } = await import("../../src/services/agentReview.service.js");
+    const expected = { company: { id: company, name: "Acme Steel Pvt Ltd" }, deal: { id: deal, name: "Acme – pilot", stage: "proposal_sent" } };
+    expect((await getDecision(pool, ws, row.id)).context).toEqual(expected);
+    expect((await getLeadAgentPanel(pool, ws, leadId)).decisions[0]).toMatchObject({ id: row.id, context: expected });
+  });
+
+  it("D1: without a company or open deal the context columns stay null", async () => {
+    const { ws, leadId } = await scenario();
+    await tick(ws, createFakeDecisionModel({ decisions: [EMAIL] }));
+    const [row] = await decisions(leadId);
+    expect(row).toMatchObject({ outcome: "draft", context_company_id: null, context_deal_id: null, context_deal_stage: null });
+    const { getDecision } = await import("../../src/services/agentReview.service.js");
+    expect((await getDecision(pool, ws, row.id)).context).toEqual({ company: null, deal: null });
+  });
+
   it("model output errors burn attempts and fail after 3; a permanent error fails at once", async () => {
     const { ws, leadId, wakeupId } = await scenario();
     const model = createFakeDecisionModel({ decisions: [new ModelOutputError("The model's invalid JSON.")] });

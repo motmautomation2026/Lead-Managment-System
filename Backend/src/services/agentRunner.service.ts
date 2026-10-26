@@ -372,9 +372,12 @@ const INSERT_DECISION = `
     (workspace_id, lead_id, wakeup_id, mode, action, reasoning, message_subject, message_body, asset_ids,
      send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
      regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
-     outcome, error)
-  values ($1, $2, $3, 'shadow', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+     outcome, error, context_company_id, context_deal_id, context_deal_stage)
+  values ($1, $2, $3, 'shadow', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
   returning id`;
+
+/** Which company and open deal (stage at the time) the decision saw, for review (D1). */
+const contextColumns = (ctx: AgentContext | null) => [ctx?.company?.id ?? null, ctx?.internal.deal.open?.id ?? null, ctx?.internal.deal.open?.stage ?? null];
 
 async function recordDraft(
   wakeup: ClaimedWakeup,
@@ -427,6 +430,7 @@ async function recordDraft(
       usage.costUsd,
       outcome,
       stillActive ? null : "The lead is no longer managed by the agent.",
+      ...contextColumns(ctx),
     ]);
     const decisionId = inserted.rows[0]!.id;
 
@@ -479,9 +483,10 @@ async function recordFailure(
     if (!ours.rowCount) return;
     await client.query(
       `insert into public.agent_decisions
-         (workspace_id, lead_id, wakeup_id, mode, action, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd, outcome, error)
-       values ($1, $2, $3, 'shadow', 'wait', $4, $5, $6, $7, $8, $9, 'failed', $10)`,
-      [wakeup.workspace_id, wakeup.lead_id, wakeup.id, ctx?.playbook?.version ?? null, models.decisionModel, models.groundingModel, usage.inputTokens, usage.outputTokens, usage.costUsd, error.slice(0, 1000)],
+         (workspace_id, lead_id, wakeup_id, mode, action, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd, outcome, error,
+          context_company_id, context_deal_id, context_deal_stage)
+       values ($1, $2, $3, 'shadow', 'wait', $4, $5, $6, $7, $8, $9, 'failed', $10, $11, $12, $13)`,
+      [wakeup.workspace_id, wakeup.lead_id, wakeup.id, ctx?.playbook?.version ?? null, models.decisionModel, models.groundingModel, usage.inputTokens, usage.outputTokens, usage.costUsd, error.slice(0, 1000), ...contextColumns(ctx)],
     );
     await client.query(`update public.agent_wakeups set status = 'done', processed_at = now() where id = $1`, [wakeup.id]);
   });

@@ -100,6 +100,13 @@ export async function listDecisions(db: Queryable, workspaceId: string, filters:
   };
 }
 
+// The company and open deal a decision saw (D1): current names, the deal's stage at the time; null before D1.
+const DECISION_CONTEXT = `json_build_object(
+    'company', case when dc.id is null then null else json_build_object('id', dc.id, 'name', dc.name) end,
+    'deal', case when dd.id is null then null else json_build_object('id', dd.id, 'name', dd.name, 'stage', d.context_deal_stage) end)`;
+const DECISION_CONTEXT_JOINS = `left join public.companies dc on dc.id = d.context_company_id and dc.workspace_id = d.workspace_id
+         left join public.deals dd on dd.id = d.context_deal_id and dd.workspace_id = d.workspace_id`;
+
 interface DecisionDetailRow {
   id: string;
   leadId: string;
@@ -108,6 +115,7 @@ interface DecisionDetailRow {
   messageBody: string | null;
   chunkIds: string[] | null;
   createdAt: Date;
+  context: { company: { id: string; name: string } | null; deal: { id: string; name: string; stage: string | null } | null };
   [key: string]: unknown;
 }
 
@@ -126,6 +134,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               d.cost_usd::float8 as "costUsd", d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote",
               d.rated_by as "ratedBy", rb.full_name as "ratedByName", d.rated_at as "ratedAt",
               d.lead_id as "leadId", json_build_object('id', l.id, 'name', ${LEAD_NAME}, 'company', l.company, 'ownerId', l.owner_id) as lead,
+              ${DECISION_CONTEXT} as context,
               o.full_name as "_ownerName", coalesce(s.company_display_name, w.name) as "_companyName",
               s.email_opt_out_text as "_emailOptOut", s.whatsapp_opt_out_text as "_whatsappOptOut",
               -- The opt-out line goes on the first WhatsApp only: was one sent (or, in shadow, drafted and allowed) earlier?
@@ -139,6 +148,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
          join public.agent_settings s on s.workspace_id = d.workspace_id
          left join public.profiles o on o.id = l.owner_id
          left join public.profiles rb on rb.id = d.rated_by
+         ${DECISION_CONTEXT_JOINS}
         where d.id = $1 and d.workspace_id = $2`,
       [id, workspaceId],
     )
@@ -339,8 +349,10 @@ export async function getLeadAgentPanel(db: Queryable, workspaceId: string, lead
                 'violations', d.rules_result -> 'violations', 'adjustments', d.rules_result -> 'adjustments') end as rules,
               case when d.grounding_result is null then null else json_build_object(
                 'supported', d.grounding_result -> 'supported', 'unsupportedClaims', d.grounding_result -> 'unsupportedClaims') end as grounding,
-              d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote", ${OPEN_REPORTS} as "openReports"
+              d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote", ${OPEN_REPORTS} as "openReports",
+              ${DECISION_CONTEXT} as context
          from public.agent_decisions d
+         ${DECISION_CONTEXT_JOINS}
         where d.lead_id = $1 and d.workspace_id = $2
         order by d.created_at desc, d.id desc limit ${PANEL_DECISIONS}`,
       [leadId, workspaceId],
