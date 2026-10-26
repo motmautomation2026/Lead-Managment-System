@@ -39,6 +39,10 @@ export interface Meeting {
   meetLink?: string;
   calendarSyncStatus: CalendarSyncStatus;
   calendarSyncError?: string;
+  notifyEmailStatus?: "not_applicable" | "pending" | "skipped" | "sent" | "failed";
+  notifyEmailError?: string;
+  notifyWhatsappStatus?: "not_applicable" | "skipped" | "queued" | "sending" | "sent" | "failed";
+  notifyWhatsappError?: string;
   createdAt: string;
   updatedAt: string;
 }

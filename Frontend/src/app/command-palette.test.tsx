@@ -59,6 +59,8 @@ async function renderPalette() {
   const onCreateContact = vi.fn();
   const onCreateCompany = vi.fn();
   const onCreateDeal = vi.fn();
+  const onCreateTask = vi.fn();
+  const onScheduleMeeting = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const root = createRootRoute({
     component: () => (
@@ -69,6 +71,8 @@ async function renderPalette() {
           onCreateContact={onCreateContact}
           onCreateCompany={onCreateCompany}
           onCreateDeal={onCreateDeal}
+          onCreateTask={onCreateTask}
+          onScheduleMeeting={onScheduleMeeting}
         />
         <Outlet />
       </QueryClientProvider>
@@ -91,7 +95,16 @@ async function renderPalette() {
   await router.load();
   render(<RouterProvider router={router} />);
   const input = await screen.findByRole("combobox");
-  return { input, router, onCreateContact, onCreateCompany, onCreateDeal, queryClient };
+  return {
+    input,
+    router,
+    onCreateContact,
+    onCreateCompany,
+    onCreateDeal,
+    onCreateTask,
+    onScheduleMeeting,
+    queryClient,
+  };
 }
 
 const type = (input: HTMLElement, value: string) => fireEvent.change(input, { target: { value } });
@@ -176,7 +189,15 @@ describe("CommandPalette search", () => {
 
   it("runs actions, filtered by the typed text", async () => {
     mocks.search.mockResolvedValue(EMPTY);
-    const { input, onCreateContact, onCreateCompany, onCreateDeal, router } = await renderPalette();
+    const {
+      input,
+      onCreateContact,
+      onCreateCompany,
+      onCreateDeal,
+      onCreateTask,
+      onScheduleMeeting,
+      router,
+    } = await renderPalette();
     expect(screen.getByRole("option", { name: "Go to Tasks" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: "Create contact" }));
     expect(onCreateContact).toHaveBeenCalled();
@@ -184,6 +205,10 @@ describe("CommandPalette search", () => {
     expect(onCreateCompany).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("option", { name: "Create deal" }));
     expect(onCreateDeal).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("option", { name: "Create task" }));
+    expect(onCreateTask).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("option", { name: "Schedule meeting" }));
+    expect(onScheduleMeeting).toHaveBeenCalled();
 
     type(input, "deals");
     expect(screen.queryByRole("option", { name: "Go to Tasks" })).toBeNull();
@@ -216,10 +241,14 @@ describe("CommandPalette recents and See all (C5)", () => {
       "Create contact",
       "Create company",
       "Create deal",
+      "Create task",
+      "Schedule meeting",
       "Go to Contacts",
       "Go to Companies",
       "Go to Deals",
       "Go to Tasks",
+      "Go to Meetings",
+      "Go to Proposals",
     ]);
     fireEvent.click(within(recent).getByText("Tata Motors"));
     await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co1"));

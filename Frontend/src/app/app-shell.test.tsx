@@ -12,6 +12,7 @@ import type { Lead } from "@/types/lead";
 
 const noop = vi.fn(async () => undefined);
 const mockRole = vi.hoisted(() => ({ isAdmin: false }));
+const mockOverdue = vi.hoisted(() => ({ count: null as number | null }));
 
 const leads: Lead[] = [
   {
@@ -103,6 +104,10 @@ vi.mock("@/store", () => ({
   useUpdateDeal: () => ({ mutateAsync: noop, isPending: false }),
   useContact: () => ({ data: undefined }),
   useContactSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  useCreateTask: () => ({ mutateAsync: noop, isPending: false }),
+  useCreateMeeting: () => ({ mutateAsync: noop, isPending: false }),
+  useUpdateMeeting: () => ({ mutateAsync: noop, isPending: false }),
+  useTaskCount: () => ({ data: mockOverdue.count === null ? undefined : mockOverdue }),
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -147,6 +152,8 @@ async function renderShell(path = "/") {
       page("/contacts", "contacts page"),
       page("/contacts/$contactId", "lead detail"),
       page("/tasks", "tasks page"),
+      page("/meetings", "meetings page"),
+      page("/proposals", "proposals page"),
       page("/companies", "companies page"),
       page("/deals", "deals page"),
       createRoute({
@@ -245,15 +252,22 @@ describe("AppShell nav", () => {
 });
 
 describe("AppShell top bar", () => {
-  it("+ Create → Contact / Company / Deal open their dialogs; others are coming soon", async () => {
+  it("+ Create → Contact / Company / Deal / Task / Meeting open their dialogs", async () => {
     await renderShell();
     openMenu("Create");
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: /Task/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Contact" }));
+    expect(within(menu).queryByText("Coming soon")).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Task" }));
+    const task = await screen.findByRole("dialog", { name: "Create task" });
+    expect(within(task).getByRole("button", { name: "Contact" })).toBeTruthy();
+    fireEvent.keyDown(task, { key: "Escape" });
+    openMenu("Create");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Meeting" }));
+    const meeting = await screen.findByRole("dialog", { name: "Schedule meeting" });
+    expect(within(meeting).getByRole("button", { name: "Contact" })).toBeTruthy();
+    fireEvent.keyDown(meeting, { key: "Escape" });
+    openMenu("Create");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Contact" }));
     expect(await screen.findByRole("dialog", { name: "Create contact" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     openMenu("Create");
@@ -299,13 +313,15 @@ describe("AppShell keyboard shortcuts (C5)", () => {
       );
     });
 
-  it("g then c / o / d / t go to Contacts / Companies / Deals / Tasks", async () => {
+  it("g then c / o / d / t / m / p go to Contacts / Companies / Deals / Tasks / Meetings / Proposals", async () => {
     const { router } = await renderShell();
     for (const [key, path] of [
       ["c", "/contacts"],
       ["o", "/companies"],
       ["d", "/deals"],
       ["t", "/tasks"],
+      ["m", "/meetings"],
+      ["p", "/proposals"],
     ] as const) {
       press("g");
       press(key);
@@ -328,6 +344,8 @@ describe("AppShell keyboard shortcuts (C5)", () => {
       "Search the current list",
       "Open the Create menu",
       "Go to Tasks",
+      "Go to Meetings",
+      "Go to Proposals",
     ])
       expect(within(help).getByText(label)).toBeTruthy();
     // With a dialog open, other shortcuts do nothing.

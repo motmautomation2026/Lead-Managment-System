@@ -54,7 +54,7 @@ import { LogCallDialog } from "@/features/leads/log-call-dialog";
 import { EnrollWorkflowDialog } from "@/features/leads/scheduled-followups";
 import { LostReasonDialog, NextActionDialog, ReasonDialog } from "@/features/leads/lead-dialogs";
 import { ScheduleMeetingDialog } from "@/features/meetings/schedule-meeting-dialog";
-import { OutcomeDialog } from "@/features/meetings/meetings-page";
+import { OutcomeDialog } from "@/features/work/meeting-outcome-dialog";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
 import { BackendError } from "@/lib/backend-client";
 import { fmtDateTime, isOverdue, relDay } from "@/lib/format";

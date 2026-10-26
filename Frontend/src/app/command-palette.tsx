@@ -29,10 +29,14 @@ const QUICK_ACTIONS = new Set([
   "create-contact",
   "create-company",
   "create-deal",
+  "create-task",
+  "schedule-meeting",
   "go-/contacts",
   "go-/companies",
   "go-/deals",
   "go-/tasks",
+  "go-/meetings",
+  "go-/proposals",
 ]);
 
 /**
@@ -46,12 +50,16 @@ export function CommandPalette({
   onCreateContact,
   onCreateCompany,
   onCreateDeal,
+  onCreateTask,
+  onScheduleMeeting,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreateContact: () => void;
   onCreateCompany: () => void;
   onCreateDeal: () => void;
+  onCreateTask: () => void;
+  onScheduleMeeting: () => void;
 }) {
   const [input, setInput] = useState("");
   const navigate = useNavigate();
@@ -75,6 +83,8 @@ export function CommandPalette({
     { id: "create-contact", label: "Create contact", icon: <Plus />, run: onCreateContact },
     { id: "create-company", label: "Create company", icon: <Plus />, run: onCreateCompany },
     { id: "create-deal", label: "Create deal", icon: <Plus />, run: onCreateDeal },
+    { id: "create-task", label: "Create task", icon: <Plus />, run: onCreateTask },
+    { id: "schedule-meeting", label: "Schedule meeting", icon: <Plus />, run: onScheduleMeeting },
     ...NAV_GROUPS.flatMap((g) => g.items).map((item) => ({
       id: `go-${item.to}`,
       label: `Go to ${item.label}`,

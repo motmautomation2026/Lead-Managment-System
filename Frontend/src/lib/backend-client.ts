@@ -37,15 +37,22 @@ import type {
   LeadSource,
   LifecycleState,
   Meeting,
+  MeetingListItem,
+  MeetingListParams,
   MeetingOutcome,
   MeetingStatus,
   PipelineStage,
   Proposal,
+  ProposalListItem,
+  ProposalListParams,
   ProposalStatus,
+  ProposalSummary,
   ResponseState,
   Run,
   ScheduledAction,
   Task,
+  TaskListItem,
+  TaskListParams,
   TaskType,
   Template,
   TemplateAttachment,
@@ -1023,6 +1030,11 @@ export const backend = {
   tasks: {
     list: (params?: Record<string, string | boolean | undefined>, signal?: AbortSignal) =>
       get<{ data: Task[] }>(query("/tasks", params), signal),
+    /** List standard (C6a); the old `list` stays for the pages C6b removes. */
+    page: (params: TaskListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<TaskListItem>>(listQuery("/tasks/list", { ...params, cursor }), signal),
+    count: (params: TaskListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/tasks/count", { ...params }), signal),
     create: (input: CreateTaskInput) => send<Task>("POST", "/tasks", input),
     update: (id: string, input: UpdateTaskInput) => send<Task>("PATCH", `/tasks/${id}`, input),
     complete: (id: string) => send<Task>("POST", `/tasks/${id}/complete`),
@@ -1031,6 +1043,10 @@ export const backend = {
   meetings: {
     list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
       get<{ data: Meeting[] }>(query("/meetings", params), signal),
+    page: (params: MeetingListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<MeetingListItem>>(listQuery("/meetings/list", { ...params, cursor }), signal),
+    count: (params: MeetingListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/meetings/count", { ...params }), signal),
     create: (input: CreateMeetingInput) => send<Meeting>("POST", "/meetings", input),
     update: (id: string, input: UpdateMeetingInput) =>
       send<Meeting>("PATCH", `/meetings/${id}`, input),
@@ -1040,6 +1056,12 @@ export const backend = {
   proposals: {
     list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
       get<{ data: Proposal[] }>(query("/proposals", params), signal),
+    page: (params: ProposalListParams, cursor?: string, signal?: AbortSignal) =>
+      get<Page<ProposalListItem>>(listQuery("/proposals/list", { ...params, cursor }), signal),
+    count: (params: ProposalListParams, signal?: AbortSignal) =>
+      get<{ count: number }>(listQuery("/proposals/count", { ...params }), signal),
+    summary: (params: ProposalListParams, signal?: AbortSignal) =>
+      get<ProposalSummary>(listQuery("/proposals/summary", { ...params }), signal),
     create: (input: CreateProposalInput) => {
       const formData = new FormData();
       formData.append("leadId", input.leadId);

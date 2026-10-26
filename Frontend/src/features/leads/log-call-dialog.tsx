@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { dateInputValue, toIsoFromIst } from "@/lib/dates";
+import { dateInputValue, defaultCallbackSlot, toIsoFromIst } from "@/lib/dates";
 import { label } from "@/lib/labels";
 import { messageFromError, useContact, useLeadMutations } from "@/store";
 import {
@@ -62,7 +62,8 @@ export function LogCallDialog({
   const [reason, setReason] = useState<CallNotConnectedReason>("no_answer");
   const [outcome, setOutcome] = useState<CallConnectedOutcome | null>(null);
   const [notes, setNotes] = useState("");
-  const [callbackAt, setCallbackAt] = useState(dateInputValue(1));
+  // Date + time in IST (B13); the backend still rejects a time that is not in the future.
+  const [callback, setCallback] = useState(defaultCallbackSlot);
   // "Interested - Later" capture — only shown/sent when outcome is interested_later.
   const [interestedLaterReason, setInterestedLaterReason] = useState("");
   const [interestedLaterRestartAt, setInterestedLaterRestartAt] = useState("");
@@ -73,18 +74,24 @@ export function LogCallDialog({
     setOutcome(null);
     setNotes("");
     setReason("no_answer");
-    setCallbackAt(dateInputValue(1));
+    setCallback(defaultCallbackSlot());
     setInterestedLaterReason("");
     setInterestedLaterRestartAt("");
     setInterestedLaterNextAction("");
     setInterestedLaterDecisionOwner("");
   };
   if (!lead) return null;
-  const canSave =
-    connected === false ||
-    (connected === true &&
-      outcome !== null &&
-      (outcome !== "callback_requested" || Boolean(callbackAt)));
+  const callbackIso =
+    callback.date && callback.time ? toIsoFromIst(callback.date, `${callback.time}:00`) : null;
+  const callbackError =
+    outcome !== "callback_requested"
+      ? null
+      : !callbackIso
+        ? "Pick a callback date and time."
+        : Date.parse(callbackIso) <= Date.now()
+          ? "The callback must be in the future."
+          : null;
+  const canSave = connected === false || (connected === true && outcome !== null && !callbackError);
 
   const save = async () => {
     if (connected === null) return;
@@ -96,7 +103,7 @@ export function LogCallDialog({
           : { notConnectedReason: reason }),
         notes: notes.trim() || undefined,
         ...(connected && outcome === "callback_requested"
-          ? { callbackDueAt: toIsoFromIst(callbackAt) }
+          ? { callbackDueAt: callbackIso ?? undefined }
           : {}),
         ...(connected && outcome === "interested_later"
           ? {
@@ -203,13 +210,38 @@ export function LogCallDialog({
           )}
           {outcome === "callback_requested" && (
             <div>
-              <Label className="mb-1.5 block text-xs">Callback date</Label>
-              <Input
-                type="date"
-                min={dateInputValue()}
-                value={callbackAt}
-                onChange={(event) => setCallbackAt(event.target.value)}
-              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="callback-date" className="mb-1.5 block text-xs">
+                    Callback date
+                  </Label>
+                  <Input
+                    id="callback-date"
+                    type="date"
+                    min={dateInputValue()}
+                    value={callback.date}
+                    aria-invalid={Boolean(callbackError)}
+                    onChange={(event) => setCallback((c) => ({ ...c, date: event.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="callback-time" className="mb-1.5 block text-xs">
+                    Time (IST)
+                  </Label>
+                  <Input
+                    id="callback-time"
+                    type="time"
+                    value={callback.time}
+                    aria-invalid={Boolean(callbackError)}
+                    onChange={(event) => setCallback((c) => ({ ...c, time: event.target.value }))}
+                  />
+                </div>
+              </div>
+              {callbackError && (
+                <p role="alert" className="mt-1 text-xs text-destructive">
+                  {callbackError}
+                </p>
+              )}
             </div>
           )}
           {outcome === "interested_later" && (

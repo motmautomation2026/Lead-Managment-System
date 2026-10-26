@@ -12,3 +12,4 @@ export * from "./task";
 export * from "./timeline";
 export * from "./user";
 export * from "./workflow";
+export * from "./work";

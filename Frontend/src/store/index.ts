@@ -71,7 +71,32 @@ export {
   useMoveDealStage,
   useContactSearch,
 } from "./server-hooks";
-export { messageFromError, refreshCompany, refreshContact, refreshDeal, keys } from "./query";
+export {
+  useTaskList,
+  useTaskCount,
+  useMeetingList,
+  useMeetingCount,
+  useProposalList,
+  useProposalCount,
+  useProposalSummary,
+  useCreateTask,
+  useUpdateTask,
+  useCancelTask,
+  useCompleteTask,
+  useCreateMeeting,
+  useUpdateMeeting,
+  useRecordMeetingOutcome,
+  useCreateProposal,
+  useSetProposalStatus,
+} from "./work-hooks";
+export {
+  messageFromError,
+  refreshCompany,
+  refreshContact,
+  refreshDeal,
+  refreshWork,
+  keys,
+} from "./query";
 export type {
   SessionSlice,
   LeadsSlice,

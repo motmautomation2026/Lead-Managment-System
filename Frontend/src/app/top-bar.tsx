@@ -32,6 +32,8 @@ export function TopBar({
   onCreateContact,
   onCreateCompany,
   onCreateDeal,
+  onCreateTask,
+  onCreateMeeting,
   createMenuOpen,
   onCreateMenuOpenChange,
   onOpenShortcuts,
@@ -41,6 +43,8 @@ export function TopBar({
   onCreateContact: () => void;
   onCreateCompany: () => void;
   onCreateDeal: () => void;
+  onCreateTask: () => void;
+  onCreateMeeting: () => void;
   /** Controlled so the `n` shortcut can open it. */
   createMenuOpen: boolean;
   onCreateMenuOpenChange: (open: boolean) => void;
@@ -110,6 +114,8 @@ export function TopBar({
         onCreateContact={onCreateContact}
         onCreateCompany={onCreateCompany}
         onCreateDeal={onCreateDeal}
+        onCreateTask={onCreateTask}
+        onCreateMeeting={onCreateMeeting}
         open={createMenuOpen}
         onOpenChange={onCreateMenuOpenChange}
       />
@@ -119,18 +125,20 @@ export function TopBar({
   );
 }
 
-const COMING_SOON = ["Task", "Meeting"] as const;
-
 function CreateMenu({
   onCreateContact,
   onCreateCompany,
   onCreateDeal,
+  onCreateTask,
+  onCreateMeeting,
   open,
   onOpenChange,
 }: {
   onCreateContact: () => void;
   onCreateCompany: () => void;
   onCreateDeal: () => void;
+  onCreateTask: () => void;
+  onCreateMeeting: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -151,15 +159,8 @@ function CreateMenu({
         <DropdownMenuItem onSelect={onCreateContact}>Contact</DropdownMenuItem>
         <DropdownMenuItem onSelect={onCreateCompany}>Company</DropdownMenuItem>
         <DropdownMenuItem onSelect={onCreateDeal}>Deal</DropdownMenuItem>
-        {COMING_SOON.map((item) => (
-          // A Radix Tooltip inside the menu fights its focus handling; a native one is enough here.
-          <div key={item} title="Coming soon">
-            <DropdownMenuItem disabled className="justify-between">
-              {item}
-              <span className="type-small text-muted-foreground">Coming soon</span>
-            </DropdownMenuItem>
-          </div>
-        ))}
+        <DropdownMenuItem onSelect={onCreateTask}>Task</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onCreateMeeting}>Meeting</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

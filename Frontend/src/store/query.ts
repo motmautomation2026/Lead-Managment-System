@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { BackendError } from "@/lib/backend-client";
 
+type WorkObject = "tasks" | "meetings" | "proposals";
+
 // Workspace-scoped keys take the current workspace id as their first
 // argument and fold it into the key so TanStack Query's cache naturally
 // separates data per workspace — switching workspaces changes the key,
@@ -106,6 +108,14 @@ export const keys = {
       : (["companyDuplicatesCount", workspaceId] as const),
   companySearch: (workspaceId: string | null, q: string) =>
     ["companySearch", workspaceId, q] as const,
+  /** Every Tasks/Meetings/Proposals list query (C6a) shares this prefix. */
+  work: (workspaceId: string | null) => ["work", workspaceId] as const,
+  workList: (workspaceId: string | null, object: WorkObject, params: object) =>
+    ["work", workspaceId, object, "list", params] as const,
+  workCount: (workspaceId: string | null, object: WorkObject, params: object) =>
+    ["work", workspaceId, object, "count", params] as const,
+  proposalSummary: (workspaceId: string | null, params: object) =>
+    ["work", workspaceId, "proposals", "summary", params] as const,
   savedViews: (workspaceId: string | null, object: string) =>
     ["savedViews", workspaceId, object] as const,
 };
@@ -122,7 +132,8 @@ const COMPANY_VIEWS = [
 
 /**
  * After any write that touches a contact (lead): its record, every contacts list and
- * count, timeline, tasks, meetings, proposals, deals, automation, AI panel, dashboard,
+ * count, timeline, tasks, meetings, proposals (old lists and the C6a work lists), deals,
+ * automation, AI panel, dashboard,
  * and the company views that show contacts.
  * Without `leadId` (bulk actions) every contact's record queries are refreshed.
  */
@@ -158,6 +169,7 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
     keys.tasks(workspaceId),
     keys.meetings(workspaceId),
     keys.proposals(workspaceId),
+    keys.work(workspaceId),
     keys.runs(workspaceId),
     keys.scheduledActions(workspaceId),
     keys.notifications(workspaceId),
@@ -192,6 +204,15 @@ export function refreshCompany(client: QueryClient, workspaceId: string | null) 
  */
 export function refreshDeal(client: QueryClient, workspaceId: string | null) {
   return refreshCompany(client, workspaceId);
+}
+
+/**
+ * After any task / meeting / proposal write (C6a): every work list, count and summary, and
+ * — since calls, outcomes and proposal statuses move the contact and its deals — every
+ * contact, company and deal view (refreshDeal → refreshCompany → refreshContact).
+ */
+export function refreshWork(client: QueryClient, workspaceId: string | null) {
+  return refreshDeal(client, workspaceId);
 }
 
 interface ErrorDetails {

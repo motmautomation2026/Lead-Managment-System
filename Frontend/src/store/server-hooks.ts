@@ -1029,7 +1029,7 @@ export function useCreateContact() {
 // --- CRM v2 companies + duplicate review (C3) -------------------------------------
 
 /** One keyset list: `{data, nextCursor}` pages, enabled once a workspace is selected. */
-function useCursorList<T>(
+export function useCursorList<T>(
   queryKey: readonly unknown[],
   fetchPage: (
     cursor: string | undefined,

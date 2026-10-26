@@ -296,9 +296,9 @@ describe("ContactRecordPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Log call/ }));
     expect(await screen.findByRole("dialog", { name: "Log call - Asha Rao" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    // Meeting and proposal dialogs are mounted with the contact's id: no list is loaded.
-    expect(mocks.leadList).toHaveBeenCalled();
-    expect(mocks.leadList.mock.calls.every(([enabled]) => enabled === false)).toBe(true);
+    // Meeting and proposal dialogs are mounted with the contact's id (or a ContactPicker, C6a):
+    // the leads list is never loaded.
+    expect(mocks.leadList).not.toHaveBeenCalled();
   });
 
   it("Create deal opens the app-wide dialog for this contact; deal rows link to the deal", async () => {

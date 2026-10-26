@@ -305,7 +305,8 @@ export interface MoveDealStageInput {
   contactAction?: ContactAction | undefined;
 }
 
-export type SavedViewObject = "contacts" | "companies" | "deals";
+export type SavedViewObject =
+  "contacts" | "companies" | "deals" | "tasks" | "meetings" | "proposals";
 export interface SavedView {
   id: string;
   object: SavedViewObject;

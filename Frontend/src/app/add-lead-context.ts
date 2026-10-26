@@ -36,3 +36,32 @@ export const CreateDealContext = createContext<{ open: (options?: CreateDealOpti
 export function useCreateDealDialog() {
   return useContext(CreateDealContext);
 }
+
+export interface CreateTaskOptions {
+  /** Fixed contact (contact record; the deal's contact on a deal record). */
+  contact?: IdName;
+}
+
+/** Opens the app-wide Create task dialog (hosted by the app shell, C6a). */
+export const CreateTaskContext = createContext<{ open: (options?: CreateTaskOptions) => void }>({
+  open: () => undefined,
+});
+
+export function useCreateTaskDialog() {
+  return useContext(CreateTaskContext);
+}
+
+export interface ScheduleMeetingOptions {
+  /** Fixed contact id; without it the dialog asks with a ContactPicker. */
+  leadId?: string;
+  dealId?: string;
+}
+
+/** Opens the app-wide Schedule meeting dialog (hosted by the app shell, C6a). */
+export const ScheduleMeetingContext = createContext<{
+  open: (options?: ScheduleMeetingOptions) => void;
+}>({ open: () => undefined });
+
+export function useScheduleMeetingDialog() {
+  return useContext(ScheduleMeetingContext);
+}
