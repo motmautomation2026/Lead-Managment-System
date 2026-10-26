@@ -39,3 +39,17 @@ describe("lazy routes", () => {
     expect(screen.queryByRole("status", { name: "Loading page" })).toBeNull();
   });
 });
+
+// Route files stay thin (C1-ui §1.9): the split chunk only pulls in its page from features/.
+describe("deal routes", () => {
+  it("/deals and /deals/$dealId load their pages lazily from features/deals", async () => {
+    const [index, record, search] = await Promise.all([
+      import("@/routes/deals.index"),
+      import("@/routes/deals.$dealId"),
+      import("@/features/deals/deals-search"),
+    ]);
+    expect(index.Route.options.validateSearch).toBe(search.validateDealsSearch);
+    expect(index.Route.options.component?.name).toBe("DealsPage");
+    expect(record.Route.options.component?.name).toBe("DealRoute");
+  });
+});

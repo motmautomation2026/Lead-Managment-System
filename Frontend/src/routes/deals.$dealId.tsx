@@ -1,15 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Handshake } from "lucide-react";
-import { ComingSoonPage } from "@/features/crm/coming-soon-page";
+import { DealRecordPage } from "@/features/deals/deal-record-page";
 
-// Placeholder until the deal record page (C4); contact records already link here.
 export const Route = createFileRoute("/deals/$dealId")({
   head: () => ({ meta: [{ title: "Deal - MOTM Flow" }] }),
-  component: () => (
-    <ComingSoonPage
-      title="Deal"
-      icon={Handshake}
-      text="The deal record (stage, amount, meetings and proposals) comes with the Deals update."
-    />
-  ),
+  component: DealRoute,
 });
+
+function DealRoute() {
+  const { dealId } = Route.useParams();
+  return <DealRecordPage dealId={dealId} />;
+}
