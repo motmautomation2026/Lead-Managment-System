@@ -95,7 +95,7 @@ describeIfDb("search + saved views API (requires TEST_DATABASE_URL)", () => {
       { object: "contacts", name: "x", columns: ["name", "name"] },
       { object: "companies", name: "x", filters: { stage: "won" } },
       { object: "deals", name: "x", sort: "contactCount:asc" },
-      { object: "tasks", name: "x" },
+      { object: "invoices", name: "x" },
       { object: "contacts", name: " " },
     ]) {
       expect((await call(rep, "POST", "/saved-views", bad)).status, JSON.stringify(bad)).toBe(400);
