@@ -204,6 +204,23 @@ describe("AppShell nav", () => {
     mockRole.isAdmin = false;
   });
 
+  it("Tasks shows my overdue count as a badge, none when nothing is overdue", async () => {
+    mockOverdue.count = 4;
+    await renderShell();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", {
+        name: /^Tasks.*4 overdue tasks$/,
+      }),
+    ).toHaveTextContent("4");
+    cleanup();
+    mockOverdue.count = 0;
+    await renderShell();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: "Tasks" }),
+    ).toBeTruthy();
+    mockOverdue.count = null;
+  });
+
   it("groups CRM, Work and Automation with the existing URLs", async () => {
     await renderShell("/contacts/lead-1");
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -278,7 +295,8 @@ describe("AppShell top bar", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Deal" }));
     const deal = await screen.findByRole("dialog", { name: "Create deal" });
     expect(within(deal).getByRole("button", { name: "Contact" })).toBeTruthy();
-  });
+    // Five lazy dialogs in a row: slow under a full parallel run.
+  }, 20_000);
 
   it("user menu switches the theme", async () => {
     await renderShell();

@@ -42,3 +42,12 @@ export function defaultCallbackSlot(now = new Date()) {
     if (weekday !== 0 && weekday !== 6) return { date, time: "10:00" };
   }
 }
+
+/** An ISO instant as IST date ("YYYY-MM-DD") + time ("HH:MM") for date/time inputs. */
+export function istParts(iso: string) {
+  const at = new Date(iso);
+  return {
+    date: new Intl.DateTimeFormat("en-CA", { timeZone: APP_TIME_ZONE }).format(at),
+    time: istTimeValue(at),
+  };
+}

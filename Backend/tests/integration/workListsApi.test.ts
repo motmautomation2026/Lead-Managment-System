@@ -136,6 +136,7 @@ describeIfDb("work lists API (requires TEST_DATABASE_URL)", () => {
       const rows = res.body.data as { id: string; dueAt: string; ownerName: string | null; contact: { id: string; name: string }; company: { id: string } | null; deal: { id: string } | null }[];
       expect(rows.map((r) => r.id)).toEqual([tasks.overdue, tasks.todayLate, tasks.tomorrowEarly, tasks.nextWeek]);
       const overdue = rows[0]!;
+      expect(res.body.data.map((r: { isOverdue: boolean }) => r.isOverdue)).toEqual([true, false, false, false]);
       expect(overdue.ownerName).toBe("Rep Work");
       expect(overdue.contact).toEqual({ id: contactA, name: "Work Acme Work" });
       expect(overdue.company?.id).toBe(companyA);

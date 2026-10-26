@@ -111,8 +111,9 @@ function taskWhere(workspaceId: string, actor: Actor, f: TaskFilters): SqlBuilde
 }
 
 export async function listWorkTasks(db: Queryable, actor: Actor, workspaceId: string, query: z.infer<typeof taskListSchema>) {
-  const page = await runPage<TaskRow & RefColumns>(db, taskWhere(workspaceId, actor, query), query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
-    `select t.*, o.full_name as owner_full_name, ${CONTACT_JSON} as contact, ${COMPANY_JSON} as company, od.deal, ${cursorSelect}
+  const page = await runPage<TaskRow & RefColumns & { is_overdue: boolean }>(db, taskWhere(workspaceId, actor, query), query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
+    `select t.*, (t.status = 'open' and t.due_at < now()) as is_overdue,
+            o.full_name as owner_full_name, ${CONTACT_JSON} as contact, ${COMPANY_JSON} as company, od.deal, ${cursorSelect}
        from ${TASK_FROM}
        left join public.companies c on c.id = l.company_id
        left join public.profiles o on o.id = t.owner_id
@@ -125,7 +126,8 @@ export async function listWorkTasks(db: Queryable, actor: Actor, workspaceId: st
       limit ${limit}`,
   );
   // The task's deal = the contact's most recently updated open deal (tasks are not linked to deals).
-  return { ...page, data: page.data.map((row) => ({ ...taskToDto(row), ...refs(row) })) };
+  // isOverdue: the same rule as due=overdue, so the UI never decides it.
+  return { ...page, data: page.data.map((row) => ({ ...taskToDto(row), ...refs(row), isOverdue: row.is_overdue })) };
 }
 
 export const countWorkTasks = (db: Queryable, actor: Actor, workspaceId: string, filters: TaskFilters) =>

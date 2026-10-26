@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useIsAdmin, useSavedViews } from "@/store";
 import type { SavedView } from "@/types";
 import {
@@ -23,7 +24,7 @@ export interface ListView<S> {
 export function useListViews<S extends ListViewState>(
   spec: ListViewSpec<S>,
   state: S,
-  set: (patch: Partial<S>) => unknown,
+  set: (patch: Partial<S>, options?: { replace?: boolean }) => unknown,
   onApply?: (next: Partial<S>) => void,
 ) {
   const isAdmin = useIsAdmin();
@@ -42,6 +43,17 @@ export function useListViews<S extends ListViewState>(
   const active = views.find((v) => v.id === activeId);
   const edited = active ? !matchesView(spec, state, active.state()) : false;
 
+  // A bare URL opens the spec's default view (replace, so Back never returns to the bare URL).
+  const landing = Boolean(spec.defaultView) && Object.keys(state).length === 0;
+  useEffect(() => {
+    if (!landing) return;
+    const view = spec.builtIns.find((v) => v.id === spec.defaultView)!;
+    const next = view.state();
+    onApply?.(next);
+    void set({ ...spec.noFilters, ...next, view: view.id }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per bare landing
+  }, [landing]);
+
   const apply = (id: string) => {
     const view = views.find((v) => v.id === id) ?? spec.builtIns[0]!;
     const next = view.state();
@@ -58,6 +70,8 @@ export function useListViews<S extends ListViewState>(
     activeId,
     active,
     edited,
+    /** True until the default view has been written to the URL: lists should wait. */
+    landing,
     canEditActive: Boolean(active?.saved && canEditView(active.saved, isAdmin)),
     isAdmin,
     apply,

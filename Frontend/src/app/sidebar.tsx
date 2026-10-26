@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ADMIN_NAV, NAV_GROUPS, SETTINGS_NAV, isNavActive, type NavItem } from "@/app/nav";
-import { useCompanyDuplicatesCount, useIsAdmin } from "@/store";
+import { useCompanyDuplicatesCount, useIsAdmin, useTaskCount } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +31,18 @@ export function AppSidebar({
   const bottom = isAdmin ? [SETTINGS_NAV, ADMIN_NAV] : [SETTINGS_NAV];
   // Admins: open duplicate-company suggestions (cheap count, cached 60 s).
   const duplicates = useCompanyDuplicatesCount({}, isAdmin).data?.count ?? 0;
+  // My overdue tasks: the same params (and cache) as the Tasks page's Overdue tab; refreshWork
+  // refreshes it with the list.
+  const overdue = useTaskCount({ ownerId: ["me"], due: "overdue" }).data?.count ?? 0;
+  const badgeFor = (to: NavItem["to"]) =>
+    to === "/companies" && duplicates > 0
+      ? {
+          badge: duplicates,
+          badgeLabel: `${duplicates} possible duplicate compan${duplicates === 1 ? "y" : "ies"} to review`,
+        }
+      : to === "/tasks" && overdue > 0
+        ? { badge: overdue, badgeLabel: `${overdue} overdue task${overdue === 1 ? "" : "s"}` }
+        : {};
   const link = (item: NavItem) => (
     <SidebarLink
       key={item.to}
@@ -38,8 +50,7 @@ export function AppSidebar({
       active={isNavActive(item.to, pathname)}
       collapsed={collapsed}
       onNavigate={onNavigate}
-      badge={item.to === "/companies" && duplicates > 0 ? duplicates : undefined}
-      badgeLabel={`${duplicates} possible duplicate compan${duplicates === 1 ? "y" : "ies"} to review`}
+      {...badgeFor(item.to)}
     />
   );
 

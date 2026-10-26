@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ListChecks, Search, X } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/app/app-shell";
-import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -12,206 +11,367 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { StatusBadge, TaskOriginBadge } from "@/components/common/status-badge";
-import { isOverdue, isToday, relDay } from "@/lib/format";
-import { useLeads, useMeetings, useSession, useTasks } from "@/store";
-import { messageFromError } from "@/store";
-import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
-import { LogCallDialog } from "@/features/leads/log-call-dialog";
-import { ScheduleMeetingDialog } from "@/features/meetings/schedule-meeting-dialog";
+import { PageHeader } from "@/components/crm/page-header";
+import { FilterBar } from "@/components/crm/filter-bar";
+import type { FilterDef } from "@/components/crm/filter-model";
+import { DataTable } from "@/components/crm/data-table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import { useCreateTaskDialog } from "@/app/add-lead-context";
+import { CompanyPicker } from "@/features/companies/company-picker";
+import { ContactPicker } from "@/features/contacts/contact-picker";
+import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
+import { toSavedViewBody } from "@/features/crm/saved-views";
+import { useListViews } from "@/features/crm/use-list-views";
+import { LogCallFlow } from "@/features/work/log-call-flow";
+import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
+import { backend } from "@/lib/backend-client";
+import { label } from "@/lib/labels";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useListUrlState } from "@/lib/use-list-url-state";
+import {
+  refreshWork,
+  useCompany,
+  useCompleteTask,
+  useContact,
+  useSession,
+  useTaskCount,
+  useTaskList,
+} from "@/store";
+import { useWorkspace } from "@/store/workspace-context";
+import { TASK_TYPES, type TaskListItem } from "@/types";
+import { taskColumns } from "./task-columns";
+import { TaskSheet } from "./task-sheet";
+import {
+  DEFAULT_COLUMNS,
+  MY_DUE_TODAY,
+  MY_OVERDUE,
+  TASK_VIEW_SPEC,
+  fromFilterValues,
+  parseSort,
+  tasksSearchSchema,
+  toApiParams,
+  toFilterValues,
+} from "./tasks-search";
 
-type View = "today" | "overdue" | "upcoming" | "done";
+const EMPTY_TEXT: Record<string, string> = {
+  overdue: "Nothing overdue.",
+  today: "No tasks due today.",
+  upcoming: "Nothing scheduled after today.",
+  completed: "No completed tasks yet.",
+};
 
-export function TasksPage() {
-  const { tasks, completeTask, isLoading, error, isPending } = useTasks();
-  const { leads } = useLeads();
-  const meetingStore = useMeetings();
-  const { users, userName } = useSession();
-  const [view, setView] = useState<View>("today");
-  const [owner, setOwner] = useState("all");
-  const [callTask, setCallTask] = useState<{ leadId: string; taskId: string } | null>(null);
-  const [scheduleMeetingTask, setScheduleMeetingTask] = useState<{ leadId: string } | null>(null);
-  const [schedulingMeeting, setSchedulingMeeting] = useState(false);
-
-  const filtered = tasks.filter((t) => {
-    if (owner !== "all" && t.ownerId !== owner) return false;
-    if (view === "done") return t.status === "completed";
-    if (t.status !== "open") return false;
-    if (view === "today") return isToday(t.dueAt);
-    if (view === "overdue") return isOverdue(t.dueAt);
-    return !isOverdue(t.dueAt) && !isToday(t.dueAt);
-  });
-
-  const counts = {
-    today: tasks.filter((t) => t.status === "open" && isToday(t.dueAt)).length,
-    overdue: tasks.filter((t) => t.status === "open" && isOverdue(t.dueAt)).length,
-    upcoming: tasks.filter((t) => t.status === "open" && !isOverdue(t.dueAt) && !isToday(t.dueAt))
-      .length,
-    done: tasks.filter((t) => t.status === "completed").length,
-  };
-
-  return (
-    <div className="pb-10">
-      <PageHeader
-        title="Tasks"
-        description="Manual and automation-created actions. Completing a task keeps the lead moving."
-        tabs={
-          <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-            <TabsList>
-              <TabsTrigger value="today">Today ({counts.today})</TabsTrigger>
-              <TabsTrigger value="overdue">Overdue ({counts.overdue})</TabsTrigger>
-              <TabsTrigger value="upcoming">Upcoming ({counts.upcoming})</TabsTrigger>
-              <TabsTrigger value="done">Completed ({counts.done})</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        }
-        actions={
-          <Select value={owner} onValueChange={setOwner}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All owners</SelectItem>
-              {users.map((u) => (
-                <SelectItem key={u.id} value={u.id}>
-                  {u.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        }
-      />
-
-      <div className="p-6">
-        {isLoading ? (
-          <LoadingBlock label="Loading tasks…" />
-        ) : error ? (
-          <ErrorBlock error={error} />
-        ) : (
-          <Card className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-sm">
-                <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
-                  <tr>
-                    {["", "Task", "Lead", "Type", "Due", "Owner", "Origin"].map((h, i) => (
-                      <th key={i} className="px-3 py-2 font-medium">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((t) => {
-                    const lead = leads.find((l) => l.id === t.leadId);
-                    return (
-                      <tr key={t.id} className="border-t hover:bg-accent/40">
-                        <td className="px-3 py-2">
-                          <Checkbox
-                            checked={t.done}
-                            disabled={t.status !== "open" || isPending}
-                            onCheckedChange={() => {
-                              if (t.status !== "open") return;
-                              if (t.type === "call") {
-                                setCallTask({ leadId: t.leadId, taskId: t.id });
-                                return;
-                              }
-                              if (t.type === "schedule_meeting") {
-                                setScheduleMeetingTask({ leadId: t.leadId });
-                                return;
-                              }
-                              void completeTask(t.id).catch((reason) => toastError(reason));
-                            }}
-                          />
-                        </td>
-                        <td
-                          className={`px-3 py-2 ${t.done ? "text-muted-foreground line-through" : ""}`}
-                        >
-                          {t.title}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {lead && (
-                            <Link
-                              to="/contacts/$contactId"
-                              params={{ contactId: lead.id }}
-                              className="hover:underline"
-                            >
-                              {lead.firstName} {lead.lastName} · {lead.company}
-                            </Link>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <StatusBadge value={t.type} tone="neutral" />
-                        </td>
-                        <td
-                          className={`whitespace-nowrap px-3 py-2 text-xs ${
-                            !t.done && isOverdue(t.dueAt)
-                              ? "text-destructive"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {relDay(t.dueAt)}
-                        </td>
-                        <td className="px-3 py-2 text-xs">{t.ownerName ?? userName(t.ownerId)}</td>
-                        <td className="px-3 py-2">
-                          <TaskOriginBadge origin={t.origin} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filtered.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="px-3 py-10 text-center text-sm text-muted-foreground"
-                      >
-                        Nothing here.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-      </div>
-      {callTask && (
-        <LogCallDialog
-          leadId={callTask.leadId}
-          taskId={callTask.taskId}
-          open={true}
-          onOpenChange={(value) => {
-            if (!value) setCallTask(null);
-          }}
-        />
-      )}
-      {scheduleMeetingTask && (
-        <ScheduleMeetingDialog
-          leadId={scheduleMeetingTask.leadId}
-          meeting={null}
-          open={true}
-          isSaving={schedulingMeeting}
-          onOpenChange={(value) => {
-            if (!value) setScheduleMeetingTask(null);
-          }}
-          onSave={(value) =>
-            void (async () => {
-              setSchedulingMeeting(true);
-              try {
-                await meetingStore.addMeeting(value);
-                toast.success("Meeting scheduled");
-              } catch (error) {
-                toastError(error);
-              } finally {
-                setSchedulingMeeting(false);
-              }
-            })()
-          }
-        />
-      )}
-    </div>
-  );
+/** One per-id write for each selected task; returns how many failed (with the first error). */
+async function eachTask(ids: string[], write: (id: string) => Promise<unknown>) {
+  let failed = 0;
+  let first: unknown = null;
+  for (const id of ids) {
+    try {
+      await write(id);
+    } catch (error) {
+      failed += 1;
+      first ??= error;
+    }
+  }
+  return { failed, first };
 }
 
-function toastError(error: unknown) {
-  toast.error(messageFromError(error));
+export function TasksPage() {
+  const [state, set] = useListUrlState(tasksSearchSchema);
+  const { users } = useSession();
+  const createTask = useCreateTaskDialog();
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  const complete = useCompleteTask();
+
+  const params = useMemo(() => toApiParams(state), [state]);
+  // A bare /tasks is rewritten to the My open view first (useListViews); don't fetch "all" meanwhile.
+  const landing = Object.keys(state).length === 0;
+  const list = useTaskList(params, !landing);
+  const count = useTaskCount(params, !landing);
+  const overdue = useTaskCount(MY_OVERDUE);
+  const dueToday = useTaskCount(MY_DUE_TODAY);
+  const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
+  const filterCompany = useCompany(state.companyId);
+  const filterContact = useContact(state.contactId ?? "");
+
+  const [qInput, setQInput] = useState(state.q ?? "");
+  const debouncedQ = useDebouncedValue(qInput, 300);
+  const lastQ = useRef(debouncedQ);
+  useEffect(() => {
+    if (lastQ.current === debouncedQ) return;
+    lastQ.current = debouncedQ;
+    void set({ q: debouncedQ || undefined }, { replace: true });
+  }, [debouncedQ, set]);
+
+  const viewsCtl = useListViews(TASK_VIEW_SPEC, state, set, (next) => {
+    setQInput(next.q ?? "");
+    lastQ.current = next.q ?? "";
+  });
+
+  const [selected, setSelected] = useState<string[]>([]);
+  const selectionKey = JSON.stringify(params);
+  const [selectionFor, setSelectionFor] = useState(selectionKey);
+  if (selectionFor !== selectionKey) {
+    setSelectionFor(selectionKey);
+    setSelected([]);
+  }
+  const [sheetTask, setSheetTask] = useState<TaskListItem | null>(null);
+  const [call, setCall] = useState<{ leadId: string; taskId: string } | null>(null);
+  const [meetingFor, setMeetingFor] = useState<{ leadId: string; taskId: string } | null>(null);
+  const [bulkOwner, setBulkOwner] = useState("");
+  const [confirm, setConfirm] = useState<"complete" | "reassign" | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  /** Done toggle: a call logs the call (which completes the task); a meeting task schedules it. */
+  const done = (task: TaskListItem) => {
+    if (task.status !== "open") return;
+    if (task.type === "call") return setCall({ leadId: task.contact.id, taskId: task.id });
+    if (task.type === "schedule_meeting")
+      return setMeetingFor({ leadId: task.contact.id, taskId: task.id });
+    complete.mutate(task.id, {
+      onSuccess: () => toast.success("Task completed"),
+      onError: (error) => toast.error(error.message),
+    });
+  };
+  const columns = taskColumns(done);
+
+  const bulk = async (kind: "complete" | "reassign") => {
+    setBulkBusy(true);
+    const { failed, first } = await eachTask(selected, (id) =>
+      kind === "complete"
+        ? backend.tasks.complete(id)
+        : backend.tasks.update(id, { ownerId: bulkOwner }),
+    );
+    setBulkBusy(false);
+    setConfirm(null);
+    await refreshWork(client, ws);
+    const ok = selected.length - failed;
+    const verb = kind === "complete" ? "completed" : "reassigned";
+    if (failed === 0) toast.success(`${ok} task${ok === 1 ? "" : "s"} ${verb}`);
+    else
+      toast.error(
+        `${ok} ${verb}, ${failed} failed: ${first instanceof Error ? first.message : "request failed"}`,
+      );
+    setSelected([]);
+  };
+
+  const ownerOptions = [
+    { value: "me", label: "Me" },
+    { value: "none", label: "No owner" },
+    ...users.map((u) => ({ value: u.id, label: u.name })),
+  ];
+  const quickFilters: FilterDef[] = [
+    { id: "ownerId", label: "Owner", type: "multi", options: ownerOptions },
+    {
+      id: "type",
+      label: "Type",
+      type: "multi",
+      options: TASK_TYPES.map((t) => ({ value: t, label: label(t) })),
+    },
+    {
+      id: "origin",
+      label: "Origin",
+      type: "multi",
+      options: [
+        { value: "manual", label: "Manual" },
+        { value: "automation", label: "Automation" },
+        { value: "agent", label: "AI Agent" },
+      ],
+    },
+    { id: "dueRange", label: "Due date", type: "dateRange" },
+  ];
+  const moreFilters: FilterDef[] = [
+    {
+      id: "status",
+      label: "Status",
+      type: "multi",
+      options: [
+        { value: "open", label: "Open" },
+        { value: "completed", label: "Completed" },
+        { value: "cancelled", label: "Cancelled" },
+        { value: "all", label: "All" },
+      ],
+    },
+  ];
+
+  const hasFilters = Object.keys(toSavedViewBody(state, toApiParams).filters).length > 0;
+  const emptyState = (
+    <EmptyState
+      icon={ListChecks}
+      title={hasFilters ? "No tasks here" : "No open tasks"}
+      text={
+        EMPTY_TEXT[viewsCtl.activeId] ??
+        (hasFilters
+          ? "Try other filters or a different search."
+          : "Create a task to plan a follow-up.")
+      }
+      action={<Button onClick={() => createTask.open()}>Create task</Button>}
+    />
+  );
+  const contactName = filterContact.data
+    ? `${filterContact.data.firstName} ${filterContact.data.lastName}`.trim()
+    : "…";
+
+  return (
+    <div className="pb-24">
+      <PageHeader
+        title="Tasks"
+        count={count.data?.count ?? null}
+        primaryAction={<Button onClick={() => createTask.open()}>Create task</Button>}
+        tabs={
+          <SavedViewTabs
+            controller={viewsCtl}
+            maxVisible={6}
+            counts={{ overdue: overdue.data?.count, today: dueToday.data?.count }}
+          />
+        }
+      />
+      <div className="space-y-3 px-4 pt-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              placeholder="Search title or contact"
+              aria-label="Search tasks"
+              data-list-search
+              className="pl-8"
+            />
+          </div>
+          <div className="flex w-full items-center gap-1 sm:w-48">
+            <ContactPicker
+              label="Contact filter"
+              placeholder="Contact"
+              value={state.contactId ? { id: state.contactId, name: contactName } : null}
+              onChange={(c) => void set({ contactId: c?.id })}
+            />
+            {state.contactId && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                aria-label="Clear contact filter"
+                onClick={() => void set({ contactId: undefined })}
+              >
+                <X />
+              </Button>
+            )}
+          </div>
+          <CompanyPicker
+            variant="chip"
+            value={
+              state.companyId
+                ? { id: state.companyId, name: filterCompany.data?.name ?? "…" }
+                : null
+            }
+            onChange={(company) => void set({ companyId: company?.id })}
+          />
+          <FilterBar
+            filters={quickFilters}
+            moreFilters={moreFilters}
+            values={toFilterValues(state)}
+            onChange={(values) => void set(fromFilterValues(values))}
+          />
+        </div>
+        <DataTable<TaskListItem>
+          label="Tasks"
+          data={rows}
+          columns={columns}
+          getRowId={(r) => r.id}
+          onRowClick={setSheetTask}
+          sort={parseSort(state.sort)}
+          onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
+          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
+          onColumnsChange={(columns) => void set({ columns })}
+          selectedIds={selected}
+          onSelectionChange={setSelected}
+          bulkActions={
+            <>
+              <Button size="sm" variant="outline" onClick={() => setConfirm("complete")}>
+                Complete
+              </Button>
+              <Select
+                value={bulkOwner}
+                onValueChange={(v) => {
+                  setBulkOwner(v);
+                  setConfirm("reassign");
+                }}
+              >
+                <SelectTrigger className="h-8 w-40" aria-label="Reassign to">
+                  <SelectValue placeholder="Reassign to…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users
+                    .filter((u) => u.active)
+                    .map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </>
+          }
+          hasNextPage={list.hasNextPage}
+          isFetchingNextPage={list.isFetchingNextPage}
+          onLoadMore={() => void list.fetchNextPage()}
+          isLoading={list.isLoading}
+          error={list.error}
+          onRetry={() => void list.refetch()}
+          emptyState={emptyState}
+        />
+      </div>
+
+      <TaskSheet
+        task={sheetTask}
+        onOpenChange={(open) => !open && setSheetTask(null)}
+        onComplete={(t) => {
+          setSheetTask(null);
+          done(t);
+        }}
+        onLogCall={(t) => {
+          setSheetTask(null);
+          setCall({ leadId: t.contact.id, taskId: t.id });
+        }}
+      />
+      {call && (
+        <LogCallFlow
+          leadId={call.leadId}
+          taskId={call.taskId}
+          open
+          onOpenChange={(open) => !open && setCall(null)}
+        />
+      )}
+      {meetingFor && (
+        <ScheduleMeetingFlow
+          leadId={meetingFor.leadId}
+          open
+          onOpenChange={(open) => !open && setMeetingFor(null)}
+        />
+      )}
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirm(null);
+            setBulkOwner("");
+          }
+        }}
+        title={confirm === "complete" ? "Complete tasks" : "Reassign tasks"}
+        description={
+          confirm === "complete"
+            ? `Mark ${selected.length} task${selected.length === 1 ? "" : "s"} as done?`
+            : `Reassign ${selected.length} task${selected.length === 1 ? "" : "s"} to ${
+                users.find((u) => u.id === bulkOwner)?.name ?? "this owner"
+              }?`
+        }
+        confirmLabel={confirm === "complete" ? "Complete" : "Reassign"}
+        confirmVariant="default"
+        disabled={bulkBusy}
+        onConfirm={() => confirm && void bulk(confirm)}
+      />
+    </div>
+  );
 }

@@ -26,6 +26,12 @@ export interface ListViewSpec<S extends ListViewState> {
   /** The list endpoint's params for this state; `sort` always set (the default when absent). */
   toApiParams: (state: S) => object;
   defaultColumns: string[];
+  /**
+   * C6a: a bare URL (no params at all) opens this built-in view, written to the URL with
+   * `view=` (replace). Without it a bare URL = the "all" view. With it, no built-in may use the
+   * id "all" (applying it would clear the URL and land on the default again).
+   */
+  defaultView?: string;
 }
 
 export interface SavedViewBody {

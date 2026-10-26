@@ -13,6 +13,8 @@ export interface ViewTab {
   label: string;
   /** The list differs from what the view stores: shows a small "Edited" marker. */
   edited?: boolean;
+  /** Shown as a small badge (e.g. overdue tasks). */
+  count?: number | undefined;
 }
 
 /**
@@ -55,6 +57,11 @@ export function ViewTabs({
           )}
         >
           {view.label}
+          {view.count !== undefined && (
+            <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 type-small font-normal text-muted-foreground num">
+              {view.count}
+            </span>
+          )}
           {view.edited && (
             <span className="ml-1.5 rounded bg-muted px-1 py-0.5 type-small font-normal text-muted-foreground">
               Edited

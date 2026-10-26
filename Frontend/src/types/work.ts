@@ -12,7 +12,11 @@ export interface WorkRefs {
   deal: IdName | null;
 }
 
-export type TaskListItem = Omit<Task, "ownerName"> & WorkRefs;
+export type TaskListItem = Omit<Task, "ownerName"> &
+  WorkRefs & {
+    /** Open and past due (backend clock). */
+    isOverdue: boolean;
+  };
 export type MeetingListItem = Omit<Meeting, "ownerName"> & WorkRefs;
 export type ProposalListItem = Omit<Proposal, "ownerName"> &
   WorkRefs & {

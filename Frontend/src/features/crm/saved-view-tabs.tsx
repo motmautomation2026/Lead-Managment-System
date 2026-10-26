@@ -22,8 +22,13 @@ import type { ListViewsController } from "./use-list-views";
  */
 export function SavedViewTabs<S extends ListViewState>({
   controller: c,
+  counts,
+  maxVisible,
 }: {
   controller: ListViewsController<S>;
+  /** Badges on built-in views, by view id. */
+  counts?: Partial<Record<string, number>>;
+  maxVisible?: number;
 }) {
   const createView = useCreateSavedView();
   const updateView = useUpdateSavedView();
@@ -59,7 +64,9 @@ export function SavedViewTabs<S extends ListViewState>({
             id: v.id,
             label: v.label,
             edited: v.id === c.activeId && c.edited,
+            count: counts?.[v.id],
           }))}
+          {...(maxVisible ? { maxVisible } : {})}
           activeId={c.activeId}
           onChange={c.apply}
           onSaveView={() => setSaveOpen(true)}
