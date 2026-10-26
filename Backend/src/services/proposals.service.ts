@@ -135,7 +135,7 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
   );
   const id = result.rows[0]!.id;
 
-  await addTimelineEvent(db, { leadId: input.leadId, kind: "proposal", title: "Proposal Created", detail: input.title.trim(), ...actorEvent(actor) });
+  await addTimelineEvent(db, { leadId: input.leadId, kind: "proposal", title: "Proposal Created", detail: input.title.trim(), ...actorEvent(actor), relatedProposalId: id });
   await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, proposalId: id, amount: input.amount ?? null });
   await updateLead(db, actor, workspaceId, input.leadId, { pipelineStage: "proposal_preparation" });
 

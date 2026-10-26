@@ -12,11 +12,14 @@ import {
   addOwnerFilter,
   addRange,
   containsPattern,
+  cursorSelectSql,
   defineSorts,
+  encodeCursor,
   isoDate,
   isoTimestamp,
   multi,
   nonNegativeNumber,
+  orderBySql,
   ownerIdFilter,
   pageParams,
   runCount,
@@ -29,6 +32,7 @@ import {
 import { createDeal, moveDealStage } from "./deals.service.js";
 import { getProfile } from "./profiles.service.js";
 import { assertCompanyUsable } from "./companyRecords.service.js";
+import { markLost, moveToLongTermNurture } from "./leads.service.js";
 
 export const DEAL_SORTS = defineSorts({
   idColumn: "d.id",
@@ -93,11 +97,13 @@ const OWNER_JSON = `case when o.id is null then null else json_build_object('id'
 const COMPANY_JSON = `case when c.id is null then null else json_build_object('id', c.id, 'name', c.name) end`;
 const CONTACT_NAME = `trim(l.first_name || ' ' || l.last_name)`;
 
+const LIST_ITEM_SELECT = `d.id, d.name, d.stage, d.amount::float8 as amount, d.currency, d.expected_close_date::text as "expectedCloseDate",
+            ${OWNER_JSON} as owner, ${COMPANY_JSON} as company, json_build_object('id', l.id, 'name', ${CONTACT_NAME}) as contact,
+            d.source, d.closed_at as "closedAt", d.created_at as "createdAt", d.updated_at as "updatedAt"`;
+
 function pageOfDeals(db: Queryable, b: SqlBuilder, sort: ListSort, page: { limit: number; cursor?: string | undefined }) {
   return runPage(db, b, sort, page, ({ where, orderBy, limit, cursorSelect }) =>
-    `select d.id, d.name, d.stage, d.amount::float8 as amount, d.currency, d.expected_close_date::text as "expectedCloseDate",
-            ${OWNER_JSON} as owner, ${COMPANY_JSON} as company, json_build_object('id', l.id, 'name', ${CONTACT_NAME}) as contact,
-            d.source, d.closed_at as "closedAt", d.created_at as "createdAt", d.updated_at as "updatedAt", ${cursorSelect}
+    `select ${LIST_ITEM_SELECT}, ${cursorSelect}
        from ${FROM}
        join public.leads l on l.id = d.lead_id
        left join public.profiles o on o.id = d.owner_id
@@ -115,26 +121,52 @@ export const countDeals = (db: Queryable, actor: Actor, workspaceId: string, fil
 /**
  * Every stage in pipeline order with its count, INR amount total and first 20 deals by
  * updatedAt desc; a column loads more via GET /deals?stage=X&sort=updatedAt:desc&cursor=….
+ * ONE query: per-stage window counts/totals/row numbers over the filtered deals, then the
+ * first 21 rows of each stage (the 21st only says there is more). Cursors match GET /deals.
  */
 export async function dealBoard(db: Queryable, actor: Actor, workspaceId: string, filters: z.infer<typeof dealBoardSchema>) {
-  const totals = dealWhere(workspaceId, actor, filters);
-  const { rows } = await db.query<{ stage: DealStage; count: number; amount_total: number }>(
-    `select d.stage, count(*)::int as count, coalesce(sum(d.amount) filter (where d.currency = 'INR'), 0)::float8 as amount_total
-       from ${FROM} ${totals.where()} group by d.stage`,
-    totals.params,
-  );
+  const b = dealWhere(workspaceId, actor, filters);
   const sort = dealSortSchema.parse("updatedAt:desc");
+  const { rows } = await db.query<BoardRow>(
+    `with ranked as (
+       select d.id,
+              row_number() over (partition by d.stage order by ${orderBySql(sort)})::int as rn,
+              count(*) over (partition by d.stage)::int as stage_count,
+              coalesce(sum(d.amount) filter (where d.currency = 'INR') over (partition by d.stage), 0)::float8 as stage_total
+         from ${FROM} ${b.where()}
+     )
+     select ${LIST_ITEM_SELECT}, r.rn, r.stage_count, r.stage_total, ${cursorSelectSql(sort)}
+       from ranked r
+       join public.deals d on d.id = r.id
+       left join public.companies c on c.id = d.company_id
+       join public.leads l on l.id = d.lead_id
+       left join public.profiles o on o.id = d.owner_id
+      where r.rn <= ${b.p(BOARD_PAGE + 1)}
+      order by r.rn`,
+    b.params,
+  );
   return {
-    data: await Promise.all(
-      DEAL_STAGES.map(async (stage) => {
-        const total = rows.find((r) => r.stage === stage);
-        const page = total
-          ? await pageOfDeals(db, dealWhere(workspaceId, actor, { ...filters, stage: [stage] }), sort, { limit: BOARD_PAGE })
-          : { data: [], nextCursor: null };
-        return { stage, count: total?.count ?? 0, amountTotal: total?.amount_total ?? 0, items: page.data, nextCursor: page.nextCursor };
-      }),
-    ),
+    data: DEAL_STAGES.map((stage) => {
+      const stageRows = rows.filter((r) => r.stage === stage);
+      const items = stageRows.filter((r) => r.rn <= BOARD_PAGE);
+      const last = items[items.length - 1];
+      return {
+        stage,
+        count: stageRows[0]?.stage_count ?? 0,
+        amountTotal: stageRows[0]?.stage_total ?? 0,
+        items: items.map(({ rn: _rn, stage_count: _count, stage_total: _total, __cursor: _cursor, ...item }) => item),
+        nextCursor: stageRows.length > BOARD_PAGE && last ? encodeCursor(sort, last.__cursor) : null,
+      };
+    }),
   };
+}
+
+type BoardRow = Record<string, unknown> & { stage: DealStage; rn: number; stage_count: number; stage_total: number; __cursor: (string | null)[] };
+
+/** 404 unless the deal exists in this workspace (cheap check for its sub-resources). */
+export async function assertDealExists(db: Queryable, workspaceId: string, id: string) {
+  const { rowCount } = await db.query(`select 1 from public.deals where id = $1 and workspace_id = $2`, [id, workspaceId]);
+  if (!rowCount) throw new NotFoundError("Deal");
 }
 
 /** All fields + contact, company, owner and the meetings and proposals linked by deal_id. */
@@ -190,9 +222,18 @@ export const updateDealSchema = z
   })
   .strict();
 
+/** What closing a deal as lost does to its contact; the rep decides (design §2.2). */
+export const CONTACT_ACTIONS = ["keep", "long_term_nurture", "lost"] as const;
+
 export const moveStageSchema = z
-  .object({ stage: z.enum(DEAL_STAGES), lossReason: z.enum(LEAD_LOSS_REASONS).optional(), lossNotes: z.string().trim().max(2000).optional() })
-  .strict();
+  .object({
+    stage: z.enum(DEAL_STAGES),
+    lossReason: z.enum(LEAD_LOSS_REASONS).optional(),
+    lossNotes: z.string().trim().max(2000).optional(),
+    contactAction: z.enum(CONTACT_ACTIONS).optional(),
+  })
+  .strict()
+  .refine((v) => !v.contactAction || v.stage === "lost", { message: "contactAction is only allowed when the stage is lost.", path: ["contactAction"] });
 
 /** Manual deal for a contact (stage default qualified). */
 export async function createManualDeal(db: Queryable, actor: Actor, workspaceId: string, input: z.infer<typeof createDealSchema>) {
@@ -223,9 +264,16 @@ export async function updateDeal(db: Queryable, workspaceId: string, id: string,
   return getDeal(db, workspaceId, id);
 }
 
-/** Manual stage move (B3b rules, incl. the contact sync on won). Moving to the current stage is a 409. */
+/**
+ * Manual stage move (B3b rules, incl. the contact sync on won). Moving to the current stage is a 409.
+ * Lost + `contactAction` also moves the contact through the existing lifecycle services in the same
+ * transaction (a DNC contact fails the whole move): `lost` with the deal's reason and notes (like any
+ * lost contact, that also closes its other open deals) or `long_term_nurture`; `keep` changes nothing.
+ */
 export async function moveDeal(db: Queryable, actor: Actor, workspaceId: string, id: string, input: z.infer<typeof moveStageSchema>) {
-  const { moved } = await moveDealStage(db, actor, workspaceId, id, input.stage, { manual: true, lossReason: input.lossReason, lossNotes: input.lossNotes });
+  const { deal, moved } = await moveDealStage(db, actor, workspaceId, id, input.stage, { manual: true, lossReason: input.lossReason, lossNotes: input.lossNotes });
   if (!moved) throw new ConflictError("The deal is already in this stage.");
+  if (input.contactAction === "lost") await markLost(db, actor, workspaceId, deal.lead_id, input.lossReason!, input.lossNotes);
+  else if (input.contactAction === "long_term_nurture") await moveToLongTermNurture(db, actor, workspaceId, deal.lead_id, `Deal lost: ${deal.name}`);
   return getDeal(db, workspaceId, id);
 }

@@ -118,7 +118,7 @@ export async function listTimelineForLead(db: Queryable, workspaceId: string, le
 // --- Paginated timelines (C3): the list standard, newest first ---------------------
 
 /** Activity filter groups, the same chips as the record pages' Activity tab. */
-export const ACTIVITY_TYPES = ["notes", "calls", "meetings", "tasks", "messages", "ai", "deals", "system"] as const;
+export const ACTIVITY_TYPES = ["notes", "calls", "meetings", "proposals", "tasks", "messages", "ai", "deals", "system"] as const;
 
 // One group per row, first match wins: deal rows, then AI agent rows, then by kind. `agent` binds AGENT_ACTOR_NAME.
 const activityTypeSql = (agent: string) => `case
@@ -126,7 +126,8 @@ const activityTypeSql = (agent: string) => `case
   when t.actor_name = ${agent} then 'ai'
   when t.event_kind = 'note' then 'notes'
   when t.event_kind = 'call' then 'calls'
-  when t.event_kind in ('meeting', 'proposal') then 'meetings'
+  when t.event_kind = 'meeting' then 'meetings'
+  when t.event_kind = 'proposal' then 'proposals'
   when t.event_kind = 'task' then 'tasks'
   when t.event_kind in ('email', 'whatsapp') then 'messages'
   else 'system' end`;
@@ -134,7 +135,7 @@ const activityTypeSql = (agent: string) => `case
 // Always newest first (no sort param); index (lead_id, occurred_at, id), migration 035.
 const TIMELINE_SORT: ListSort = { key: "at", dir: "desc", field: { columns: ["t.occurred_at"], type: "timestamptz" }, idColumn: "t.id" };
 
-/** GET /contacts/:id/timeline and /companies/:id/timeline. */
+/** GET /contacts/:id/timeline, /companies/:id/timeline and /deals/:id/timeline. */
 export const timelineListSchema = z.object({ kind: multi(z.enum(ACTIVITY_TYPES)).optional(), ...pageParams }).strict();
 type TimelineQuery = z.infer<typeof timelineListSchema>;
 
@@ -158,6 +159,17 @@ export async function listContactTimeline(db: Queryable, workspaceId: string, le
   return { data: page.data.map(timelineToDto), nextCursor: page.nextCursor };
 }
 
+/** Feeds spanning several contacts: each row says whose event it is. */
+async function timelinePageWithContact(db: Queryable, b: SqlBuilder, query: TimelineQuery) {
+  const page = await timelinePage<TimelineRow & { contact: { id: string; name: string } }>(
+    db,
+    b,
+    query,
+    `, json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name)) as contact`,
+  );
+  return { data: page.data.map((row) => ({ ...timelineToDto(row), contact: row.contact })), nextCursor: page.nextCursor };
+}
+
 /** Events of the company's non-merged contacts plus every event of its deals, each with whose event it is. */
 export async function listCompanyTimeline(db: Queryable, workspaceId: string, companyId: string, query: TimelineQuery) {
   const b = new SqlBuilder();
@@ -167,11 +179,20 @@ export async function listCompanyTimeline(db: Queryable, workspaceId: string, co
     `((l.company_id = ${company} and l.lifecycle_state <> 'merged')
       or t.related_deal_id in (select d.id from public.deals d where d.workspace_id = ${ws} and d.company_id = ${company}))`,
   );
-  const page = await timelinePage<TimelineRow & { contact: { id: string; name: string } }>(
-    db,
-    b,
-    query,
-    `, json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name)) as contact`,
+  return timelinePageWithContact(db, b, query);
+}
+
+/**
+ * A deal's events: rows with its related_deal_id plus the events of the meetings and proposals
+ * linked to it by deal_id (partial indexes on all three related_* columns).
+ */
+export async function listDealTimeline(db: Queryable, workspaceId: string, dealId: string, query: TimelineQuery) {
+  const b = new SqlBuilder();
+  const deal = b.p(dealId);
+  b.and(`l.workspace_id = ${b.p(workspaceId)}`).and(
+    `(t.related_deal_id = ${deal}
+      or t.related_meeting_id in (select m.id from public.meetings m where m.deal_id = ${deal})
+      or t.related_proposal_id in (select p.id from public.proposals p where p.deal_id = ${deal}))`,
   );
-  return { data: page.data.map((row) => ({ ...timelineToDto(row), contact: row.contact })), nextCursor: page.nextCursor };
+  return timelinePageWithContact(db, b, query);
 }

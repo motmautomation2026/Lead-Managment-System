@@ -8,6 +8,7 @@ import { pool, withTransaction } from "../db.js";
 import { ValidationError } from "../errors.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as deals from "../services/dealRecords.service.js";
+import { listDealTimeline, timelineListSchema } from "../services/timeline.service.js";
 
 export const dealsRouter = Router();
 dealsRouter.param("id", uuidParam("deal"));
@@ -45,6 +46,16 @@ dealsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     res.json(await deals.getDeal(pool, req.workspaceId!, req.params.id!));
+  }),
+);
+
+/** The deal's activity, newest first: its own rows plus its linked meetings' and proposals'. */
+dealsRouter.get(
+  "/:id/timeline",
+  asyncHandler(async (req, res) => {
+    const query = parseQuery(timelineListSchema, req.query);
+    await deals.assertDealExists(pool, req.workspaceId!, req.params.id!);
+    res.json(await listDealTimeline(pool, req.workspaceId!, req.params.id!, query));
   }),
 );
 

@@ -116,6 +116,8 @@ describeIfPerf("list performance (RUN_PERF_TESTS=true)", () => {
     await timed("deals deep page (after 20, all)", `/deals${qs({ status: "all", cursor: await deepCursor("/deals", { status: "all" }) })}`);
     await timed("deals sort amount desc", `/deals${qs({ status: "all", sort: "amount:desc" })}`);
     await timed("deals board", "/deals/board");
+    await timed("deals board (again)", "/deals/board");
+    await timed("deals board (status=all)", `/deals/board${qs({ status: "all" })}`);
     await timed("search q=perf12", `/search${qs({ q: "perf12" })}`);
   }, 300_000);
 

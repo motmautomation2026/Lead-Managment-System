@@ -124,7 +124,7 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
     ]);
   }
 
-  await addTimelineEvent(db, { leadId: input.leadId, kind: "meeting", title: "Meeting Scheduled", detail: input.title.trim(), ...actorEvent(actor) });
+  await addTimelineEvent(db, { leadId: input.leadId, kind: "meeting", title: "Meeting Scheduled", detail: input.title.trim(), ...actorEvent(actor), relatedMeetingId: id });
   await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, meetingId: id });
 
   // Only advance the funnel forward — a lead already past meeting_scheduled
