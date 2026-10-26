@@ -13,19 +13,14 @@ describe("query invalidation", () => {
     const invalidated = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
     expect(invalidated).toEqual(
       expect.arrayContaining([
-        keys.leads("workspace-1"),
         keys.lead("workspace-1", "lead-1"),
         keys.notes("workspace-1", "lead-1"),
         keys.contactability("workspace-1", "lead-1"),
-        keys.calls("workspace-1", "lead-1"),
-        keys.timeline("workspace-1", "lead-1"),
-        keys.tasks("workspace-1"),
-        keys.meetings("workspace-1"),
-        keys.proposals("workspace-1"),
+        keys.work("workspace-1"),
         keys.runs("workspace-1"),
         keys.scheduledActions("workspace-1"),
         keys.notifications("workspace-1"),
-        keys.dashboard("workspace-1"),
+        keys.home("workspace-1"),
         keys.contact("workspace-1", "lead-1"),
         keys.contacts("workspace-1"),
         keys.contactsCount("workspace-1"),
@@ -97,7 +92,7 @@ describe("query invalidation", () => {
       expect.arrayContaining([
         ["contact", "workspace-1"],
         ["lead", "workspace-1"],
-        ["timeline", "workspace-1"],
+        ["contactTimeline", "workspace-1"],
         keys.contacts("workspace-1"),
         keys.agentLeadPanel("workspace-1"),
       ]),
@@ -105,8 +100,8 @@ describe("query invalidation", () => {
   });
 
   it("keys every workspace-scoped query by the workspace id so switching workspaces changes the cache key", () => {
-    expect(keys.leads("workspace-1")).not.toEqual(keys.leads("workspace-2"));
-    expect(keys.leads(null)).toEqual(["leads", null]);
+    expect(keys.contacts("workspace-1")).not.toEqual(keys.contacts("workspace-2"));
+    expect(keys.contacts(null)).toEqual(["contacts", null]);
   });
 });
 

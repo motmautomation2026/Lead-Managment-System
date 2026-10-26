@@ -141,6 +141,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     goTasks: () => void navigate({ to: "/tasks" }),
     goMeetings: () => void navigate({ to: "/meetings" }),
     goProposals: () => void navigate({ to: "/proposals" }),
+    goWorkflows: () => void navigate({ to: "/automations" }),
+    goAiActivity: () => void navigate({ to: "/ai-activity" }),
+    goKnowledge: () => void navigate({ to: "/knowledge" }),
+    goSettings: () => void navigate({ to: "/settings" }),
   });
 
   const toggleCollapsed = () => {

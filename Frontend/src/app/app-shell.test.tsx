@@ -8,60 +8,10 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Lead } from "@/types/lead";
 
 const noop = vi.fn(async () => undefined);
 const mockRole = vi.hoisted(() => ({ isAdmin: false }));
 const mockOverdue = vi.hoisted(() => ({ count: null as number | null }));
-
-const leads: Lead[] = [
-  {
-    id: "lead-1",
-    firstName: "John",
-    lastName: "Smith",
-    company: "Acme Corp",
-    jobTitle: "VP Sales",
-    industry: "Manufacturing",
-    phone: "+1-555-0100",
-    email: "john.smith@acme.test",
-    source: "linkedin",
-    serviceInterest: "Automation Suite",
-    pipelineStage: "connected_qualifying",
-    lifecycleState: "active",
-    automationMode: "active",
-    agentStatus: "none",
-    agentTouchCount: 0,
-    responseState: "no_response",
-    doNotContact: false,
-    lastActivityAt: "2026-09-01T00:00:00.000Z",
-    nextAction: null,
-    createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: "2026-09-01T00:00:00.000Z",
-  },
-  {
-    id: "lead-2",
-    firstName: "Priya",
-    lastName: "Nair",
-    company: "Globex",
-    jobTitle: "CTO",
-    industry: "Software",
-    phone: "+1-555-0101",
-    email: "priya.nair@globex.test",
-    source: "referral",
-    serviceInterest: "Consulting",
-    pipelineStage: "negotiation",
-    lifecycleState: "active",
-    automationMode: "manual",
-    agentStatus: "none",
-    agentTouchCount: 0,
-    responseState: "responded",
-    doNotContact: false,
-    lastActivityAt: "2026-09-02T00:00:00.000Z",
-    nextAction: null,
-    createdAt: "2026-08-02T00:00:00.000Z",
-    updatedAt: "2026-09-02T00:00:00.000Z",
-  },
-];
 
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Request failed"),
@@ -75,22 +25,6 @@ vi.mock("@/store", () => ({
   useIsAdmin: () => mockRole.isAdmin,
   useCompanyDuplicatesCount: (_params: unknown, enabled: boolean) => ({
     data: enabled ? { count: 4 } : undefined,
-  }),
-  useLeads: () => ({
-    leads,
-    getLead: (id: string) => leads.find((l) => l.id === id),
-    isLoading: false,
-    error: null,
-    isPending: false,
-    addLead: noop,
-    updateLead: noop,
-    addNote: noop,
-    setAutomation: noop,
-    markDnc: noop,
-    reactivateFromDnc: noop,
-    logCall: noop,
-    logCommunication: noop,
-    setLifecycle: noop,
   }),
   useNotifications: () => ({
     notifications: [],
@@ -156,6 +90,10 @@ async function renderShell(path = "/") {
       page("/proposals", "proposals page"),
       page("/companies", "companies page"),
       page("/deals", "deals page"),
+      page("/automations", "automations page"),
+      page("/ai-activity", "ai-activity page"),
+      page("/knowledge", "knowledge page"),
+      page("/settings", "settings page"),
       createRoute({
         getParentRoute: () => rootRoute,
         path: "/list",
@@ -329,7 +267,7 @@ describe("AppShell keyboard shortcuts (C5)", () => {
       );
     });
 
-  it("g then c / o / d / t / m / p go to Contacts / Companies / Deals / Tasks / Meetings / Proposals", async () => {
+  it("g then c / o / d / t / m / p / w / a / k / s go to each section (Workflows, AI Activity, Knowledge, Settings since C6b)", async () => {
     const { router } = await renderShell();
     for (const [key, path] of [
       ["c", "/contacts"],
@@ -338,6 +276,10 @@ describe("AppShell keyboard shortcuts (C5)", () => {
       ["t", "/tasks"],
       ["m", "/meetings"],
       ["p", "/proposals"],
+      ["w", "/automations"],
+      ["a", "/ai-activity"],
+      ["k", "/knowledge"],
+      ["s", "/settings"],
     ] as const) {
       press("g");
       press(key);

@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-// The old lead page (features/leads/lead-detail-page.tsx, unrouted until C6) moved to /contacts/$id.
+// The old lead page moved to /contacts/$id (C2; its code was removed in C6b).
 export const Route = createFileRoute("/leads/$leadId")({
   beforeLoad: ({ params }) => {
     throw redirect({

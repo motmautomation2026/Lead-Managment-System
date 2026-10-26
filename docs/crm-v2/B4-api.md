@@ -157,3 +157,19 @@ sentAt, owner, updatedAt, sendStatus, document`.
 | Global search `perf12` | 23 + 3 + 4 ms | 164 ms | seq scans at this size |
 
 \* HTTP includes the network round trips from the local API to the staging pooler (~100 ms each); server execution is the target (< 300 ms, met everywhere).
+
+## 9. Deprecated endpoints — remove after the production release (C6b)
+
+The C6b frontend no longer calls these. They stay unchanged so the production rollback plan can
+run the previous frontend; remove them (and this section) after the C6b release has settled.
+
+| Endpoint | Replaced by |
+|---|---|
+| `GET /leads` (whole list, ≤ 500) | `GET /contacts` (§2) |
+| `GET /leads/:id/timeline`, `/leads/:id/calls`, `/leads/:id/meetings`, `/leads/:id/proposals`, `/leads/:id/runs` | `GET /contacts/:id/timeline`, the work lists with `contactId` (§7a), `GET /runs/list?contactId=` (§7b) |
+| `GET /tasks`, `GET /meetings`, `GET /proposals` (unpaginated `{ data }`) | `/tasks/list`, `/meetings/list`, `/proposals/list` (§7a) |
+| `GET /runs`, `GET /scheduled-actions` (unpaginated `{ data }`) | `/runs/list`, `/scheduled-actions/list` (§7b) |
+| `GET /dashboard/summary` (B38 fixed in C6b: no-show / failed meetings and cancelled funnel rows no longer count) | `GET /home/summary` (§7c) |
+
+Also without a UI caller (not list endpoints, kept as they are): `PATCH /workspaces/:id` (rename) and
+`POST /notifications/:id/read` (audit C).

@@ -17,6 +17,10 @@ export const SHORTCUTS = [
   { id: "goTasks", keys: ["g", "t"], label: "Go to Tasks", group: "Go to" },
   { id: "goMeetings", keys: ["g", "m"], label: "Go to Meetings", group: "Go to" },
   { id: "goProposals", keys: ["g", "p"], label: "Go to Proposals", group: "Go to" },
+  { id: "goWorkflows", keys: ["g", "w"], label: "Go to Workflows", group: "Go to" },
+  { id: "goAiActivity", keys: ["g", "a"], label: "Go to AI Activity", group: "Go to" },
+  { id: "goKnowledge", keys: ["g", "k"], label: "Go to Knowledge", group: "Go to" },
+  { id: "goSettings", keys: ["g", "s"], label: "Go to Settings", group: "Go to" },
 ] as const;
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];

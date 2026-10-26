@@ -14,22 +14,15 @@ export const keys = {
   session: ["session"] as const,
   profiles: ["profiles"] as const,
   workspaces: ["workspaces"] as const,
-  leads: (workspaceId: string | null) => ["leads", workspaceId] as const,
   search: (workspaceId: string | null, q: string) => ["search", workspaceId, q] as const,
   lead: (workspaceId: string | null, id: string) => ["lead", workspaceId, id] as const,
   notes: (workspaceId: string | null, id: string) => ["notes", workspaceId, id] as const,
   contactability: (workspaceId: string | null, id: string) =>
     ["contactability", workspaceId, id] as const,
-  calls: (workspaceId: string | null, id: string) => ["calls", workspaceId, id] as const,
-  timeline: (workspaceId: string | null, id: string) => ["timeline", workspaceId, id] as const,
-  tasks: (workspaceId: string | null) => ["tasks", workspaceId] as const,
-  meetings: (workspaceId: string | null) => ["meetings", workspaceId] as const,
-  proposals: (workspaceId: string | null) => ["proposals", workspaceId] as const,
   workflows: (workspaceId: string | null) => ["workflows", workspaceId] as const,
   templates: (workspaceId: string | null) => ["templates", workspaceId] as const,
   runs: (workspaceId: string | null) => ["runs", workspaceId] as const,
   scheduledActions: (workspaceId: string | null) => ["scheduledActions", workspaceId] as const,
-  dashboard: (workspaceId: string | null) => ["dashboard", workspaceId] as const,
   notifications: (workspaceId: string | null) => ["notifications", workspaceId] as const,
   knowledgeDocuments: (workspaceId: string | null) => ["knowledgeDocuments", workspaceId] as const,
   knowledgeDocument: (workspaceId: string | null, id: string) =>
@@ -148,8 +141,8 @@ const COMPANY_VIEWS = [
 
 /**
  * After any write that touches a contact (lead): its record, every contacts list and
- * count, timeline, tasks, meetings, proposals (old lists and the C6a work lists), deals,
- * automation (runs, scheduled steps), AI panel, Home (and the old dashboard),
+ * count, timeline, the work lists (tasks, meetings, proposals), deals,
+ * automation (runs, scheduled steps), AI panel, Home,
  * and the company views that show contacts.
  * Without `leadId` (bulk actions) every contact's record queries are refreshed.
  */
@@ -160,36 +153,22 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
         keys.contact(workspaceId, leadId),
         keys.notes(workspaceId, leadId),
         keys.contactability(workspaceId, leadId),
-        keys.calls(workspaceId, leadId),
-        keys.timeline(workspaceId, leadId),
         keys.contactTimeline(workspaceId, leadId),
         keys.agentLeadPanel(workspaceId, leadId),
       ]
-    : [
-        "lead",
-        "contact",
-        "notes",
-        "contactability",
-        "calls",
-        "timeline",
-        "contactTimeline",
-        "agentLeadPanel",
-      ].map((prefix) => [prefix, workspaceId]);
+    : ["lead", "contact", "notes", "contactability", "contactTimeline", "agentLeadPanel"].map(
+        (prefix) => [prefix, workspaceId],
+      );
   const targets = [
     ...perContact,
-    keys.leads(workspaceId),
     keys.contacts(workspaceId),
     keys.contactsCount(workspaceId),
     ["contactSearch", workspaceId],
     keys.deals(workspaceId),
-    keys.tasks(workspaceId),
-    keys.meetings(workspaceId),
-    keys.proposals(workspaceId),
     keys.work(workspaceId),
     keys.runs(workspaceId),
     keys.scheduledActions(workspaceId),
     keys.notifications(workspaceId),
-    keys.dashboard(workspaceId),
     keys.home(workspaceId),
     ...COMPANY_VIEWS.map((prefix) => [prefix, workspaceId]),
   ];

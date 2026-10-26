@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { validateContactsSearch } from "@/features/contacts/contacts-search";
 
-// The old leads list (features/leads/leads-page.tsx, unrouted until C6) moved to /contacts.
+// The old leads list moved to /contacts (C2; its code was removed in C6b).
 // Old param names map onto the contacts list params; the rest is validated as contacts params.
 export const Route = createFileRoute("/leads/")({
   beforeLoad: ({ search }) => {

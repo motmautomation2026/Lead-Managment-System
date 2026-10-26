@@ -2,16 +2,10 @@ export { StoreProvider } from "./store-provider";
 export {
   useSession,
   useIsAdmin,
-  useLeads,
   useLeadMutations,
   useLead,
-  useTasks,
-  useMeetings,
-  useProposals,
-  useTimeline,
   useAutomations,
   useNotifications,
-  useDashboard,
   useKnowledge,
   useKnowledgeDocument,
   useKnowledgeSearch,
@@ -106,10 +100,4 @@ export {
   refreshWork,
   keys,
 } from "./query";
-export type {
-  SessionSlice,
-  LeadsSlice,
-  TimelineSlice,
-  AutomationsSlice,
-  NotificationsSlice,
-} from "./server-hooks";
+export type { SessionSlice, AutomationsSlice, NotificationsSlice } from "./server-hooks";

@@ -249,6 +249,10 @@ describe("CommandPalette recents and See all (C5)", () => {
       "Go to Tasks",
       "Go to Meetings",
       "Go to Proposals",
+      "Go to Workflows",
+      "Go to AI Activity",
+      "Go to Knowledge",
+      "Go to Settings",
     ]);
     fireEvent.click(within(recent).getByText("Tata Motors"));
     await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co1"));

@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   timeline: [] as TimelineEvent[],
   updateLead: vi.fn(),
   openDeal: vi.fn(),
-  leadList: vi.fn(),
   timelineKinds: [] as unknown[],
   fetchNextPage: vi.fn(),
   openTask: vi.fn(),
@@ -100,10 +99,6 @@ vi.mock("@/store", () => ({
     ],
     contactability: [],
   }),
-  useLeadList: (enabled: boolean) => {
-    mocks.leadList(enabled);
-    return { data: undefined };
-  },
   useLeadMutations: () => ({
     isPending: false,
     updateLead: mocks.updateLead,
@@ -403,9 +398,8 @@ describe("ContactRecordPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Log call/ }));
     expect(await screen.findByRole("dialog", { name: "Log call - Asha Rao" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    // Meeting and proposal dialogs are mounted with the contact's id (or a ContactPicker, C6a):
-    // the leads list is never loaded.
-    expect(mocks.leadList).not.toHaveBeenCalled();
+    // Meeting and proposal dialogs are mounted with the contact's id (or a ContactPicker, C6a);
+    // the old leads-list hook no longer exists (src/test/removed-code.test.ts guards it).
   });
 
   it("Create deal opens the app-wide dialog for this contact; deal rows link to the deal", async () => {

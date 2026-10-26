@@ -50,8 +50,8 @@ describe("contact hooks", () => {
         keys.runs("ws-1"),
         keys.contact("ws-1", "lead-1"),
         keys.lead("ws-1", "lead-1"),
-        keys.timeline("ws-1", "lead-1"),
-        keys.tasks("ws-1"),
+        keys.contactTimeline("ws-1", "lead-1"),
+        keys.work("ws-1"),
         keys.contacts("ws-1"),
       ]),
     );

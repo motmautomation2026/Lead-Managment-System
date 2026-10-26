@@ -10,114 +10,36 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/store", () => {
-  const noop = vi.fn(async () => undefined);
-  return {
-    messageFromError: (error: unknown) =>
-      error instanceof Error ? error.message : "Request failed",
-    useSession: () => ({
-      users: [],
-      currentUser: null,
-      userName: () => "Unassigned",
-      isLoading: false,
-      error: null,
-    }),
-    useLeads: () => ({
-      leads: [],
-      getLead: () => undefined,
-      isLoading: false,
-      error: null,
-      isPending: false,
-      addLead: noop,
-      updateLead: noop,
-      addNote: noop,
-      setAutomation: noop,
-      markDnc: noop,
-      reactivateFromDnc: noop,
-      logCall: noop,
-      logCommunication: noop,
-      setLifecycle: noop,
-    }),
-    useTasks: () => ({
-      tasks: [],
-      isLoading: false,
-      error: null,
-      isPending: false,
-      addTask: noop,
-      updateTask: noop,
-      completeTask: noop,
-      cancelTask: noop,
-    }),
-    useMeetings: () => ({
-      meetings: [],
-      isLoading: false,
-      error: null,
-      isPending: false,
-      addMeeting: noop,
-      updateMeeting: noop,
-      recordOutcome: noop,
-    }),
-    useProposals: () => ({
-      proposals: [],
-      isLoading: false,
-      error: null,
-      isPending: false,
-      addProposal: noop,
-      updateProposal: noop,
-      setProposalStatus: noop,
-    }),
-    useAutomations: () => ({
-      workflows: [],
-      templates: [],
-      runs: [],
-      scheduledActions: [],
-      isLoading: false,
-      error: null,
-      isPending: false,
-      templateName: () => "-",
-      addWorkflow: noop,
-      updateWorkflow: noop,
-      createDraft: noop,
-      updateDraftSteps: noop,
-      publishVersion: noop,
-      duplicateWorkflow: noop,
-      pauseRun: noop,
-      resumeRun: noop,
-      cancelRun: noop,
-      retryRun: noop,
-      addTemplate: noop,
-      updateTemplate: noop,
-    }),
-    useIsAdmin: () => false,
-    useLeadList: () => ({ data: { data: [] } }),
-    useAgentStats: () => ({ data: undefined, error: null }),
-    useAgentDecisions: () => ({
-      data: { pages: [] },
-      isLoading: false,
-      error: null,
-      hasNextPage: false,
-    }),
-    useAgentDecision: () => ({ data: undefined, isLoading: false, error: null }),
-    useEnrollLeads: () => ({ mutateAsync: noop, isPending: false }),
-    useDashboard: () => ({
-      summary: {
-        activeLeads: 0,
-        tasksDueToday: 0,
-        overdueActions: 0,
-        meetingsToday: 0,
-        proposalFollowUps: 0,
-        leadsWithNoNextAction: 0,
-        automationFailures: 0,
-        pipelineFunnel: [],
-        todaysQueue: [],
-      },
-      isLoading: false,
-      error: null,
-    }),
-  };
-});
+vi.mock("@/store/workspace-context", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "ws-1" }),
+}));
+vi.mock("@/store", () => ({
+  messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Request failed"),
+  useSession: () => ({ users: [], currentUser: null, userName: () => "Unassigned" }),
+  useIsAdmin: () => false,
+  useHomeSummary: () => ({
+    data: {
+      tasks: { overdue: 0, dueToday: 0, next: [] },
+      meetings: { today: [], todayCount: 0, needsOutcome: 0 },
+      deals: { openCount: 0, openAmount: 0, stages: [] },
+      proposals: { awaitingDecision: 0 },
+      ai: null,
+    },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+  useAgentStats: () => ({ data: undefined, error: null }),
+  useAgentDecisions: () => ({
+    data: { pages: [] },
+    isLoading: false,
+    error: null,
+    hasNextPage: false,
+  }),
+  useAgentDecision: () => ({ data: undefined, isLoading: false, error: null }),
+}));
 
-import { DashboardPage } from "@/features/dashboard/dashboard-page";
+import { HomePage } from "@/features/home/home-page";
 import { AiActivityPage } from "@/features/agent/ai-activity-page";
 
 afterEach(cleanup);
@@ -139,7 +61,7 @@ async function renderScreen(Screen: () => ReactNode) {
 
 describe("zero-record route states", () => {
   it.each([
-    [DashboardPage, "Nothing due today."],
+    [HomePage, "No open tasks. Nice."],
     [AiActivityPage, "No AI decisions match these filters."],
   ])("renders an empty backend dataset", async (Screen, expectedText) => {
     const view = await renderScreen(Screen);

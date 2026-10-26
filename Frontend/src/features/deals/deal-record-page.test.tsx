@@ -101,7 +101,6 @@ vi.mock("@/store", () => ({
         lossReasonStatuses: ["rejected"],
       },
     ]),
-  useLeadList: () => ({ data: undefined }),
   useAutomations: () => ({ templates: [] }),
   useCompanySearch: () => ({ data: undefined }),
   useCreateCompany: () => ({ mutateAsync: noop, isPending: false }),

@@ -199,12 +199,12 @@ describe("backend client", () => {
     const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await backend.leads.list();
+    await backend.workflows.list();
     expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty(["headers", "X-Workspace-Id"]);
 
     setCurrentWorkspaceId("workspace-1");
     expect(getCurrentWorkspaceId()).toBe("workspace-1");
-    await backend.leads.list();
+    await backend.workflows.list();
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       headers: { "X-Workspace-Id": "workspace-1" },
     });

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/command";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Money } from "@/components/crm/money";
-import { NAV_GROUPS } from "@/app/nav";
+import { NAV_GROUPS, SETTINGS_NAV } from "@/app/nav";
 import { useTheme } from "@/app/theme-context";
 import { messageFromError, useGlobalSearch } from "@/store";
 import { SEARCH_MIN_CHARS } from "@/store/server-hooks";
@@ -37,6 +37,10 @@ const QUICK_ACTIONS = new Set([
   "go-/tasks",
   "go-/meetings",
   "go-/proposals",
+  "go-/automations",
+  "go-/ai-activity",
+  "go-/knowledge",
+  "go-/settings",
 ]);
 
 /**
@@ -85,7 +89,7 @@ export function CommandPalette({
     { id: "create-deal", label: "Create deal", icon: <Plus />, run: onCreateDeal },
     { id: "create-task", label: "Create task", icon: <Plus />, run: onCreateTask },
     { id: "schedule-meeting", label: "Schedule meeting", icon: <Plus />, run: onScheduleMeeting },
-    ...NAV_GROUPS.flatMap((g) => g.items).map((item) => ({
+    ...[...NAV_GROUPS.flatMap((g) => g.items), SETTINGS_NAV].map((item) => ({
       id: `go-${item.to}`,
       label: `Go to ${item.label}`,
       icon: <item.icon />,

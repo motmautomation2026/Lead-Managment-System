@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { messageFromError, useLeads } from "@/store";
+import { messageFromError, useLeadMutations } from "@/store";
 import type { ImportLeadsResult } from "@/lib/backend-client";
 import {
   downloadSampleCsv,
@@ -33,7 +33,7 @@ export function ImportLeadsDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const { importLeadsCsv, isPending } = useLeads();
+  const { importLeadsCsv, isPending } = useLeadMutations();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>("select");

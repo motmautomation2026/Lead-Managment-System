@@ -356,25 +356,6 @@ export interface UpdateTemplateInput {
   isDefaultMeetingScheduled?: boolean | undefined;
 }
 
-export interface DashboardSummary {
-  activeLeads: number;
-  tasksDueToday: number;
-  overdueActions: number;
-  meetingsToday: number;
-  proposalFollowUps: number;
-  leadsWithNoNextAction: number;
-  automationFailures: number;
-  pipelineFunnel: { label: string; value: number }[];
-  todaysQueue: {
-    id: string;
-    leadId: string;
-    title: string;
-    type: TaskType;
-    dueAt: string;
-    ownerId?: string;
-  }[];
-}
-
 export interface AdminUser {
   id: string;
   name: string;
@@ -852,7 +833,6 @@ export const backend = {
   workspaces: {
     list: (signal?: AbortSignal) => get<{ data: Workspace[] }>("/workspaces", signal),
     create: (name: string) => send<Workspace>("POST", "/workspaces", { name }),
-    rename: (id: string, name: string) => send<Workspace>("PATCH", `/workspaces/${id}`, { name }),
   },
   connections: {
     email: {
@@ -981,11 +961,6 @@ export const backend = {
       send<AssignmentRules>("PUT", "/assignment-rules", input),
   },
   leads: {
-    list: (params?: LeadFilters, signal?: AbortSignal) =>
-      get<{ data: Lead[] }>(
-        query("/leads", params as Record<string, string | number | undefined>),
-        signal,
-      ),
     get: (id: string, signal?: AbortSignal) => get<Lead>(`/leads/${id}`, signal),
     create: (input: CreateLeadInput) => send<Lead>("POST", "/leads", input),
     importCsv: (rows: ImportLeadRow[]) =>
@@ -1018,15 +993,6 @@ export const backend = {
         workflowTrigger?: WorkflowTrigger;
         promptScheduleMeeting?: boolean;
       }>("POST", `/leads/${id}/calls`, input),
-    calls: (id: string, signal?: AbortSignal) =>
-      get<{ data: Call[] }>(`/leads/${id}/calls`, signal),
-    timeline: (id: string, signal?: AbortSignal) =>
-      get<{ data: TimelineEvent[] }>(`/leads/${id}/timeline`, signal),
-    meetings: (id: string, signal?: AbortSignal) =>
-      get<{ data: Meeting[] }>(`/leads/${id}/meetings`, signal),
-    proposals: (id: string, signal?: AbortSignal) =>
-      get<{ data: Proposal[] }>(`/leads/${id}/proposals`, signal),
-    runs: (id: string, signal?: AbortSignal) => get<{ data: Run[] }>(`/leads/${id}/runs`, signal),
     logCommunication: (id: string, channel: "email" | "whatsapp", detail?: string) =>
       send<{ channel: string; title: string }>("POST", `/leads/${id}/communications`, {
         channel,
@@ -1034,9 +1000,7 @@ export const backend = {
       }),
   },
   tasks: {
-    list: (params?: Record<string, string | boolean | undefined>, signal?: AbortSignal) =>
-      get<{ data: Task[] }>(query("/tasks", params), signal),
-    /** List standard (C6a); the old `list` stays for the pages C6b removes. */
+    /** List standard (C6a). */
     page: (params: TaskListParams, cursor?: string, signal?: AbortSignal) =>
       get<Page<TaskListItem>>(listQuery("/tasks/list", { ...params, cursor }), signal),
     count: (params: TaskListParams, signal?: AbortSignal) =>
@@ -1047,8 +1011,6 @@ export const backend = {
     cancel: (id: string, reason?: string) => send<Task>("POST", `/tasks/${id}/cancel`, { reason }),
   },
   meetings: {
-    list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
-      get<{ data: Meeting[] }>(query("/meetings", params), signal),
     page: (params: MeetingListParams, cursor?: string, signal?: AbortSignal) =>
       get<Page<MeetingListItem>>(listQuery("/meetings/list", { ...params, cursor }), signal),
     count: (params: MeetingListParams, signal?: AbortSignal) =>
@@ -1060,8 +1022,6 @@ export const backend = {
       send<Meeting>("POST", `/meetings/${id}/outcome`, { outcome, notes }),
   },
   proposals: {
-    list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
-      get<{ data: Proposal[] }>(query("/proposals", params), signal),
     page: (params: ProposalListParams, cursor?: string, signal?: AbortSignal) =>
       get<Page<ProposalListItem>>(listQuery("/proposals/list", { ...params, cursor }), signal),
     count: (params: ProposalListParams, signal?: AbortSignal) =>
@@ -1133,8 +1093,6 @@ export const backend = {
       del(`/templates/${templateId}/attachments/${attachmentId}`),
   },
   runs: {
-    list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
-      get<{ data: Run[] }>(query("/runs", params), signal),
     /** List standard (C6b). */
     page: (params: RunListParams, cursor?: string, signal?: AbortSignal) =>
       get<Page<RunListItem>>(listQuery("/runs/list", { ...params, cursor }), signal),
@@ -1148,8 +1106,6 @@ export const backend = {
     retry: (id: string) => send<Run>("POST", `/runs/${id}/retry`),
   },
   scheduledActions: {
-    list: (params?: Record<string, string | undefined>, signal?: AbortSignal) =>
-      get<{ data: ScheduledAction[] }>(query("/scheduled-actions", params), signal),
     page: (params: ScheduledActionListParams, cursor?: string, signal?: AbortSignal) =>
       get<Page<ScheduledActionListItem>>(
         listQuery("/scheduled-actions/list", { ...params, cursor }),
@@ -1158,15 +1114,11 @@ export const backend = {
     count: (params: ScheduledActionListParams, signal?: AbortSignal) =>
       get<{ count: number }>(listQuery("/scheduled-actions/count", { ...params }), signal),
   },
-  dashboard: {
-    summary: (signal?: AbortSignal) => get<DashboardSummary>("/dashboard/summary", signal),
-  },
   home: {
     summary: (signal?: AbortSignal) => get<HomeSummary>("/home/summary", signal),
   },
   notifications: {
     list: (signal?: AbortSignal) => get<{ data: AppNotification[] }>("/notifications", signal),
-    markRead: (id: string) => send<AppNotification>("POST", `/notifications/${id}/read`),
     markAllRead: () => send<{ data: AppNotification[] }>("POST", "/notifications/read-all"),
   },
 };

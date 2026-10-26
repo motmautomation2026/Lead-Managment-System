@@ -152,7 +152,7 @@ describe("AI review hooks", () => {
     expect(results).toHaveLength(250);
     expect(invalidatedKeys(invalidate)).toEqual(
       expect.arrayContaining([
-        keys.leads("ws-1"),
+        keys.contacts("ws-1"),
         keys.agentLeadPanel("ws-1"),
         keys.agentStats("ws-1"),
       ]),
@@ -169,7 +169,7 @@ describe("AI review hooks", () => {
     expect(invalidatedKeys(invalidate)).toEqual(
       expect.arrayContaining([
         keys.lead("ws-1", "lead-1"),
-        keys.leads("ws-1"),
+        keys.contacts("ws-1"),
         keys.agentLeadPanel("ws-1", "lead-1"),
         keys.contact("ws-1", "lead-1"),
         keys.agentStats("ws-1"),
