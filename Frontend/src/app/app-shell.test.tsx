@@ -72,6 +72,9 @@ vi.mock("@/store", () => ({
     error: null,
   }),
   useIsAdmin: () => mockRole.isAdmin,
+  useCompanyDuplicatesCount: (_params: unknown, enabled: boolean) => ({
+    data: enabled ? { count: 4 } : undefined,
+  }),
   useLeads: () => ({
     leads,
     getLead: (id: string) => leads.find((l) => l.id === id),
@@ -164,6 +167,22 @@ describe("AppShell nav", () => {
     mockRole.isAdmin = true;
     await renderShell();
     expect(screen.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe("/admin");
+    mockRole.isAdmin = false;
+  });
+
+  it("admins see the open duplicate count on Companies; others don't", async () => {
+    await renderShell();
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).getByRole("link", { name: "Companies" })).toBeTruthy();
+    cleanup();
+
+    mockRole.isAdmin = true;
+    await renderShell();
+    const adminNav = screen.getByRole("navigation", { name: "Main" });
+    const companies = within(adminNav).getByRole("link", {
+      name: /^Companies.*4 possible duplicate companies to review$/,
+    });
+    expect(companies).toHaveTextContent("4");
     mockRole.isAdmin = false;
   });
 

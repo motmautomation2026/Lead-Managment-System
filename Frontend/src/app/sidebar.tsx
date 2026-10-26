@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ADMIN_NAV, NAV_GROUPS, SETTINGS_NAV, isNavActive, type NavItem } from "@/app/nav";
-import { useIsAdmin } from "@/store";
+import { useCompanyDuplicatesCount, useIsAdmin } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +29,8 @@ export function AppSidebar({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isAdmin = useIsAdmin();
   const bottom = isAdmin ? [SETTINGS_NAV, ADMIN_NAV] : [SETTINGS_NAV];
+  // Admins: open duplicate-company suggestions (cheap count, cached 60 s).
+  const duplicates = useCompanyDuplicatesCount({}, isAdmin).data?.count ?? 0;
   const link = (item: NavItem) => (
     <SidebarLink
       key={item.to}
@@ -36,6 +38,8 @@ export function AppSidebar({
       active={isNavActive(item.to, pathname)}
       collapsed={collapsed}
       onNavigate={onNavigate}
+      badge={item.to === "/companies" && duplicates > 0 ? duplicates : undefined}
+      badgeLabel={`${duplicates} possible duplicate compan${duplicates === 1 ? "y" : "ies"} to review`}
     />
   );
 
@@ -90,11 +94,15 @@ function SidebarLink({
   active,
   collapsed,
   onNavigate,
+  badge,
+  badgeLabel,
 }: {
   item: NavItem;
   active: boolean;
   collapsed: boolean;
   onNavigate?: (() => void) | undefined;
+  badge?: number | undefined;
+  badgeLabel?: string;
 }) {
   const node = (
     <Link
@@ -102,7 +110,7 @@ function SidebarLink({
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-sidebar-accent",
+        "relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-sidebar-accent",
         collapsed && "justify-center px-0",
         active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
       )}
@@ -112,6 +120,20 @@ function SidebarLink({
         aria-hidden
       />
       <span className={cn(collapsed && "sr-only")}>{item.label}</span>
+      {badge !== undefined && (
+        <span
+          title={badgeLabel}
+          className={cn(
+            "rounded-full bg-warning-soft text-warning-soft-foreground",
+            collapsed
+              ? "absolute top-1 right-1 size-2"
+              : "ml-auto px-1.5 text-[10px] font-semibold",
+          )}
+        >
+          {!collapsed && <span aria-hidden>{badge}</span>}
+          <span className="sr-only">, {badgeLabel}</span>
+        </span>
+      )}
     </Link>
   );
   if (!collapsed) return node;

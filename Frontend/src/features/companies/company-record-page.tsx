@@ -58,6 +58,7 @@ import type { CompanyDetail, DealListItem } from "@/types";
 import { CompanyAbout } from "./company-about";
 import { NO_OWNER } from "./company-helpers";
 import { MergeCompanyDialog } from "./merge-company-dialog";
+import { REASON_LABEL } from "./duplicates-search";
 
 const dash = <span className="text-muted-foreground">–</span>;
 const CONTACT_TAB_COLUMNS = [
@@ -433,7 +434,7 @@ function CompanyRecord({ company }: { company: CompanyDetail }) {
               id: d.id,
               title: other ? other.name : (d.contact?.name ?? "A contact"),
               subtitle: other
-                ? label(d.reason)
+                ? REASON_LABEL[d.reason]
                 : `Contact says “${d.observedName ?? d.observedDomain ?? "?"}”`,
               meta: (
                 <Link
