@@ -214,6 +214,61 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect((await build(WS, leadId)).companyName).toBe(workspaceName);
   });
 
+  async function newCompany(ws: string, name: string, extra: { industry?: string | null; description?: string | null; mergedInto?: string | null } = {}) {
+    const result = await pool.query(
+      `insert into public.companies (workspace_id, name, normalized_name, domain, industry, city, country, employee_range, description, merged_into_company_id)
+       values ($1, $2, lower($2), $3, $4, 'Pune', 'India', '201-500', $5, $6) returning id`,
+      [ws, name, `${randomUUID().slice(0, 8)}.example.com`, extra.industry ?? null, extra.description ?? null, extra.mergedInto ?? null],
+    );
+    return result.rows[0].id as string;
+  }
+
+  it("D1: the deal the meeting/proposal created is the open deal; no company → none", async () => {
+    const ctx = await build(WS, leadId);
+    expect(ctx.company).toBeNull();
+    expect(ctx.internal.companyDescription).toBeNull();
+    expect(ctx.internal.deal).toMatchObject({ wonCount: 0, lostCount: 0, open: { stage: "proposal_sent", stageLabel: "Proposal sent", daysInStage: 0, latestProposal: { status: "sent" } } });
+    expect(ctx.internal.deal.open?.latestMeeting?.scheduledAt).toContain("2030-01-03");
+  });
+
+  it("D1: company facts (company first, contact fallback), description, open deal; no amounts or loss notes in the prompt", async () => {
+    const lead = await newLead(WS);
+    const company = await newCompany(WS, `Acme Steel ${randomUUID().slice(0, 6)}`, { industry: null, description: "Family-owned mill." });
+    await pool.query(`update public.leads set company_id = $2 where id = $1`, [lead, company]);
+    await pool.query(
+      `insert into public.deals (workspace_id, name, lead_id, company_id, stage, amount, source, expected_close_date, loss_reason, loss_notes, closed_at, updated_at)
+       values ($1, 'Old win', $2, $3, 'won', 4242421, 'manual', null, null, null, now(), now()),
+              ($1, 'Old loss', $2, $3, 'lost', 4242421, 'manual', null, 'price', 'SECRET-LOSS-NOTE', now(), now()),
+              ($1, 'Older open', $2, $3, 'qualified', 7373731, 'manual', null, null, null, null, now() - interval '3 days'),
+              ($1, 'Pilot', $2, $3, 'negotiation', 7373731, 'manual', '2026-12-15', null, null, null, now() - interval '1 day')`,
+      [WS, lead, company],
+    );
+    const ctx = await build(WS, lead);
+    expect(ctx.company).toMatchObject({ id: company, industry: "Steel", revenueRange: "10-50 Cr", location: "Pune, India", employeeRange: "201-500" });
+    expect(ctx.internal.companyDescription).toBe("Family-owned mill.");
+    expect(ctx.internal.deal).toMatchObject({ wonCount: 1, lostCount: 1, open: { name: "Pilot", stage: "negotiation", expectedCloseMonth: "December 2026", latestMeeting: null, latestProposal: null } });
+
+    const { buildDecisionMessages, buildGroundingMessages } = await import("../../src/agent/prompt.js");
+    const text = buildDecisionMessages(ctx, ctx.settings, new Date())
+      .concat(buildGroundingMessages({ action: "send_whatsapp", body: "Hi", assetIds: [], nextWakeInDays: 3, reasoning: "r" }, ctx) ?? [])
+      .map((m) => m.content)
+      .join("\n");
+    expect(text).toContain("Open deal: Pilot");
+    for (const banned of ["4242421", "7373731", "SECRET-LOSS-NOTE"]) expect(text).not.toContain(banned);
+  });
+
+  it("D1: a merged company is followed once; a chain of merges → no company", async () => {
+    const lead = await newLead(WS);
+    const target = await newCompany(WS, `Acme Group ${randomUUID().slice(0, 6)}`, { industry: "Metals" });
+    const source = await newCompany(WS, `Acme Old ${randomUUID().slice(0, 6)}`, { mergedInto: target });
+    await pool.query(`update public.leads set company_id = $2 where id = $1`, [lead, source]);
+    expect((await build(WS, lead)).company).toMatchObject({ id: target, industry: "Metals" });
+
+    const final = await newCompany(WS, `Acme Final ${randomUUID().slice(0, 6)}`);
+    await pool.query(`update public.companies set merged_into_company_id = $2 where id = $1`, [target, final]);
+    expect((await build(WS, lead)).company).toBeNull();
+  });
+
   it("is workspace-isolated", async () => {
     await expect(build(WS, otherLeadId)).rejects.toMatchObject({ status: 404 });
     const other = await build(OTHER, otherLeadId);

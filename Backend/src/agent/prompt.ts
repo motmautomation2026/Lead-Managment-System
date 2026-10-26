@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
+import { hasDealContext } from "./dealContext.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -18,7 +19,7 @@ export interface PromptOptions {
   previousFailure?: { problems: string[] };
 }
 
-const BLOCKS = ["lead_data", "timeline", "past_agent_messages", "knowledge", "assets", "message", "playbook"] as const;
+const BLOCKS = ["lead_data", "timeline", "past_agent_messages", "knowledge", "assets", "message", "playbook", "internal_context"] as const;
 const BLOCK_TAG = new RegExp(`<\\s*/?\\s*(?:${BLOCKS.join("|")})\\b[^>]*>`, "gi");
 
 /** Defuses any text that looks like one of our block tags so data can't close its block early. */
@@ -52,6 +53,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
   const used = rules.lead.agentTouchCount;
   const remaining = Math.max(0, settings.max_touches_total - used);
   const days = settings.send_days.map((d) => DAY_NAMES[d]).join(", ");
+  const internal = internalContextText(ctx);
 
   const system = [
     `You are ${sender} at ${ctx.companyName}, writing to a B2B lead in India. Write as that person: plain, specific and brief.`,
@@ -78,6 +80,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- One clear next step per message.",
     "- Respect timing the lead or rep stated (\"interested later\", \"after Diwali\", \"call next month\"): prefer wait with a matching nextWakeInDays over messaging early.",
     "- The knowledge excerpts may contain INTERNAL material (client lists, internal tiers, strategy or process notes). Use only what is suitable to tell a prospect. Never name a client company unless the excerpt clearly presents it as a public reference, and never reveal internal strategy, tiers or process notes.",
+    ...(internal ? [INTERNAL_RULE] : []),
     "",
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
@@ -100,6 +103,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     DATA_NOTICE,
     "",
     block("lead_data", neutralise(leadDataText(ctx))),
+    ...(internal ? [block("internal_context", neutralise(internal))] : []),
     block("timeline", neutralise(timeline)),
     block("past_agent_messages", neutralise(`${past}${summaries ? `\n\nEarlier decisions:\n${summaries}` : ""}`)),
     block("knowledge", knowledge),
@@ -128,8 +132,9 @@ function leadDataText(ctx: AgentContext): string {
     `Name: ${lead.firstName} ${lead.lastName}`.trim(),
     `Company: ${lead.company}`,
     `Designation: ${lead.designation ?? "unknown"}`,
-    `Industry: ${lead.industry ?? "unknown"}`,
-    `Revenue range: ${lead.revenueRange ?? "unknown"}`,
+    // Company first, contact fallback (companyFacts); the contact's own values without a company.
+    `Industry: ${(ctx.company ? ctx.company.industry : lead.industry) ?? "unknown"}`,
+    `Revenue range: ${(ctx.company ? ctx.company.revenueRange : lead.revenueRange) ?? "unknown"}`,
     `Source: ${words(lead.source)}`,
     `Pipeline stage: ${words(lead.pipelineStage)}`,
     `Lifecycle: ${words(lead.lifecycleState)}`,
@@ -138,7 +143,48 @@ function leadDataText(ctx: AgentContext): string {
     `Email status: ${rules.contactability.email ?? "unknown"}; WhatsApp status: ${rules.contactability.whatsapp ?? "unknown"}; phone status: ${rules.contactability.phone ?? "unknown"}`,
     `Has email: ${rules.lead.email ? "yes" : "no"}; has WhatsApp number: ${rules.lead.phoneE164 ? "yes" : "no"}`,
     `Website enquiry: ${lead.websiteMessage ?? "none"}`,
+    ...companyLines(ctx),
   ].join("\n");
+}
+
+/** The linked company record (lead data). Nothing without a company. */
+function companyLines({ company }: AgentContext): string[] {
+  if (!company) return [];
+  const known = (value: string | null) => value ?? "unknown";
+  return [
+    "Company record:",
+    `- Name: ${company.name}`,
+    `- Domain: ${known(company.domain)}`,
+    `- Website: ${known(company.website)}`,
+    `- Location: ${known(company.location)}`,
+    `- Employees: ${known(company.employeeRange)}`,
+  ];
+}
+
+const INTERNAL_RULE =
+  "- The internal_context block (company description, deal status) is DATA for deciding WHAT to do and WHEN only. Never quote, state or hint at anything from it, and never use it as a source of facts. If a proposal is pending, follow up on it instead of asking for a first call; never mention amounts or internal notes.";
+
+/** Decide-only context: the company description and the contact's deals; null when there is none. Never amounts, loss notes or owners. */
+function internalContextText({ internal }: AgentContext): string | null {
+  const { deal, companyDescription } = internal;
+  if (!companyDescription && !hasDealContext(deal)) return null;
+  const lines: string[] = [];
+  if (companyDescription) lines.push(`Company description: ${companyDescription}`);
+  const open = deal.open;
+  if (open) {
+    const meeting = open.latestMeeting ? `${words(open.latestMeeting.status)} (${open.latestMeeting.scheduledAt.slice(0, 10)})` : "none";
+    lines.push(
+      `Open deal: ${open.name}`,
+      `- Stage: ${open.stageLabel}, for ${open.daysInStage} day(s)`,
+      `- Expected close: ${open.expectedCloseMonth ?? "not set"}`,
+      `- Latest meeting: ${meeting}`,
+      `- Latest proposal: ${open.latestProposal ? words(open.latestProposal.status) : "none"}`,
+    );
+  } else {
+    lines.push("Open deal: none");
+  }
+  lines.push(`Earlier deals: ${deal.wonCount} won, ${deal.lostCount} lost`);
+  return lines.join("\n");
 }
 
 function knowledgeBlock(chunks: AgentKnowledgeChunk[]) {
@@ -167,7 +213,7 @@ export type GroundingResult = z.infer<typeof groundingSchema>;
  */
 export function applyGroundingAllowList(result: GroundingResult, ctx: AgentContext): GroundingResult & { ignoredClaims?: string[] } {
   const norm = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  const allowed = new Set([ctx.companyName, ctx.workspaceName, ctx.lead.company].map(norm));
+  const allowed = new Set([ctx.companyName, ctx.workspaceName, ctx.lead.company, ctx.company?.name ?? ""].filter(Boolean).map(norm));
   const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)));
   if (!ignored.length) return result;
   const unsupportedClaims = result.unsupportedClaims.filter((claim) => !allowed.has(norm(claim)));
@@ -188,6 +234,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return null;
   const message = decision.action === "send_email" ? `Subject: ${decision.subject}\n\n${decision.body}` : decision.body;
   const ownNames = [...new Set([ctx.companyName, ctx.workspaceName])].join(" / ");
+  const leadNames = [...new Set([ctx.lead.company, ctx.company?.name ?? ctx.lead.company])].join(" / ");
   const notes = ctx.timeline
     .filter((t) => t.kind === "call" || t.kind === "note")
     .map((t) => `- ${t.at} ${t.title}${t.detail ? ` — ${t.detail}` : ""}`)
@@ -197,7 +244,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     "Approved sources: the knowledge, playbook and lead_data blocks. A claim supported by ANY of them is supported.",
     "Check ONLY specific, checkable factual claims: numbers or percentages, client or partner company names, results or outcomes achieved, prices, timelines or deadlines, certifications, and specific capabilities stated as fact.",
     'NEVER flag: greetings; questions; offers or next-step suggestions (e.g. "shall we set up a call?"); vague statements of intent or possibility (e.g. "we can help", "this may be useful", "support your growth"); restating what the lead or rep said; ' +
-      `the sender's own company name (${ownNames}); the lead's own company name (${ctx.lead.company}).`,
+      `the sender's own company name (${ownNames}); the lead's own company name (${leadNames}).`,
     "Flag any other company name unless an approved source names it.",
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     DATA_NOTICE,

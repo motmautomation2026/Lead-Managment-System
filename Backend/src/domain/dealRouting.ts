@@ -15,6 +15,18 @@ import {
   type ProposalStatus,
 } from "./enums.js";
 
+/** Display labels for deal stages (timeline titles, the agent's deal context). */
+export const DEAL_STAGE_LABELS: Record<DealStage, string> = {
+  qualified: "Qualified",
+  meeting_scheduled: "Meeting scheduled",
+  meeting_follow_up: "Meeting done / follow-up",
+  proposal_preparation: "Preparing proposal",
+  proposal_sent: "Proposal sent",
+  negotiation: "Negotiation",
+  won: "Won",
+  lost: "Lost",
+};
+
 /** The loss reason for deals closed by a contact closing or a "not interested" meeting (no better enum value exists). */
 export const DEAL_CLOSED_LOSS_REASON: LeadLossReason = "other";
 

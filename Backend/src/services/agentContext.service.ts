@@ -3,6 +3,8 @@ import { NotFoundError } from "../errors.js";
 import type { LeadLossReason, LifecycleState, ObjectionType, PipelineStage } from "../domain/enums.js";
 import type { AgentMode, AgentRuleSettings, AgentStatus, RulesContext } from "../agent/rules.js";
 import { buildKbQuery } from "../agent/kbQuery.js";
+import { companyDescription, companyFacts, resolveCompany, type CompanyFacts, type CompanyRecord } from "../agent/companyFacts.js";
+import { buildDealContext, type AgentDealContext, type AgentDealRow } from "../agent/dealContext.js";
 import { countTokens } from "../knowledge/chunkText.js";
 import type { Embedder } from "../providers/openai.provider.js";
 import { searchKnowledge } from "./knowledge.service.js";
@@ -94,6 +96,10 @@ export interface AgentContext {
   companyName: string;
   workspaceName: string;
   lead: AgentContextLead;
+  /** The linked company's facts (company first, contact fallback); lead data, an approved grounding source. Null = no company. */
+  company: CompanyFacts | null;
+  /** Decide-only context, never stated to the lead and never a grounding source. Never trimmed. */
+  internal: { companyDescription: string | null; deal: AgentDealContext };
   settings: AgentSettingsRow;
   /** Exactly what validateDecision needs. */
   rules: RulesContext;
@@ -114,6 +120,12 @@ export interface AgentContextDeps {
   /** The legacy env sender (SMTP_FROM_ADDRESS) used while a workspace has no saved email connection. */
   fallbackSenderAddress?: string | null;
 }
+
+const companyJson = (alias: string) =>
+  `case when ${alias}.id is null then null else json_build_object(
+     'id', ${alias}.id, 'name', ${alias}.name, 'domain', ${alias}.domain, 'website', ${alias}.website, 'industry', ${alias}.industry,
+     'revenueRange', ${alias}.revenue_range, 'city', ${alias}.city, 'state', ${alias}.state, 'country', ${alias}.country,
+     'employeeRange', ${alias}.employee_range, 'description', ${alias}.description, 'mergedIntoCompanyId', ${alias}.merged_into_company_id) end`;
 
 const latest = (dates: Date[]) => (dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null);
 const truncate = (text: string | null, max: number) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -154,14 +166,35 @@ export async function buildAgentContext(
       owner_name: string | null;
       owner_email: string | null;
       company_name: string;
+      linked_company: CompanyRecord | null;
+      merge_target: CompanyRecord | null;
+      deals: (Omit<AgentDealRow, "updatedAt" | "stageSince"> & { updatedAt: string; stageSince: string })[];
     }>(
       `select l.id, l.first_name, l.last_name, l.company, l.job_title, l.industry, l.revenue_range, l.source,
               l.email, l.phone_e164, l.pipeline_stage, l.lifecycle_state, l.objection_type, l.loss_reason,
               l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.owner_id,
-              o.full_name as owner_name, o.email as owner_email, w.name as company_name
+              o.full_name as owner_name, o.email as owner_email, w.name as company_name,
+              ${companyJson("c")} as linked_company, ${companyJson("cm")} as merge_target,
+              coalesce(dl.deals, '[]'::json) as deals
          from public.leads l
          join public.workspaces w on w.id = l.workspace_id
          left join public.profiles o on o.id = l.owner_id
+         left join public.companies c on c.id = l.company_id and c.workspace_id = l.workspace_id
+         left join public.companies cm on cm.id = c.merged_into_company_id and cm.workspace_id = l.workspace_id
+         -- The contact's deals for the decide-only deal context: never amounts, loss reasons/notes or owners.
+         left join lateral (
+           select json_agg(json_build_object(
+                    'id', d.id, 'name', d.name, 'stage', d.stage, 'updatedAt', d.updated_at,
+                    -- Every stage move writes a timeline row with metadata.to (moveDealStage).
+                    'stageSince', coalesce((select max(t.occurred_at) from public.timeline_events t
+                                             where t.related_deal_id = d.id and t.metadata ->> 'to' = d.stage::text), d.created_at),
+                    'expectedCloseDate', d.expected_close_date::text,
+                    'latestMeeting', (select json_build_object('status', m.status, 'scheduledAt', m.scheduled_at)
+                                        from public.meetings m where m.deal_id = d.id order by m.scheduled_at desc limit 1),
+                    'latestProposal', (select json_build_object('status', p.status)
+                                         from public.proposals p where p.deal_id = d.id order by p.updated_at desc, p.id desc limit 1))) as deals
+             from public.deals d where d.lead_id = l.id and d.workspace_id = l.workspace_id
+         ) dl on true
         where l.id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId],
     )
@@ -261,6 +294,9 @@ export async function buildAgentContext(
     ownerEmail: leadRow.owner_email,
   };
 
+  const company = resolveCompany(leadRow.linked_company, leadRow.merge_target);
+  const deals: AgentDealRow[] = leadRow.deals.map((d) => ({ ...d, updatedAt: new Date(d.updatedAt), stageSince: new Date(d.stageSince) }));
+
   const status = (channel: string) => channels.rows.find((c) => c.channel === channel)?.status ?? null;
   const weekAgo = now.getTime() - 7 * 24 * 3600 * 1000;
   const senderAddress = sender.rows[0]?.address || deps.fallbackSenderAddress || null;
@@ -305,6 +341,8 @@ export async function buildAgentContext(
     companyName: settings.company_display_name ?? leadRow.company_name,
     workspaceName: leadRow.company_name,
     lead,
+    company: companyFacts(company, lead),
+    internal: { companyDescription: companyDescription(company), deal: buildDealContext(deals, now) },
     settings,
     rules,
     timeline: timelineRows.rows.reverse().map((t) => ({
@@ -339,7 +377,7 @@ const tokensOf = (value: unknown) => countTokens(JSON.stringify(value));
 /**
  * Keeps the context under `cap` tokens (a JSON estimate) by dropping the oldest
  * timeline events, then the oldest decision summaries. The playbook, knowledge
- * chunks and past messages are never trimmed. Exported for tests.
+ * chunks, past messages, company and internal context are never trimmed. Exported for tests.
  */
 export function trimToCap(context: AgentContext, cap: number): AgentContext {
   const { timeline, decisionSummaries, ...rest } = context;

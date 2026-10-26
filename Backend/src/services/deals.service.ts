@@ -5,6 +5,7 @@ import { NotFoundError, ValidationError } from "../errors.js";
 import type { DealStage, LeadLossReason, LifecycleState, MeetingOutcome, MeetingStatus, ProposalStatus } from "../domain/enums.js";
 import { isPlaceholderCompany } from "../domain/companyNormalize.js";
 import {
+  DEAL_STAGE_LABELS,
   backfillDealStage,
   canMoveDealStage,
   DEAL_CLOSED_LOSS_REASON,
@@ -38,17 +39,6 @@ export interface DealRow {
   created_at: Date;
   updated_at: Date;
 }
-
-const STAGE_LABELS: Record<DealStage, string> = {
-  qualified: "Qualified",
-  meeting_scheduled: "Meeting scheduled",
-  meeting_follow_up: "Meeting done / follow-up",
-  proposal_preparation: "Preparing proposal",
-  proposal_sent: "Proposal sent",
-  negotiation: "Negotiation",
-  won: "Won",
-  lost: "Lost",
-};
 
 const eventActor = (actor: Actor | null) => (actor ? actorEvent(actor) : AUTOMATION_ACTOR);
 
@@ -102,7 +92,7 @@ export async function createDeal(db: Queryable, actor: Actor | null, workspaceId
     ],
   );
   const deal = rows[0]!;
-  await addTimelineEvent(db, { leadId: contact.id, kind: "system", title: "Deal created", detail: `${name} (${STAGE_LABELS[stage]})`, ...eventActor(actor), relatedDealId: deal.id });
+  await addTimelineEvent(db, { leadId: contact.id, kind: "system", title: "Deal created", detail: `${name} (${DEAL_STAGE_LABELS[stage]})`, ...eventActor(actor), relatedDealId: deal.id });
   return deal;
 }
 
@@ -153,7 +143,7 @@ export async function moveDealStage(
   await addTimelineEvent(db, {
     leadId: deal.lead_id,
     kind: "system",
-    title: `Deal stage changed: ${STAGE_LABELS[current.stage]} → ${STAGE_LABELS[toStage]}`,
+    title: `Deal stage changed: ${DEAL_STAGE_LABELS[current.stage]} → ${DEAL_STAGE_LABELS[toStage]}`,
     detail: deal.name,
     ...eventActor(actor),
     relatedDealId: deal.id,
