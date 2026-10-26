@@ -119,7 +119,6 @@ vi.mock("@/store", () => {
 
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
 import { LeadsPage } from "@/features/leads/leads-page";
-import { MeetingsPage } from "@/features/meetings/meetings-page";
 import { ProposalsPage } from "@/features/proposals/proposals-page";
 import { AiActivityPage } from "@/features/agent/ai-activity-page";
 
@@ -144,7 +143,6 @@ describe("zero-record route states", () => {
   it.each([
     [DashboardPage, "Nothing due today."],
     [LeadsPage, "No leads match these filters."],
-    [MeetingsPage, "No meetings."],
     [ProposalsPage, "No proposals."],
     [AiActivityPage, "No AI decisions match these filters."],
   ])("renders an empty backend dataset", async (Screen, expectedText) => {

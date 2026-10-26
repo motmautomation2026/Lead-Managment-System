@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, Search, X } from "lucide-react";
+import { ListChecks, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -19,11 +19,11 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { useCreateTaskDialog } from "@/app/add-lead-context";
 import { CompanyPicker } from "@/features/companies/company-picker";
-import { ContactPicker } from "@/features/contacts/contact-picker";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
 import { LogCallFlow } from "@/features/work/log-call-flow";
+import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
 import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
 import { backend } from "@/lib/backend-client";
 import { label } from "@/lib/labels";
@@ -33,7 +33,6 @@ import {
   refreshWork,
   useCompany,
   useCompleteTask,
-  useContact,
   useSession,
   useTaskCount,
   useTaskList,
@@ -93,7 +92,6 @@ export function TasksPage() {
   const dueToday = useTaskCount(MY_DUE_TODAY);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const filterCompany = useCompany(state.companyId);
-  const filterContact = useContact(state.contactId ?? "");
 
   const [qInput, setQInput] = useState(state.q ?? "");
   const debouncedQ = useDebouncedValue(qInput, 300);
@@ -209,9 +207,6 @@ export function TasksPage() {
       action={<Button onClick={() => createTask.open()}>Create task</Button>}
     />
   );
-  const contactName = filterContact.data
-    ? `${filterContact.data.firstName} ${filterContact.data.lastName}`.trim()
-    : "…";
 
   return (
     <div className="pb-24">
@@ -240,25 +235,11 @@ export function TasksPage() {
               className="pl-8"
             />
           </div>
-          <div className="flex w-full items-center gap-1 sm:w-48">
-            <ContactPicker
-              label="Contact filter"
-              placeholder="Contact"
-              value={state.contactId ? { id: state.contactId, name: contactName } : null}
-              onChange={(c) => void set({ contactId: c?.id })}
-            />
-            {state.contactId && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 shrink-0"
-                aria-label="Clear contact filter"
-                onClick={() => void set({ contactId: undefined })}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
+          <ContactFilter
+            contactId={state.contactId}
+            onChange={(contactId) => void set({ contactId })}
+          />
+          <DealFilterChip dealId={state.dealId} onClear={() => void set({ dealId: undefined })} />
           <CompanyPicker
             variant="chip"
             value={

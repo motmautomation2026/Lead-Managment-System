@@ -102,6 +102,7 @@ vi.mock("@/store", () => ({
     data: id ? { id, firstName: "Ravi", lastName: "Kumar" } : undefined,
   }),
   useContactSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  useDeal: (id: string | undefined) => ({ data: id ? { id, name: "Acme deal" } : undefined }),
   useTaskList: (params: TaskListParams) => {
     mocks.listParams.push(params);
     return {
