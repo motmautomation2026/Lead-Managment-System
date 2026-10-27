@@ -214,15 +214,16 @@ vi.mock("@/store", () => ({
 }));
 
 import { ContactRecordPage } from "./contact-record-page";
+import type { ContactRecordSearch } from "./contact-helpers";
 
-async function renderPage() {
+async function renderPage(link?: ContactRecordSearch) {
   const root = createRootRoute({ component: () => <Outlet /> });
   const router = createRouter({
     routeTree: root.addChildren([
       createRoute({
         getParentRoute: () => root,
         path: "/",
-        component: () => <ContactRecordPage contactId="c-1" />,
+        component: () => <ContactRecordPage contactId="c-1" link={link ?? {}} />,
       }),
       createRoute({ getParentRoute: () => root, path: "/contacts", component: () => null }),
       createRoute({
@@ -260,6 +261,16 @@ afterEach(() => {
 });
 
 describe("ContactRecordPage", () => {
+  it("D2: a Read reply link opens Activity filtered to messages", async () => {
+    await renderPage({ tab: "activity", activity: "messages", reply: "latest" });
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Messages" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(mocks.timelineKinds.at(-1)).toEqual(["messages"]);
+  });
+
   it("renders the header and every panel", async () => {
     await renderPage();
     expect(screen.getByText(/^CTO ·/)).toBeTruthy();

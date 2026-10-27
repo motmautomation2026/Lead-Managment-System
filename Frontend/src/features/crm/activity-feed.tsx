@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,8 +8,10 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { ACTIVITY_FILTERS, type ActivityFilter } from "@/features/contacts/contact-helpers";
 import { cn } from "@/lib/utils";
-import { useCompanyTimeline, useContactTimeline, useDealTimeline } from "@/store";
+import { useCompanyTimeline, useContactTimeline, useDealTimeline, useInboundReply } from "@/store";
 import type { CompanyTimelineEvent, TimelineEvent } from "@/types";
+
+type Reply = NonNullable<TimelineEvent["reply"]>;
 
 type Source =
   | { contactId: string; companyId?: never; dealId?: never }
@@ -20,9 +22,16 @@ type Source =
  * A paginated timeline (GET /contacts|companies|deals/:id/timeline), newest first, with the
  * Activity type chips filtering server-side and "Load more". Company and deal feeds show whose
  * event each row is. `limit` renders only the first N rows, without chips (Overview).
+ * Contact feeds (D2): inbound WhatsApp replies get "Show message" for the owner and admins;
+ * `focusReply` scrolls to the newest reply once it has loaded.
  */
-export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) {
-  const [filter, setFilter] = useState<ActivityFilter>("all");
+export function ActivityFeed({
+  limit,
+  initialFilter = "all",
+  focusReply = false,
+  ...source
+}: Source & { limit?: number; initialFilter?: ActivityFilter | undefined; focusReply?: boolean }) {
+  const [filter, setFilter] = useState<ActivityFilter>(initialFilter);
   const kind = filter === "all" ? [] : [filter];
   // All hooks run; the ones without an id stay disabled.
   const contactFeed = useContactTimeline(source.contactId ?? "", kind);
@@ -32,6 +41,13 @@ export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) 
   const all: Array<TimelineEvent | CompanyTimelineEvent> =
     feed.data?.pages.flatMap((p) => p.data) ?? [];
   const events = limit ? all.slice(0, limit) : all;
+  const focusId = focusReply ? events.find((e) => e.reply)?.id : undefined;
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focusId || focused.current) return;
+    focused.current = true;
+    document.getElementById(`activity-${focusId}`)?.scrollIntoView?.({ block: "center" });
+  }, [focusId]);
 
   return (
     <div className="space-y-3">
@@ -64,7 +80,11 @@ export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) 
       ) : (
         <Card className="divide-y p-0">
           {events.map((event) => (
-            <div key={event.id} className="flex gap-3 px-4 py-3">
+            <div
+              key={event.id}
+              id={`activity-${event.id}`}
+              className={cn("flex gap-3 px-4 py-3", event.id === focusId && "bg-accent/40")}
+            >
               <RelativeTime
                 value={event.at}
                 className="w-28 shrink-0 type-small text-muted-foreground"
@@ -81,6 +101,9 @@ export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) 
                   <p className="pt-0.5 type-body break-words text-muted-foreground">
                     {event.detail}
                   </p>
+                )}
+                {event.reply && source.contactId && (
+                  <ReplyText contactId={source.contactId} reply={event.reply} />
                 )}
                 <div className="pt-0.5 type-small text-muted-foreground">
                   {"contact" in event && (
@@ -115,5 +138,71 @@ export function ActivityFeed({ limit, ...source }: Source & { limit?: number }) 
         </div>
       )}
     </div>
+  );
+}
+
+const muted = "pt-1 type-small text-muted-foreground";
+
+/**
+ * D2: one reply's text, requested only after "Show message" (each request is audited).
+ * Hiding or unmounting drops it from the cache (useInboundReply).
+ */
+function ReplyText({ contactId, reply }: { contactId: string; reply: Reply }) {
+  const [shown, setShown] = useState(false);
+  const query = useInboundReply(contactId, reply.messageId, shown && reply.canRead);
+  if (!reply.canRead)
+    return <p className={muted}>Only the contact owner and admins can read replies.</p>;
+  const toggle = (
+    <Button
+      variant="link"
+      size="sm"
+      className="h-auto p-0"
+      aria-expanded={shown}
+      onClick={() => setShown((v) => !v)}
+    >
+      {shown ? "Hide" : "Show message"}
+    </Button>
+  );
+  if (!shown) return <div className="pt-1">{toggle}</div>;
+  const data = query.data;
+  return (
+    <div className="space-y-1 pt-1">
+      {query.isLoading ? (
+        <p className={muted}>Loading message…</p>
+      ) : query.error ? (
+        <ErrorBlock error={query.error} />
+      ) : data?.text != null ? (
+        <>
+          <blockquote className="border-l-2 pl-3 type-body break-words whitespace-pre-wrap">
+            {data.text}
+          </blockquote>
+          {data.truncated && <p className={muted}>(shortened — the message was longer)</p>}
+        </>
+      ) : (
+        <p className={muted}>
+          {data?.reason === "unreadable"
+            ? "This message can't be read any more (the encryption key changed)."
+            : "The text of this message wasn't stored (e.g. a sticker or voice note)."}
+        </p>
+      )}
+      {toggle}
+    </div>
+  );
+}
+
+/** The 4A reply task's title (backend whatsapp-inbound.service.ts REPLY_TASK_TITLE). */
+export const REPLY_TASK_TITLE = "Lead replied on WhatsApp — respond today";
+
+/** D2: opens the contact's Activity filtered to messages, scrolled to the newest reply. */
+export function ReadReplyLink({ contactId }: { contactId: string }) {
+  return (
+    <Link
+      to="/contacts/$contactId"
+      params={{ contactId }}
+      search={{ tab: "activity", activity: "messages", reply: "latest" }}
+      className="type-small font-medium text-primary hover:underline"
+    >
+      Read reply
+    </Link>
   );
 }

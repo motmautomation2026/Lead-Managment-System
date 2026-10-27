@@ -49,6 +49,7 @@ import { RelativeTime } from "@/components/crm/relative-time";
 import { Money } from "@/components/crm/money";
 import { LeadAiPanel } from "@/features/agent/lead-ai-panel";
 import { ActivityFeed } from "@/features/crm/activity-feed";
+import type { ContactRecordSearch } from "./contact-helpers";
 import { LeadJourneyCard } from "@/features/leads/lead-journey-card";
 import { EnrollWorkflowDialog } from "@/features/leads/scheduled-followups";
 import { LostReasonDialog, NextActionDialog, ReasonDialog } from "@/features/leads/lead-dialogs";
@@ -110,7 +111,16 @@ const mutate = async (work: () => Promise<unknown>, success: string) => {
 };
 
 /** HubSpot-style contact record. The contact is always fetched by id (B11). */
-export function ContactRecordPage({ contactId }: { contactId: string }) {
+export function ContactRecordPage({
+  contactId,
+  link = {},
+  onTabChange,
+}: {
+  contactId: string;
+  /** D2 deep link (route search): tab, Activity filter, scroll to the newest reply. */
+  link?: ContactRecordSearch;
+  onTabChange?: () => void;
+}) {
   const query = useContact(contactId);
   const contact = query.data;
   useRememberRecent(
@@ -144,11 +154,27 @@ export function ContactRecordPage({ contactId }: { contactId: string }) {
       </div>
     );
   }
-  return <ContactRecord contact={query.data} />;
+  return <ContactRecord contact={query.data} link={link} onTabChange={onTabChange} />;
 }
 
-function ContactRecord({ contact }: { contact: ContactDetail }) {
+function ContactRecord({
+  contact,
+  link,
+  onTabChange,
+}: {
+  contact: ContactDetail;
+  link: ContactRecordSearch;
+  onTabChange?: (() => void) | undefined;
+}) {
   const id = contact.id;
+  // Following a deep link (again) switches the tab; picking a tab is local state.
+  const linkKey = `${link.tab ?? ""}|${link.activity ?? ""}|${link.reply ?? ""}`;
+  const [tab, setTab] = useState(link.tab ?? "overview");
+  const [seenLink, setSeenLink] = useState(linkKey);
+  if (seenLink !== linkKey) {
+    setSeenLink(linkKey);
+    if (link.tab) setTab(link.tab);
+  }
   const navigate = useNavigate();
   const { users, userName } = useSession();
   const actions = useLeadMutations();
@@ -781,12 +807,27 @@ function ContactRecord({ contact }: { contact: ContactDetail }) {
         left={<ContactAbout contact={contact} contactability={extras.contactability} />}
         tabs={[
           { id: "overview", label: "Overview", content: overview },
-          { id: "activity", label: "Activity", content: <ActivityFeed contactId={id} /> },
+          {
+            id: "activity",
+            label: "Activity",
+            content: (
+              <ActivityFeed
+                key={linkKey}
+                contactId={id}
+                initialFilter={link.activity}
+                focusReply={link.reply === "latest"}
+              />
+            ),
+          },
           { id: "notes", label: "Notes", content: notes },
           { id: "meetings", label: "Meetings & proposals", content: meetingsAndProposals },
           { id: "automation", label: "Automation", content: automation },
         ]}
-        defaultTab="overview"
+        tab={tab}
+        onTabChange={(next) => {
+          setTab(next);
+          onTabChange?.();
+        }}
         right={
           <>
             <ContactAssociations contact={contact} />

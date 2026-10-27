@@ -328,6 +328,26 @@ describe("TasksPage", () => {
     expect(await screen.findByText("enroll call_not_connected")).toBeTruthy();
   });
 
+  it("D2: the reply task's Sheet links to the reply; other tasks don't", async () => {
+    mocks.rows = [
+      task("t-9", "Lead replied on WhatsApp — respond today", { origin: "agent" }),
+      task("t-1", "Send the deck"),
+    ];
+    await renderPage();
+    fireEvent.click(screen.getByText("Lead replied on WhatsApp — respond today"));
+    const sheet = await screen.findByRole("dialog", {
+      name: "Lead replied on WhatsApp — respond today",
+    });
+    expect(within(sheet).getByRole("link", { name: "Read reply" }).getAttribute("href")).toMatch(
+      /^\/contacts\/[^?]+\?tab=activity&activity=messages&reply=latest$/,
+    );
+    fireEvent.keyDown(sheet, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByText("Send the deck"));
+    const other = await screen.findByRole("dialog", { name: "Send the deck" });
+    expect(within(other).queryByRole("link", { name: "Read reply" })).toBeNull();
+  });
+
   it("row Sheet: details, reschedule (IST), reassign, cancel with a reason, log call", async () => {
     mocks.update.mockResolvedValue({});
     mocks.cancel.mockResolvedValue({});

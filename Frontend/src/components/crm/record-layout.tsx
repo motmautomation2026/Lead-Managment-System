@@ -18,12 +18,17 @@ export function RecordLayout({
   tabs,
   right,
   defaultTab,
+  tab,
+  onTabChange,
   rightLabel = "Related",
 }: {
   left: ReactNode;
   tabs: RecordTab[];
   right?: ReactNode;
   defaultTab?: string;
+  /** Controlled tab (optional; with `onTabChange`). */
+  tab?: string;
+  onTabChange?: (tab: string) => void;
   /** Tab name for the right panel below lg. */
   rightLabel?: string;
 }) {
@@ -36,7 +41,11 @@ export function RecordLayout({
         ...(right ? [{ id: "related", label: rightLabel, content: right }] : []),
       ];
   const middle = (
-    <Tabs defaultValue={defaultTab ?? allTabs[0]?.id ?? ""} className="min-w-0">
+    <Tabs
+      defaultValue={defaultTab ?? allTabs[0]?.id ?? ""}
+      {...(tab !== undefined && { value: tab, onValueChange: onTabChange })}
+      className="min-w-0"
+    >
       <div className="overflow-x-auto">
         <TabsList>
           {allTabs.map((t) => (

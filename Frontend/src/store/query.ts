@@ -91,6 +91,8 @@ export const keys = {
     extra
       ? (["contactTimeline", workspaceId, id, extra] as const)
       : (["contactTimeline", workspaceId, id] as const),
+  inboundReply: (workspaceId: string | null, contactId: string, messageId: string) =>
+    ["inboundReply", workspaceId, contactId, messageId] as const,
   companyDuplicates: (workspaceId: string | null, params?: object) =>
     params
       ? (["companyDuplicates", workspaceId, params] as const)

@@ -64,6 +64,7 @@ import type {
   Template,
   TemplateAttachment,
   TimelineEvent,
+  InboundReply,
   User,
   Workflow,
   WorkflowStep,
@@ -741,6 +742,9 @@ export const backend = {
     /** Paginated, newest first (C3). The old `leads.timeline` returns everything. */
     timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
       get<Page<TimelineEvent>>(listQuery(`/contacts/${id}/timeline`, { kind, cursor }), signal),
+    /** D2: one reply's text (owner + admins; audited server-side). Only after a click. */
+    reply: (id: string, messageId: string, signal?: AbortSignal) =>
+      get<InboundReply>(`/contacts/${id}/replies/${encodeURIComponent(messageId)}`, signal),
   },
   /** CRM v2 companies (B4 §3). Merge is admin only. */
   companies: {

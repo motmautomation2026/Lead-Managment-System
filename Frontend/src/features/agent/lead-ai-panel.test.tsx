@@ -63,6 +63,16 @@ describe("LeadAiPanel", () => {
     expect(screen.getByText(/24 Oct 2026, 10:00 am IST · Scheduled follow-up/)).toBeTruthy();
   });
 
+  it("D2: a lead handed off by a reply links to the reply; other reasons don't", () => {
+    mocks.panel.mockReturnValue(panel("handed_off", { statusReason: "lead_replied" }));
+    const { unmount } = render(<LeadAiPanel leadId="lead-1" />);
+    expect(screen.getByText("Read reply")).toBeTruthy();
+    unmount();
+    mocks.panel.mockReturnValue(panel("paused"));
+    render(<LeadAiPanel leadId="lead-1" />);
+    expect(screen.queryByText("Read reply")).toBeNull();
+  });
+
   it("hides every admin button from salespeople", () => {
     for (const status of ["none", "active", "paused", "stopped"]) {
       mocks.panel.mockReturnValue(panel(status));

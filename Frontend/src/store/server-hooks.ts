@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backend,
@@ -881,6 +882,30 @@ export function useCompanyTimeline(companyId: string, kind: ActivityType[] = [])
     (cursor, signal) => backend.companies.timeline(companyId, kind, cursor, signal),
     Boolean(companyId),
   );
+}
+
+/**
+ * D2: one inbound reply's text, fetched only while `enabled` (after a click; never prefetched).
+ * Each fetch is an audited read, so no retries or focus refetches. The text leaves the cache
+ * when the caller hides it, unmounts or the workspace changes.
+ */
+export function useInboundReply(contactId: string, messageId: string, enabled: boolean) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  const client = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    return () =>
+      client.removeQueries({ queryKey: keys.inboundReply(ws, contactId, messageId), exact: true });
+  }, [client, ws, contactId, messageId, enabled]);
+  return useQuery({
+    queryKey: keys.inboundReply(ws, contactId, messageId),
+    queryFn: ({ signal }) => backend.contacts.reply(contactId, messageId, signal),
+    enabled,
+    staleTime: 0,
+    gcTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 }
 
 /** A contact's timeline, newest first, paginated; `kind` filters server-side (empty = all). */

@@ -23,6 +23,7 @@ import { PropertyList } from "@/components/crm/property-list";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { StatusPill } from "@/components/crm/status-pill";
 import { TaskOriginBadge } from "@/components/common/status-badge";
+import { ReadReplyLink, REPLY_TASK_TITLE } from "@/features/crm/activity-feed";
 import { RefLink } from "@/features/work/ref-link";
 import { istParts, toIsoFromIst } from "@/lib/dates";
 import { label } from "@/lib/labels";
@@ -135,6 +136,9 @@ function TaskDetails({
               : []),
           ]}
         />
+        {task.origin === "agent" && task.title === REPLY_TASK_TITLE && (
+          <ReadReplyLink contactId={task.contact.id} />
+        )}
         {open && (
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onComplete(task)}>

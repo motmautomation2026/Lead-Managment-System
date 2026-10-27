@@ -18,3 +18,17 @@ export const ACTIVITY_FILTERS = [
 ] as const;
 /** "all" or a server-side activity type (`kind` on the paginated timelines). */
 export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number]["id"];
+
+/** D2 deep link into a contact record: open a tab, pre-filter Activity, scroll to the newest reply. */
+export interface ContactRecordSearch {
+  tab?: string | undefined;
+  activity?: ActivityFilter | undefined;
+  reply?: "latest" | undefined;
+}
+export function validateContactRecordSearch(search: Record<string, unknown>): ContactRecordSearch {
+  return {
+    tab: typeof search["tab"] === "string" ? search["tab"] : undefined,
+    activity: ACTIVITY_FILTERS.find((f) => f.id === search["activity"])?.id,
+    reply: search["reply"] === "latest" ? "latest" : undefined,
+  };
+}

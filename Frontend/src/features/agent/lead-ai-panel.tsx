@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
+import { ReadReplyLink } from "@/features/crm/activity-feed";
 import type { LeadAgentPanel } from "@/lib/backend-client";
 import {
   messageFromError,
@@ -86,6 +87,7 @@ export function LeadAiPanel({ leadId }: { leadId: string }) {
               {p.statusChangedAt && ` · ${istDateTime(p.statusChangedAt)}`}
             </p>
           )}
+          {p.statusReason === "lead_replied" && <ReadReplyLink contactId={p.leadId} />}
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
             <dt className="text-muted-foreground">Touches used</dt>
             <dd>{p.touchCount}</dd>
