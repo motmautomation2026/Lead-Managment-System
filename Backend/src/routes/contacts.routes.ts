@@ -11,6 +11,7 @@ import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as contacts from "../services/contacts.service.js";
 import { getLeadRowOr404 } from "../services/leads.service.js";
 import { listContactTimeline, timelineListSchema } from "../services/timeline.service.js";
+import { canReadReplies, readInboundReply } from "../services/inboundReplies.service.js";
 
 export const contactsRouter = Router();
 contactsRouter.param("id", uuidParam("contact"));
@@ -50,7 +51,16 @@ contactsRouter.get(
   "/:id/timeline",
   asyncHandler(async (req, res) => {
     const query = parseQuery(timelineListSchema, req.query);
-    await getLeadRowOr404(pool, req.workspaceId!, req.params.id!);
-    res.json(await listContactTimeline(pool, req.workspaceId!, req.params.id!, query));
+    const lead = await getLeadRowOr404(pool, req.workspaceId!, req.params.id!);
+    res.json(await listContactTimeline(pool, req.workspaceId!, req.params.id!, query, canReadReplies(req.actor!, lead.owner_id)));
+  }),
+);
+
+/** D2: one inbound WhatsApp reply's text (owner + admins, audited). Never cached, never logged. */
+contactsRouter.get(
+  "/:id/replies/:messageId",
+  asyncHandler(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json(await readInboundReply(pool, req.actor!, req.workspaceId!, req.params.id!, req.params.messageId!));
   }),
 );

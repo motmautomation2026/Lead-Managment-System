@@ -151,12 +151,28 @@ function timelinePage<R extends TimelineRow>(db: Queryable, b: SqlBuilder, query
   );
 }
 
-/** One contact's events (404 handled by the caller's lookup). */
-export async function listContactTimeline(db: Queryable, workspaceId: string, leadId: string, query: TimelineQuery) {
+// D2: null unless the row is a matched inbound WhatsApp reply; never the text itself.
+const REPLY_HAS_TEXT_SQL = `, (select e.body_ciphertext is not null from public.whatsapp_inbound_events e
+     where t.event_kind = 'whatsapp' and e.message_id = t.metadata->>'messageId'
+       and e.workspace_id = l.workspace_id and e.disposition = 'matched') as reply_has_text`;
+
+/**
+ * One contact's events (404 handled by the caller's lookup). Inbound reply rows get
+ * `reply: { messageId, hasText, canRead }`; the text is only at GET /contacts/:id/replies/:messageId.
+ */
+export async function listContactTimeline(db: Queryable, workspaceId: string, leadId: string, query: TimelineQuery, canReadReplies = false) {
   const b = new SqlBuilder();
   b.and(`l.workspace_id = ${b.p(workspaceId)}`).and(`t.lead_id = ${b.p(leadId)}`);
-  const page = await timelinePage(db, b, query);
-  return { data: page.data.map(timelineToDto), nextCursor: page.nextCursor };
+  const page = await timelinePage<TimelineRow & { reply_has_text: boolean | null }>(db, b, query, REPLY_HAS_TEXT_SQL);
+  return {
+    data: page.data.map(({ reply_has_text, ...row }) => ({
+      ...timelineToDto(row),
+      ...(reply_has_text === null
+        ? {}
+        : { reply: { messageId: String(row.metadata?.messageId), hasText: reply_has_text, canRead: canReadReplies } }),
+    })),
+    nextCursor: page.nextCursor,
+  };
 }
 
 /** Feeds spanning several contacts: each row says whose event it is. */

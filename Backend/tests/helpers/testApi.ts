@@ -17,7 +17,7 @@ export type JsonBody = any;
 
 export interface TestApi {
   newUser(role: "admin" | "salesperson", options?: { isActive?: boolean; name?: string }): Promise<Actor>;
-  call(as: Actor, workspaceId: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: JsonBody }>;
+  call(as: Actor, workspaceId: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: JsonBody; headers: Headers }>;
   close(): Promise<void>;
 }
 
@@ -55,7 +55,7 @@ export async function startTestApi(pool: Pool, label: string): Promise<TestApi> 
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
       const text = await res.text();
-      return { status: res.status, body: text ? JSON.parse(text) : undefined };
+      return { status: res.status, body: text ? JSON.parse(text) : undefined, headers: res.headers };
     },
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
