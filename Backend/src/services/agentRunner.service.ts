@@ -31,6 +31,11 @@ const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
 const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
+/** This IST month's AI spend of workspace $1: decisions plus reply classifications (D4a). */
+export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agent_decisions
+     where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
+   + coalesce((select sum(classification_cost_usd) from public.whatsapp_inbound_events
+     where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
 
 export interface AgentRunnerDeps {
   model: DecisionModel;
@@ -298,11 +303,7 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   // 3. Budget for the current IST calendar month.
   const spent = Number(
     (
-      await pool.query<{ spent: string }>(
-        `select coalesce(sum(cost_usd), 0) as spent from public.agent_decisions
-          where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')`,
-        [wakeup.workspace_id],
-      )
+      await pool.query<{ spent: string }>(`select ${MONTH_SPEND_SQL} as spent`, [wakeup.workspace_id])
     ).rows[0]!.spent,
   );
   const budget = Number(state.monthly_budget_usd);

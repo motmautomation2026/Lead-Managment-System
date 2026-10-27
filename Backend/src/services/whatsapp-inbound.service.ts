@@ -6,9 +6,12 @@ import { onAgentEvent } from "./agentEvents.service.js";
 import { createTask } from "./tasks.service.js";
 import { extractInboundText } from "../domain/whatsappInboundText.js";
 import { encryptText } from "../security/encryption.js";
-import type { AgentStatus } from "../agent/rules.js";
+import type { AgentMode, AgentStatus } from "../agent/rules.js";
+import { matchReplyKeyword } from "../domain/replyKeywords.js";
+import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClassification.js";
+import { applyReplyLabel } from "./replyLabels.service.js";
 
-export const REPLY_TASK_TITLE = "Lead replied on WhatsApp — respond today";
+export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
 
 /** 23:59 today, Asia/Kolkata (fixed UTC+05:30). */
@@ -69,8 +72,13 @@ export async function processInboundUpsert(workspaceId: string, event: { message
       );
 
       // The text is stored only encrypted and only for a single matched lead; never log it.
+      let hasText = false;
+      let keyword: ReturnType<typeof matchReplyKeyword> = null;
       if (disposition === "matched") {
         const { text, truncated } = extractInboundText(message.message);
+        hasText = Boolean(text);
+        keyword = matchReplyKeyword(text);
+        await db.query(`update public.whatsapp_inbound_events set lead_id = $2 where message_id = $1`, [id, matches.rows[0]!.id]);
         if (text) {
           const body = encryptText(text, `whatsapp:inbound:${id}`);
           await db.query(
@@ -106,7 +114,9 @@ export async function processInboundUpsert(workspaceId: string, event: { message
             (lead_id, channel, status, reason, updated_by_name)
            values ($1, 'whatsapp', 'reachable', 'Inbound reply received', 'WhatsApp')
            on conflict (lead_id, channel) do update
-             set status = 'reachable', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'WhatsApp'`,
+             set status = 'reachable', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'WhatsApp'
+             -- A STOP opt-out (D4a) stays until a person clears it.
+             where lead_contact_channels.status <> 'opted_out'`,
           [lead.id],
         );
         await addTimelineEvent(db, {
@@ -133,10 +143,12 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         }
         await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
         // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
-        if (disposition === "matched" && lead.owner_id && (lead.agent_status === "active" || lead.agent_status === "paused")) {
+        const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused";
+        if (disposition === "matched" && lead.owner_id && wasManaged) {
+          // Any reply-task title: an earlier reply's label may have re-titled it (D4a).
           const open = await db.query(
-            `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = $2 limit 1`,
-            [lead.id, REPLY_TASK_TITLE],
+            `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]) limit 1`,
+            [lead.id, REPLY_TASK_TITLES],
           );
           if (!open.rowCount) {
             await createTask(db, null, workspaceId, {
@@ -148,6 +160,20 @@ export async function processInboundUpsert(workspaceId: string, event: { message
               dueAt: endOfIstDay().toISOString(),
               origin: "agent",
             });
+          }
+        }
+        // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
+        if (disposition === "matched") {
+          const mode = (await db.query<{ mode: AgentMode }>(`select mode from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0]?.mode ?? "off";
+          if (keyword) {
+            await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: keyword, source: "keyword", status: "done" });
+          } else if (hasText && wasManaged && mode !== "off") {
+            await db.query(
+              `update public.whatsapp_inbound_events set classification_status = 'pending', classification_next_at = now() where message_id = $1`,
+              [id],
+            );
+          } else {
+            await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: "unclassified", source: "keyword", status: "skipped" });
           }
         }
       }

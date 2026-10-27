@@ -67,7 +67,7 @@ const PROPOSAL_ELIGIBILITY_SQL = norm(`select l.phone_e164
                  from public.proposals p
                  join public.leads l on l.id = p.lead_id
                 where p.id = $1 and p.workspace_id = $2 and p.whatsapp_send_status = 'sending'
-                  and l.lifecycle_state != 'do_not_contact'
+                  and l.lifecycle_state != 'do_not_contact' and not exists (select 1 from public.lead_contact_channels c where c.lead_id = l.id and c.channel = 'whatsapp' and c.status = 'opted_out')
                 for update of p, l`);
 
 interface FakeOptions {
@@ -132,7 +132,7 @@ function eligibilityCall() {
 }
 
 function contactChannelCall() {
-  return mocks.txQuery.mock.calls.find(([sql]) => norm(sql).includes("lead_contact_channels"));
+  return mocks.txQuery.mock.calls.find(([sql]) => norm(sql).includes("insert into public.lead_contact_channels"));
 }
 
 beforeEach(() => {
@@ -186,6 +186,7 @@ describe("performSend: meeting source (B1)", () => {
     await expect(send(connectedManager(socket), source)).resolves.toEqual({ providerMessageId: "MSG-1" });
     const [sql, params] = eligibilityCall()!;
     expect(norm(sql)).toContain("from public.meetings m join public.leads l on l.id = m.lead_id where m.id = $1 and m.workspace_id = $2");
+    expect(norm(sql)).toContain("c.channel = 'whatsapp' and c.status = 'opted_out'");
     expect(params).toEqual(["meeting-1", WS]);
     expect(socket.sendMessage).toHaveBeenCalledOnce();
   });

@@ -5,7 +5,7 @@ import { composeOutgoing, type OutgoingMessage } from "../agent/composeMessage.j
 import type { AgentAction, SendDecision } from "../agent/decisionSchema.js";
 import { goLiveReadiness, RATING_REASONS, type RatingReason } from "../agent/readiness.js";
 import { isUuid } from "../validation/parse.js";
-import { IST_MONTH } from "./agentRunner.service.js";
+import { IST_MONTH, MONTH_SPEND_SQL } from "./agentRunner.service.js";
 
 /**
  * Reviewing the agent's decisions (3D-1): the decision log, ratings, problem
@@ -283,8 +283,7 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
     ),
     db.query<{ n: number }>(`select count(*)::int as n from public.agent_decision_reports where workspace_id = $1 and resolved_at is null`, [workspaceId]),
     db.query<{ spent: number; budget: number | null; month: string; mode: string | null }>(
-      `select coalesce((select sum(cost_usd) from public.agent_decisions
-                         where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)::float8 as spent,
+      `select ${MONTH_SPEND_SQL}::float8 as spent,
               (select monthly_budget_usd::float8 from public.agent_settings where workspace_id = $1) as budget,
               (select mode from public.agent_settings where workspace_id = $1) as mode,
               to_char(${IST_MONTH}, 'YYYY-MM') as month`,

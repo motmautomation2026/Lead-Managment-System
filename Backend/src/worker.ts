@@ -15,6 +15,7 @@ import { supabaseAdmin } from "./supabaseAdmin.js";
 import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
 import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
 import { runAgentTick } from "./services/agentRunner.service.js";
+import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runDealSweep } from "./services/deals.service.js";
 
@@ -190,6 +191,13 @@ async function tick(): Promise<void> {
     });
     if (swept && swept.processed + swept.failed > 0) console.log(`[worker] Deal sweep: ${swept.processed} contact(s), ${swept.created} deal(s) created, ${swept.attachedMeetings} meeting(s) and ${swept.attachedProposals} proposal(s) attached, ${swept.failed} failed.`);
   }
+
+  // D4a: label WhatsApp replies that matched no keyword, behind AGENT_RUNNER_ENABLED.
+  const labelled = await runReplyClassification(env.AGENT_RUNNER_ENABLED, { model: decisionModel }).catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Reply classification failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (labelled.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
 
   // AI agent (shadow drafts only), behind AGENT_RUNNER_ENABLED; after all other work.
   await runAgentTick(env.AGENT_RUNNER_ENABLED, {

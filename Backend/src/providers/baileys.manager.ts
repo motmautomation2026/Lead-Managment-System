@@ -67,6 +67,9 @@ export function isMeetingSendEligible(row: MeetingSendRow): boolean {
   );
 }
 
+// A contact who asked to stop on WhatsApp (D4a) gets no WhatsApp, even from a rep's button.
+const NOT_OPTED_OUT = `not exists (select 1 from public.lead_contact_channels c where c.lead_id = l.id and c.channel = 'whatsapp' and c.status = 'opted_out')`;
+
 /**
  * Re-checks, under row locks, that the source still allows this send, and
  * returns the lead's current phone (null when ineligible) for the caller's
@@ -98,7 +101,7 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
            from public.proposals p
            join public.leads l on l.id = p.lead_id
           where p.id = $1 and p.workspace_id = $2 and p.whatsapp_send_status = 'sending'
-            and l.lifecycle_state != 'do_not_contact'
+            and l.lifecycle_state != 'do_not_contact' and ${NOT_OPTED_OUT}
           for update of p, l`,
         [source.id, workspaceId],
       );
@@ -111,7 +114,7 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
         `select m.notify_whatsapp_status, m.status::text as meeting_status, l.lifecycle_state::text as lifecycle_state, l.phone_e164
            from public.meetings m
            join public.leads l on l.id = m.lead_id
-          where m.id = $1 and m.workspace_id = $2
+          where m.id = $1 and m.workspace_id = $2 and ${NOT_OPTED_OUT}
           for update of m, l`,
         [source.id, workspaceId],
       );

@@ -1,6 +1,7 @@
 /**
  * D2: the text of one inbound WhatsApp reply, for the contact's owner and admins.
- * The only place that decrypts `whatsapp_inbound_events.body_*`. Every read that
+ * `decryptInboundBody` is the only decrypt of `whatsapp_inbound_events.body_*`
+ * (also used by the D4a worker classifier). Every read that
  * reaches a matched reply of the contact is audited in `inbound_message_views`.
  * Never log, throw or store the decrypted text.
  */
@@ -23,14 +24,26 @@ export interface InboundReply {
   reason?: "not_stored" | "unreadable";
 }
 
-interface EventRow {
-  owner_id: string | null;
-  received_at: Date;
+export interface InboundBody {
   body_ciphertext: Buffer | null;
   body_iv: Buffer | null;
   body_tag: Buffer | null;
   body_key_version: number | null;
+}
+
+interface EventRow extends InboundBody {
+  owner_id: string | null;
+  received_at: Date;
   body_truncated: boolean;
+}
+
+/** The reply text, null when none was stored; throws when it can't be decrypted. Never log the result. */
+export function decryptInboundBody(row: InboundBody, messageId: string): string | null {
+  if (!row.body_ciphertext || !row.body_iv || !row.body_tag || row.body_key_version === null) return null;
+  return decryptText(
+    { ciphertext: row.body_ciphertext, iv: row.body_iv, tag: row.body_tag, keyVersion: row.body_key_version },
+    `whatsapp:inbound:${messageId}`,
+  );
 }
 
 /** 404 unless the reply is a matched event of this contact in this workspace (its timeline row links them). */
@@ -59,21 +72,18 @@ export async function readInboundReply(db: Queryable, actor: Actor, workspaceId:
     throw new ForbiddenError(REPLY_FORBIDDEN_MESSAGE);
   }
   const base = { messageId, receivedAt: row.received_at.toISOString(), truncated: row.body_truncated };
-  if (!row.body_ciphertext || !row.body_iv || !row.body_tag || row.body_key_version === null) {
-    await audit("no_text");
-    return { ...base, text: null, reason: "not_stored" };
-  }
-  let text: string;
+  let text: string | null;
   try {
-    text = decryptText(
-      { ciphertext: row.body_ciphertext, iv: row.body_iv, tag: row.body_tag, keyVersion: row.body_key_version },
-      `whatsapp:inbound:${messageId}`,
-    );
+    text = decryptInboundBody(row, messageId);
   } catch {
     // Wrong key, rotated key or tampered row. Ids only: never the ciphertext.
     console.warn(`[replies] could not decrypt inbound message ${messageId} (key version ${row.body_key_version})`);
     await audit("decrypt_failed");
     return { ...base, text: null, reason: "unreadable" };
+  }
+  if (text === null) {
+    await audit("no_text");
+    return { ...base, text: null, reason: "not_stored" };
   }
   await audit("shown");
   return { ...base, text };
