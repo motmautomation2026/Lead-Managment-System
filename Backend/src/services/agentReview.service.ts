@@ -271,7 +271,7 @@ export async function resolveReport(db: Queryable, workspaceId: string, id: stri
 }
 
 export async function getAgentStats(db: Queryable, workspaceId: string) {
-  const [counts, ratings, openReports, spend] = await Promise.all([
+  const [counts, ratings, openReports, spend, replies] = await Promise.all([
     db.query<{ action: string; outcome: string; n: number }>(
       `select action, outcome, count(*)::int as n from public.agent_decisions where workspace_id = $1 group by action, outcome`,
       [workspaceId],
@@ -287,6 +287,14 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
               (select monthly_budget_usd::float8 from public.agent_settings where workspace_id = $1) as budget,
               (select mode from public.agent_settings where workspace_id = $1) as mode,
               to_char(${IST_MONTH}, 'YYYY-MM') as month`,
+      [workspaceId],
+    ),
+    // D4a: WhatsApp replies labelled this IST month, by label, and the AI cost of labelling them.
+    db.query<{ label: string; n: number; cost: number }>(
+      `select reply_label as label, count(*)::int as n, coalesce(sum(classification_cost_usd), 0)::float8 as cost
+         from public.whatsapp_inbound_events
+        where workspace_id = $1 and reply_label is not null and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')
+        group by reply_label`,
       [workspaceId],
     ),
   ]);
@@ -319,6 +327,10 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
     ratings: { rated: good + bad, good, bad, badByReason },
     openReports: openReports.rows[0]!.n,
     spend: { month: s.month, spentUsd: s.spent, budgetUsd: s.budget },
+    replies: {
+      byLabel: Object.fromEntries(replies.rows.map((r) => [r.label, r.n])) as Record<string, number>,
+      costUsd: Math.round(replies.rows.reduce((sum, r) => sum + r.cost, 0) * 1e6) / 1e6,
+    },
     readiness: goLiveReadiness({ good, badByReason }),
   };
 }

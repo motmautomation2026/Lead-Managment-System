@@ -40,6 +40,7 @@ import type {
   LeadLossReason,
   MeetingOutcome,
   ProposalStatus,
+  ReplyLabel,
   TemplateType,
   User,
   WorkflowStep,
@@ -905,6 +906,17 @@ export function useInboundReply(contactId: string, messageId: string, enabled: b
     gcTime: 60_000,
     retry: false,
     refetchOnWindowFocus: false,
+  });
+}
+
+/** D4a: change a reply's label; refreshes the contact (timeline, tasks). */
+export function useCorrectReplyLabel(contactId: string) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: { messageId: string; label: Exclude<ReplyLabel, "unclassified"> }) =>
+      backend.contacts.setReplyLabel(contactId, input.messageId, input.label),
+    onSuccess: () => refreshContact(client, ws, contactId),
   });
 }
 

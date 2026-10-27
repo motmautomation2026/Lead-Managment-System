@@ -348,6 +348,14 @@ describe("TasksPage", () => {
     expect(within(other).queryByRole("link", { name: "Read reply" })).toBeNull();
   });
 
+  it("D4a: a reply task re-titled by its label still links to the reply", async () => {
+    mocks.rows = [task("t-8", "Wants to talk — respond today", { origin: "agent" })];
+    await renderPage();
+    fireEvent.click(screen.getByText("Wants to talk — respond today"));
+    const sheet = await screen.findByRole("dialog", { name: "Wants to talk — respond today" });
+    expect(within(sheet).getByRole("link", { name: "Read reply" })).toBeTruthy();
+  });
+
   it("row Sheet: details, reschedule (IST), reassign, cancel with a reason, log call", async () => {
     mocks.update.mockResolvedValue({});
     mocks.cancel.mockResolvedValue({});

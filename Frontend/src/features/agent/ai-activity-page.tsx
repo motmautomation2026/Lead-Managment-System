@@ -31,9 +31,11 @@ import {
   OUTCOME_LABEL,
   OUTCOME_TONE,
   RATING_REASON_LABEL,
+  REPLY_LABEL_TEXT,
   istDateTime,
   usd,
 } from "./agent-labels";
+import { REPLY_LABELS } from "@/types";
 import { DecisionDrawer } from "./decision-drawer";
 
 // Display only: the server's go-live gate (agent/readiness.ts) decides readiness.
@@ -71,7 +73,7 @@ export function AiActivityPage() {
           <ErrorBlock error={stats.error} />
         ) : (
           s && (
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <Card>
                 <CardContent className="space-y-2 p-4">
                   <div className="flex items-center justify-between gap-2">
@@ -112,6 +114,26 @@ export function AiActivityPage() {
                   <p className="text-xs text-muted-foreground">
                     {s.failed} failed {s.failed === 1 ? "decision" : "decisions"} (not counted in
                     reviews)
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="space-y-1 p-4">
+                  <span className="text-sm font-medium">WhatsApp replies this month</span>
+                  {Object.keys(s.replies.byLabel).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No replies labelled yet.</p>
+                  ) : (
+                    <ul className="space-y-0.5 text-sm">
+                      {REPLY_LABELS.filter((l) => s.replies.byLabel[l]).map((l) => (
+                        <li key={l} className="flex justify-between gap-2">
+                          <span>{REPLY_LABEL_TEXT[l]}</span>
+                          <span className="font-medium">{s.replies.byLabel[l]}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    AI labelling cost {usd(s.replies.costUsd)} (included in the spend)
                   </p>
                 </CardContent>
               </Card>

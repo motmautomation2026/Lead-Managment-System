@@ -6,9 +6,30 @@ import type {
 } from "@/lib/backend-client";
 import { fmtDateTime } from "@/lib/format";
 import { label } from "@/lib/labels";
-import type { AgentStatus } from "@/types";
+import type { AgentStatus, ReplyLabel } from "@/types";
 
 /** Display labels for AI agent codes. Display only: the server decides what is allowed. */
+
+/** Every title the reply task can have once a label re-titles it (backend replyClassification.ts). */
+export const REPLY_TASK_TITLES: readonly string[] = [
+  "Lead replied on WhatsApp — respond today",
+  "Asked to stop on WhatsApp — review today",
+  "Not interested — review today",
+  "Annoyed — review today",
+  "Wants to talk — respond today",
+  "Asked a question — respond today",
+];
+
+/** D4a: what a WhatsApp reply says. */
+export const REPLY_LABEL_TEXT: Record<ReplyLabel, string> = {
+  asked_to_stop: "Asked to stop",
+  not_interested: "Not interested",
+  annoyed: "Annoyed",
+  positive: "Wants to talk",
+  question: "Question",
+  other: "Other",
+  unclassified: "Not classified",
+};
 
 export const ACTION_LABEL: Record<AgentAction, string> = {
   send_email: "Email",

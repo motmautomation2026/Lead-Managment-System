@@ -151,25 +151,37 @@ function timelinePage<R extends TimelineRow>(db: Queryable, b: SqlBuilder, query
   );
 }
 
-// D2: null unless the row is a matched inbound WhatsApp reply; never the text itself.
-const REPLY_HAS_TEXT_SQL = `, (select e.body_ciphertext is not null from public.whatsapp_inbound_events e
-     where t.event_kind = 'whatsapp' and e.message_id = t.metadata->>'messageId'
-       and e.workspace_id = l.workspace_id and e.disposition = 'matched') as reply_has_text`;
+// D2/D4a: null unless the row is a matched inbound WhatsApp reply; never the text itself.
+const REPLY_INFO_SQL = `, (select json_build_object('hasText', e.body_ciphertext is not null, 'label', e.reply_label,
+            'labelSource', e.reply_label_source, 'classifying', e.classification_status = 'pending' and e.reply_label is null,
+            'labelBy', case when e.reply_label_source = 'rep' then p.full_name end)
+       from public.whatsapp_inbound_events e left join public.profiles p on p.id = e.label_corrected_by
+      where t.event_kind = 'whatsapp' and e.message_id = t.metadata->>'messageId'
+        and e.workspace_id = l.workspace_id and e.disposition = 'matched') as reply_info`;
+
+interface ReplyInfo {
+  hasText: boolean;
+  label: string | null;
+  labelSource: string | null;
+  classifying: boolean;
+  labelBy: string | null;
+}
 
 /**
  * One contact's events (404 handled by the caller's lookup). Inbound reply rows get
- * `reply: { messageId, hasText, canRead }`; the text is only at GET /contacts/:id/replies/:messageId.
+ * `reply: { messageId, hasText, canRead, label, labelSource, labelBy, classifying, canCorrect }`;
+ * the text is only at GET /contacts/:id/replies/:messageId.
  */
 export async function listContactTimeline(db: Queryable, workspaceId: string, leadId: string, query: TimelineQuery, canReadReplies = false) {
   const b = new SqlBuilder();
   b.and(`l.workspace_id = ${b.p(workspaceId)}`).and(`t.lead_id = ${b.p(leadId)}`);
-  const page = await timelinePage<TimelineRow & { reply_has_text: boolean | null }>(db, b, query, REPLY_HAS_TEXT_SQL);
+  const page = await timelinePage<TimelineRow & { reply_info: ReplyInfo | null }>(db, b, query, REPLY_INFO_SQL);
   return {
-    data: page.data.map(({ reply_has_text, ...row }) => ({
+    data: page.data.map(({ reply_info, ...row }) => ({
       ...timelineToDto(row),
-      ...(reply_has_text === null
+      ...(reply_info === null
         ? {}
-        : { reply: { messageId: String(row.metadata?.messageId), hasText: reply_has_text, canRead: canReadReplies } }),
+        : { reply: { messageId: String(row.metadata?.messageId), ...reply_info, canRead: canReadReplies, canCorrect: canReadReplies } }),
     })),
     nextCursor: page.nextCursor,
   };

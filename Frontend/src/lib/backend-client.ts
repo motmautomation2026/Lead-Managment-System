@@ -65,6 +65,7 @@ import type {
   TemplateAttachment,
   TimelineEvent,
   InboundReply,
+  ReplyLabel,
   User,
   Workflow,
   WorkflowStep,
@@ -612,6 +613,8 @@ export interface AgentStats {
   };
   openReports: number;
   spend: { month: string; spentUsd: number; budgetUsd: number | null };
+  /** D4a: WhatsApp replies labelled this month (counts only) and the AI cost of labelling them. */
+  replies: { byLabel: Partial<Record<ReplyLabel, number>>; costUsd: number };
   readiness: {
     ready: boolean;
     rated: number;
@@ -745,6 +748,13 @@ export const backend = {
     /** D2: one reply's text (owner + admins; audited server-side). Only after a click. */
     reply: (id: string, messageId: string, signal?: AbortSignal) =>
       get<InboundReply>(`/contacts/${id}/replies/${encodeURIComponent(messageId)}`, signal),
+    /** D4a: the owner or an admin changes a reply's label (never "unclassified"). */
+    setReplyLabel: (id: string, messageId: string, label: Exclude<ReplyLabel, "unclassified">) =>
+      send<{ messageId: string; label: ReplyLabel; labelSource: "rep"; labelBy: string }>(
+        "PUT",
+        `/contacts/${id}/replies/${encodeURIComponent(messageId)}/label`,
+        { label },
+      ),
   },
   /** CRM v2 companies (B4 §3). Merge is admin only. */
   companies: {

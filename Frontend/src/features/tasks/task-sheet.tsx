@@ -23,7 +23,8 @@ import { PropertyList } from "@/components/crm/property-list";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { StatusPill } from "@/components/crm/status-pill";
 import { TaskOriginBadge } from "@/components/common/status-badge";
-import { ReadReplyLink, REPLY_TASK_TITLE } from "@/features/crm/activity-feed";
+import { ReadReplyLink } from "@/features/crm/activity-feed";
+import { REPLY_TASK_TITLES } from "@/features/agent/agent-labels";
 import { RefLink } from "@/features/work/ref-link";
 import { istParts, toIsoFromIst } from "@/lib/dates";
 import { label } from "@/lib/labels";
@@ -136,7 +137,7 @@ function TaskDetails({
               : []),
           ]}
         />
-        {task.origin === "agent" && task.title === REPLY_TASK_TITLE && (
+        {task.origin === "agent" && REPLY_TASK_TITLES.includes(task.title) && (
           <ReadReplyLink contactId={task.contact.id} />
         )}
         {open && (

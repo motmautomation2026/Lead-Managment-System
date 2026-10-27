@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool, type PoolClient } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
+import { startTestApi, type TestApi } from "../helpers/testApi.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
 import type { ReplyClassification } from "../../src/agent/replyClassification.js";
 import { ModelOutputError } from "../../src/providers/provider-errors.js";
@@ -23,6 +24,9 @@ const DEFAULT_TITLE = "Lead replied on WhatsApp — respond today";
 describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;
   let owner: Actor;
+  let admin: Actor;
+  let otherRep: Actor;
+  let api: TestApi;
   const logged: string[] = [];
   const secrets: string[] = [];
 
@@ -86,9 +90,10 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL, max: 3 });
-    const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`d4a-owner-${randomUUID()}@example.com`]);
-    await pool.query(`update public.profiles set role = 'salesperson', is_active = true, full_name = 'D4a Owner' where id = $1`, [auth.rows[0].id]);
-    owner = { id: auth.rows[0].id, email: "d4a@example.com", fullName: "D4a Owner", role: "salesperson" } as Actor;
+    api = await startTestApi(pool, "reply-labels");
+    owner = await api.newUser("salesperson", { name: "D4a Owner" });
+    admin = await api.newUser("admin", { name: "D4a Admin" });
+    otherRep = await api.newUser("salesperson", { name: "D4a Other" });
     for (const level of ["log", "info", "warn", "error", "debug"] as const) {
       vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
         logged.push(args.map((a) => (a instanceof Error ? `${a.message} ${a.stack}` : typeof a === "string" ? a : JSON.stringify(a))).join(" "));
@@ -99,7 +104,7 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
   afterAll(async () => {
     vi.restoreAllMocks();
     await deleteCreatedTestWorkspaces(pool);
-    await pool.query(`delete from auth.users where id = $1`, [owner.id]).catch((error: Error) => console.warn(`[d4a] user cleanup failed: ${error.message}`));
+    await api.close();
     await pool.end();
   });
 
@@ -264,6 +269,55 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     expect(await classify(broke.ws, model)).toEqual([{ messageId: id, result: "skipped", label: "unclassified" }]);
     expect(await event(id)).toMatchObject({ reply_label: "unclassified", classification_status: "skipped" });
     expect(model.calls).toEqual([]);
+  });
+
+  it("timeline reply labels, rep correction (owner/admin only; re-titles, never undoes), stats by label", async () => {
+    const { ws, phone, leadId } = await scenario();
+    const stopId = await inbound(ws, phone, "unsubscribe");
+    await pool.query(`update public.leads set agent_status = 'active', agent_status_reason = null where id = $1`, [leadId]);
+    const id = await inbound(ws, phone, secret("Could you share a case study?"));
+    const replies = async (as: Actor) => {
+      const res = await api.call(as, ws, "GET", `/contacts/${leadId}/timeline?kind=messages`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return Object.fromEntries(res.body.data.filter((e: { reply?: unknown }) => e.reply).map((e: { reply: { messageId: string } }) => [e.reply.messageId, e.reply]));
+    };
+    let view = await replies(owner);
+    expect(view[stopId]).toMatchObject({ label: "asked_to_stop", labelSource: "keyword", labelBy: null, classifying: false, canRead: true, canCorrect: true });
+    expect(view[id]).toMatchObject({ label: null, labelSource: null, classifying: true, canCorrect: true });
+    expect((await replies(otherRep))[id]).toMatchObject({ canRead: false, canCorrect: false });
+
+    await classify(ws, fake({ label: "question", confidence: 0.9 }));
+    view = await replies(owner);
+    expect(view[id]).toMatchObject({ label: "question", labelSource: "ai", classifying: false });
+    expect(await tasks(leadId)).toEqual([{ title: "Asked a question — respond today", status: "open" }]);
+
+    const put = (as: Actor, messageId: string, body: unknown, lead = leadId) => api.call(as, ws, "PUT", `/contacts/${lead}/replies/${messageId}/label`, body);
+    expect((await put(otherRep, id, { label: "positive" })).status).toBe(403);
+    expect((await put(owner, id, { label: "unclassified" })).status).toBe(400);
+    expect((await put(owner, id, { label: "nope" })).status).toBe(400);
+    expect((await put(owner, "no-such-message", { label: "positive" })).status).toBe(404);
+    const other = await scenario();
+    expect((await put(owner, id, { label: "positive" }, other.leadId)).status).toBe(404);
+
+    const ok = await put(owner, id, { label: "positive" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body).toEqual({ messageId: id, label: "positive", labelSource: "rep", labelBy: "D4a Owner" });
+    expect((await replies(owner))[id]).toMatchObject({ label: "positive", labelSource: "rep", labelBy: "D4a Owner" });
+    expect(await event(id)).toMatchObject({ label_corrected_by: owner.id, reply_label_source: "rep" });
+    expect(await tasks(leadId)).toEqual([{ title: "Wants to talk — respond today", status: "open" }]);
+
+    // Correcting the STOP never undoes the opt-out or restarts the AI.
+    const stopped = await leadRow(leadId);
+    expect((await put(admin, stopId, { label: "other" })).status).toBe(200);
+    expect(await whatsappStatus(leadId)).toBe("opted_out");
+    expect(await leadRow(leadId)).toEqual(stopped);
+    expect(await tasks(leadId)).toEqual([{ title: DEFAULT_TITLE, status: "open" }]);
+
+    const stats = await api.call(admin, ws, "GET", "/agent/stats");
+    expect(stats.status).toBe(200);
+    expect(stats.body.replies.byLabel).toEqual({ other: 1, positive: 1 });
+    expect(stats.body.replies.costUsd).toBe(0.00034);
+    expect(stats.body.spend.spentUsd).toBeCloseTo(0.00034, 6);
   });
 
   it("the reply text never appears in logs, labels, notifications, tasks or the timeline", async () => {

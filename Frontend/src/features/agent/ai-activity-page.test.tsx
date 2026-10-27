@@ -82,6 +82,7 @@ vi.mock("@/store", () => ({
       failed: 0,
       openReports: 1,
       spend: { month: "2026-10", spentUsd: 1, budgetUsd: 20 },
+      replies: { byLabel: { positive: 1, asked_to_stop: 2 }, costUsd: 0.0012 },
       readiness: { ready: false, rated: 3, goodPct: 100, seriousBad: 0, reasons: [] },
     },
     error: null,
@@ -167,6 +168,17 @@ describe("AiActivityPage (C6b)", () => {
     expect(screen.getByText(/Shadow mode/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(mocks.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("shows this month's WhatsApp reply labels (counts only) and their AI cost (D4a)", async () => {
+    await renderPage();
+    const heading = screen.getByText("WhatsApp replies this month");
+    const card = heading.closest("div")!;
+    const items = within(card)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(items).toEqual(["Asked to stop2", "Wants to talk1"]);
+    expect(within(card).getByText(/AI labelling cost/)).toBeTruthy();
   });
 
   it("the open-reports card and the checkbox write openReport to the URL", async () => {

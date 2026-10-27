@@ -250,7 +250,9 @@ export function ContactAbout({
     ...contactability.map((c) => ({
       id: `contactability-${c.channel}`,
       label: `${label(c.channel)} status`,
-      value: label(c.status),
+      // D4a: a STOP opt-out says why ("Asked to stop on WhatsApp").
+      value:
+        c.status === "opted_out" && c.reason ? `${label(c.status)} — ${c.reason}` : label(c.status),
     })),
     { id: "createdAt", label: "Created", value: <RelativeTime value={contact.createdAt} /> },
   ];

@@ -2,14 +2,18 @@
  * D4a: a WhatsApp reply's label and what it does (rule 4). Ids and labels only:
  * never the reply text, a quote of it, or anything derived from it beyond the label.
  */
+import { z } from "zod";
 import type { Queryable } from "../dto.js";
+import type { Actor } from "../authMiddleware.js";
+import { ForbiddenError, NotFoundError } from "../errors.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { canTransition } from "../agent/status.js";
 import type { AgentStatus } from "../agent/rules.js";
 import type { LifecycleState } from "../domain/enums.js";
-import { REPLY_TASK_TITLES, replyEffects, replyTaskTitle, type ReplyLabel, type ReplyLabelSource } from "../agent/replyClassification.js";
+import { REPLY_LABELS, REPLY_TASK_TITLES, replyEffects, replyTaskTitle, type ReplyLabel, type ReplyLabelSource } from "../agent/replyClassification.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { canReadReplies } from "./inboundReplies.service.js";
 
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 const OPT_OUT_REASON = "Asked to stop on WhatsApp";
@@ -139,4 +143,40 @@ export async function applyReplyLabel(db: Queryable, input: ReplyLabelInput): Pr
 
   // other/unclassified keep the task's current title: a later "ok" must not hide an earlier "Wants to talk".
   if (input.label !== "other" && input.label !== "unclassified") await retitleReplyTask(db, input.leadId, input.label);
+}
+
+/** A rep may pick any label except "unclassified" (that one means the system couldn't). */
+export const replyLabelCorrectionSchema = z.object({ label: z.enum(REPLY_LABELS).exclude(["unclassified"]) }).strict();
+
+/**
+ * Rule 5: the owner or an admin changes a reply's label. Recorded (source rep, who,
+ * when) and re-titles the open reply task; never undoes an opt-out or restarts a
+ * permanently stopped AI, and never applies new effects. 404/403 like D2's read.
+ */
+export async function correctReplyLabel(db: Queryable, actor: Actor, workspaceId: string, leadId: string, messageId: string, label: ReplyLabel) {
+  const row = (
+    await db.query<{ owner_id: string | null }>(
+      `select l.owner_id
+         from public.leads l
+         join public.whatsapp_inbound_events e on e.workspace_id = l.workspace_id and e.message_id = $3 and e.disposition = 'matched'
+        where l.id = $1 and l.workspace_id = $2
+          and exists (select 1 from public.timeline_events t
+                       where t.lead_id = l.id and t.event_kind = 'whatsapp' and t.metadata->>'messageId' = e.message_id)
+        for update of e`,
+      [leadId, workspaceId, messageId],
+    )
+  ).rows[0];
+  if (!row) throw new NotFoundError("Reply");
+  if (!canReadReplies(actor, row.owner_id)) throw new ForbiddenError("Only the contact owner and admins can change a reply's label.");
+  // A pending AI step is dropped: the rep's label wins.
+  await db.query(
+    `update public.whatsapp_inbound_events
+        set reply_label = $2, reply_label_source = 'rep', reply_label_confidence = null, label_corrected_by = $3, label_corrected_at = now(),
+            classification_status = case when classification_status = 'pending' then 'done' else classification_status end,
+            classification_next_at = null, classified_at = coalesce(classified_at, now())
+      where message_id = $1`,
+    [messageId, label, actor.id],
+  );
+  await retitleReplyTask(db, leadId, label);
+  return { messageId, label, labelSource: "rep" as const, labelBy: actor.fullName };
 }

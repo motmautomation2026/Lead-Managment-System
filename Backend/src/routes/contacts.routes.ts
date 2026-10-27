@@ -5,13 +5,14 @@
  */
 import { Router } from "express";
 import { asyncHandler } from "../asyncHandler.js";
-import { pool } from "../db.js";
+import { pool, withTransaction } from "../db.js";
 import { ForbiddenError } from "../errors.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as contacts from "../services/contacts.service.js";
 import { getLeadRowOr404 } from "../services/leads.service.js";
 import { listContactTimeline, timelineListSchema } from "../services/timeline.service.js";
 import { canReadReplies, readInboundReply } from "../services/inboundReplies.service.js";
+import { correctReplyLabel, replyLabelCorrectionSchema } from "../services/replyLabels.service.js";
 
 export const contactsRouter = Router();
 contactsRouter.param("id", uuidParam("contact"));
@@ -62,5 +63,14 @@ contactsRouter.get(
   asyncHandler(async (req, res) => {
     res.set("Cache-Control", "no-store");
     res.json(await readInboundReply(pool, req.actor!, req.workspaceId!, req.params.id!, req.params.messageId!));
+  }),
+);
+
+/** D4a: the owner or an admin changes a reply's label (no text involved). */
+contactsRouter.put(
+  "/:id/replies/:messageId/label",
+  asyncHandler(async (req, res) => {
+    const { label } = parseBody(replyLabelCorrectionSchema, req.body);
+    res.json(await withTransaction((client) => correctReplyLabel(client, req.actor!, req.workspaceId!, req.params.id!, req.params.messageId!, label)));
   }),
 );

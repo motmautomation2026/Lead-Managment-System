@@ -145,8 +145,8 @@ describeIfDb("inbound reply text (requires TEST_DATABASE_URL)", () => {
     expect(JSON.stringify(own.body)).not.toContain(secret);
     const replies = (own.body.data as { reply?: { messageId: string; hasText: boolean; canRead: boolean } }[]).flatMap((r) => (r.reply ? [r.reply] : []));
     expect(replies).toHaveLength(4);
-    expect(replies.find((r) => r.messageId === msg.text)).toEqual({ messageId: msg.text, hasText: true, canRead: true });
-    expect(replies.find((r) => r.messageId === msg.sticker)).toEqual({ messageId: msg.sticker, hasText: false, canRead: true });
+    expect(replies.find((r) => r.messageId === msg.text)).toMatchObject({ messageId: msg.text, hasText: true, canRead: true });
+    expect(replies.find((r) => r.messageId === msg.sticker)).toMatchObject({ messageId: msg.sticker, hasText: false, canRead: true });
 
     const other = await api.call(otherRep, ws, "GET", `/contacts/${leadA}/timeline?limit=100`);
     expect(JSON.stringify(other.body)).not.toContain(secret);

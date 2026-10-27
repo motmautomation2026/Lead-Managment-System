@@ -7,7 +7,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InboundReply, TimelineEvent } from "@/types";
@@ -15,6 +15,7 @@ import type { InboundReply, TimelineEvent } from "@/types";
 const mocks = vi.hoisted(() => ({
   timeline: vi.fn(),
   reply: vi.fn(),
+  setReplyLabel: vi.fn(),
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -23,7 +24,7 @@ vi.mock("@/store/workspace-context", () => ({
 vi.mock("@/lib/backend-client", () => ({
   BackendError: class extends Error {},
   backend: {
-    contacts: { timeline: mocks.timeline, reply: mocks.reply },
+    contacts: { timeline: mocks.timeline, reply: mocks.reply, setReplyLabel: mocks.setReplyLabel },
     companies: { timeline: vi.fn() },
     deals: { timeline: vi.fn() },
   },
@@ -42,6 +43,18 @@ const replyRow = (reply: TimelineEvent["reply"], id = "t-1"): TimelineEvent => (
   actor: "System",
   source: "system",
   ...(reply && { reply }),
+});
+type ReplyField = NonNullable<TimelineEvent["reply"]>;
+const r = (over: Partial<ReplyField> = {}): ReplyField => ({
+  messageId: "m-1",
+  hasText: true,
+  canRead: true,
+  label: null,
+  labelSource: null,
+  labelBy: null,
+  classifying: false,
+  canCorrect: false,
+  ...over,
 });
 const answer = (over: Partial<InboundReply> = {}): InboundReply => ({
   messageId: "m-1",
@@ -91,7 +104,7 @@ afterEach(() => {
 describe("ActivityFeed — inbound replies (D2)", () => {
   it("requests the text only after Show message; Hide removes it from the cache", async () => {
     mocks.reply.mockResolvedValue(answer());
-    await feed([replyRow({ messageId: "m-1", hasText: true, canRead: true })]);
+    await feed([replyRow(r({ hasText: true, canRead: true }))]);
     const show = await screen.findByRole("button", { name: "Show message" });
     expect(mocks.reply).not.toHaveBeenCalled();
 
@@ -109,7 +122,7 @@ describe("ActivityFeed — inbound replies (D2)", () => {
 
   it("unmounting (navigating away) removes the text from the cache", async () => {
     mocks.reply.mockResolvedValue(answer());
-    await feed([replyRow({ messageId: "m-1", hasText: true, canRead: true })]);
+    await feed([replyRow(r({ hasText: true, canRead: true }))]);
     fireEvent.click(await screen.findByRole("button", { name: "Show message" }));
     await screen.findByText(SECRET);
     cleanup();
@@ -118,7 +131,7 @@ describe("ActivityFeed — inbound replies (D2)", () => {
 
   it("shows the shortened note when truncated", async () => {
     mocks.reply.mockResolvedValue(answer({ truncated: true }));
-    await feed([replyRow({ messageId: "m-1", hasText: true, canRead: true })]);
+    await feed([replyRow(r({ hasText: true, canRead: true }))]);
     fireEvent.click(await screen.findByRole("button", { name: "Show message" }));
     expect(await screen.findByText("(shortened — the message was longer)")).toBeInTheDocument();
   });
@@ -128,13 +141,13 @@ describe("ActivityFeed — inbound replies (D2)", () => {
     ["unreadable", /can't be read/],
   ] as const)("shows %s as muted text", async (reason, text) => {
     mocks.reply.mockResolvedValue(answer({ text: null, reason }));
-    await feed([replyRow({ messageId: "m-1", hasText: reason === "unreadable", canRead: true })]);
+    await feed([replyRow(r({ hasText: reason === "unreadable", canRead: true }))]);
     fireEvent.click(await screen.findByRole("button", { name: "Show message" }));
     expect(await screen.findByText(text)).toBeInTheDocument();
   });
 
   it("no button and an explanation when the user can't read replies", async () => {
-    await feed([replyRow({ messageId: "m-1", hasText: true, canRead: false })]);
+    await feed([replyRow(r({ hasText: true, canRead: false }))]);
     expect(
       await screen.findByText("Only the contact owner and admins can read replies."),
     ).toBeInTheDocument();
@@ -157,6 +170,60 @@ describe("ActivityFeed — inbound replies (D2)", () => {
       "aria-pressed",
       "true",
     );
+  });
+});
+
+describe("ActivityFeed — reply labels (D4a)", () => {
+  it.each([
+    [{ label: "asked_to_stop", labelSource: "keyword" }, "Asked to stop", "by keyword"],
+    [{ label: "not_interested", labelSource: "ai" }, "Not interested", "by AI"],
+    [{ label: "annoyed", labelSource: "ai" }, "Annoyed", "by AI"],
+    [{ label: "positive", labelSource: "rep", labelBy: "Priya" }, "Wants to talk", "by Priya"],
+    [{ label: "question", labelSource: "ai" }, "Question", "by AI"],
+    [{ label: "other", labelSource: "ai" }, "Other", "by AI"],
+    [{ label: "unclassified", labelSource: "keyword" }, "Not classified", "by keyword"],
+  ] as const)("shows %o as a pill with its source", async (over, pill, by) => {
+    await feed([replyRow(r(over))]);
+    expect(await screen.findByText(pill)).toBeInTheDocument();
+    expect(screen.getByText(by)).toBeInTheDocument();
+  });
+
+  it("shows Classifying… while pending, and nothing for an unlabelled older reply", async () => {
+    await feed([
+      replyRow(r({ classifying: true }), "t-1"),
+      replyRow(r({ messageId: "m-2" }), "t-2"),
+    ]);
+    expect(await screen.findAllByText("Classifying…")).toHaveLength(1);
+  });
+
+  it("no Change menu unless the user may correct", async () => {
+    await feed([replyRow(r({ label: "positive", labelSource: "ai", canCorrect: false }))]);
+    await screen.findByText("Wants to talk");
+    expect(screen.queryByRole("button", { name: "Change reply label" })).not.toBeInTheDocument();
+  });
+
+  it("the owner/admin changes the label: one API call, then the timeline refetches", async () => {
+    mocks.setReplyLabel.mockResolvedValue({
+      messageId: "m-1",
+      label: "not_interested",
+      labelSource: "rep",
+      labelBy: "Me",
+    });
+    await feed([replyRow(r({ label: "positive", labelSource: "ai", canCorrect: true }))]);
+    const change = await screen.findByRole("button", { name: "Change reply label" });
+    expect(mocks.timeline).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(change, { key: "Enter" });
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).queryByRole("menuitem", { name: "Not classified" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "Wants to talk" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Not interested" }));
+    await waitFor(() =>
+      expect(mocks.setReplyLabel).toHaveBeenCalledWith("c-1", "m-1", "not_interested"),
+    );
+    await waitFor(() => expect(mocks.timeline).toHaveBeenCalledTimes(2));
   });
 });
 

@@ -1,15 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/common/status-badge";
+import { StatusPill, type PillTone } from "@/components/crm/status-pill";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { EmptyState } from "@/components/crm/empty-state";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { ACTIVITY_FILTERS, type ActivityFilter } from "@/features/contacts/contact-helpers";
 import { cn } from "@/lib/utils";
-import { useCompanyTimeline, useContactTimeline, useDealTimeline, useInboundReply } from "@/store";
-import type { CompanyTimelineEvent, TimelineEvent } from "@/types";
+import { REPLY_LABEL_TEXT } from "@/features/agent/agent-labels";
+import {
+  messageFromError,
+  useCompanyTimeline,
+  useContactTimeline,
+  useCorrectReplyLabel,
+  useDealTimeline,
+  useInboundReply,
+} from "@/store";
+import {
+  REPLY_LABELS,
+  type CompanyTimelineEvent,
+  type ReplyLabel,
+  type TimelineEvent,
+} from "@/types";
 
 type Reply = NonNullable<TimelineEvent["reply"]>;
 
@@ -103,7 +124,10 @@ export function ActivityFeed({
                   </p>
                 )}
                 {event.reply && source.contactId && (
-                  <ReplyText contactId={source.contactId} reply={event.reply} />
+                  <>
+                    <ReplyLabelLine contactId={source.contactId} reply={event.reply} />
+                    <ReplyText contactId={source.contactId} reply={event.reply} />
+                  </>
                 )}
                 <div className="pt-0.5 type-small text-muted-foreground">
                   {"contact" in event && (
@@ -186,6 +210,82 @@ function ReplyText({ contactId, reply }: { contactId: string; reply: Reply }) {
         </p>
       )}
       {toggle}
+    </div>
+  );
+}
+
+const REPLY_LABEL_TONE: Record<ReplyLabel, PillTone> = {
+  asked_to_stop: "danger",
+  not_interested: "warning",
+  annoyed: "warning",
+  positive: "success",
+  question: "info",
+  other: "neutral",
+  unclassified: "neutral",
+};
+const CORRECTABLE = REPLY_LABELS.filter(
+  (l): l is Exclude<ReplyLabel, "unclassified"> => l !== "unclassified",
+);
+
+/**
+ * D4a: what the reply says (never the text) and who decided it; the owner and admins can
+ * change it. A change re-titles the reply task but never undoes an opt-out or a stopped AI.
+ */
+function ReplyLabelLine({ contactId, reply }: { contactId: string; reply: Reply }) {
+  const correct = useCorrectReplyLabel(contactId);
+  if (!reply.label && !reply.classifying) return null;
+  const by =
+    reply.labelSource === "rep"
+      ? `by ${reply.labelBy ?? "a rep"}`
+      : reply.labelSource === "ai"
+        ? "by AI"
+        : reply.labelSource === "keyword"
+          ? "by keyword"
+          : null;
+  const change = (label: Exclude<ReplyLabel, "unclassified">) =>
+    correct.mutate(
+      { messageId: reply.messageId, label },
+      {
+        onSuccess: () => toast.success(`Reply marked "${REPLY_LABEL_TEXT[label]}"`),
+        onError: (error) => toast.error(messageFromError(error)),
+      },
+    );
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1 type-small text-muted-foreground">
+      {reply.label ? (
+        <StatusPill tone={REPLY_LABEL_TONE[reply.label]}>
+          {REPLY_LABEL_TEXT[reply.label]}
+        </StatusPill>
+      ) : (
+        <StatusPill>Classifying…</StatusPill>
+      )}
+      {reply.label && by && <span>{by}</span>}
+      {reply.canCorrect && (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0"
+              disabled={correct.isPending}
+              aria-label="Change reply label"
+            >
+              Change
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {CORRECTABLE.map((label) => (
+              <DropdownMenuItem
+                key={label}
+                disabled={label === reply.label}
+                onSelect={() => change(label)}
+              >
+                {REPLY_LABEL_TEXT[label]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
