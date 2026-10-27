@@ -70,7 +70,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `038`).
+  (currently `039`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -84,10 +84,12 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not send provider messages from manual Email/WhatsApp activity buttons.
 - Do not execute workflow sends in request/response handlers; use the worker.
 - Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
+- Inbound text is readable only through `GET /contacts/:id/replies/:messageId` (owner + admins, every read audited in
+  `inbound_message_views`, `Cache-Control: no-store`); never in lists, timelines, search, notifications, tasks, AI or logs.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `038`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `039`).
 
 ## Way of working
 
@@ -387,6 +389,18 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   detail + lead panel rows return `context` (`B4-api.md` §7e). Frontend: `ContextUsed` ("Context used: company · deal +
   stage pill", or "No company · no open deal") in the decision Sheet and the lead AI panel rows. `agent:preview` prints the
   Company and Internal context blocks and the prompt token count. No change to rules, wake policy, ceilings or actions.
+- **D2 (read a contact's WhatsApp reply; owner + admins, audited):** migration 039 `inbound_message_views` (workspace,
+  lead, message, viewer, outcome `shown|denied|no_text|decrypt_failed`, viewed_at; RLS on, no policies; no UI yet).
+  `services/inboundReplies.service.ts` (the only decrypt of `whatsapp_inbound_events.body_*`; `canReadReplies`):
+  `GET /contacts/:id/replies/:messageId` → `{ messageId, receivedAt, text, truncated }` or `text: null` + `reason`
+  `not_stored`/`unreadable`; 403 for others (audited `denied`), 404 unless a matched reply of this contact (linked by its
+  timeline row's `metadata.messageId`; no lead column on the event), `Cache-Control: no-store`. Contact timeline rows of
+  matched replies get `reply: { messageId, hasText, canRead }` (`B4-api.md` §7f). No HTTP logger exists, so there is no
+  redaction list to extend; the route logs only the message id on a decrypt failure. Frontend: Activity "Show message" /
+  "Hide" (`useInboundReply`: staleTime 0, gcTime 60 s, no retry/focus refetch, removed on hide/unmount/workspace change),
+  "Read reply" (`ReadReplyLink`) in the reply task's Sheet and the AI panel when `statusReason = lead_replied`; contact
+  route search `tab` / `activity` / `reply=latest` (`validateContactRecordSearch`); `RecordLayout` takes optional
+  `tab`/`onTabChange`. Matching, encryption, the reply task, handoff and notifications unchanged; the agent never gets the text.
 
 ## CRM v2
 

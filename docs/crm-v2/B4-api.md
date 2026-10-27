@@ -32,7 +32,7 @@ Writes stay on the existing `/leads/:id/...` routes.
 | `GET /contacts` | List standard. |
 | `GET /contacts/count` | `{ count }`. |
 | `GET /contacts/:id` | The existing Lead DTO, plus `company: {id, name, domain} \| null` and `deals: [{id, name, stage, amount, currency, closedAt}]` (newest updated first). The Lead DTO's text `company` is returned as **`companyText`** (the key `company` holds the object). 404 for another workspace. |
-| `GET /contacts/:id/timeline` | C3. The contact's timeline, **newest first**, list standard on `(occurred_at, id)` (index `(lead_id, occurred_at, id)`, migration 035): `limit` 1–100, `cursor`, no `sort` (400). Optional `kind[]` = Activity groups `notes, calls, meetings, proposals, tasks, messages, ai, deals, system` (first match wins: `related_deal_id` → deals; actor "AI Agent" → ai; then by `event_kind`: note, call, meeting, proposal (C4: its own group, was under meetings), task, email/whatsapp; else system). Rows = the timeline DTO (`id, leadId, at, kind, title, detail, actor, source, related…Id, metadata`). 404 for another workspace. The old `GET /leads/:id/timeline` (everything, oldest first) is unchanged. |
+| `GET /contacts/:id/timeline` | C3. The contact's timeline, **newest first**, list standard on `(occurred_at, id)` (index `(lead_id, occurred_at, id)`, migration 035): `limit` 1–100, `cursor`, no `sort` (400). Optional `kind[]` = Activity groups `notes, calls, meetings, proposals, tasks, messages, ai, deals, system` (first match wins: `related_deal_id` → deals; actor "AI Agent" → ai; then by `event_kind`: note, call, meeting, proposal (C4: its own group, was under meetings), task, email/whatsapp; else system). Rows = the timeline DTO (`id, leadId, at, kind, title, detail, actor, source, related…Id, metadata`). 404 for another workspace. The old `GET /leads/:id/timeline` (everything, oldest first) is unchanged. D2: a row of a **matched** inbound WhatsApp reply also has `reply: { messageId, hasText, canRead }` (§7f), never the text. |
 | `POST /contacts/bulk` | `{ ids: uuid[1..100], action: "assignOwner" \| "enrollAi", ownerId? }` → `{ data: [{ id, ok, error? }] }` in request order (duplicates removed). One failure never stops the others. `assignOwner` needs `ownerId` of an **active** user (else 400 for the whole request) and runs the normal lead update per contact (timeline "Lead Assigned"). `enrollAi` is **A** and calls the AI enroll service (`error` explains skips: already enrolled, not eligible, no email/phone, …). A contact in another workspace → `ok: false, error: "Contact not found."` |
 
 Filters: `ownerId[]`, `leadStatus[]` (pipeline stage), `lifecycle[]` (default `active` + `long_term_nurture`; `all` = every state except merged; `merged` only when named), `source[]`, `companyId`, `agentStatus[]` (`none|active|paused|handed_off|stopped`), `hasOpenDeal`, `createdFrom/To`, `lastActivityFrom/To`, `q` (full name "first last", first name, last name, company, email, phone).
@@ -174,6 +174,28 @@ and the open deal the decision saw (migration 038: `agent_decisions.context_comp
 `context_deal_stage`). `name` is the current name; `stage` is the deal's stage **when the decision was made**. Both are
 null for decisions without a company / open deal and for every row from before D1. `null` also when the company or deal
 was deleted later.
+
+## 7f. Inbound WhatsApp reply text — `GET /contacts/:id/replies/:messageId` (D2)
+
+The **only** way to read the text of an inbound WhatsApp reply. It returns one message per request, and the frontend calls it
+only after a click. The text is never part of list, timeline, search, notification, task, AI or export responses, and it
+is never logged.
+
+- `messageId` = the contact timeline row's `reply.messageId`. The contact timeline (`GET /contacts/:id/timeline`) adds
+  `reply: { messageId, hasText, canRead }` to rows whose `metadata.messageId` is a `matched` `whatsapp_inbound_events`
+  row of the workspace. `hasText` = text stored (encrypted, since 4A). `canRead` = the caller is an admin or the
+  contact's current owner. Company and deal feeds don't add `reply`.
+- **200** `{ messageId, receivedAt, text, truncated }`. `truncated` = stored text was cut to 4,000 characters.
+  `{ …, text: null, reason: "not_stored" }` when no text was stored (stickers, voice notes, replies before 4A).
+  `{ …, text: null, reason: "unreadable" }` when decryption fails (e.g. `INTEGRATION_ENCRYPTION_KEY` changed), with a
+  warning log that carries only the message id and key version.
+- **403** "Only the contact owner and admins can read replies." for anyone else (CRM user, not owner, not admin).
+- **404** when the contact is not in this workspace, or the message is not a matched reply of this contact (another
+  contact's, another workspace's, ambiguous/unmatched or unknown). It never reveals that the message exists elsewhere.
+- Headers: `Cache-Control: no-store` (also on 403).
+- Audit (migration 039, `inbound_message_views`): one row per request that reached a matched reply of the contact,
+  with `workspace_id, lead_id, message_id, viewer_id, outcome` (`shown` | `denied` | `no_text` | `decrypt_failed`) and
+  `viewed_at`. 404s are not audited. The text is never stored there. RLS is on with no policies (backend only). No UI yet.
 
 ## 8. Performance (B4 check)
 
