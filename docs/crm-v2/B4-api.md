@@ -179,7 +179,7 @@ was deleted later.
 
 The **only** way to read the text of an inbound WhatsApp reply. It returns one message per request, and the frontend calls it
 only after a click. The text is never part of list, timeline, search, notification, task, AI or export responses, and it
-is never logged.
+is never logged. (D4a: the worker also decrypts it once to label it, §7g; only the label is stored.)
 
 - `messageId` = the contact timeline row's `reply.messageId`. The contact timeline (`GET /contacts/:id/timeline`) adds
   `reply: { messageId, hasText, canRead }` to rows whose `metadata.messageId` is a `matched` `whatsapp_inbound_events`
@@ -196,6 +196,28 @@ is never logged.
 - Audit (migration 039, `inbound_message_views`): one row per request that reached a matched reply of the contact,
   with `workspace_id, lead_id, message_id, viewer_id, outcome` (`shown` | `denied` | `no_text` | `decrypt_failed`) and
   `viewed_at`. 404s are not audited. The text is never stored there. RLS is on with no policies (backend only). No UI yet.
+
+## 7g. Reply labels — `reply.label…` and `PUT /contacts/:id/replies/:messageId/label` (D4a)
+
+What a matched WhatsApp reply says, never the text or a quote of it (migration 040 on `whatsapp_inbound_events`).
+
+- Labels: `asked_to_stop`, `not_interested`, `annoyed`, `positive`, `question`, `other`, `unclassified`. Sources:
+  `keyword` (exact short phrase, every mode, no AI), `ai` (worker, grounding model, only for contacts the AI managed before
+  the reply and a non-off mode within the monthly budget), `rep` (a correction).
+- The contact timeline's `reply` (§7f) also has `label` (null = an older reply or still classifying), `labelSource`,
+  `labelBy` (the rep's name when `labelSource = "rep"`, else null), `classifying` (AI step pending) and `canCorrect`
+  (= `canRead`: admin or the contact's owner).
+- `PUT /contacts/:id/replies/:messageId/label` `{ label }` (any label except `unclassified`, else 400) →
+  `{ messageId, label, labelSource: "rep", labelBy }`. 403 "Only the contact owner and admins can change a reply's label."
+  for anyone else; 404 like §7f. Records who and when, drops a pending AI step, and re-titles the contact's open reply task.
+  It never undoes a WhatsApp opt-out, never restarts a permanently stopped AI and never applies new effects.
+- Effects of an automatic label (same transaction, idempotent): `asked_to_stop` → WhatsApp contactability `opted_out`
+  (reason "Asked to stop on WhatsApp"; a later reply keeps it), the owner is notified, an AI contact → `stopped`
+  (`asked_to_stop`); `not_interested` / `annoyed` → an AI contact → `stopped` (`not_interested`). Never Do Not Contact.
+  The open reply task is re-titled except for `other` / `unclassified`. An opted-out contact gets no WhatsApp from
+  workflows, the agent rules, or the proposal / meeting sends.
+- `GET /agent/stats` adds `replies: { byLabel: { <label>: n }, costUsd }` for replies labelled this IST month; the AI
+  labelling cost is also part of `spend.spentUsd` (the monthly budget), never of the daily decision cap.
 
 ## 8. Performance (B4 check)
 

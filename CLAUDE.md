@@ -70,7 +70,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `039`).
+  (currently `040`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,10 +86,12 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
 - Inbound text is readable only through `GET /contacts/:id/replies/:messageId` (owner + admins, every read audited in
   `inbound_message_views`, `Cache-Control: no-store`); never in lists, timelines, search, notifications, tasks, AI or logs.
+  Sole exception (D4a): the worker's reply classifier decrypts it once to label it (no DB client held during the call,
+  strict label + confidence schema); only the label is stored, and the decision agent never gets the text.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `039`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `040`).
 
 ## Way of working
 
@@ -401,6 +403,32 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   "Read reply" (`ReadReplyLink`) in the reply task's Sheet and the AI panel when `statusReason = lead_replied`; contact
   route search `tab` / `activity` / `reply=latest` (`validateContactRecordSearch`); `RecordLayout` takes optional
   `tab`/`onTabChange`. Matching, encryption, the reply task, handoff and notifications unchanged; the agent never gets the text.
+- **D4a (understand WhatsApp replies; nothing sent):** migration 040 on `whatsapp_inbound_events`: `lead_id`, `reply_label`
+  (`asked_to_stop|not_interested|annoyed|positive|question|other|unclassified`), `reply_label_source` (`keyword|ai|rep`),
+  `reply_label_confidence`, `classification_status` (`pending|done|failed|skipped`), `classification_attempts` (claim token),
+  `classification_next_at`, `classified_at`, `label_corrected_by/_at`, `classification_model/_input_tokens/_output_tokens/
+  _cost_usd`; partial index on pending. Pure `domain/replyKeywords.ts` (`matchReplyKeyword`: the WHOLE reply, lower-cased,
+  punctuation/emoji dropped, must be an exact short phrase) and `agent/replyClassification.ts` (strict JSON schema
+  `label` + `confidence`, `finalLabel`: < 0.6 → `other` except stop/not-interested, `replyEffects`, `replyTaskTitle`,
+  `REPLY_TASK_TITLES`, delimited `<reply>` block). `processInboundUpsert` (matched only, same transaction): keyword → label at
+  once in every mode; else `pending` when the contact was active/paused in the AI before the reply and the mode is not off;
+  else `unclassified` (`skipped`). `services/replyLabels.service.ts` `applyReplyLabel`: `asked_to_stop` → WhatsApp
+  `opted_out` (+ timeline, owner notification "<Name> asked us to stop messaging on WhatsApp"), AI → `stopped`
+  `asked_to_stop`; `not_interested`/`annoyed` → AI `stopped` `not_interested`; re-titles the one open reply task (not for
+  other/unclassified); never DNC. The reply upsert no longer overwrites `opted_out` with `reachable`; the reply-task lookup
+  matches every reply title; proposal/meeting WhatsApp eligibility (`loadSourceEligibility`) refuses an opted-out contact
+  (workflows and agent rules already did). `services/replyClassifier.service.ts` `runReplyClassification` (worker, behind
+  `AGENT_RUNNER_ENABLED`): ≤ 10 pending (15-min claim), mode/budget re-check (else `unclassified`), grounding model +
+  price (else defer), `decryptInboundBody` (`inboundReplies.service.ts`), `DecisionModel`'s sibling `ReplyClassifierModel`
+  `classifyReply` with no client held; 3 attempts then `unclassified` (`failed`). `MONTH_SPEND_SQL` (agentRunner) = decisions +
+  classification cost: the monthly budget and `/agent/stats` spend; never the daily decision cap. API: timeline `reply` +
+  `label`, `labelSource`, `labelBy`, `classifying`, `canCorrect`; `PUT /contacts/:id/replies/:messageId/label` (owner/admin,
+  `correctReplyLabel`: source rep, re-titles, never undoes an opt-out or a permanent stop); `/agent/stats` `replies {byLabel,
+  costUsd}` (`B4-api.md` §7g). Frontend: Activity reply pill + "by AI / keyword / <rep>" + Change menu
+  (`useCorrectReplyLabel`), "Classifying…", WhatsApp status "Opted Out — Asked to stop on WhatsApp", AI Activity "WhatsApp
+  replies this month"; `REPLY_LABEL_TEXT` / `REPLY_TASK_TITLES` in `features/agent/agent-labels.ts`. Clearing an opt-out today:
+  `POST /leads/:id/contactability {channel:"whatsapp", status:"valid"}` (any CRM user, no UI). D1 prompt fix: the DATA
+  sentence names `internal_context`.
 
 ## CRM v2
 
@@ -433,3 +461,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
 - The agent never marks Won/Lost/DNC, never deletes, never changes the owner; never contacts
   DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`.
+- Reply labels (D4a): a matched WhatsApp reply is labelled by keyword first (every contact, every mode: `stop`,
+  `unsubscribe`, `remove me`, `don't message me`, `do not message`, `not interested`, … — exact short phrases only, list in
+  `domain/replyKeywords.ts`), else by the worker's AI step (AI contacts, non-off mode, budget left). `asked_to_stop` → WhatsApp
+  opted out + AI stopped (permanent); `not_interested`/`annoyed` → AI stopped (permanent); never Do Not Contact (a rep
+  decision). A rep's correction never undoes these.
