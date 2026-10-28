@@ -15,6 +15,7 @@ import { PermanentProviderError, ProviderDeferredError } from "./providers/provi
 import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
 import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
 import { runAgentTick } from "./services/agentRunner.service.js";
+import { runAgentSends } from "./services/agentSends.service.js";
 import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runDealSweep } from "./services/deals.service.js";
@@ -207,7 +208,14 @@ async function tick(): Promise<void> {
   });
   if (labelled.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
 
-  // AI agent (shadow drafts only), behind AGENT_RUNNER_ENABLED; after all other work.
+  // E2: the AI's queued WhatsApp sends (its emails go through runEmailOutbound above), behind AGENT_RUNNER_ENABLED.
+  const aiSends = await runAgentSends(env.AGENT_RUNNER_ENABLED, { dryRun: env.WORKER_DRY_RUN }).catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] AI sends failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (aiSends.length) console.log(`[worker] AI WhatsApp sends: ${aiSends.map((s) => s.result).join(", ")}.`);
+
+  // AI agent decisions (shadow drafts; live contacts queue sends / execute actions), behind AGENT_RUNNER_ENABLED; after all other work.
   await runAgentTick(env.AGENT_RUNNER_ENABLED, {
     model: decisionModel,
     embedder: getDefaultEmbedder(),
@@ -229,7 +237,7 @@ async function loop(): Promise<void> {
 }
 
 console.log(
-  `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}, AI agent runner ${env.AGENT_RUNNER_ENABLED ? "on (shadow only)" : "off"}).`,
+  `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}, AI agent runner ${env.AGENT_RUNNER_ENABLED ? "on" : "off"}).`,
 );
 void baileysRegistry
   .ensureManagers()

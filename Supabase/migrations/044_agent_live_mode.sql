@@ -62,8 +62,16 @@ create index if not exists agent_decisions_ws_sent_idx
 
 alter table public.whatsapp_outbound_messages
   add column if not exists agent_decision_id uuid references public.agent_decisions (id) on delete cascade;
-create unique index if not exists whatsapp_outbound_agent_decision_unique
-  on public.whatsapp_outbound_messages (agent_decision_id) where agent_decision_id is not null;
+-- A plain unique constraint (NULLs don't collide), like proposal_id / meeting_id, so the send path's
+-- `on conflict (agent_decision_id)` works: one WhatsApp per decision.
+drop index if exists public.whatsapp_outbound_agent_decision_unique;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'whatsapp_outbound_agent_decision_id_key') then
+    alter table public.whatsapp_outbound_messages
+      add constraint whatsapp_outbound_agent_decision_id_key unique (agent_decision_id);
+  end if;
+end $$;
 
 -- 'agent' joins the WhatsApp sources (email_outbound_messages already allows it, migration 042).
 alter table public.whatsapp_outbound_messages drop constraint if exists whatsapp_outbound_exactly_one_source;

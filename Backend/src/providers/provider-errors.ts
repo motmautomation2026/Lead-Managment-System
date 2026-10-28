@@ -45,3 +45,11 @@ export function toProviderHttpError(error: unknown, action: string): unknown {
   if (error instanceof ProviderTimeoutError) return new AppError(504, "provider_timeout", `${action}: ${reason}`);
   return new AppError(502, "provider_error", `${action}: ${reason}`);
 }
+
+/** A send the re-check refused at send time (E2 rule 5): nothing went out, and it won't be retried. */
+export class SendCancelledError extends PermanentProviderError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SendCancelledError";
+  }
+}

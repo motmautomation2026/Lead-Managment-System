@@ -16,12 +16,13 @@ import type { Queryable } from "../dto.js";
 import { phoneE164ToJid } from "../domain/phone.js";
 import { decryptBytes, encryptBytes } from "../security/encryption.js";
 import { clearBaileysAuthState, loadBaileysAuthState } from "./baileys-auth.store.js";
-import { PermanentProviderError, ProviderDeferredError } from "./provider-errors.js";
+import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "./provider-errors.js";
 import { processInboundUpsert } from "../services/whatsapp-inbound.service.js";
 import { disconnectAction, isOutboundRestricted, randomSpacingMs, reconnectDelayMs, type DisconnectAction } from "../domain/baileys-policy.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
 import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
+import { agentSendRecheck } from "../services/agentSendState.service.js";
 
 export interface WhatsAppAttachment {
   storagePath: string;
@@ -41,11 +42,17 @@ export interface WhatsAppAttachment {
  * connection checks) stays computed generically across the whole table
  * regardless of which source a row came from.
  */
-export type WhatsAppSendSource = { type: "scheduled_action"; id: string } | { type: "proposal"; id: string } | { type: "meeting"; id: string };
+export type WhatsAppSendSource =
+  | { type: "scheduled_action"; id: string }
+  | { type: "proposal"; id: string }
+  | { type: "meeting"; id: string }
+  /** E2: an AI decision (automated); `id` is the agent_decisions id. */
+  | { type: "agent"; id: string };
 
-export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" {
+export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" {
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
+  if (source.type === "agent") return "agent_decision_id";
   return "meeting_id";
 }
 
@@ -126,6 +133,9 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
       const row = result.rows[0];
       return row && isMeetingSendEligible(row) ? row.phone_e164 : null;
     }
+    case "agent":
+      // performSend re-checks AI sends with agentSendRecheck (it can defer or cancel, not only refuse).
+      throw new Error("AI sends are checked by agentSendRecheck.");
     default:
       return assertNever(source);
   }
@@ -143,6 +153,9 @@ export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSend
       break;
     case "meeting":
       table = "public.meetings";
+      break;
+    case "agent":
+      table = "public.agent_decisions";
       break;
     default:
       return assertNever(source);
@@ -250,6 +263,8 @@ type Claim =
   | { kind: "alreadySent"; messageId: string }
   | { kind: "defer"; reason: string; retryAfterMs: number }
   | { kind: "permanent"; reason: string }
+  /** E2: the AI send's re-check refused it at send time. */
+  | { kind: "cancel"; reason: string }
   | {
       kind: "send";
       messageId: string;
@@ -671,7 +686,17 @@ export class BaileysManager {
           paused = true;
         }
       }
-      const eligiblePhone = await loadSourceEligibility(db, this.workspaceId, input.source);
+      let eligiblePhone: string | null;
+      if (input.source.type === "agent") {
+        // E2 rule 5: the AI send's re-check, under the decision + lead row locks, right before the send.
+        const check = await agentSendRecheck(db, input.source.id, "whatsapp");
+        if ("cancel" in check) return { kind: "cancel", reason: check.cancel };
+        if ("defer" in check) return { kind: "defer", reason: check.reason, retryAfterMs: Math.max(check.defer.getTime() - Date.now(), 1_000) };
+        eligiblePhone = check.phoneE164 ?? null;
+        if (eligiblePhone !== input.phoneE164) return { kind: "cancel", reason: "The contact's phone number changed after this message was written." };
+      } else {
+        eligiblePhone = await loadSourceEligibility(db, this.workspaceId, input.source);
+      }
       if (eligiblePhone !== input.phoneE164) return { kind: "permanent", reason: "The lead is no longer eligible for this WhatsApp action." };
       const existing = await db.query<OutboundRow>(
         `select message_id, remote_jid, status from public.whatsapp_outbound_messages where ${column} = $1`,
@@ -741,6 +766,7 @@ export class BaileysManager {
     if (claim.kind === "alreadySent") return { providerMessageId: claim.messageId };
     if (claim.kind === "defer") throw new ProviderDeferredError(claim.reason, claim.retryAfterMs);
     if (claim.kind === "permanent") throw new PermanentProviderError(claim.reason);
+    if (claim.kind === "cancel") throw new SendCancelledError(claim.reason);
     if (claim.spacingMs > 0) await this.wait(claim.spacingMs);
 
     // Re-check the emergency switch and live connection state after the spacing

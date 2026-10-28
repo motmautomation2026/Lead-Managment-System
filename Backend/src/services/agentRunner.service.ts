@@ -1,4 +1,5 @@
 import { pool, withTransaction } from "../db.js";
+import type { Queryable } from "../dto.js";
 import { env } from "../env.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
@@ -12,12 +13,16 @@ import { PermanentProviderError, ProviderDeferredError } from "../providers/prov
 import { buildAgentContext, type AgentContext, type AgentSettingsRow } from "./agentContext.service.js";
 import { enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { composeOutgoing } from "../agent/composeMessage.js";
+import { executeHandoff, executeStageChange, executeStop } from "./agentSends.service.js";
+import { enqueueEmail } from "./emailOutbound.service.js";
 
 /**
- * The agent's decision loop (3C-2), SHADOW ONLY: turns due wakeups into DRAFT
- * agent_decisions. Never sends, never creates tasks, never changes a lead's
- * stage or status from a decision, never touches workflows. No transaction or
- * checked-out client is held during model calls.
+ * The agent's decision loop (3C-2): turns due wakeups into agent_decisions. A shadow
+ * contact gets a DRAFT (nothing sent, no task, no stage/status change). E2: a live
+ * contact's allowed send is queued (sent later by the worker's channel queues, after a
+ * re-check), and handoff / stop / update_stage are executed in the decision's
+ * transaction. No transaction or checked-out client is held during model calls.
  */
 
 const BATCH_SIZE = 5;
@@ -173,13 +178,13 @@ interface ClaimedWakeup {
 export interface WakeupOutcome {
   wakeupId: string;
   leadId: string;
-  result: "draft" | "blocked" | "precheck" | "deferred" | "failed" | "skipped" | "lost_claim";
+  result: "draft" | "executed" | "blocked" | "precheck" | "deferred" | "failed" | "skipped" | "lost_claim";
   action?: string;
 }
 
 /**
  * One agent tick: cancel pending wakeups of leads the agent no longer manages,
- * claim up to 5 due wakeups in SHADOW workspaces (reclaiming any stuck in
+ * claim up to 5 due wakeups in shadow and live workspaces (reclaiming any stuck in
  * `executing` for 15 min), and process them one at a time. A no-op unless
  * `enabled` (AGENT_RUNNER_ENABLED).
  */
@@ -212,7 +217,7 @@ async function claimWakeups(workspaceIds: string[] | null): Promise<ClaimedWakeu
           set status = 'executing', claimed_at = date_trunc('milliseconds', now()), attempt_count = w.attempt_count + 1
         where w.id in (
           select x.id from public.agent_wakeups x
-            join public.agent_settings s on s.workspace_id = x.workspace_id and s.mode = 'shadow'
+            join public.agent_settings s on s.workspace_id = x.workspace_id and s.mode in ('shadow', 'live')
            where ((x.status = 'pending' and x.due_at <= now())
                or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
              and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
@@ -380,11 +385,11 @@ function decisionColumns(decision: AgentDecision) {
 
 const INSERT_DECISION = `
   insert into public.agent_decisions
-    (workspace_id, lead_id, wakeup_id, mode, action, reasoning, message_subject, message_body, asset_ids,
+    (workspace_id, lead_id, wakeup_id, action, reasoning, message_subject, message_body, asset_ids,
      send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
      regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
-     outcome, error, context_company_id, context_deal_id, context_deal_stage)
-  values ($1, $2, $3, 'shadow', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+     outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at)
+  values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
   returning id`;
 
 /** Which company and open deal (stage at the time) the decision saw, for review (D1). */
@@ -410,7 +415,10 @@ async function recordDraft(
     const columns = decisionColumns(draft.decision);
     // A handoff fallback keeps the failed attempt's message for review.
     const failed = draft.failedAttempt ? decisionColumns(draft.failedAttempt.rules.finalDecision) : null;
-    const outcome = stillActive ? draft.outcome : "skipped";
+    // E2: a live contact's decision is acted on (executed), a shadow contact's stays a draft.
+    const live = ctx.rules.mode === "live";
+    const outcome = !stillActive ? "skipped" : live && draft.outcome === "draft" ? "executed" : draft.outcome;
+    const queuedSend = outcome === "executed" && isSend(draft.decision);
     const recorded = draft.decision.action === "handoff" && failed ? { ...columns, message_subject: failed.message_subject, message_body: failed.message_body } : columns;
     const sendAt = draft.failedAttempt ? null : draft.rules.sendAt;
     const nextWakeAt = draft.failedAttempt ? null : draft.rules.nextWakeAt;
@@ -442,25 +450,62 @@ async function recordDraft(
       outcome,
       stillActive ? null : "The lead is no longer managed by the agent.",
       ...contextColumns(ctx),
+      live ? "live" : "shadow",
+      queuedSend ? "queued" : null,
+      queuedSend ? sendAt : null,
     ]);
     const decisionId = inserted.rows[0]!.id;
 
-    if (outcome === "draft") {
+    if (outcome === "draft" || outcome === "executed") {
       const d = draft.decision;
       if ((isSend(d) || d.action === "wait") && nextWakeAt) {
         await enqueueWakeup(client, { workspaceId: wakeup.workspace_id, leadId: wakeup.lead_id, reason: "timer", dueAt: nextWakeAt, payload: { decisionId } });
       }
-      const title = timelineTitle(d);
-      if (title) {
-        await addTimelineEvent(client, { leadId: wakeup.lead_id, kind: "automation", title, detail: SHADOW_NOTE, ...AGENT_ACTOR, metadata: { decisionId } });
+      if (outcome === "draft") {
+        const title = timelineTitle(d);
+        if (title) {
+          await addTimelineEvent(client, { leadId: wakeup.lead_id, kind: "automation", title, detail: SHADOW_NOTE, ...AGENT_ACTOR, metadata: { decisionId } });
+        }
+      } else {
+        await executeLive(client, wakeup, ctx, d, decisionId, sendAt);
       }
     }
     await client.query(`update public.agent_wakeups set status = 'done', processed_at = now() where id = $1`, [wakeup.id]);
     console.log(
       `[agent] wakeup ${wakeup.id} lead ${wakeup.lead_id}: decision ${decisionId} ${draft.decision.action} ${outcome}${draft.regenerated ? " (regenerated)" : ""}, tokens ${usage.inputTokens}/${usage.outputTokens}, cost $${usage.costUsd.toFixed(6)}.`,
     );
-    return { ...base, result: outcome === "draft" ? "draft" : outcome === "blocked" ? "blocked" : "skipped", action: draft.decision.action };
+    return { ...base, result: outcome === "draft" || outcome === "executed" ? outcome : outcome === "blocked" ? "blocked" : "skipped", action: draft.decision.action };
   });
+}
+
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * E2 rule 8, in the decision's transaction: an email is queued in email_outbound_messages
+ * (source 'agent', one per decision; WhatsApp sends are claimed from the decision row);
+ * handoff, stop and update_stage are executed. Each send/action writes its own timeline row.
+ */
+async function executeLive(client: Queryable, wakeup: ClaimedWakeup, ctx: AgentContext, d: AgentDecision, decisionId: string, sendAt: Date | null) {
+  const { workspace_id: workspaceId, lead_id: leadId } = wakeup;
+  switch (d.action) {
+    case "send_email": {
+      const composed = composeOutgoing(d, { ownerName: ctx.lead.ownerName ?? "The team", companyName: ctx.companyName, settings: ctx.settings, isFirstWhatsApp: false });
+      if (composed.channel !== "email") return;
+      await enqueueEmail(client, { workspaceId, source: "agent", sourceId: decisionId, leadId, to: ctx.rules.lead.email!, subject: composed.subject, html: composed.html, notBefore: sendAt });
+      return;
+    }
+    case "handoff":
+      return executeHandoff(client, workspaceId, leadId, decisionId, d.title);
+    case "stop":
+      return executeStop(client, leadId, decisionId, d.reason);
+    case "update_stage":
+      await executeStageChange(client, workspaceId, leadId, decisionId, d.newStage);
+      // The contact stays with the AI; look again after the shortest wake gap.
+      await enqueueWakeup(client, { workspaceId, leadId, reason: "timer", dueAt: new Date(Date.now() + ctx.settings.wake_min_days * DAY_MS), payload: { decisionId } });
+      return;
+    default:
+      return;
+  }
 }
 
 function timelineTitle(decision: AgentDecision): string | null {

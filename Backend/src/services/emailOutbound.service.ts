@@ -29,6 +29,7 @@ import { defaultTransportCache, type TransportCache } from "../providers/email.p
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
+import { agentSendRecheck, recordAgentSendOutcome } from "./agentSendState.service.js";
 
 /**
  * E1b: every email goes through this queue and is sent only by the worker
@@ -79,6 +80,8 @@ export interface EnqueueEmailInput {
   html: string;
   attachments?: AttachmentRef[];
   createdBy?: string | null;
+  /** Not before this time (default now); the AI's rules-allowed send time. */
+  notBefore?: Date | null;
 }
 
 /** Idempotent: a second call for the same (source, sourceId) returns the existing row. */
@@ -99,8 +102,8 @@ export async function enqueueEmail(db: Queryable, input: EnqueueEmailInput): Pro
   }
   const inserted = await db.query<EmailOutboundRow>(
     `insert into public.email_outbound_messages
-       (workspace_id, source, source_id, lead_id, to_address, from_name, to_contact, subject, html, text_body, attachments, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       (workspace_id, source, source_id, lead_id, to_address, from_name, to_contact, subject, html, text_body, attachments, created_by, next_attempt_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, greatest(now(), coalesce($13::timestamptz, now())))
      on conflict (source, source_id) do nothing
      returning *`,
     [
@@ -116,6 +119,7 @@ export async function enqueueEmail(db: Queryable, input: EnqueueEmailInput): Pro
       htmlToText(input.html),
       JSON.stringify(input.attachments ?? []),
       input.createdBy ?? null,
+      input.notBefore ?? null,
     ],
   );
   if (inserted.rows[0]) return inserted.rows[0];
@@ -163,16 +167,20 @@ export async function claimDueEmails(db: Queryable, limit: number, workspaceIds:
 // ---------------------------------------------------------------------------
 // Outcomes (each one short transaction) and their effect on the source row
 
-async function onSourceSent(db: Queryable, row: EmailOutboundRow) {
-  if (row.source === "proposal") {
+async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { messageId: string | null; dryRun: boolean }) {
+  if (row.source === "agent") {
+    await recordAgentSendOutcome(db, row.source_id, { kind: "sent", providerMessageId: result.messageId, dryRun: result.dryRun });
+  } else if (row.source === "proposal") {
     await db.query(`update public.proposals set email_send_status = 'sent', email_sent_at = now(), email_send_error = null where id = $1`, [row.source_id]);
   } else if (row.source === "meeting") {
     await db.query(`update public.meetings set notify_email_status = 'sent', notify_email_sent_at = now(), notify_email_error = null where id = $1`, [row.source_id]);
   }
 }
 
-async function onSourceProblem(db: Queryable, row: EmailOutboundRow, status: "pending" | "failed", error: string) {
-  if (row.source === "proposal") {
+async function onSourceProblem(db: Queryable, row: EmailOutboundRow, status: "pending" | "failed", error: string, retryAt?: Date) {
+  if (row.source === "agent") {
+    await recordAgentSendOutcome(db, row.source_id, status === "failed" ? { kind: "failed", reason: error } : { kind: "deferred", until: retryAt ?? new Date(), reason: error });
+  } else if (row.source === "proposal") {
     await db.query(`update public.proposals set email_send_status = $2, email_send_error = $3 where id = $1`, [row.source_id, status, error]);
   } else if (row.source === "meeting") {
     await db.query(`update public.meetings set notify_email_status = $2, notify_email_error = $3 where id = $1`, [row.source_id, status, error]);
@@ -187,7 +195,7 @@ async function markSent(row: EmailOutboundRow, result: { messageId: string | nul
         where id = $1`,
       [row.id, result.messageId, result.response, result.dryRun],
     );
-    await onSourceSent(db, row);
+    await onSourceSent(db, row, result);
   });
   if (row.source === "proposal") await tryAdvanceToSent(row.workspace_id, row.source_id);
 }
@@ -210,7 +218,7 @@ async function requeue(db: Queryable, row: EmailOutboundRow, at: Date, reason: s
     reason,
     attempts,
   ]);
-  await onSourceProblem(db, row, "pending", reason);
+  await onSourceProblem(db, row, "pending", reason, at);
 }
 
 export async function checkAutoPause(db: Queryable, workspaceId: string) {
@@ -262,6 +270,26 @@ async function downloadAttachment(ref: AttachmentRef): Promise<Buffer> {
 
 const tooBig = (bytes: number) => `Attachments are ${(bytes / 1024 / 1024).toFixed(1)} MB; emails can carry at most 10 MB.`;
 
+/**
+ * E2: re-checks an AI email (short transaction, locks released before SMTP). A time-based
+ * problem re-queues it (no attempt), anything else cancels it and the decision.
+ */
+async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "queued" | "cancelled"> {
+  return withTransaction(async (db) => {
+    const check = await agentSendRecheck(db, row.source_id, "email", now);
+    if ("defer" in check) {
+      await requeue(db, row, check.defer, check.reason);
+      return "queued" as const;
+    }
+    if ("cancel" in check) {
+      await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, check.cancel]);
+      await recordAgentSendOutcome(db, row.source_id, { kind: "cancelled", reason: check.cancel });
+      return "cancelled" as const;
+    }
+    return "ok" as const;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Sending one claimed row
 
@@ -279,6 +307,12 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDeps = {}): Promise<EmailOutboundRow["status"]> {
   const now = deps.now?.() ?? new Date();
   const random = deps.random ?? Math.random;
+
+  // E2: an AI email is re-checked first (a contact that bounced/unsubscribed/replied cancels it, rule 5) and again right before SMTP.
+  if (row.source === "agent") {
+    const gate = await agentGate(row, now);
+    if (gate !== "ok") return gate;
+  }
 
   if (row.source === "scheduled_action" && !(await workflowStepActive(row))) {
     await pool.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, "The workflow step is no longer active."]);
@@ -354,6 +388,11 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
     if (bytes > MAX_ATTACHMENT_BYTES) {
       await withTransaction((db) => markFailed(db, row, tooBig(bytes)));
       return "failed";
+    }
+    // E2 rule 5: the AI email's re-check, immediately before the SMTP call.
+    if (row.source === "agent") {
+      const gate = await agentGate(row, deps.now?.() ?? new Date());
+      if (gate !== "ok") return gate;
     }
     const transport = (deps.transports ?? defaultTransportCache).get(row.workspace_id, box.transportKey, box.smtp);
     const info = await transport.sendMail({

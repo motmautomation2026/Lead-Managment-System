@@ -16,7 +16,7 @@ export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
 
 /** 23:59 today, Asia/Kolkata (fixed UTC+05:30). */
-function endOfIstDay(now = new Date()) {
+export function endOfIstDay(now = new Date()) {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
   ist.setUTCHours(23, 59, 0, 0);
   return new Date(ist.getTime() - IST_OFFSET_MS);
