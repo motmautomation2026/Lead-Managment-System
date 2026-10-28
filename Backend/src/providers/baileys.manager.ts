@@ -1,8 +1,11 @@
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   generateMessageIDV2,
+  makeCacheableSignalKeyStore,
   proto,
   type AnyMessageContent,
+  type CacheStore,
   type ConnectionState,
   type WASocket,
 } from "baileys";
@@ -15,10 +18,10 @@ import { decryptBytes, encryptBytes } from "../security/encryption.js";
 import { clearBaileysAuthState, loadBaileysAuthState } from "./baileys-auth.store.js";
 import { PermanentProviderError, ProviderDeferredError } from "./provider-errors.js";
 import { processInboundUpsert } from "../services/whatsapp-inbound.service.js";
-import { isOutboundRestricted, isTerminalDisconnect, randomSpacingMs, reconnectDelayMs } from "../domain/baileys-policy.js";
+import { disconnectAction, isOutboundRestricted, randomSpacingMs, reconnectDelayMs, type DisconnectAction } from "../domain/baileys-policy.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
-import { autoPause, loadSendStats, recordSafetyEvent } from "../services/whatsappSafety.service.js";
+import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 
 export interface WhatsAppAttachment {
   storagePath: string;
@@ -199,6 +202,49 @@ interface ConnectionControl {
 
 const RESTRICTED_REASON = "WhatsApp applied a reach-out or new-chat restriction to this number.";
 
+/** B1: "composing" expires after ~10 s, so it is resent at most every 8 s. */
+const COMPOSING_REFRESH_MS = 8_000;
+
+/**
+ * B7: numbers paired before E1 keep the browser identity they were paired with
+ * (changing it on a live session is not worth the risk); new pairings use a
+ * standard preset. The WA Web version is the one pinned in the installed
+ * Baileys release — never fetched per connect.
+ */
+const LEGACY_BROWSER: [string, string, string] = ["Northbeam CRM", "Chrome", "1.0.0"];
+const PAIRING_BROWSER = Browsers.macOS("Chrome");
+
+/** Closes we never reconnect from (B4): status, whether auth is cleared, what admins are told. */
+const STOP_ON_DISCONNECT: Record<Exclude<DisconnectAction, "reconnect" | "reconnect_now">, { clearAuth: boolean; pause: boolean; reason: string }> = {
+  logged_out: { clearAuth: true, pause: true, reason: "WhatsApp logged this number out. Pair it again in Settings → WhatsApp." },
+  pause: { clearAuth: false, pause: true, reason: "WhatsApp closed the session (forbidden or replaced by another session). The number may be restricted." },
+  repair: { clearAuth: true, pause: false, reason: "The WhatsApp session is broken and needs to be paired again." },
+};
+
+/**
+ * B5: one retry-counter cache per workspace for the life of the process, outside
+ * any socket, so a reconnect can't reset counters into an endless retry loop.
+ * shortcut: a size-capped Map without TTL; switch to a TTL cache if retries grow large.
+ */
+const retryCounterCaches = new Map<string, CacheStore>();
+export function retryCounterCache(workspaceId: string): CacheStore {
+  let cache = retryCounterCaches.get(workspaceId);
+  if (!cache) {
+    const values = new Map<string, unknown>();
+    cache = {
+      get: <T>(key: string) => values.get(key) as T | undefined,
+      set: <T>(key: string, value: T) => {
+        if (values.size >= 10_000) values.clear();
+        values.set(key, value);
+      },
+      del: (key: string) => void values.delete(key),
+      flushAll: () => values.clear(),
+    };
+    retryCounterCaches.set(workspaceId, cache);
+  }
+  return cache;
+}
+
 /** The claim transaction's outcome; errors are thrown after it commits. */
 type Claim =
   | { kind: "alreadySent"; messageId: string }
@@ -207,6 +253,8 @@ type Claim =
   | {
       kind: "send";
       messageId: string;
+      /** The JID onWhatsApp returned (B2); WhatsApp may normalise the number. */
+      sendJid: string;
       text: string;
       typingMs: number;
       spacingMs: number;
@@ -359,13 +407,19 @@ export class BaileysManager {
 
   private async openSocketUnguarded() {
     this.intentionalClose = false;
-    await pool.query(`update public.whatsapp_connection set status = 'connecting', last_error = null where workspace_id = $1`, [this.workspaceId]);
+    const connecting = await pool.query<{ paired_at: Date | null }>(
+      `update public.whatsapp_connection set status = 'connecting', last_error = null where workspace_id = $1 returning paired_at`,
+      [this.workspaceId],
+    );
     const { state, saveCreds } = await loadBaileysAuthState(this.workspaceId);
     if (this.stopped) return; // stopped (e.g. lock lost) while loading auth state
+    const pairedBeforeE1 = Boolean(state.creds.me) && !connecting.rows[0]?.paired_at;
     const socket = makeWASocket({
-      auth: state,
+      // B6: key writes go straight to the DB store; the cache only saves reads.
+      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, this.logger) },
       logger: this.logger,
-      browser: ["Northbeam CRM", "Chrome", "1.0.0"],
+      browser: pairedBeforeE1 ? LEGACY_BROWSER : PAIRING_BROWSER,
+      msgRetryCounterCache: retryCounterCache(this.workspaceId),
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
       markOnlineOnConnect: false,
@@ -374,7 +428,9 @@ export class BaileysManager {
       shouldIgnoreJid: (jid) =>
         jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@broadcast") || jid.endsWith("@newsletter"),
       getMessage: async (key) => {
-        if (!key.id || !key.remoteJid) return undefined;
+        // By message id alone (unique): a retry request may name the chat by the JID
+        // WhatsApp normalised or by its LID, not the PN JID we stored (B2).
+        if (!key.id) return undefined;
         const result = await pool.query<{
           payload_ciphertext: Buffer;
           payload_iv: Buffer;
@@ -383,8 +439,8 @@ export class BaileysManager {
         }>(
           `select payload_ciphertext, payload_iv, payload_tag, key_version
              from public.whatsapp_outbound_messages
-            where workspace_id = $1 and message_id = $2 and remote_jid = $3 and payload_ciphertext is not null`,
-          [this.workspaceId, key.id, key.remoteJid],
+            where workspace_id = $1 and message_id = $2 and payload_ciphertext is not null`,
+          [this.workspaceId, key.id],
         );
         const row = result.rows[0];
         if (!row) return undefined;
@@ -440,22 +496,32 @@ export class BaileysManager {
     const code = disconnectCode(update);
     const message = update.lastDisconnect?.error?.message ?? "WhatsApp connection closed.";
     if (this.intentionalClose) return;
-    if (isTerminalDisconnect(code)) {
-      await clearBaileysAuthState(this.workspaceId);
+    const action = disconnectAction(code);
+    if (action === "reconnect" || action === "reconnect_now") {
       await pool.query(
-        `update public.whatsapp_connection
-            set status = 'reauth_required', desired_state = 'disconnected', last_error = $1, last_disconnected_at = now(),
-                qr_ciphertext = null, qr_iv = null, qr_tag = null, qr_expires_at = null
-          where workspace_id = $2`,
+        `update public.whatsapp_connection set status = 'reconnecting', last_error = $1, last_disconnected_at = now() where workspace_id = $2`,
         [message, this.workspaceId],
       );
+      // A dropped connection counts toward the reconnect-storm signal; 515 right after pairing doesn't.
+      if (action === "reconnect") await this.recordReconnectFailure(`${code ?? "unknown"}: ${message}`);
+      this.scheduleReconnect(action === "reconnect_now" ? 0 : undefined);
       return;
     }
+    // Never reconnect. desired_state 'disconnected' also makes the registry stop this manager.
+    const stop = STOP_ON_DISCONNECT[action];
+    if (stop.clearAuth) await clearBaileysAuthState(this.workspaceId);
     await pool.query(
-      `update public.whatsapp_connection set status = 'reconnecting', last_error = $1, last_disconnected_at = now() where workspace_id = $2`,
-      [message, this.workspaceId],
+      `update public.whatsapp_connection
+          set status = $1, desired_state = 'disconnected', last_error = $2, last_disconnected_at = now(),
+              qr_ciphertext = null, qr_iv = null, qr_tag = null, qr_expires_at = null${stop.clearAuth ? ", paired_at = null" : ""}
+        where workspace_id = $3`,
+      [stop.clearAuth ? "reauth_required" : "error", message, this.workspaceId],
     );
-    this.scheduleReconnect(code === DisconnectReason.restartRequired ? 0 : undefined);
+    await withTransaction(async (db) => {
+      await recordSafetyEvent(db, this.workspaceId, "disconnected", `${code ?? "unknown"}: ${message}`.slice(0, 500));
+      const paused = stop.pause && (await autoPause(db, this.workspaceId, stop.reason));
+      if (!paused) await notifyAdmins(db, this.workspaceId, "WhatsApp disconnected", stop.reason);
+    }).catch((error) => this.logger.error({ err: error }, "Failed to record a WhatsApp disconnect"));
   }
 
   private scheduleReconnect(forcedDelay?: number) {
@@ -463,11 +529,20 @@ export class BaileysManager {
     const delay = forcedDelay ?? reconnectDelayMs(this.reconnectAttempt++);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.openSocket().catch((error) => {
+      void this.openSocket().catch(async (error) => {
         this.logger.error({ err: error }, "WhatsApp reconnect failed");
+        await this.recordReconnectFailure(error instanceof Error ? error.message : "reconnect failed");
         this.scheduleReconnect();
       });
     }, delay);
+  }
+
+  /** Rule 7 / B4: ≥ 5 dropped connections or failed reconnects in 30 min pause sending (a storm is itself a risk signal). */
+  private async recordReconnectFailure(detail: string) {
+    await withTransaction(async (db) => {
+      await recordSafetyEvent(db, this.workspaceId, "reconnect_failed", detail.slice(0, 500));
+      await this.checkAutoPause(db);
+    }).catch((error) => this.logger.error({ err: error }, "Failed to record a WhatsApp reconnect failure"));
   }
 
   private async storeQr(qr: string) {
@@ -633,8 +708,8 @@ export class BaileysManager {
         return { kind: "permanent", reason: decision.block };
       }
 
-      const registered = await this.socket.onWhatsApp(input.phoneE164.slice(1));
-      if (!registered?.some((entry) => entry.exists)) {
+      const registered = (await this.socket.onWhatsApp(input.phoneE164.slice(1)))?.find((entry) => entry.exists);
+      if (!registered) {
         await db.query(
           `update public.whatsapp_outbound_messages set status = 'failed', last_error = 'Recipient is not on WhatsApp' where ${column} = $1`,
           [sourceId],
@@ -654,6 +729,7 @@ export class BaileysManager {
       return {
         kind: "send",
         messageId,
+        sendJid: registered.jid || jid,
         text: decision.text,
         typingMs: decision.typingMs,
         spacingMs: decision.spacingMs,
@@ -694,11 +770,11 @@ export class BaileysManager {
     // The socket can still go away after the recheck (e.g. the session lock
     // connection drops and stop() nulls it) or during typing. Nothing went out, so defer.
     if (!this.socket || !this.connected) throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
-    await this.showTyping(this.socket, jid, claim.typingMs);
+    await this.showTyping(this.socket, claim.sendJid, claim.typingMs);
     const socket = this.socket as WASocket | null;
     if (!socket || !this.connected) throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
     // No DB transaction is held across the network send.
-    const sent = await socket.sendMessage(jid, messageContent, { messageId: claim.messageId }).catch(async (error: unknown) => {
+    const sent = await socket.sendMessage(claim.sendJid, messageContent, { messageId: claim.messageId }).catch(async (error: unknown) => {
       if ((error as { output?: { statusCode?: number } }).output?.statusCode === DisconnectReason.connectionClosed) {
         throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
       }
@@ -725,10 +801,16 @@ export class BaileysManager {
     return { providerMessageId: claim.messageId };
   }
 
-  /** "typing…" for `ms`, then paused. Presence errors never fail a send. */
+  /**
+   * B1: "typing…" for `ms` (composing resent every ≤ 8 s), then paused, then the caller sends.
+   * Never `available`: that would make WhatsApp treat us as an active desktop and mute the
+   * paired phone's notifications. Presence errors never fail a send.
+   */
   private async showTyping(socket: WASocket, jid: string, ms: number) {
-    await socket.sendPresenceUpdate("composing", jid).catch(() => undefined);
-    await this.wait(ms);
+    for (let left = ms; left > 0; left -= COMPOSING_REFRESH_MS) {
+      await socket.sendPresenceUpdate("composing", jid).catch(() => undefined);
+      await this.wait(Math.min(left, COMPOSING_REFRESH_MS));
+    }
     await socket.sendPresenceUpdate("paused", jid).catch(() => undefined);
   }
 

@@ -122,7 +122,7 @@ function installFakeDb({ eligibility, registered = true }: FakeOptions) {
     fetchNewChatMessageCap: vi.fn(async () => null),
     onWhatsApp: vi.fn(async () => [{ exists: registered }]),
     sendMessage: vi.fn(async () => ({ message: { conversation: "hi" } })),
-    sendPresenceUpdate: vi.fn(async () => undefined),
+    sendPresenceUpdate: vi.fn(async (_type: string, _jid?: string) => undefined),
   };
   return socket;
 }
@@ -402,5 +402,155 @@ describe("BaileysManager session lock (B18)", () => {
     const client = FakeClient.instances[0]!;
     expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [WS]);
     expect(client.end).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Baileys hygiene (E1 item 2b)", () => {
+  const sql = () => mocks.txQuery.mock.calls.map(([s]) => norm(String(s)));
+  const poolSql = () => mocks.poolQuery.mock.calls.map(([s]) => norm(String(s)));
+
+  it("B1: composing is resent every ≤ 8 s for a long typing time, then paused; never available", async () => {
+    const waits: number[] = [];
+    const manager = new BaileysManager(WS, async (ms) => void waits.push(ms));
+    const socket = { sendPresenceUpdate: vi.fn(async (_type: string, _jid: string) => undefined) };
+    await (manager as unknown as { showTyping: (s: unknown, j: string, ms: number) => Promise<void> }).showTyping(socket, JID, 20_000);
+    expect(socket.sendPresenceUpdate.mock.calls).toEqual([
+      ["composing", JID],
+      ["composing", JID],
+      ["composing", JID],
+      ["paused", JID],
+    ]);
+    expect(waits).toEqual([8_000, 8_000, 4_000]);
+  });
+
+  it("B1: a send shows typing, then paused, then sends", async () => {
+    const socket = installFakeDb({ eligibility: [{ phone_e164: PHONE }] });
+    await send(connectedManager(socket), { type: "proposal", id: "src-1" });
+    const order = [...socket.sendPresenceUpdate.mock.invocationCallOrder, ...socket.sendMessage.mock.invocationCallOrder];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(socket.sendPresenceUpdate.mock.calls.map(([type]) => type)).toEqual(["composing", "paused"]);
+  });
+
+  it("B2: sends to the JID onWhatsApp returned, not the constructed one", async () => {
+    const socket = installFakeDb({ eligibility: [{ phone_e164: PHONE }] });
+    socket.onWhatsApp.mockResolvedValueOnce([{ exists: true, jid: "919876543210:0@s.whatsapp.net" }] as never);
+    await send(connectedManager(socket), { type: "proposal", id: "src-1" });
+    expect(socket.sendMessage).toHaveBeenCalledWith("919876543210:0@s.whatsapp.net", expect.anything(), expect.anything());
+  });
+
+  describe("B4: disconnect reasons", () => {
+    function closingManager() {
+      const socket = { ev: { on: vi.fn() }, end: vi.fn() };
+      const manager = new BaileysManager(WS, async () => undefined);
+      Object.assign(manager as unknown as Record<string, unknown>, { socket, connected: true });
+      const reconnect = vi
+        .spyOn(manager as unknown as { scheduleReconnect: (d?: number) => void }, "scheduleReconnect")
+        .mockImplementation(() => undefined);
+      const close = (statusCode: number) =>
+        (manager as unknown as { handleConnectionUpdate: (s: unknown, u: unknown) => Promise<void> }).handleConnectionUpdate(socket, {
+          connection: "close",
+          lastDisconnect: { error: Object.assign(new Error(`closed ${statusCode}`), { output: { statusCode } }) },
+        });
+      return { reconnect, close };
+    }
+
+    function fakeTx(reconnects30m = 0) {
+      mocks.txQuery.mockImplementation(async (s: string) => {
+        const q = norm(s);
+        if (q.startsWith("update public.whatsapp_connection set enabled = false")) return { rowCount: 1, rows: [{}] };
+        if (q.startsWith("select enabled, resumed_at")) return { rows: [{ enabled: true, resumed_at: null }] };
+        if (q.startsWith("with since as")) return { rows: [{ ...QUIET_STATS, reconnects_30m: reconnects30m }] };
+        return { rows: [] };
+      });
+    }
+
+    beforeEach(() => {
+      mocks.poolQuery.mockResolvedValue({ rows: [] });
+      fakeTx();
+    });
+
+    it.each([
+      [DisconnectReason.loggedOut, { reconnect: false, clearAuth: true, pause: true, status: "reauth_required" }],
+      [DisconnectReason.forbidden, { reconnect: false, clearAuth: false, pause: true, status: "error" }],
+      [DisconnectReason.connectionReplaced, { reconnect: false, clearAuth: false, pause: true, status: "error" }],
+      [DisconnectReason.multideviceMismatch, { reconnect: false, clearAuth: true, pause: false, status: "reauth_required" }],
+      [DisconnectReason.badSession, { reconnect: false, clearAuth: true, pause: false, status: "reauth_required" }],
+      [DisconnectReason.restartRequired, { reconnect: true, clearAuth: false, pause: false, status: "reconnecting" }],
+      [DisconnectReason.connectionClosed, { reconnect: true, clearAuth: false, pause: false, status: "reconnecting" }],
+      [DisconnectReason.timedOut, { reconnect: true, clearAuth: false, pause: false, status: "reconnecting" }],
+      [DisconnectReason.unavailableService, { reconnect: true, clearAuth: false, pause: false, status: "reconnecting" }],
+    ])("code %s", async (code, expected) => {
+      const { clearBaileysAuthState } = await import("../../src/providers/baileys-auth.store.js");
+      const { reconnect, close } = closingManager();
+      await close(code);
+      expect(reconnect).toHaveBeenCalledTimes(expected.reconnect ? 1 : 0);
+      if (code === DisconnectReason.restartRequired) expect(reconnect).toHaveBeenCalledWith(0);
+      expect(clearBaileysAuthState).toHaveBeenCalledTimes(expected.clearAuth ? 1 : 0);
+      expect(sql().some((q) => q.startsWith("update public.whatsapp_connection set enabled = false"))).toBe(expected.pause);
+      expect(poolSql().some((q) => q.includes(expected.status === "reconnecting" ? "status = 'reconnecting'" : "desired_state = 'disconnected'"))).toBe(true);
+      if (!expected.reconnect) {
+        const status = mocks.poolQuery.mock.calls.find(([s]) => norm(String(s)).includes("desired_state = 'disconnected'"))!;
+        expect((status[1] as unknown[])[0]).toBe(expected.status);
+        // Admins hear about it: through the pause notice, or directly when there is no pause.
+        expect(sql().some((q) => q.startsWith("insert into public.notifications"))).toBe(true);
+      }
+    });
+
+    it("a reconnect storm (≥ 5 drops in 30 min) pauses", async () => {
+      fakeTx(5);
+      const { close } = closingManager();
+      await close(DisconnectReason.connectionLost);
+      expect(sql().some((q) => q.startsWith("insert into public.whatsapp_safety_events"))).toBe(true);
+      const pause = mocks.txQuery.mock.calls.find(([s]) => norm(String(s)).startsWith("update public.whatsapp_connection set enabled = false"));
+      expect(pause?.[1]).toEqual([WS, "5 failed reconnects in 30 minutes."]);
+    });
+
+    it("a dropped connection below the storm limit does not pause", async () => {
+      const { close } = closingManager();
+      await close(DisconnectReason.connectionLost);
+      expect(sql().some((q) => q.startsWith("update public.whatsapp_connection set enabled = false"))).toBe(false);
+    });
+  });
+
+  describe("B5/B6/B7: socket options", () => {
+    beforeEach(() => {
+      mocks.poolQuery.mockResolvedValue({ rows: [{ paired_at: null }] });
+    });
+
+    async function open(manager: BaileysManager) {
+      Object.assign(manager as unknown as Record<string, unknown>, { socket: null });
+      await (manager as unknown as { openSocket: () => Promise<void> }).openSocket();
+      return (pgMocks.makeWASocket.mock.calls as unknown as [Record<string, unknown>][]).at(-1)![0];
+    }
+
+    it("the retry-counter cache survives socket restarts (and manager replacement)", async () => {
+      const manager = new BaileysManager(WS);
+      const first = await open(manager);
+      const second = await open(manager);
+      const replacement = await open(new BaileysManager(WS));
+      expect(first.msgRetryCounterCache).toBeDefined();
+      expect(second.msgRetryCounterCache).toBe(first.msgRetryCounterCache);
+      expect(replacement.msgRetryCounterCache).toBe(first.msgRetryCounterCache);
+      expect(first.maxMsgRetryCount).toBeUndefined(); // the Baileys default, 5
+    });
+
+    it("keeps presence offline, no history, no link previews, no version fetch; wraps keys in a cache", async () => {
+      const options = await open(new BaileysManager(WS));
+      expect(options).toMatchObject({ markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
+      expect(options.version).toBeUndefined();
+      expect(typeof (options.auth as { keys: { get: unknown } }).keys.get).toBe("function");
+    });
+
+    it("B7: a new pairing uses a standard Browsers preset; a number paired before E1 keeps its identity", async () => {
+      const { loadBaileysAuthState } = await import("../../src/providers/baileys-auth.store.js");
+      const paired = { state: { creds: { me: { id: "91999:1@s.whatsapp.net" } } }, saveCreds: vi.fn() } as never;
+      expect((await open(new BaileysManager(WS))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
+      vi.mocked(loadBaileysAuthState).mockResolvedValueOnce(paired);
+      expect((await open(new BaileysManager(WS))).browser).toEqual(["Northbeam CRM", "Chrome", "1.0.0"]);
+      // Paired after E1 (paired_at set): the preset it was paired with.
+      mocks.poolQuery.mockResolvedValue({ rows: [{ paired_at: new Date() }] });
+      vi.mocked(loadBaileysAuthState).mockResolvedValueOnce(paired);
+      expect((await open(new BaileysManager(WS))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
+    });
   });
 });

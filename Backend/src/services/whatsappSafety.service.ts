@@ -85,13 +85,18 @@ export async function autoPause(db: Queryable, workspaceId: string, reason: stri
   );
   if (!paused.rowCount) return false;
   await recordSafetyEvent(db, workspaceId, "paused", reason);
+  await notifyAdmins(db, workspaceId, "WhatsApp sending paused automatically", `${reason} An admin can resume it in Settings → Workspace → WhatsApp.`);
+  return true;
+}
+
+/** A warning notification to every active admin, linking to Settings. */
+export async function notifyAdmins(db: Queryable, workspaceId: string, title: string, detail: string) {
   await db.query(
     `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, href)
-     select $1, p.id, 'WhatsApp sending paused automatically', $2, 'warning', '/settings'
+     select $1, p.id, $2, $3, 'warning', '/settings'
        from public.profiles p where p.role = 'admin' and p.is_active`,
-    [workspaceId, `${reason} An admin can resume it in Settings → Workspace → WhatsApp.`],
+    [workspaceId, title, detail],
   );
-  return true;
 }
 
 /** Admin only (route guard): turns outbound back on; signals before now no longer count. */
