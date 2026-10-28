@@ -73,7 +73,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `043`).
+  (currently `044`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `043`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `044`).
 
 ## Way of working
 
@@ -513,6 +513,37 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (`minmax(0,1fr)`), which fixes every dialog. Send proposal file row: name `min-w-0 flex-1 truncate` (+ `title`), size and
   Remove `shrink-0` (`send-proposal-dialog.test.tsx`).
 
+- **E2 (AI Live mode, Feature 6):** migration 044: `agent_settings.live_scope` (`test_contacts|new_leads|all`, default
+  `test_contacts`) + `live_since`; `leads.agent_live_test` (+ `_by`, `_at`); `agent_decisions.send_status`
+  (`queued|sending|sent|failed|cancelled|dry_run`, null = draft) + `send_attempts`, `send_next_at`, `send_claimed_at`, `sent_at`,
+  `send_error`, `cancel_reason`, `provider_message_id`; `whatsapp_outbound_messages.agent_decision_id` (unique; the 4th WhatsApp
+  source); indexes for the send claim and real sends. Pure `agent/liveMode.ts` (`effectiveMode` — the ONE rule for live vs
+  shadow per contact, `canSetScope`, `liveChannels` / `imapHealthy`, `sendRecheck`, `STALE_DECISION_MS` 24 h) and
+  `agent/messageChecks.ts` `countQuestions`. Context (`agentContext.service.ts`): `rules.mode` = the contact's effective mode;
+  a live contact counts/shows only real sends (`outcome = 'sent'`), drafts are labelled "draft — never sent to the contact" in
+  the prompt; `rules.emailBlockedReason` (rules `emailUsable`) when a live contact's workspace IMAP hasn't polled OK in 30 min.
+  `draftDecision`: > 1 question → regenerate once (`one_question:` problem) → handoff "AI couldn't write a one-question
+  message". Runner: claims shadow AND live workspaces; a live contact's decision is `mode 'live'`, `outcome 'executed'`: a send
+  is queued (`send_status queued`, `send_next_at` = rules send time; email = an `email_outbound_messages` row source `agent`,
+  source id = decision id, `notBefore`), handoff / stop / update_stage executed in the decision's transaction
+  (`agentSends.service.ts`: `executeHandoff` one open task "AI handed off — please follow up" + `handed_off` `ai_handoff`;
+  `executeStop`; `executeStageChange` via `updateLead` + a timer wakeup after `wake_min_days`). Sends (`runAgentSends` in the
+  worker, behind `AGENT_RUNNER_ENABLED`, before `runAgentTick`): SKIP LOCKED claim of `send_whatsapp` decisions (15-min
+  reclaim, `send_claimed_at` token), compose (signature + opt-out on the first AI WhatsApp) → `sendWhatsApp` →
+  `performSend` source `agent`, whose claim transaction runs `agentSendRecheck` (`agentSendState.service.ts`, decision + lead
+  locked) instead of `loadSourceEligibility` (cancel → `SendCancelledError`). Emails: `processEmail` runs the same re-check
+  first and again right before `sendMail` (`agentGate`); `onSourceSent` / `onSourceProblem` write back via
+  `recordAgentSendOutcome` (sent → `outcome sent`, `sent_at`, Message-ID, `leads.agent_touch_*`, timeline "AI sent WhatsApp" /
+  "AI sent email: <subject>"; failed → owner notified; dry run → `dry_run`, no touch). Rule 9: `isAiLiveContact`,
+  `cancelWorkflowsIfLive`, `cancelWorkflowsOfLiveContacts` ("Managed by AI agent", via `cancelRunsForLead`) on scope on/widened,
+  live-test mark, admin enroll, auto-enroll; `autoEnroll` skips live AI contacts; `POST /runs` → 409. API (`B4-api.md` §7k):
+  `PUT /agent/settings` `mode: live` + `liveScope` (gate → 422 with `details.readiness`), `GET /agent/settings/live-preview`,
+  `PUT /agent/leads/:id/live-test`, decision DTO send fields, `/agent/stats.live`, panel `liveTest` / `effectiveMode`.
+  Frontend: Settings → AI agent Off/Shadow/Live, scope buttons (gated), `GatePanel`, `LiveConfirmDialog` (preview counts),
+  `LiveBanner` (`features/agent/live-mode.tsx`), contact AI panel Live/Shadow + "Live test" pills + admin "AI live test
+  contact" switch (`useSetLiveTest`), `SendStatusPill`, rule notes in IST (`withIstTimes`), enrol dialog shows the 409.
+  `npm run test:integration:staging -- <files>` runs only those files. Not in E2: backfilling older leads (handoff note 10).
+
 ## WhatsApp safety (E1)
 
 - Every WhatsApp send — workflow steps, rep proposal/meeting messages and (E2) the AI agent — goes through
@@ -605,13 +636,30 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 - One action per wake-up: `send_email`, `send_whatsapp`, `wait`, `handoff`, `update_stage`,
   `stop`. Code enforces the safety rules (`src/agent/rules.ts`), not the model.
-- Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live`
-  (Feature 6). Nothing in Feature 3 sends messages to leads.
+- Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live` (E2). In `live` the **live scope** picks
+  the live AI contacts: `test_contacts` (marked "AI live test" by an admin; no gate), `new_leads` (created ≥ `live_since`),
+  `all`; the last two need the go-live gate (`goLiveReadiness`, checked in the backend). Every other AI contact runs as
+  shadow. `agent/liveMode.ts` `effectiveMode` is the only place that decides; runner, send path and UI use it (bulk SQL
+  mirror: `liveContactSql`). Only admins change mode, scope or the mark.
+- Live sends only from the worker, through the channel queues and their safety rules (WhatsApp `performSend` →
+  `decideSend` source `agent`; email `email_outbound_messages` source `agent`), one per decision, re-checked right before the
+  provider call (`sendRecheck`: AI status, lifecycle/DNC, channel status, any reply after the decision, IMAP health for
+  email, an active workflow run, mode/scope/mark, limits on real sends, ≤ 24 h old; time problems defer, the rest cancel).
+  AI email only while the workspace's IMAP polled OK in the last 30 min. Kill switch: shadow/off, narrower scope, mark
+  removed, paused/stopped contact → queued sends are cancelled at the re-check; WhatsApp pause defers.
+- Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
+  send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
+- One question per message (both modes): > 1 → regenerate once → handoff. Live handoff = one open owner task "AI handed
+  off — please follow up"; stop → `stopped` with the reason; update_stage only within `AGENT_STAGE_ALLOW_LIST` via
+  `updateLead`.
+- A contact is never AI-live and in a workflow: becoming live cancels its runs ("Managed by AI agent"), `autoEnroll`
+  skips it, manual enrolment → 409.
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
   facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
 - The agent never marks Won/Lost/DNC, never deletes, never changes the owner; never contacts
-  DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`.
+  DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`. Every safety ceiling, the daily decision
+  cap and the monthly budget apply in live as in shadow.
 - Reply labels (D4a): a matched WhatsApp reply is labelled by keyword first (every contact, every mode: `stop`,
   `unsubscribe`, `remove me`, `don't message me`, `do not message`, `not interested`, … — exact short phrases only, list in
   `domain/replyKeywords.ts`), else by the worker's AI step (AI contacts, non-off mode, budget left). `asked_to_stop` → WhatsApp

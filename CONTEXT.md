@@ -290,8 +290,21 @@ On each tick it:
 - Advances workflow runs to their next enabled step or completes/stops them.
 - Claims queued proposal WhatsApp sends.
 - Claims queued meeting WhatsApp notifications.
+- AI agent (behind `AGENT_RUNNER_ENABLED`): sends the live AI contacts' queued WhatsApp messages (`runAgentSends`), then
+  turns due wake-ups into decisions (`runAgentTick`).
 
 `WORKER_DRY_RUN=true` renders/logs messages and advances runs as if the send succeeded, without contacting providers.
+
+### AI agent: Shadow and Live (E2)
+
+The AI agent decides one action per wake-up for each contact it manages. In **Shadow** it only drafts (for review and
+rating). In **Live** an admin picks who is live: test contacts an admin marks "AI live test" (allowed at once), new leads
+from the switch-on moment (pilot), or all AI contacts — the last two only after the go-live gate (≥ 50 rated decisions,
+≥ 90 % good, no made-up facts or leaked internal info). Live contacts get real WhatsApp and email through the same queues
+and safety rules as workflows (send window, spacing, caps, warm-up, pause), re-checked right before sending (any reply, DNC,
+opt-out, bounce, mode or scope change, workflow run, limits, ≤ 24 h old); AI email only while the mailbox's reply reading
+(IMAP) works. Handoffs create a task for the owner; stop and allowed stage changes are applied. A live contact is never in
+a workflow. Everyone else stays in Shadow.
 
 ## Integrations
 
@@ -301,7 +314,7 @@ Email:
   (host, port, SSL/STARTTLS, login, from address, default from name, reply-to) plus an IMAP login for the same mailbox
   (read for replies, bounces and unsubscribes, D3). Everyone else sees it read-only, without secrets.
 - Secrets are write-only and encrypted in Postgres (AAD `integration:email`); blank fields keep the saved values.
-- Only the worker sends: every email (workflow step, proposal, meeting notification, test; later the AI) is a row in
+- Only the worker sends: every email (workflow step, proposal, meeting notification, test, the AI agent's live emails) is a row in
   `email_outbound_messages` (one per source), sent through one pooled SMTP connection per workspace with spacing, hourly and
   daily caps, warm-up, a send window for automated email, recipient checks and auto-pause (`domain/emailSafety.ts`).
 - A workspace with no SMTP saved (or still on Resend) is "not set up": emails wait in the queue, they never fail for it.
@@ -481,7 +494,8 @@ Integration tests skip when `TEST_DATABASE_URL` is absent. A full login-to-persi
 
 ## Production Rollout Notes
 
-1. Apply all migrations in filename order.
+1. Apply all migrations in filename order (latest `044`, E2: no workspace goes live by itself; AI email needs SMTP + a
+   healthy IMAP login; workflow runs are cancelled only when an admin turns Live on or widens the scope).
 2. Set one stable `INTEGRATION_ENCRYPTION_KEY` on both API and worker.
 3. Create the first Supabase Auth user, then promote it:
 

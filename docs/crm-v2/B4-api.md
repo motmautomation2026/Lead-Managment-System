@@ -331,6 +331,37 @@ only mail after the IMAP login was saved; classification in `domain/emailInbound
 - SMTP 451 (E1b fix): only a `4.7.x` code or rate-limit wording auto-pauses; other 451s are temporary retries. A queued
   meeting email is cancelled ("Meeting time has passed" / "Meeting was cancelled"; meeting `notify_email_status` `skipped`).
 
+## 7k. AI Live mode — E2
+
+Migration 044. Only admins change mode, scope or the test mark; reads are as before.
+
+- `PUT /agent/settings` (admin) accepts `mode: "live"` and `liveScope` (`test_contacts` | `new_leads` | `all`). Switching into
+  Live, or changing the scope while Live, to `new_leads` / `all` needs the go-live gate: **422** `invalid_transition` with
+  the gate's reasons in `message` and `details.readiness` (`{ ready, rated, goodPct, seriousBad, reasons }`). Switching
+  `new_leads` on sets `liveSince` (now). Off → Shadow/Live wakes the active AI contacts as before. Afterwards every live AI
+  contact (status active / paused / handed off) leaves its unfinished workflow runs (cancel reason "Managed by AI agent",
+  timeline "Workflow Cancelled"). Leaving Live cancels nothing directly: queued sends are cancelled at send time.
+  GET/PUT responses add `liveScope`, `liveSince`, `liveContactCount` (AI contacts live now).
+- `GET /agent/settings/live-preview?scope=<scope>` (admin, changes nothing) → `{ scope, readiness, allowed, message,
+  liveContacts, workflowRunsToCancel }` — the confirm dialog's numbers (for `new_leads` not yet on: counted from now, i.e.
+  marked test contacts only). **400** for an unknown scope.
+- `PUT /agent/leads/:id/live-test` `{ enabled: boolean }` (admin; any lifecycle) → the lead AI panel (below). Timeline
+  "Marked as AI live test by <admin>" / "AI live test removed by <admin>"; marking a contact that is then AI-live cancels its
+  workflow runs. **400** bad body, **404** unknown lead.
+- `POST /runs` (manual workflow enrolment, with or without `workflowId`) for a live AI contact → **409** "This contact is
+  managed by the AI agent. Stop the AI for this contact first." `autoEnroll` (every trigger) skips such contacts silently.
+- Decisions (`GET /agent/decisions` rows, `GET /agent/decisions/:id`, lead panel rows) add `mode` (rows), `sendStatus`
+  (`queued|sending|sent|failed|cancelled|dry_run`, null = draft / not a send), `sentAt`, `sendError` (failure or the
+  current deferral reason), `cancelReason`, `channel` (`email|whatsapp|null`). A live decision's `outcome` is `executed`
+  (acted on), `sent` once really sent.
+- `GET /agent/stats` adds `live: { scope, liveSince, liveContacts (0 unless the mode is live), sentToday (IST),
+  sentThisMonth (IST) }` (real sends only).
+- `GET /agent/leads/:id` adds `liveTest` and `effectiveMode` (`off|shadow|live`: how the AI runs for this contact now).
+- Timeline (kind `automation`, actor "AI Agent"): "AI sent WhatsApp", "AI sent email: <subject>", "AI handed off: <reason>",
+  "AI stopped" (detail = reason), "AI moved stage to <stage>". Shadow contacts keep the "AI drafted…/suggested…" rows.
+- Email queue: `email_outbound_messages` rows with `source = 'agent'`, `source_id` = decision id (From "<owner> | <company
+  display name>", automated: send window applies). A cancelled AI email has `status cancelled` + the reason in `last_error`.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
