@@ -289,6 +289,48 @@ Migration 042. The send-time rules live in `Backend/src/domain/emailSafety.ts` (
   `emailSendError` / `notifyEmailError` hold the reason (e.g. "Email is not set up. An admin must add the SMTP mailbox in
   Settings → Email.", "Hourly cap (20) reached.").
 
+## 7j. Email replies, bounces and unsubscribes (IMAP) — D3
+
+Migration 043. The worker (`services/emailInbound.service.ts`, `runEmailInbound`) reads one due workspace's mailbox per
+tick, every `EMAIL_IMAP_POLL_SECONDS` (120) per workspace, read-only (EXAMINE + `BODY.PEEK`, never a flag / move / delete),
+only mail after the IMAP login was saved; classification in `domain/emailInbound.ts`. Each message is one
+`email_inbound_events` row (`kind` `reply|bounce|bounce_temporary|auto_reply|unsubscribe|ignored`, `match_status`
+`matched|unmatched|ambiguous`); the reply text is stored only encrypted.
+
+- Contact timeline (`GET /contacts/:id/timeline`): rows "Replied by email" (`kind` `email`) carry the same `reply` field as
+  WhatsApp replies (§7f/§7g). `reply` now always has `channel` (`"whatsapp"` | `"email"`); for email, `messageId` is the
+  email reply's id (uuid). Other D3 rows (no `reply`): "Email bounced (<reason>)" (detail = status + diagnostic),
+  "Automatic email reply received (out of office or similar)", "Unsubscribed from email", "Email status cleared by
+  <admin>: <reason>".
+- `GET /contacts/:id/email-replies/:replyId` — same rules as §7f: **200** `{ replyId, receivedAt, subject, text, truncated }`
+  (subject + text without the quoted history, ≤ 4,000 characters; never HTML or attachments) or `text: null` + `reason`
+  `not_stored|unreadable`; **403** "Only the contact owner and admins can read replies." (audited `denied`); **404** unless a
+  matched email reply of this contact; **400** for a non-uuid id; `Cache-Control: no-store`. Every read is audited in
+  `inbound_message_views` with `channel = 'email'` and `email_event_id` (existing rows: `channel = 'whatsapp'`).
+- `PUT /contacts/:id/email-replies/:replyId/label` `{ label }` — the §7g correction for email replies (own route; same
+  body, response, 400/403/404 and rules; re-titles the reply task with the email titles).
+- Effects (one transaction per message): **bounce** 5.x.x → the outbound email's `bounced_at` / `bounce_status`, the contact's
+  email `invalid` (5.1.x) or `permanent_bounce`, a `recipient_rejected` safety event (counts toward the 5 % auto-pause);
+  4.x.x / delayed → recorded only; unlinkable → `unmatched` only. **Auto-reply** → timeline row only. **Unsubscribe**
+  (subject "unsubscribe" to our List-Unsubscribe address) → email `unsubscribed`, owner notified, AI `stopped`
+  (`asked_to_stop`); never DNC, no task. **Reply** (matched to one contact: In-Reply-To, then References → our Message-ID →
+  its contact, a merged contact → its target; else exactly one contact with the sender's address) → automation stopped
+  (`response_state` responded, manual, runs/actions cancelled "Inbound email reply"), owner notification "Email reply
+  received", AI contact → one open task "Lead replied by email — respond today" + handed off (`lead_replied`), D4a label
+  (keyword, else the worker's AI step; `asked_to_stop` → email `unsubscribed`, task "Asked to stop by email — review
+  today"). Our own sent copies and no-reply senders are `ignored`; unmatched / ambiguous messages keep metadata only.
+- `POST /leads/:id/contactability`: changing an email `invalid` / `permanent_bounce` / `unsubscribed` to any other status is
+  **admin only** (403 "Only an admin can clear an email bounce or unsubscribe.") and needs a non-blank `reason` (400).
+- `GET /connections/email/settings` adds `imapStatus` (null until an IMAP login is saved): `{ lastCheckAt, lastSuccessAt,
+  lastError (plain English, never a secret), nextCheckAt, today: { replies, bounces, autoReplies, unsubscribes, unmatched }
+  (IST day), bounces24h }`. An IMAP login rejection is shown here and notifies admins once per IST day; it never pauses
+  sending.
+- `POST /connections/email/check-now` — **admin only**: the next worker tick reads the mailbox (the request never opens
+  IMAP). Returns the GET body.
+- `GET /agent/stats` `replies` counts WhatsApp and email replies; email labelling cost is part of the monthly AI spend.
+- SMTP 451 (E1b fix): only a `4.7.x` code or rate-limit wording auto-pauses; other 451s are temporary retries. A queued
+  meeting email is cancelled ("Meeting time has passed" / "Meeting was cancelled"; meeting `notify_email_status` `skipped`).
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

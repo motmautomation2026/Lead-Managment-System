@@ -25,6 +25,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - `CRM_DEAL_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the deal backfill sweeper.
 - Email has no env vars (E1b): no `RESEND_API_KEY` / `SMTP_FROM_*`; the SMTP + IMAP mailbox is saved per workspace by an
   admin in Settings → Email. Tests never contact a real SMTP/IMAP server or DNS (fake transport, IMAP client, resolver).
+- `EMAIL_IMAP_POLL_SECONDS` (worker; default 120, 30–3600): how often each workspace's mailbox is read over IMAP (D3).
 
 ## Tests
 
@@ -72,7 +73,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `042`).
+  (currently `043`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -86,14 +87,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not send provider messages from manual Email/WhatsApp activity buttons.
 - Do not execute workflow sends in request/response handlers; use the worker.
 - Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
-- Inbound text is readable only through `GET /contacts/:id/replies/:messageId` (owner + admins, every read audited in
-  `inbound_message_views`, `Cache-Control: no-store`); never in lists, timelines, search, notifications, tasks, AI or logs.
-  Sole exception (D4a): the worker's reply classifier decrypts it once to label it (no DB client held during the call,
-  strict label + confidence schema); only the label is stored, and the decision agent never gets the text.
+- Inbound email reply text (D3) follows the same rules: subject + text (quoted history stripped, never HTML or attachments)
+  stored only encrypted (AAD `email:inbound:<event id>`), only for replies matched to exactly one contact, never logged.
+- Inbound text is readable only through `GET /contacts/:id/replies/:messageId` (WhatsApp) and
+  `GET /contacts/:id/email-replies/:replyId` (email) (owner + admins, every read audited in `inbound_message_views` with its
+  `channel`, `Cache-Control: no-store`); never in lists, timelines, search, notifications, tasks, AI or logs.
+  Sole exception (D4a, D3): the worker's reply classifier decrypts it once to label it (WhatsApp or email; no DB client held
+  during the call, strict label + confidence schema); only the label is stored, and the decision agent never gets the text.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `042`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `043`).
 
 ## Way of working
 
@@ -477,6 +481,33 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   to me" with polled status, paused banner + Resume confirm, stats, events, 14-day table, Deliverability card);
   `EmailStatusPill` ("Email: Queued/Sent/Failed", reason as tooltip or with `showReason`) on proposal/meeting lists, sheets
   and contact/deal record pages; proposal lists poll while an email is queued.
+- **D3 (email replies, bounces and unsubscribes over IMAP; nothing new sent):** migration 043: `email_inbound_events` (one row
+  per message read; unique (workspace, Message-ID header), else (workspace, uidvalidity, uid); `kind`
+  `reply|bounce|bounce_temporary|auto_reply|unsubscribe|ignored`, `match_status` `matched|unmatched|ambiguous`, `match_method`
+  `in_reply_to|references|sender|original_message|recipient`, `lead_id`, `outbound_id`, `bounce_status/_detail`, encrypted
+  `body_*` (JSON `{subject, text}`) + `text_truncated`, the D4a label/classification/cost columns), `email_imap_state` (per
+  workspace `uidvalidity`, `last_uid`, `imap_saved_at`, `last_poll_at`, `last_success_at`, `last_error`, `next_poll_at`,
+  `login_alerted_on`), `email_outbound_messages.bounced_at/bounce_status` + `(workspace_id, message_id)` index,
+  `inbound_message_views.channel` (default whatsapp) + `email_event_id` (`message_id` now nullable, check: exactly one).
+  `mailparser` 3.9.3 (pinned; linkify / html-to-text never run on inbound mail). Pure `domain/emailInbound.ts`
+  (`parseInboundEmail`, `classifyInboundEmail` (rule order bounce → auto-reply → unsubscribe → own/no-reply ignored →
+  reply), `parseDsn`, `candidateMessageIds`, `extractReplyText` (quote stripping, HTML → text, 4,000 code points),
+  `isOwnOrNoReply`); fixtures `tests/fixtures/email/rawEmails.ts`. `providers/email.provider.ts` `ImapReader` /
+  `createImapReader` (30 s timeouts). `services/emailInbound.service.ts` `runEmailInbound` (worker tick, no flag, one due
+  workspace per tick; no DB client during the IMAP session; one transaction per message; matching rule 4; effects below).
+  Shared with WhatsApp (no behaviour change): `stopAutomationForReply`, `ensureReplyTask` (whatsapp-inbound.service.ts),
+  `applyReplyEffects` / channel-aware `applyReplyLabel`, `retitleReplyTask`, `correctReplyLabel` (replyLabels.service.ts),
+  `decryptInboundBody(row, aad)` + `whatsappReplyAad` / `emailReplyAad`, `readEmailReply`; the classifier claims from both
+  tables; `replyTaskTitle(label, channel)` (email: "Lead replied by email — respond today", "Asked to stop by email — review
+  today"); `onAgentEvent` `email_inbound` hands off like `whatsapp_inbound`; `MONTH_SPEND_SQL` and `/agent/stats` replies
+  include email. `emailConnection.service.ts`: `loadImapStatus`, `requestImapCheck`, `resetImapState` (a changed IMAP host /
+  port / folder / login reads only new mail). API (`B4-api.md` §7j): `GET|PUT /contacts/:id/email-replies/:replyId[/label]`,
+  timeline `reply.channel`, email status clear admin-only with a reason, settings `imapStatus`, `POST
+  /connections/email/check-now` (admin). E1b fixes: 451 rule, stale meeting emails cancelled, `npm run
+  staging:cleanup-test-users` (deactivates active `@example.com` users; dry run by default) + test helpers deactivate their
+  users. Frontend: Activity "Replied by email" rows (Show message with subject / Hide, label pill + Change, Classifying…),
+  `ClearOptOutDialog` `channel` ("Clear" on Bounced / Invalid / Unsubscribed email status, admins), Settings → Email →
+  Replies & bounces (+ Check now), AI Activity "Replies this month (WhatsApp + email)".
 
 ## WhatsApp safety (E1)
 
@@ -505,7 +536,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   set up. An admin must add the SMTP mailbox in Settings → Email." (never fail); 2 settings admin-only, secrets write-only;
   3 login tests read-only, 15 s; 4 claim SKIP LOCKED, reclaim `sending` after 15 min, no transaction across the SMTP call;
   5 4xx/timeouts/connection errors temporary (backoff 5/10/20/40 min, 5 attempts → failed), 5xx recipient → failed + the
-  contact's email `invalid` (5.1.x) or `permanent_bounce`, 535/EAUTH or 421/451/4.7.x or 5.7.x → auto-pause (email
+  contact's email `invalid` (5.1.x) or `permanent_bounce`, 535/EAUTH or 421 or 4.7.x or 5.7.x → auto-pause (email
   re-queued, no attempt); 6 spacing random 30–90 s (> 20 s defers via `next_send_at`), ≤ 20 per IST clock hour, daily cap
   100, warm-up min(cap, 20/40/70) for IST days 1–3/4–7/8–14 after `configured_at` unless `already_warmed`; 7 automated email
   only in the send window (Mon–Sat 09:30–19:00 IST) + 0–20 min jitter; proposal/meeting/test ignore the window, not the
@@ -517,6 +548,20 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   attachments ≤ 10 MB; 11 DNS check reads only; 12 monitoring for every CRM user; 13 `WORKER_DRY_RUN` marks sent
   (`dry_run`, not counted) without SMTP.
 - Deferrals never burn attempts.
+- D3: SMTP 451 auto-pauses only with a `4.7.x` code or rate-limit wording ("rate", "limit", "too many", "throttl"); other
+  451s are temporary retries. A queued meeting email whose meeting has started / was cancelled is cancelled ("Meeting time
+  has passed" / "Meeting was cancelled").
+- D3 IMAP (read-only): the worker polls each workspace with a saved IMAP login (also while sending is paused) every
+  `EMAIL_IMAP_POLL_SECONDS`, one workspace at a time, connect → EXAMINE → SEARCH/FETCH (`BODY.PEEK`, ≤ 1 MB per message) →
+  logout, 30 s timeouts. Never set flags, move, copy, delete or expunge; only the configured folder. First poll (and after a
+  UIDVALIDITY change): only mail after the IMAP login was saved (after the last good poll); then by UID, ≤ 50 per poll; every
+  message once. IMAP errors → `last_error` (plain text), retried next poll; a rejected IMAP login never pauses sending (admins
+  notified once per IST day).
+- D3 effects: a 5.x.x DSN → our email `bounced_at`, the contact's email `invalid` (5.1.x) / `permanent_bounce`, a
+  `recipient_rejected` event (counts toward the 5 % pause); 4.x.x / delayed → recorded only; out-of-office → timeline only;
+  "unsubscribe" to our List-Unsubscribe address → email `unsubscribed` + AI stopped (`asked_to_stop`), never DNC; a matched
+  reply behaves like a WhatsApp reply (automation stopped, reply task + handoff for AI contacts, D4a labels; `asked_to_stop` →
+  email `unsubscribed`). Clearing an email `invalid|permanent_bounce|unsubscribed` is admin-only with a reason.
 
 ## Baileys rules (https://baileys.wiki)
 

@@ -121,7 +121,7 @@ Workspaces (salesperson; not workspace-scoped, so the list loads before one is s
 Connections (salesperson, scoped to the `X-Workspace-Id` workspace; `Backend/src/routes/connections.routes.ts`):
 
 - `GET /connections/email/settings` (every CRM user, no secrets)
-- `PUT /connections/email/settings`, `POST /connections/email/test-smtp|test-imap|test-send|resume`,
+- `PUT /connections/email/settings`, `POST /connections/email/test-smtp|test-imap|test-send|resume|check-now`,
   `GET /connections/email/test-send/:id`, `GET /connections/email/deliverability` (admin only, E1b)
 - `GET /connections/website-leads`
 - `PUT /connections/website-leads`
@@ -284,6 +284,7 @@ On each tick it:
 - Executes internal actions directly (`create_call_task`, `create_follow_up_task`, `change_lead_stage`, `stop_workflow`).
 - Renders email/WhatsApp templates for message actions.
 - Sends queued email (workflow steps, proposals, meeting notifications, tests) through the workspace's SMTP mailbox (`runEmailOutbound`).
+- Reads one due workspace's mailbox over IMAP, read-only, for replies, bounces and unsubscribes (`runEmailInbound`, D3).
 - Sends WhatsApp through the workspace's own Baileys socket (one per active workspace, see `Backend/src/providers/baileys-registry.ts`).
 - Records success, failure, deferred retry, or skipped outcomes.
 - Advances workflow runs to their next enabled step or completes/stops them.
@@ -298,7 +299,7 @@ Email:
 
 - SMTP only (E1b; Resend was removed). An **admin** saves the workspace's mailbox in Settings → Workspace → Email: SMTP
   (host, port, SSL/STARTTLS, login, from address, default from name, reply-to) plus an IMAP login for the same mailbox
-  (read for replies and bounces in D3). Everyone else sees it read-only, without secrets.
+  (read for replies, bounces and unsubscribes, D3). Everyone else sees it read-only, without secrets.
 - Secrets are write-only and encrypted in Postgres (AAD `integration:email`); blank fields keep the saved values.
 - Only the worker sends: every email (workflow step, proposal, meeting notification, test; later the AI) is a row in
   `email_outbound_messages` (one per source), sent through one pooled SMTP connection per workspace with spacing, hourly and
@@ -306,6 +307,14 @@ Email:
 - A workspace with no SMTP saved (or still on Resend) is "not set up": emails wait in the queue, they never fail for it.
 - Admins can test the SMTP/IMAP login, send themselves a test email, resume a paused mailbox, and run a DNS
   deliverability check (MX, SPF, DKIM, DMARC). Every CRM user sees the sending numbers.
+- Replies (D3): every 2 minutes (`EMAIL_IMAP_POLL_SECONDS`) the worker reads new mail in the IMAP folder, read-only
+  (EXAMINE + BODY.PEEK; nothing is marked read, moved or deleted), only mail that arrived after the IMAP login was saved.
+  Bounces (DSN) mark our email bounced and the contact's email invalid / bounced (they count toward the 5 % auto-pause);
+  out-of-office replies get a timeline row; an "unsubscribe" email unsubscribes the contact; a real reply matched to one
+  contact (In-Reply-To / References → our Message-ID, else the sender's address) is stored encrypted and behaves like a
+  WhatsApp reply (automation stopped, reply task + AI handoff for AI contacts, keyword / AI label). Only the owner and admins
+  can read it (`GET /contacts/:id/email-replies/:replyId`, audited). Settings → Email → Replies & bounces shows the last
+  check and today's counts; an admin's "Check now" schedules the next read.
 
 WhatsApp:
 
@@ -408,7 +417,8 @@ Worker/provider values:
 - `WORKER_BATCH_SIZE`
 - `WORKER_DRY_RUN`
 
-Email has no env settings (E1b): the mailbox is saved per workspace in Settings, and only the worker sends.
+Email has no provider env settings (E1b): the mailbox is saved per workspace in Settings, and only the worker sends.
+`EMAIL_IMAP_POLL_SECONDS` (worker, default 120, 30–3600): how often each workspace's mailbox is read (D3).
 
 Docker Compose only (root `.env`, read by `compose.yaml`):
 
