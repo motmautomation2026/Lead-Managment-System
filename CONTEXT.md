@@ -306,11 +306,13 @@ WhatsApp:
 
 - Uses Baileys, an unofficial WhatsApp Web client.
 - The worker runs one Baileys socket per active workspace, each guarded by its own PostgreSQL advisory lock (keyed on the workspace id), with its own paired number, daily cap and send spacing.
-- Connect/restart/logout, the outbound enabled switch, and the daily cap are on the Settings page, per workspace (any salesperson).
+- Connect/restart/logout are on the Settings page for every CRM user. The Safety section (E1) — outbound switch, spacing, daily cap, new chats per day, send window, Resume — is **admin-only**; everyone sees its monitoring numbers.
 - QR codes are encrypted, shown only on the Settings page, and short-lived.
 - Baileys credentials and Signal keys are encrypted in Postgres.
 - Outbound messages support workflow scheduled actions, proposal sends, and meeting notification sends.
-- Sends respect an emergency switch, live connection state, WhatsApp reachout/new-chat restrictions, recipient registration, randomized send spacing, and Asia/Kolkata daily cap.
+- Every send goes through `domain/whatsappSafety.ts` `decideSend` (E1): random 45–120 s spacing (longer waits defer the send), "typing…" for 2–8 s first, Asia/Kolkata daily cap lowered during a new number's warm-up (20/40/80 for days 1–3/4–7/8–14), at most 20 first messages to new phones per day, workflow messages only Mon–Sat 09:30–19:00 IST (rep proposal/meeting messages are not held by the window), a first workflow message may not contain a link and always ends with an opt-out line. Live connection state, recipient registration and WhatsApp's reach-out/new-chat restrictions are still checked.
+- Sending pauses itself (`enabled` = false, admins notified) on a restriction, a forbidden/logged-out/replaced session, ≥ 5 send failures or ≥ 5 dropped connections in 30 min, or ≥ 3 STOP replies (or ≥ 5 % of ≥ 40 sends) in 24 h; paused sends defer and go out after an admin resumes.
+- Clearing a WhatsApp opt-out is admin-only and needs a reason.
 - Inbound direct replies store metadata only, never message body content, and atomically stop matching lead automation. Ambiguous/unmatched replies appear for review in the Settings page's WhatsApp panel.
 - Protocol and account-enforcement risk remains because Baileys is unofficial.
 

@@ -70,7 +70,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `040`).
+  (currently `041`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -91,7 +91,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `040`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `041`).
 
 ## Way of working
 
@@ -427,8 +427,60 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   costUsd}` (`B4-api.md` §7g). Frontend: Activity reply pill + "by AI / keyword / <rep>" + Change menu
   (`useCorrectReplyLabel`), "Classifying…", WhatsApp status "Opted Out — Asked to stop on WhatsApp", AI Activity "WhatsApp
   replies this month"; `REPLY_LABEL_TEXT` / `REPLY_TASK_TITLES` in `features/agent/agent-labels.ts`. Clearing an opt-out today:
-  `POST /leads/:id/contactability {channel:"whatsapp", status:"valid"}` (any CRM user, no UI). D1 prompt fix: the DATA
-  sentence names `internal_context`.
+  `POST /leads/:id/contactability {channel:"whatsapp", status:"valid"}` (any CRM user, no UI; admin-only since E1). D1 prompt
+  fix: the DATA sentence names `internal_context`.
+- **E1 (WhatsApp safety, Feature 5; nothing new sent):** migration 041: `whatsapp_connection.paired_at` (null = paired before
+  E1, fully warmed; set on `isNewLogin`, cleared on logout/auth clear), `max_new_chats_per_day` (20), `send_window_days/_start/
+  _end` (Mon–Sat 09:30–19:00 IST), `next_send_at` (spacing), `paused_reason/_at/_by`, `resumed_at`; spacing defaults 45/120
+  (rows still on 5/15 moved); `whatsapp_outbound_messages.new_chat`; `whatsapp_safety_events` (`send_failed|reconnect_failed|
+  disconnected|restricted|paused|resumed`); indexes for "never messaged" and the 24 h / IST-day counts. Pure
+  `domain/whatsappSafety.ts` (`decideSend`, `warmupCap`, `warmupDayFor`, `hasLink`, `ensureOptOutLine`, `typingMsFor`,
+  `nextWindowTime` (reuses `agent/rules.ts` `nextAllowedSendTime`), `shouldAutoPause`). `services/whatsappSafety.service.ts`
+  (`loadSendStats` one query, `autoPause` flips `enabled` once + notifies admins, `notifyAdmins`, `resumeSending`,
+  `loadSafetyMonitoring`, `updateSafetySettings`). `performSend`: the claim tx returns its outcome and throws after commit
+  (so the auto-pause and the not-registered mark persist — the latter used to roll back); spacing > 20 s defers to
+  `next_send_at` instead of sleeping (keeps the worker tick and the 15-min reclaim safe); no tx across `sendMessage`;
+  `BaileysManager(workspaceId, wait)` (tests inject a no-op wait). Baileys hygiene (B1–B7 below): composing refresh,
+  `onWhatsApp` JID, `disconnectAction` per reason (`domain/baileys-policy.ts`, backoff 5 s → 10 min), reconnect-storm pause,
+  per-workspace `retryCounterCache` outside the socket, `makeCacheableSignalKeyStore`, `getMessage` by message id only,
+  `Browsers.macOS("Chrome")` for new pairings (numbers paired before E1 keep `["Northbeam CRM","Chrome","1.0.0"]`). API
+  (`B4-api.md` §7h): GET adds the monitoring numbers; PUT settings + `POST /connections/whatsapp/resume` admin-only;
+  clearing a WhatsApp opt-out admin-only with a reason (timeline "WhatsApp opt-out cleared by <admin>: <reason>").
+  Frontend: `features/settings/whatsapp-safety.tsx` (Safety section: admin form RHF + Zod, read-only for others, red paused
+  banner + Resume confirm, stats, last 20 events, 14-day table), `features/contacts/clear-opt-out-dialog.tsx` ("Clear
+  opt-out" on the contact's WhatsApp status line, admins), `useLeadMutations().clearWhatsAppOptOut`. Non-admins can no
+  longer flip the outbound switch or the daily cap.
+
+## WhatsApp safety (E1)
+
+- Every WhatsApp send — workflow steps, rep proposal/meeting messages and (E2) the AI agent — goes through
+  `domain/whatsappSafety.ts` `decideSend` inside `performSend` (`providers/baileys.manager.ts`). **E2 must route agent sends
+  through it** (source `agent` = automated). No other code path may call `sendMessage`.
+- Rules (per workspace, admin-adjustable): 1 spacing random 45–120 s between any two sends; 2 "typing…" ~2–8 s by length
+  before each send; 3 warm-up cap min(cap, 20/40/80) for IST days 1–3/4–7/8–14 after pairing (`paired_at` null = warmed);
+  4 ≤ 20 first messages per IST day to phones never messaged / never heard from, else defer to the next day's window;
+  5 automated sends only in the send window (Mon–Sat 09:30–19:00 IST), else the next opening + 0–20 min; rep proposal/
+  meeting sends ignore the window but not spacing, caps or pause; 6 a first automated message must not contain a link
+  (permanent failure "First WhatsApp message can't contain a link") and gets "Reply STOP to opt out." unless it says STOP;
+  7 auto-pause (`enabled` = false + `paused_reason`, admins notified once, only an admin resumes; signals count only after
+  `resumed_at`): restriction, 401/403/440 close, ≥ 5 send failures (not "not on WhatsApp") or ≥ 5 dropped connections /
+  failed reconnects in 30 min, ≥ 3 STOP replies or ≥ 5 % of ≥ 40 sends in 24 h. Paused sends defer, never fail;
+  8 clearing a WhatsApp opt-out is admin-only with a reason; 9 `WORKER_DRY_RUN` unchanged.
+- Deferrals never burn attempts. Never hold a DB transaction across a wait or the network send.
+
+## Baileys rules (https://baileys.wiki)
+
+- B1 presence: `composing` per chat expires after ~10 s → resend every ≤ 8 s, then `paused`, then send. Keep
+  `markOnlineOnConnect: false`; never leave the client `available` (it mutes the paired phone's notifications).
+- B2 send to the JID `onWhatsApp` returns (`exists`), built from digits only; v7 sessions are LID — inbound keeps using
+  `remoteJidAlt`; never "restore" PN JIDs from LIDs.
+- B3 never re-enable delivery ACKs, never `readMessages` automatically, never `chatModify`.
+- B4 401 → no reconnect, clear auth, new QR; 403/440 → no reconnect, pause; 411/500 → stop, clear auth, re-pair;
+  515 → reconnect at once; others → backoff 5 s → 10 min + jitter; ≥ 5 in 30 min → pause.
+- B5 `getMessage` returns the stored outbound payload; `msgRetryCounterCache` lives outside the socket; `maxMsgRetryCount` 5.
+- B6 persist creds on every `creds.update` and keys immediately; the store accepts `lid-mapping`, `device-list`, `tctoken`.
+- B7 never fetch the WA Web version per connect (pinned by the installed Baileys); standard `Browsers` preset for new
+  pairings only; no history sync; no link previews (`link-preview-js` not installed); stay on 7.0.0-rc14 (v8 is pre-release).
 
 ## CRM v2
 

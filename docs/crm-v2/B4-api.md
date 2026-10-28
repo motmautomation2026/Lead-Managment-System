@@ -219,6 +219,32 @@ What a matched WhatsApp reply says, never the text or a quote of it (migration 0
 - `GET /agent/stats` adds `replies: { byLabel: { <label>: n }, costUsd }` for replies labelled this IST month; the AI
   labelling cost is also part of `spend.spentUsd` (the monthly budget), never of the daily decision cap.
 
+## 7h. WhatsApp safety — `/connections/whatsapp/*` and WhatsApp opt-out clearing (E1)
+
+Migration 041. The send-time rules live in `Backend/src/domain/whatsappSafety.ts` (`decideSend`).
+
+- `GET /connections/whatsapp/settings` (every CRM user) adds:
+  `pairedAt` (null = paired before E1, fully warmed), `warmupDay` (1 = pairing day, IST; null), `effectiveDailyCap`
+  (= min(daily cap, warm-up cap 20/40/80 for days 1–3/4–7/8–14)), `maxNewChatsPerDay`, `sendWindow { days (ISO, 1 = Mon),
+  start, end ("HH:MM" IST) }`, `pause` (null while `enabled`, else `{ reason, at, byName }`; `byName` null = automatic or
+  never set), `newChatsToday`, `failures24h` (WhatsApp send failures; "not on WhatsApp" is not one), `stops24h`
+  (`asked_to_stop` replies), `safetyEvents` (last 20: `{ kind: send_failed|reconnect_failed|disconnected|restricted|paused|
+  resumed, detail, at }`), `daily` (last 14 IST days, newest first: `{ date, sent, failed, stops }`). Existing fields
+  unchanged (`todayCount` = sent today).
+- `PUT /connections/whatsapp/settings` — **admin only** (403 otherwise). Body `{ enabled, dailyCap (1–10000),
+  minDelaySeconds? (1–300), maxDelaySeconds? (1–600, ≥ min), maxNewChatsPerDay? (0–1000), sendWindow? { days (1–7 items),
+  start < end } }` (omitted optional fields keep their value; 400 on invalid). `enabled` true → false records a pause
+  "Paused by <admin>."; false → true is a resume. Returns the GET body.
+- `POST /connections/whatsapp/resume` — **admin only**. `enabled` = true, pause cleared, `resumed_at` = now (auto-pause
+  signals count only after it). Returns the GET body.
+- `POST /connections/whatsapp/connect|restart|logout` unchanged (every CRM user).
+- `POST /leads/:id/contactability` (old route, unchanged otherwise): changing a WhatsApp `opted_out` to any other status is
+  **admin only** (403 "Only an admin can clear a WhatsApp opt-out.") and needs a non-blank `reason` (400); the timeline row
+  is "WhatsApp opt-out cleared by <admin>: <reason>". Every other contactability change stays open to every CRM user.
+- Deferred sends (window, caps, new-chat limit, spacing, pause) are `ProviderDeferredError`s: no attempt is burned; a
+  workflow step's `last_error` holds the reason. A first automated message with a link fails permanently with
+  "First WhatsApp message can't contain a link".
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
