@@ -508,6 +508,10 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   users. Frontend: Activity "Replied by email" rows (Show message with subject / Hide, label pill + Change, Classifying…),
   `ClearOptOutDialog` `channel` ("Clear" on Bounced / Invalid / Unsubscribed email status, admins), Settings → Email →
   Replies & bounces (+ Check now), AI Activity "Replies this month (WhatsApp + email)".
+- **UI fix (dialog overflow, frontend only):** `DialogContent` had an implicit `auto` grid column, which grows to the
+  widest nowrap content (a long proposal file name), so every field ran past the right edge. It is now `grid-cols-1`
+  (`minmax(0,1fr)`), which fixes every dialog. Send proposal file row: name `min-w-0 flex-1 truncate` (+ `title`), size and
+  Remove `shrink-0` (`send-proposal-dialog.test.tsx`).
 
 ## WhatsApp safety (E1)
 

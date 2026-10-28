@@ -167,14 +167,16 @@ export function SendProposalDialog({
           <div>
             <Label className="mb-1.5 block text-xs">Proposal document</Label>
             {documentFile ? (
-              <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
-                <span className="truncate">
-                  {documentFile.name}{" "}
-                  <span className="text-muted-foreground">({formatBytes(documentFile.size)})</span>
+              <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs">
+                <span className="min-w-0 flex-1 truncate" title={documentFile.name}>
+                  {documentFile.name}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  ({formatBytes(documentFile.size)})
                 </span>
                 <button
                   type="button"
-                  className="text-muted-foreground hover:text-foreground"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
                   onClick={() => setDocumentFile(null)}
                 >
                   Remove
