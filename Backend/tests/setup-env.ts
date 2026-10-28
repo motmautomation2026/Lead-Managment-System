@@ -27,6 +27,8 @@ if (testDatabaseUrl) {
     const { pool } = await import("../src/db.js");
     try {
       if (!fileStartedAt) return;
+      // D3 8c: no test user stays active (some can't be deleted: append-only admin audit rows).
+      await pool.query(`update public.profiles set is_active = false where is_active and email like '%@example.com' and created_at >= $1`, [fileStartedAt]);
       // Test users all have @example.com emails and are deleted in afterAll (created_by → null);
       // real staging users have real emails, so a person adding a lead meanwhile doesn't trip this.
       const leaks = await pool.query<{ id: string; workspace: string }>(

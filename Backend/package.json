@@ -23,6 +23,7 @@
     "agent:preview": "tsx scripts/agent-preview.ts",
     "db:connections": "tsx scripts/db-connections.ts",
     "staging:cleanup-test-workspaces": "tsx scripts/cleanup-test-workspaces.ts",
+    "staging:cleanup-test-users": "tsx scripts/cleanup-test-users.ts",
     "crm:sweep": "tsx scripts/crm-sweep.ts",
     "crm:deal-sweep": "tsx scripts/crm-deal-sweep.ts"
   },

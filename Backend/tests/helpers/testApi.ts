@@ -1,7 +1,8 @@
 /**
  * The real HTTP stack (createApp) for integration tests, with auth bypassed by
  * setting req.actor (requireAuth then skips the token check), as in roles.test.ts.
- * Test users are `@example.com` auth users, deleted by close().
+ * Test users are `@example.com` auth users, deactivated and then deleted by close() (a user with an
+ * append-only admin audit row can't be deleted; it stays inactive).
  */
 import { randomUUID } from "node:crypto";
 import express from "express";
@@ -59,6 +60,7 @@ export async function startTestApi(pool: Pool, label: string): Promise<TestApi> 
     },
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await pool.query(`update public.profiles set is_active = false where id = any($1::uuid[])`, [authUserIds]);
       for (const id of authUserIds) {
         await pool.query(`delete from auth.users where id = $1`, [id]).catch((error: Error) => console.warn(`[${label}] test user not deleted: ${error.message}`));
       }
