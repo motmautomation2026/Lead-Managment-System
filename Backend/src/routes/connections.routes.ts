@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
+import { pool } from "../db.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as connections from "../services/connections.service.js";
 import * as websiteLeadSettings from "../services/websiteLeadSettings.service.js";
@@ -64,6 +65,15 @@ connectionsRouter.put(
   asyncHandler(async (req, res) =>
     res.json(await emailConnection.updateEmailSettings(req.actor!, req.workspaceId!, parseBody(emailSettingsSchema, req.body))),
   ),
+);
+// D3: the next worker tick reads the mailbox; this request never opens IMAP itself.
+connectionsRouter.post(
+  "/email/check-now",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    await emailConnection.requestImapCheck(pool, req.workspaceId!);
+    res.json(await emailConnection.getEmailSettings(req.workspaceId!));
+  }),
 );
 connectionsRouter.post("/email/resume", requireAdmin, asyncHandler(async (req, res) => res.json(await emailConnection.resumeEmail(req.actor!, req.workspaceId!))));
 connectionsRouter.post("/email/test-smtp", requireAdmin, asyncHandler(async (req, res) => res.json(await emailConnection.testSmtpLogin(req.actor!, req.workspaceId!))));

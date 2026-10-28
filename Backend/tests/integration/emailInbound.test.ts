@@ -388,4 +388,61 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     expect(await leadRow(c.id)).toMatchObject({ agent_status: "stopped", agent_status_reason: "asked_to_stop", lifecycle_state: "active" });
     expect(await tasks(c.id)).toEqual([{ title: "Asked to stop by email — review today", status: "open", origin: "agent" }]);
   });
+
+  it("the email reply API: owner and admin read (audited, no-store), other rep 403; label correction; email status clear is admin-only", async () => {
+    const { ws, box } = await workspace("api");
+    const c = await contact(ws);
+    const ours = await sentEmail(ws, c.id, c.email);
+    const text = secret("Can we talk on Friday");
+    box.add(plainReply({ from: `Ravi <${c.email}>`, inReplyTo: ours.messageId, subject: "Re: Pricing", text }));
+    await poll(ws, box);
+    const [event] = await events(ws);
+
+    const page = await api.call(owner, ws, "GET", `/contacts/${c.id}/timeline`);
+    const row = page.body.data.find((r: { title: string }) => r.title === "Replied by email");
+    expect(row.reply).toEqual({ channel: "email", messageId: event.id, hasText: true, label: null, labelSource: null, labelBy: null, classifying: true, canRead: true, canCorrect: true });
+
+    const read = await api.call(owner, ws, "GET", `/contacts/${c.id}/email-replies/${event.id}`);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("cache-control")).toBe("no-store");
+    expect(read.body).toMatchObject({ replyId: event.id, subject: "Re: Pricing", text, truncated: false });
+    expect((await api.call(admin, ws, "GET", `/contacts/${c.id}/email-replies/${event.id}`)).status).toBe(200);
+    const denied = await api.call(otherRep, ws, "GET", `/contacts/${c.id}/email-replies/${event.id}`);
+    expect(denied.status).toBe(403);
+    expect(denied.headers.get("cache-control")).toBe("no-store");
+    expect((await api.call(owner, ws, "GET", `/contacts/${c.id}/email-replies/${randomUUID()}`)).status).toBe(404);
+    const audit = await pool.query(`select channel, viewer_id, outcome from public.inbound_message_views where email_event_id = $1 order by viewed_at`, [event.id]);
+    expect(audit.rows).toEqual([
+      { channel: "email", viewer_id: owner.id, outcome: "shown" },
+      { channel: "email", viewer_id: admin.id, outcome: "shown" },
+      { channel: "email", viewer_id: otherRep.id, outcome: "denied" },
+    ]);
+    const otherView = await api.call(otherRep, ws, "GET", `/contacts/${c.id}/timeline`);
+    expect(otherView.body.data.find((r: { title: string }) => r.title === "Replied by email").reply).toMatchObject({ canRead: false, canCorrect: false });
+
+    expect((await api.call(otherRep, ws, "PUT", `/contacts/${c.id}/email-replies/${event.id}/label`, { label: "question" })).status).toBe(403);
+    const corrected = await api.call(owner, ws, "PUT", `/contacts/${c.id}/email-replies/${event.id}/label`, { label: "question" });
+    expect(corrected.body).toEqual({ messageId: event.id, label: "question", labelSource: "rep", labelBy: owner.fullName });
+    expect(await tasks(c.id)).toEqual([{ title: "Asked a question — respond today", status: "open", origin: "agent" }]);
+
+    // Rule 6: clearing a bounce / unsubscribe is admin-only with a reason.
+    await pool.query(`insert into public.lead_contact_channels (lead_id, channel, status, reason) values ($1, 'email', 'permanent_bounce', 'bounced')`, [c.id]);
+    expect((await api.call(owner, ws, "POST", `/leads/${c.id}/contactability`, { channel: "email", status: "valid", reason: "fixed" })).status).toBe(403);
+    expect((await api.call(admin, ws, "POST", `/leads/${c.id}/contactability`, { channel: "email", status: "valid" })).status).toBe(400);
+    expect((await api.call(admin, ws, "POST", `/leads/${c.id}/contactability`, { channel: "email", status: "valid", reason: "New address confirmed" })).status).toBe(200);
+    expect(await emailStatus(c.id)).toBe("valid");
+    expect(await timeline(c.id)).toContain(`Email status cleared by ${admin.fullName}: New address confirmed`);
+
+    // Settings: the Replies & bounces block; Check now is admin-only and only schedules the next poll.
+    const settings = await api.call(owner, ws, "GET", "/connections/email/settings");
+    expect(settings.body.imapStatus).toMatchObject({ lastError: null, today: { replies: 1, bounces: 0, autoReplies: 0, unsubscribes: 0, unmatched: 0 }, bounces24h: 0 });
+    expect(settings.body.imapStatus.lastSuccessAt).not.toBeNull();
+    expect((await api.call(owner, ws, "POST", "/connections/email/check-now")).status).toBe(403);
+    const calls = box.calls.length;
+    await pool.query(`update public.email_imap_state set next_poll_at = now() + interval '1 hour' where workspace_id = $1`, [ws]);
+    const checked = await api.call(admin, ws, "POST", "/connections/email/check-now");
+    expect(checked.status).toBe(200);
+    expect(box.calls.length).toBe(calls);
+    expect(new Date((await state(ws)).next_poll_at).getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
+  });
 });

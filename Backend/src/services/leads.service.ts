@@ -979,6 +979,13 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
     if (actor.role !== "admin") throw new ForbiddenError("Only an admin can clear a WhatsApp opt-out.");
     if (!input.reason?.trim()) throw new ValidationError("A reason is required to clear a WhatsApp opt-out.");
   }
+  // D3 rule 6: same for an email bounce / unsubscribe (the address bounced or the contact asked).
+  const EMAIL_BLOCKS = ["invalid", "permanent_bounce", "unsubscribed"];
+  const clearsEmail = input.channel === "email" && EMAIL_BLOCKS.includes(current.rows[0]?.status ?? "") && !EMAIL_BLOCKS.includes(input.status);
+  if (clearsEmail) {
+    if (actor.role !== "admin") throw new ForbiddenError("Only an admin can clear an email bounce or unsubscribe.");
+    if (!input.reason?.trim()) throw new ValidationError("A reason is required to clear an email bounce or unsubscribe.");
+  }
 
   await db.query(
     `insert into public.lead_contact_channels (lead_id, channel, status, reason, updated_by, updated_by_name)
@@ -994,7 +1001,9 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
     kind: "system",
     title: clearsOptOut
       ? `WhatsApp opt-out cleared by ${actor.fullName}: ${input.reason!.trim()}`
-      : `${input.channel} contactability: ${input.status}`,
+      : clearsEmail
+        ? `Email status cleared by ${actor.fullName}: ${input.reason!.trim()}`
+        : `${input.channel} contactability: ${input.status}`,
     detail: input.reason,
     ...actorEvent(actor),
   });

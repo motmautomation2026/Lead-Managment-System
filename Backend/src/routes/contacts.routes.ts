@@ -11,11 +11,12 @@ import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as contacts from "../services/contacts.service.js";
 import { getLeadRowOr404 } from "../services/leads.service.js";
 import { listContactTimeline, timelineListSchema } from "../services/timeline.service.js";
-import { canReadReplies, readInboundReply } from "../services/inboundReplies.service.js";
+import { canReadReplies, readEmailReply, readInboundReply } from "../services/inboundReplies.service.js";
 import { correctReplyLabel, replyLabelCorrectionSchema } from "../services/replyLabels.service.js";
 
 export const contactsRouter = Router();
 contactsRouter.param("id", uuidParam("contact"));
+contactsRouter.param("replyId", uuidParam("reply"));
 
 contactsRouter.get(
   "/",
@@ -72,5 +73,23 @@ contactsRouter.put(
   asyncHandler(async (req, res) => {
     const { label } = parseBody(replyLabelCorrectionSchema, req.body);
     res.json(await withTransaction((client) => correctReplyLabel(client, req.actor!, req.workspaceId!, req.params.id!, req.params.messageId!, label)));
+  }),
+);
+
+/** D3: one email reply's subject + text (owner + admins, audited). Never cached, never logged. */
+contactsRouter.get(
+  "/:id/email-replies/:replyId",
+  asyncHandler(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json(await readEmailReply(pool, req.actor!, req.workspaceId!, req.params.id!, req.params.replyId!));
+  }),
+);
+
+/** D3: the owner or an admin changes an email reply's label (same rules as WhatsApp's). */
+contactsRouter.put(
+  "/:id/email-replies/:replyId/label",
+  asyncHandler(async (req, res) => {
+    const { label } = parseBody(replyLabelCorrectionSchema, req.body);
+    res.json(await withTransaction((client) => correctReplyLabel(client, req.actor!, req.workspaceId!, req.params.id!, req.params.replyId!, label, "email")));
   }),
 );

@@ -169,6 +169,13 @@ const TEXT_FIELDS: Array<[TextField, string]> = [
 ];
 
 /** Left panel "About": every editable contact property, saved with PATCH /leads/:id. */
+/** D3: email statuses that block sending, as the contact's status line shows them. */
+const EMAIL_BLOCKED_TEXT: Record<string, string> = {
+  permanent_bounce: "Bounced",
+  invalid: "Invalid",
+  unsubscribed: "Unsubscribed",
+};
+
 export function ContactAbout({
   contact,
   contactability,
@@ -180,6 +187,7 @@ export function ContactAbout({
   const { updateLead } = useLeadMutations();
   const isAdmin = useIsAdmin();
   const [clearOpen, setClearOpen] = useState(false);
+  const [clearChannel, setClearChannel] = useState<"whatsapp" | "email">("whatsapp");
   const text = ([field, name]: [TextField, string]): Property => ({
     id: field,
     label: name,
@@ -251,18 +259,29 @@ export function ContactAbout({
       ...(contact.lifecycleState === "active" && stageEditor ? { editor: stageEditor } : {}),
     },
     ...contactability.map((c) => {
-      // D4a: a STOP opt-out says why ("Asked to stop on WhatsApp").
+      // D4a: a STOP opt-out says why ("Asked to stop on WhatsApp"); D3: so do email bounces / unsubscribes.
+      const emailBlocked = c.channel === "email" && c.status in EMAIL_BLOCKED_TEXT;
+      const status = emailBlocked ? EMAIL_BLOCKED_TEXT[c.status]! : label(c.status);
       const text =
-        c.status === "opted_out" && c.reason ? `${label(c.status)} — ${c.reason}` : label(c.status);
+        (c.status === "opted_out" || emailBlocked) && c.reason ? `${status} — ${c.reason}` : status;
+      const clearable = (c.channel === "whatsapp" && c.status === "opted_out") || emailBlocked;
       return {
         id: `contactability-${c.channel}`,
         label: `${label(c.channel)} status`,
         value:
-          c.channel === "whatsapp" && c.status === "opted_out" && isAdmin ? (
+          clearable && isAdmin ? (
             <div className="space-y-1">
-              <p>{text}</p>
-              <Button type="button" size="sm" variant="outline" onClick={() => setClearOpen(true)}>
-                Clear opt-out
+              <p className="break-words">{text}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setClearChannel(c.channel === "email" ? "email" : "whatsapp");
+                  setClearOpen(true);
+                }}
+              >
+                {c.channel === "email" ? "Clear" : "Clear opt-out"}
               </Button>
             </div>
           ) : (
@@ -276,7 +295,12 @@ export function ContactAbout({
     <>
       <PropertyList items={items} />
       {isAdmin && (
-        <ClearOptOutDialog contactId={contact.id} open={clearOpen} onOpenChange={setClearOpen} />
+        <ClearOptOutDialog
+          contactId={contact.id}
+          channel={clearChannel}
+          open={clearOpen}
+          onOpenChange={setClearOpen}
+        />
       )}
     </>
   );

@@ -18,9 +18,12 @@ export const REPLY_TASK_TITLES: readonly string[] = [
   "Annoyed — review today",
   "Wants to talk — respond today",
   "Asked a question — respond today",
+  // D3: email replies.
+  "Lead replied by email — respond today",
+  "Asked to stop by email — review today",
 ];
 
-/** D4a: what a WhatsApp reply says. */
+/** D4a: what a reply says (D3: WhatsApp or email). */
 export const REPLY_LABEL_TEXT: Record<ReplyLabel, string> = {
   asked_to_stop: "Asked to stop",
   not_interested: "Not interested",

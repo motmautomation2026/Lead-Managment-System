@@ -46,6 +46,7 @@ const replyRow = (reply: TimelineEvent["reply"], id = "t-1"): TimelineEvent => (
 });
 type ReplyField = NonNullable<TimelineEvent["reply"]>;
 const r = (over: Partial<ReplyField> = {}): ReplyField => ({
+  channel: "whatsapp",
   messageId: "m-1",
   hasText: true,
   canRead: true,
@@ -221,9 +222,82 @@ describe("ActivityFeed — reply labels (D4a)", () => {
     );
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Not interested" }));
     await waitFor(() =>
-      expect(mocks.setReplyLabel).toHaveBeenCalledWith("c-1", "m-1", "not_interested"),
+      expect(mocks.setReplyLabel).toHaveBeenCalledWith("c-1", "m-1", "not_interested", "whatsapp"),
     );
     await waitFor(() => expect(mocks.timeline).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("ActivityFeed — email replies (D3)", () => {
+  const emailRow = (over: Partial<ReplyField> = {}, id = "t-1"): TimelineEvent => ({
+    ...replyRow(r({ channel: "email", messageId: "e-1", ...over }), id),
+    kind: "email",
+    title: "Replied by email",
+  });
+
+  it("Show message reads the email reply (subject + text) through the email channel; Hide drops it", async () => {
+    mocks.reply.mockResolvedValue(answer({ messageId: "e-1", subject: "Re: Pricing" }));
+    await feed([emailRow()]);
+    fireEvent.click(await screen.findByRole("button", { name: "Show message" }));
+    expect(await screen.findByText(SECRET)).toBeInTheDocument();
+    expect(screen.getByText("Re: Pricing")).toBeInTheDocument();
+    const call = mocks.reply.mock.calls[0]!;
+    expect([call[0], call[1], call[3]]).toEqual(["c-1", "e-1", "email"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText(SECRET)).not.toBeInTheDocument();
+    expect(client.getQueryData(keys.inboundReply("ws-1", "c-1", "e-1"))).toBeUndefined();
+  });
+
+  it("another rep (canRead false) gets no button and no request", async () => {
+    await feed([emailRow({ canRead: false })]);
+    expect(
+      await screen.findByText("Only the contact owner and admins can read replies."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show message" })).not.toBeInTheDocument();
+    expect(mocks.reply).not.toHaveBeenCalled();
+  });
+
+  it("shows Classifying…, and a label change goes to the email reply", async () => {
+    mocks.setReplyLabel.mockResolvedValue({
+      messageId: "e-2",
+      label: "question",
+      labelSource: "rep",
+      labelBy: "Me",
+    });
+    await feed([
+      emailRow({ classifying: true }),
+      emailRow({ messageId: "e-2", label: "positive", labelSource: "ai", canCorrect: true }, "t-2"),
+    ]);
+    expect(await screen.findByText("Classifying…")).toBeInTheDocument();
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Change reply label" }), {
+      key: "Enter",
+    });
+    const menu = await screen.findByRole("menu");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Question" }));
+    await waitFor(() =>
+      expect(mocks.setReplyLabel).toHaveBeenCalledWith("c-1", "e-2", "question", "email"),
+    );
+  });
+
+  it("bounce, auto-reply and unsubscribe rows show their title and reason, with no Show message", async () => {
+    const row = (id: string, title: string, detail?: string): TimelineEvent => ({
+      ...replyRow(undefined, id),
+      kind: "email",
+      title,
+      ...(detail ? { detail } : {}),
+    });
+    await feed([
+      row("b", "Email bounced (address doesn't exist)", "Email bounced: 5.1.1 User unknown"),
+      row("a", "Automatic email reply received (out of office or similar)"),
+      row("u", "Unsubscribed from email"),
+    ]);
+    expect(await screen.findByText("Email bounced (address doesn't exist)")).toBeInTheDocument();
+    expect(screen.getByText("Email bounced: 5.1.1 User unknown")).toBeInTheDocument();
+    expect(
+      screen.getByText("Automatic email reply received (out of office or similar)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Unsubscribed from email")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show message" })).not.toBeInTheDocument();
   });
 });
 

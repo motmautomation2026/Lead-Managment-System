@@ -170,9 +170,9 @@ describe("AiActivityPage (C6b)", () => {
     expect(mocks.fetchNextPage).toHaveBeenCalled();
   });
 
-  it("shows this month's WhatsApp reply labels (counts only) and their AI cost (D4a)", async () => {
+  it("shows this month's reply labels, both channels (counts only) and their AI cost (D4a, D3)", async () => {
     await renderPage();
-    const heading = screen.getByText("WhatsApp replies this month");
+    const heading = screen.getByText("Replies this month (WhatsApp + email)");
     const card = heading.closest("div")!;
     const items = within(card)
       .getAllByRole("listitem")

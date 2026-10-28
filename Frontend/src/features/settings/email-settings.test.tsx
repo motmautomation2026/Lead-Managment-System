@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   sendTest: vi.fn(),
   testStatus: vi.fn(),
   deliverability: vi.fn(),
+  checkNow: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -33,6 +34,7 @@ vi.mock("@/lib/backend-client", () => ({
         sendTest: mocks.sendTest,
         testStatus: mocks.testStatus,
         deliverability: mocks.deliverability,
+        checkNow: mocks.checkNow,
       },
     },
   },
@@ -82,6 +84,14 @@ const SAVED: EmailSettings = {
     },
   ],
   daily: [{ date: "2026-10-28", sent: 7, failed: 1, rejected: 2 }],
+  imapStatus: {
+    lastCheckAt: "2026-10-28T05:00:00.000Z",
+    lastSuccessAt: "2026-10-28T05:00:00.000Z",
+    lastError: null,
+    nextCheckAt: "2026-10-28T05:02:00.000Z",
+    today: { replies: 4, bounces: 2, autoReplies: 1, unsubscribes: 1, unmatched: 3 },
+    bounces24h: 2,
+  },
   updatedAt: "2026-10-28T04:00:00.000Z",
 };
 
@@ -257,5 +267,52 @@ describe("EmailPanel (E1b)", () => {
     expect(screen.getByText("Missing")).toBeInTheDocument();
     expect(mocks.deliverability).toHaveBeenCalledWith("s1", expect.anything());
     expect(screen.getByRole("button", { name: "Re-check" })).toBeInTheDocument();
+  });
+
+  describe("Replies & bounces (D3)", () => {
+    const stat = (label: string) => screen.getByText(label).parentElement!;
+
+    it("shows the last checks and today's counts; a salesperson has no Check now", async () => {
+      mocks.isAdmin = false;
+      renderPanel();
+      expect(await screen.findByRole("heading", { name: "Replies & bounces" })).toBeInTheDocument();
+      expect(stat("Replies today")).toHaveTextContent("4");
+      expect(stat("Bounces today")).toHaveTextContent("2");
+      expect(stat("Auto-replies today")).toHaveTextContent("1");
+      expect(stat("Unsubscribes today")).toHaveTextContent("1");
+      expect(stat("Unmatched today")).toHaveTextContent("3");
+      expect(stat("Bounces (24 h)")).toHaveTextContent("2");
+      expect(screen.queryByRole("button", { name: "Check now" })).not.toBeInTheDocument();
+    });
+
+    it("shows the last error in plain text and Never before the first check", async () => {
+      mocks.isAdmin = false;
+      renderPanel({
+        imapStatus: {
+          ...SAVED.imapStatus!,
+          lastCheckAt: null,
+          lastSuccessAt: null,
+          lastError:
+            "IMAP login rejected — check the IMAP username and password in Settings → Email.",
+        },
+      });
+      expect(await screen.findByText(/IMAP login rejected/)).toBeInTheDocument();
+      expect(screen.getAllByText("Never")).toHaveLength(2);
+    });
+
+    it("an admin's Check now asks the server once", async () => {
+      mocks.isAdmin = true;
+      mocks.checkNow.mockResolvedValue({ ...SAVED });
+      renderPanel();
+      fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
+      await waitFor(() => expect(mocks.checkNow).toHaveBeenCalledTimes(1));
+    });
+
+    it("no IMAP login saved: no card", async () => {
+      mocks.isAdmin = false;
+      renderPanel({ imapStatus: null });
+      await screen.findByText("Sent today");
+      expect(screen.queryByRole("heading", { name: "Replies & bounces" })).not.toBeInTheDocument();
+    });
   });
 });

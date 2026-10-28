@@ -173,7 +173,7 @@ const muted = "pt-1 type-small text-muted-foreground";
  */
 function ReplyText({ contactId, reply }: { contactId: string; reply: Reply }) {
   const [shown, setShown] = useState(false);
-  const query = useInboundReply(contactId, reply.messageId, shown && reply.canRead);
+  const query = useInboundReply(contactId, reply.messageId, shown && reply.canRead, reply.channel);
   if (!reply.canRead)
     return <p className={muted}>Only the contact owner and admins can read replies.</p>;
   const toggle = (
@@ -197,6 +197,7 @@ function ReplyText({ contactId, reply }: { contactId: string; reply: Reply }) {
         <ErrorBlock error={query.error} />
       ) : data?.text != null ? (
         <>
+          {data.subject && <p className="type-small font-medium break-words">{data.subject}</p>}
           <blockquote className="border-l-2 pl-3 type-body break-words whitespace-pre-wrap">
             {data.text}
           </blockquote>
@@ -206,7 +207,9 @@ function ReplyText({ contactId, reply }: { contactId: string; reply: Reply }) {
         <p className={muted}>
           {data?.reason === "unreadable"
             ? "This message can't be read any more (the encryption key changed)."
-            : "The text of this message wasn't stored (e.g. a sticker or voice note)."}
+            : reply.channel === "email"
+              ? "The text of this email wasn't stored."
+              : "The text of this message wasn't stored (e.g. a sticker or voice note)."}
         </p>
       )}
       {toggle}
@@ -244,7 +247,7 @@ function ReplyLabelLine({ contactId, reply }: { contactId: string; reply: Reply 
           : null;
   const change = (label: Exclude<ReplyLabel, "unclassified">) =>
     correct.mutate(
-      { messageId: reply.messageId, label },
+      { messageId: reply.messageId, label, channel: reply.channel },
       {
         onSuccess: () => toast.success(`Reply marked "${REPLY_LABEL_TEXT[label]}"`),
         onError: (error) => toast.error(messageFromError(error)),

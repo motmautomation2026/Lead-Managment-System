@@ -25,17 +25,40 @@ const schema = z.object({
 });
 type ClearOptOutForm = z.infer<typeof schema>;
 
-/** Admin only (E1 rule 8): clears a WhatsApp opt-out with a required reason; the timeline records who and why. */
+const TEXT = {
+  whatsapp: {
+    title: "Clear WhatsApp opt-out?",
+    description:
+      "This contact asked us to stop messaging on WhatsApp. Clear it only when they asked to hear from us again.",
+    action: "Clear opt-out",
+    done: "WhatsApp opt-out cleared",
+  },
+  email: {
+    title: "Clear email status?",
+    description:
+      "This address bounced or the contact unsubscribed. Clear it only when the address is fixed or they asked to hear from us again.",
+    action: "Clear status",
+    done: "Email status cleared",
+  },
+};
+
+/**
+ * Admin only (E1 rule 8, D3 rule 6): clears a WhatsApp opt-out or an email bounce / unsubscribe
+ * with a required reason; the timeline records who and why.
+ */
 export function ClearOptOutDialog({
   contactId,
   open,
   onOpenChange,
+  channel = "whatsapp",
 }: {
   contactId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  channel?: "whatsapp" | "email";
 }) {
-  const { clearWhatsAppOptOut } = useLeadMutations();
+  const { clearWhatsAppOptOut, clearEmailStatus } = useLeadMutations();
+  const text = TEXT[channel];
   const form = useForm<ClearOptOutForm>({
     resolver: zodResolver(schema),
     defaultValues: { reason: "" },
@@ -48,8 +71,11 @@ export function ClearOptOutDialog({
 
   const submit = form.handleSubmit(async ({ reason }) => {
     try {
-      await clearWhatsAppOptOut(contactId, reason.trim());
-      toast.success("WhatsApp opt-out cleared");
+      await (channel === "email" ? clearEmailStatus : clearWhatsAppOptOut)(
+        contactId,
+        reason.trim(),
+      );
+      toast.success(text.done);
       onOpenChange(false);
     } catch (error) {
       form.setError("root", { message: messageFromError(error) });
@@ -60,11 +86,8 @@ export function ClearOptOutDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Clear WhatsApp opt-out?</DialogTitle>
-          <DialogDescription>
-            This contact asked us to stop messaging on WhatsApp. Clear it only when they asked to
-            hear from us again.
-          </DialogDescription>
+          <DialogTitle>{text.title}</DialogTitle>
+          <DialogDescription>{text.description}</DialogDescription>
         </DialogHeader>
         <form className="space-y-3" onSubmit={(e) => void submit(e)} noValidate>
           <div className="space-y-1.5">
@@ -85,7 +108,7 @@ export function ClearOptOutDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={form.formState.isSubmitting}>
-              Clear opt-out
+              {text.action}
             </Button>
           </DialogFooter>
         </form>

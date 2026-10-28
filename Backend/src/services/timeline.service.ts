@@ -151,15 +151,23 @@ function timelinePage<R extends TimelineRow>(db: Queryable, b: SqlBuilder, query
   );
 }
 
-// D2/D4a: null unless the row is a matched inbound WhatsApp reply; never the text itself.
-const REPLY_INFO_SQL = `, (select json_build_object('hasText', e.body_ciphertext is not null, 'label', e.reply_label,
-            'labelSource', e.reply_label_source, 'classifying', e.classification_status = 'pending' and e.reply_label is null,
-            'labelBy', case when e.reply_label_source = 'rep' then p.full_name end)
-       from public.whatsapp_inbound_events e left join public.profiles p on p.id = e.label_corrected_by
-      where t.event_kind = 'whatsapp' and e.message_id = t.metadata->>'messageId'
-        and e.workspace_id = l.workspace_id and e.disposition = 'matched') as reply_info`;
+// D2/D4a/D3: null unless the row is a matched inbound WhatsApp or email reply; never the text itself.
+const replyInfo = (channel: string, id: string) => `json_build_object('channel', '${channel}', 'messageId', ${id}, 'hasText', e.body_ciphertext is not null,
+            'label', e.reply_label, 'labelSource', e.reply_label_source, 'classifying', e.classification_status = 'pending' and e.reply_label is null,
+            'labelBy', case when e.reply_label_source = 'rep' then p.full_name end)`;
+const REPLY_INFO_SQL = `, coalesce(
+     (select ${replyInfo("whatsapp", "e.message_id")}
+        from public.whatsapp_inbound_events e left join public.profiles p on p.id = e.label_corrected_by
+       where t.event_kind = 'whatsapp' and e.message_id = t.metadata->>'messageId'
+         and e.workspace_id = l.workspace_id and e.disposition = 'matched'),
+     (select ${replyInfo("email", "e.id")}
+        from public.email_inbound_events e left join public.profiles p on p.id = e.label_corrected_by
+       where t.event_kind = 'email' and e.id::text = t.metadata->>'emailReplyId'
+         and e.workspace_id = l.workspace_id and e.kind = 'reply' and e.match_status = 'matched')) as reply_info`;
 
 interface ReplyInfo {
+  channel: "whatsapp" | "email";
+  messageId: string;
   hasText: boolean;
   label: string | null;
   labelSource: string | null;
@@ -181,7 +189,7 @@ export async function listContactTimeline(db: Queryable, workspaceId: string, le
       ...timelineToDto(row),
       ...(reply_info === null
         ? {}
-        : { reply: { messageId: String(row.metadata?.messageId), ...reply_info, canRead: canReadReplies, canCorrect: canReadReplies } }),
+        : { reply: { ...reply_info, canRead: canReadReplies, canCorrect: canReadReplies } }),
     })),
     nextCursor: page.nextCursor,
   };

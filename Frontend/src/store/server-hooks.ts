@@ -41,6 +41,7 @@ import type {
   MeetingOutcome,
   ProposalStatus,
   ReplyLabel,
+  ReplyChannel,
   TemplateType,
   User,
   WorkflowStep,
@@ -178,10 +179,17 @@ export function useLeadMutations() {
               : backend.leads.reactivate(id, reason),
     onSuccess: (lead) => refresh(lead.id),
   });
-  // E1: clearing a WhatsApp opt-out is admin-only and needs a reason (backend enforces it).
+  // E1 / D3: clearing a WhatsApp opt-out or an email bounce / unsubscribe is admin-only and needs a reason (backend enforces it).
   const contactability = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      backend.leads.setContactability(id, { channel: "whatsapp", status: "valid", reason }),
+    mutationFn: ({
+      id,
+      reason,
+      channel,
+    }: {
+      id: string;
+      reason: string;
+      channel: "whatsapp" | "email";
+    }) => backend.leads.setContactability(id, { channel, status: "valid", reason }),
     onSuccess: (_data, variables) => refresh(variables.id),
   });
   const isPending = [
@@ -218,7 +226,10 @@ export function useLeadMutations() {
       reason?: string,
       lossReason?: LeadLossReason,
     ) => lifecycle.mutateAsync({ id, action, reason, lossReason }),
-    clearWhatsAppOptOut: (id: string, reason: string) => contactability.mutateAsync({ id, reason }),
+    clearWhatsAppOptOut: (id: string, reason: string) =>
+      contactability.mutateAsync({ id, reason, channel: "whatsapp" }),
+    clearEmailStatus: (id: string, reason: string) =>
+      contactability.mutateAsync({ id, reason, channel: "email" }),
   };
 }
 
@@ -898,7 +909,12 @@ export function useCompanyTimeline(companyId: string, kind: ActivityType[] = [])
  * Each fetch is an audited read, so no retries or focus refetches. The text leaves the cache
  * when the caller hides it, unmounts or the workspace changes.
  */
-export function useInboundReply(contactId: string, messageId: string, enabled: boolean) {
+export function useInboundReply(
+  contactId: string,
+  messageId: string,
+  enabled: boolean,
+  channel: ReplyChannel = "whatsapp",
+) {
   const { currentWorkspaceId: ws } = useWorkspace();
   const client = useQueryClient();
   useEffect(() => {
@@ -908,7 +924,7 @@ export function useInboundReply(contactId: string, messageId: string, enabled: b
   }, [client, ws, contactId, messageId, enabled]);
   return useQuery({
     queryKey: keys.inboundReply(ws, contactId, messageId),
-    queryFn: ({ signal }) => backend.contacts.reply(contactId, messageId, signal),
+    queryFn: ({ signal }) => backend.contacts.reply(contactId, messageId, signal, channel),
     enabled,
     staleTime: 0,
     gcTime: 60_000,
@@ -922,8 +938,11 @@ export function useCorrectReplyLabel(contactId: string) {
   const client = useQueryClient();
   const { currentWorkspaceId: ws } = useWorkspace();
   return useMutation({
-    mutationFn: (input: { messageId: string; label: Exclude<ReplyLabel, "unclassified"> }) =>
-      backend.contacts.setReplyLabel(contactId, input.messageId, input.label),
+    mutationFn: (input: {
+      messageId: string;
+      label: Exclude<ReplyLabel, "unclassified">;
+      channel?: ReplyChannel;
+    }) => backend.contacts.setReplyLabel(contactId, input.messageId, input.label, input.channel),
     onSuccess: () => refreshContact(client, ws, contactId),
   });
 }

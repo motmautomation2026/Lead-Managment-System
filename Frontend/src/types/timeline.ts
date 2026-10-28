@@ -15,8 +15,10 @@ export interface TimelineEvent {
   relatedWorkflowRunId?: string;
   relatedDealId?: string;
   metadata?: Record<string, unknown>;
-  /** D2/D4a: only on a matched inbound WhatsApp reply of the contact (contact timeline). Never the text. */
+  /** D2/D4a/D3: only on a matched inbound WhatsApp or email reply of the contact (contact timeline). Never the text. */
   reply?: {
+    channel: ReplyChannel;
+    /** WhatsApp message id, or the email reply's id. */
     messageId: string;
     hasText: boolean;
     canRead: boolean;
@@ -42,11 +44,16 @@ export const REPLY_LABELS = [
 ] as const;
 export type ReplyLabel = (typeof REPLY_LABELS)[number];
 export type ReplyLabelSource = "keyword" | "ai" | "rep";
+export type ReplyChannel = "whatsapp" | "email";
 
-/** D2: GET /contacts/:id/replies/:messageId. `text` is null with a `reason` when there is nothing to show. */
+/**
+ * D2: GET /contacts/:id/replies/:messageId (D3: or /email-replies/:replyId). `text` is null with a
+ * `reason` when there is nothing to show. `subject` only for email.
+ */
 export interface InboundReply {
   messageId: string;
   receivedAt: string;
+  subject?: string | null;
   text: string | null;
   truncated: boolean;
   reason?: "not_stored" | "unreadable";

@@ -287,6 +287,10 @@ export function EmailPanel({ workspaceId }: { workspaceId: string }) {
           </table>
         </section>
 
+        {data.imapStatus && (
+          <RepliesAndBounces status={data.imapStatus} isAdmin={isAdmin} onChecked={store} />
+        )}
+
         {isAdmin && data.configured && <DeliverabilityCard />}
 
         <ConfirmDialog
@@ -407,7 +411,8 @@ function EmailForm({
       <fieldset className="space-y-3 rounded-lg border p-3">
         <legend className="px-1 text-sm font-semibold">Replies and bounces (IMAP)</legend>
         <p className="text-xs text-muted-foreground">
-          Replies and bounces will be read from this mailbox in the next update.
+          Every 2 minutes the worker reads new mail in this folder (read-only: nothing is marked
+          read, moved or deleted) to record replies, bounces and unsubscribes.
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <TextField form={form} name="imapHost" label="IMAP host" placeholder="imap.gmail.com" />
@@ -860,6 +865,65 @@ function DeliverabilityCard() {
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+const when = (at: string | null) => (at ? new Date(at).toLocaleString() : "Never");
+
+/** D3: what the worker read from the mailbox; "Check now" (admin) only schedules the next read. */
+function RepliesAndBounces({
+  status,
+  isAdmin,
+  onChecked,
+}: {
+  status: NonNullable<EmailSettings["imapStatus"]>;
+  isAdmin: boolean;
+  onChecked: (next: EmailSettings) => void;
+}) {
+  const checkNow = useMutation({
+    mutationFn: backend.connections.email.checkNow,
+    onSuccess: (next) => {
+      onChecked(next);
+      toast.success("The mailbox will be checked within a minute.");
+    },
+    onError: (error) => toast.error(messageFromError(error)),
+  });
+  const t = status.today;
+  return (
+    <section aria-labelledby="email-replies" className="space-y-3 border-t pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="email-replies" className="text-sm font-semibold">
+          Replies & bounces
+        </h3>
+        {isAdmin && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={checkNow.isPending}
+            onClick={() => checkNow.mutate()}
+          >
+            <RefreshCw className="size-3.5" aria-hidden /> Check now
+          </Button>
+        )}
+      </div>
+      <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+        <ReadOnly label="Last check" value={when(status.lastCheckAt)} />
+        <ReadOnly label="Last successful check" value={when(status.lastSuccessAt)} />
+      </dl>
+      {status.lastError && (
+        <p role="alert" className="break-words text-sm text-destructive">
+          {status.lastError}
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Replies today" value={String(t.replies)} />
+        <Stat label="Bounces today" value={String(t.bounces)} />
+        <Stat label="Auto-replies today" value={String(t.autoReplies)} />
+        <Stat label="Unsubscribes today" value={String(t.unsubscribes)} />
+        <Stat label="Unmatched today" value={String(t.unmatched)} />
+        <Stat label="Bounces (24 h)" value={String(status.bounces24h)} />
+      </div>
     </section>
   );
 }

@@ -66,6 +66,7 @@ import type {
   TimelineEvent,
   InboundReply,
   ReplyLabel,
+  ReplyChannel,
   User,
   Workflow,
   WorkflowStep,
@@ -667,6 +668,23 @@ export type AgentEnrollResult =
 export type MailSecurity = "ssl" | "starttls";
 
 /** E1b: GET /connections/email/settings (every CRM user; never any secret). */
+export interface EmailImapStatus {
+  lastCheckAt: string | null;
+  lastSuccessAt: string | null;
+  /** Plain English, never a secret. */
+  lastError: string | null;
+  nextCheckAt: string | null;
+  /** Messages read today (IST). */
+  today: {
+    replies: number;
+    bounces: number;
+    autoReplies: number;
+    unsubscribes: number;
+    unmatched: number;
+  };
+  bounces24h: number;
+}
+
 export interface EmailSettings {
   /** SMTP saved (the only provider); false = "Email is not set up". */
   configured: boolean;
@@ -715,6 +733,8 @@ export interface EmailSettings {
     at: string;
   }[];
   daily: { date: string; sent: number; failed: number; rejected: number }[];
+  /** D3: reading replies, bounces and unsubscribes over IMAP; null until an IMAP login is saved. */
+  imapStatus: EmailImapStatus | null;
   updatedAt: string;
 }
 
@@ -869,14 +889,35 @@ export const backend = {
     /** Paginated, newest first (C3). The old `leads.timeline` returns everything. */
     timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
       get<Page<TimelineEvent>>(listQuery(`/contacts/${id}/timeline`, { kind, cursor }), signal),
-    /** D2: one reply's text (owner + admins; audited server-side). Only after a click. */
-    reply: (id: string, messageId: string, signal?: AbortSignal) =>
-      get<InboundReply>(`/contacts/${id}/replies/${encodeURIComponent(messageId)}`, signal),
+    /** D2: one reply's text (owner + admins; audited server-side). Only after a click. D3: email too. */
+    reply: async (
+      id: string,
+      messageId: string,
+      signal?: AbortSignal,
+      channel: ReplyChannel = "whatsapp",
+    ) => {
+      if (channel === "whatsapp") {
+        return get<InboundReply>(
+          `/contacts/${id}/replies/${encodeURIComponent(messageId)}`,
+          signal,
+        );
+      }
+      const { replyId, ...rest } = await get<Omit<InboundReply, "messageId"> & { replyId: string }>(
+        `/contacts/${id}/email-replies/${encodeURIComponent(messageId)}`,
+        signal,
+      );
+      return { ...rest, messageId: replyId } satisfies InboundReply;
+    },
     /** D4a: the owner or an admin changes a reply's label (never "unclassified"). */
-    setReplyLabel: (id: string, messageId: string, label: Exclude<ReplyLabel, "unclassified">) =>
+    setReplyLabel: (
+      id: string,
+      messageId: string,
+      label: Exclude<ReplyLabel, "unclassified">,
+      channel: ReplyChannel = "whatsapp",
+    ) =>
       send<{ messageId: string; label: ReplyLabel; labelSource: "rep"; labelBy: string }>(
         "PUT",
-        `/contacts/${id}/replies/${encodeURIComponent(messageId)}/label`,
+        `/contacts/${id}/${channel === "email" ? "email-replies" : "replies"}/${encodeURIComponent(messageId)}/label`,
         { label },
       ),
   },
@@ -991,6 +1032,8 @@ export const backend = {
       testStatus: (id: string, signal?: AbortSignal) =>
         get<TestEmailStatus>(`/connections/email/test-send/${encodeURIComponent(id)}`, signal),
       resume: () => send<EmailSettings>("POST", "/connections/email/resume"),
+      /** D3 (admin): the worker reads the mailbox on its next tick. */
+      checkNow: () => send<EmailSettings>("POST", "/connections/email/check-now"),
       deliverability: (selector: string, signal?: AbortSignal) =>
         get<DeliverabilityCheck>(
           `/connections/email/deliverability${selector ? `?selector=${encodeURIComponent(selector)}` : ""}`,

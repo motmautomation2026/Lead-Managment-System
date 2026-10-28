@@ -119,7 +119,7 @@ export function AiActivityPage() {
               </Card>
               <Card>
                 <CardContent className="space-y-1 p-4">
-                  <span className="text-sm font-medium">WhatsApp replies this month</span>
+                  <span className="text-sm font-medium">Replies this month (WhatsApp + email)</span>
                   {Object.keys(s.replies.byLabel).length === 0 ? (
                     <p className="text-xs text-muted-foreground">No replies labelled yet.</p>
                   ) : (
