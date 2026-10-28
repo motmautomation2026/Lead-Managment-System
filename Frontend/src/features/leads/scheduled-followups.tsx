@@ -51,6 +51,8 @@ export function EnrollWorkflowDialog({
   const automationStore = useAutomations();
   const [workflowId, setWorkflowId] = useState("");
   const [reason, setReason] = useState("");
+  // Shown in the dialog too: e.g. the 409 for a contact the AI agent manages live (E2).
+  const [error, setError] = useState<string | null>(null);
 
   const active = automationStore.workflows.filter(
     (workflow) =>
@@ -68,6 +70,7 @@ export function EnrollWorkflowDialog({
     setLastLoadedFor(loadedFor);
     setWorkflowId(matchingTrigger.length === 1 ? matchingTrigger[0]!.id : "");
     setReason("");
+    setError(null);
   }
   if (!open && lastLoadedFor !== "") setLastLoadedFor("");
 
@@ -79,8 +82,9 @@ export function EnrollWorkflowDialog({
       setWorkflowId("");
       setReason("");
       onOpenChange(false);
-    } catch (error) {
-      toast.error(messageFromError(error));
+    } catch (err) {
+      setError(messageFromError(err));
+      toast.error(messageFromError(err));
     }
   };
 
@@ -131,6 +135,14 @@ export function EnrollWorkflowDialog({
               placeholder="Why this lead is going into this workflow"
             />
           </div>
+          {error && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-danger-soft p-2 text-sm text-danger-soft-foreground"
+            >
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -92,8 +92,11 @@ export function StatusBadge({
   dot = false,
   className,
   display,
+  title,
 }: {
   value: string;
+  /** Tooltip, e.g. the reason behind a status. */
+  title?: string | undefined;
   tone?: Tone;
   /** Text shown as given instead of label(value). */
   display?: string;
@@ -103,6 +106,7 @@ export function StatusBadge({
   const t = tone ?? MAP[value] ?? "neutral";
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
         toneClass[t],

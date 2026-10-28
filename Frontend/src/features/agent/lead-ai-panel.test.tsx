@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   panel: vi.fn(),
   enroll: vi.fn(),
   stop: vi.fn(),
+  setLiveTest: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/store", () => {
     useResumeLead: () => mutation(),
     useStopLead: () => mutation(mocks.stop),
     useWakeLead: () => mutation(),
+    useSetLiveTest: () => mutation(mocks.setLiveTest),
     useRateDecision: () => mutation(),
     useReportDecision: () => mutation(),
     useResolveReport: () => mutation(),
@@ -43,6 +45,8 @@ const panel = (status: string, extra: object = {}) => ({
     touchCount: 2,
     lastTouchAt: null,
     nextWakeup: { id: "w-1", dueAt: "2026-10-24T04:30:00.000Z", reason: "timer" },
+    liveTest: false,
+    effectiveMode: "shadow",
     decisions: [],
     ...extra,
   },
@@ -55,6 +59,70 @@ afterEach(() => {
 });
 
 describe("LeadAiPanel", () => {
+  it("E2: shows Live vs Shadow and the Live test pill to everyone; the toggle only to admins", () => {
+    mocks.panel.mockReturnValue(panel("active", { liveTest: true, effectiveMode: "live" }));
+    const { unmount } = render(<LeadAiPanel leadId="lead-1" />);
+    expect(screen.getByText("Live")).toBeTruthy();
+    expect(screen.getByText("Live test")).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: /AI live test contact/ })).toBeNull();
+    unmount();
+
+    mocks.isAdmin = true;
+    mocks.panel.mockReturnValue(panel("active"));
+    render(<LeadAiPanel leadId="lead-1" />);
+    expect(screen.getByText("Shadow")).toBeTruthy();
+    expect(screen.queryByText("Live test")).toBeNull();
+    const toggle = screen.getByRole("switch", { name: /AI live test contact/ });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(mocks.setLiveTest).toHaveBeenCalledWith(
+      { leadId: "lead-1", enabled: true },
+      expect.any(Object),
+    );
+  });
+
+  it("E2: decision rows show the send status with its reason", () => {
+    mocks.panel.mockReturnValue(
+      panel("active", {
+        decisions: [
+          {
+            id: "d-1",
+            createdAt: "2026-10-23T05:30:00.000Z",
+            mode: "live",
+            action: "send_whatsapp",
+            outcome: "executed",
+            reasoning: "r",
+            messageSubject: null,
+            messageBody: "Hi",
+            sendAt: null,
+            handoffTitle: null,
+            newStage: null,
+            stopReason: null,
+            regenerated: false,
+            error: null,
+            rating: null,
+            ratingReason: null,
+            ratingNote: null,
+            context: { company: null, deal: null },
+            sendStatus: "cancelled",
+            sentAt: null,
+            sendError: null,
+            cancelReason: "The contact replied after this message was written.",
+            channel: "whatsapp",
+            rules: null,
+            grounding: null,
+            openReports: 0,
+          },
+        ],
+      }),
+    );
+    render(<LeadAiPanel leadId="lead-1" />);
+    expect(screen.getByText("Cancelled")).toHaveAttribute(
+      "title",
+      "The contact replied after this message was written.",
+    );
+  });
+
   it("shows status, plain reason, touches and the next wake-up in IST", () => {
     mocks.panel.mockReturnValue(panel("paused"));
     render(<LeadAiPanel leadId="lead-1" />);

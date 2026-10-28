@@ -6,6 +6,7 @@ import {
   type AgentEnrollResult,
   type AgentRatingInput,
   type AgentSettingsUpdate,
+  type AgentLiveScope,
   type CreateLeadInput,
   type CreateMeetingInput,
   type CreateProposalInput,
@@ -524,7 +525,23 @@ export function useUpdateAgentSettings() {
   const { currentWorkspaceId } = useWorkspace();
   return useMutation({
     mutationFn: (input: AgentSettingsUpdate) => backend.agent.settings.update(input),
-    onSuccess: (data) => client.setQueryData(keys.agentSettings(currentWorkspaceId), data),
+    onSuccess: (data) => {
+      client.setQueryData(keys.agentSettings(currentWorkspaceId), data);
+      // The mode banner, live counts and every contact's Live/Shadow come from these.
+      void client.invalidateQueries({ queryKey: keys.agentStats(currentWorkspaceId) });
+      void client.invalidateQueries({ queryKey: keys.agentLeadPanel(currentWorkspaceId) });
+    },
+  });
+}
+
+/** E2 (admin): the confirm dialog's numbers for switching to Live with `scope`; fresh each time. */
+export function useAgentLivePreview(scope: AgentLiveScope | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: [...keys.agentSettings(currentWorkspaceId), "live-preview", scope] as const,
+    queryFn: ({ signal }) => backend.agent.settings.livePreview(scope!, signal),
+    enabled: Boolean(currentWorkspaceId && scope),
+    staleTime: 0,
   });
 }
 
@@ -681,6 +698,13 @@ export const useWakeLead = () =>
   useAgentStatusWrite(
     (leadId: string) => backend.agent.leads.wake(leadId),
     (id) => id,
+  );
+/** E2 (admin): mark / unmark an AI live test contact. */
+export const useSetLiveTest = () =>
+  useAgentStatusWrite(
+    ({ leadId, enabled }: { leadId: string; enabled: boolean }) =>
+      backend.agent.leads.setLiveTest(leadId, enabled),
+    ({ leadId }) => leadId,
   );
 
 export const SEARCH_MIN_CHARS = 2;

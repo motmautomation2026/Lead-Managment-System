@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
@@ -23,6 +24,7 @@ import {
   useLeadAgentPanel,
   usePauseLead,
   useResumeLead,
+  useSetLiveTest,
   useStopLead,
   useWakeLead,
 } from "@/store";
@@ -45,6 +47,7 @@ import {
   DecisionMessage,
   Section,
 } from "./decision-drawer";
+import { SendStatusPill } from "./live-mode";
 
 type ConfirmAction = "pause" | "resume" | "stop";
 const CONFIRM_TEXT: Record<ConfirmAction, { title: string; body: string }> = {
@@ -78,6 +81,19 @@ export function LeadAiPanel({ leadId }: { leadId: string }) {
               display={p.status === "none" ? "Not enrolled" : AGENT_STATUS_LABEL[p.status]}
               tone={AGENT_STATUS_TONE[p.status]}
             />
+            {p.status !== "none" && p.effectiveMode !== "off" && (
+              <StatusBadge
+                value=""
+                display={p.effectiveMode === "live" ? "Live" : "Shadow"}
+                tone={p.effectiveMode === "live" ? "danger" : "muted"}
+                title={
+                  p.effectiveMode === "live"
+                    ? "The AI really sends messages to this contact."
+                    : "The AI only drafts for this contact; nothing is sent."
+                }
+              />
+            )}
+            {p.liveTest && <StatusBadge value="" display="Live test" tone="warning" />}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -100,6 +116,7 @@ export function LeadAiPanel({ leadId }: { leadId: string }) {
                 : "None scheduled"}
             </dd>
           </dl>
+          {isAdmin && <LiveTestToggle panel={p} />}
           {isAdmin && <AdminControls panel={p} />}
         </CardContent>
       </Card>
@@ -145,6 +162,7 @@ function PanelDecision({
         <span className="text-xs text-muted-foreground">{istDateTime(d.createdAt)}</span>
         <StatusBadge value="" display={ACTION_LABEL[d.action]} tone="info" />
         <StatusBadge value="" display={OUTCOME_LABEL[d.outcome]} tone={OUTCOME_TONE[d.outcome]} />
+        <SendStatusPill state={d} />
         {d.rating && (
           <StatusBadge
             value=""
@@ -159,6 +177,7 @@ function PanelDecision({
       </button>
       {expanded && (
         <div className="mt-3 space-y-3 pl-6">
+          <SendStatusPill state={d} showReason />
           <ContextUsed context={d.context} />
           <DecisionMessage decision={d} />
           {d.error && <p className="text-destructive">{d.error}</p>}
@@ -181,6 +200,38 @@ function PanelDecision({
         </div>
       )}
     </li>
+  );
+}
+
+/** E2, admin only: mark this contact for live testing (the server enforces admin). */
+function LiveTestToggle({ panel: p }: { panel: LeadAgentPanel }) {
+  const setLiveTest = useSetLiveTest();
+  return (
+    <div className="flex items-center justify-between gap-3 border-t pt-3">
+      <Label htmlFor="ai-live-test" className="space-y-0.5">
+        <span className="block font-medium">AI live test contact</span>
+        <span className="block text-xs font-normal text-muted-foreground">
+          In Live mode the AI really messages this contact, even before the go-live gate.
+        </span>
+      </Label>
+      <Switch
+        id="ai-live-test"
+        checked={p.liveTest}
+        disabled={setLiveTest.isPending}
+        onCheckedChange={(enabled) =>
+          setLiveTest.mutate(
+            { leadId: p.leadId, enabled },
+            {
+              onSuccess: () =>
+                toast.success(
+                  enabled ? "Marked as an AI live test contact" : "AI live test mark removed",
+                ),
+              onError: (error) => toast.error(messageFromError(error)),
+            },
+          )
+        }
+      />
+    </div>
   );
 }
 

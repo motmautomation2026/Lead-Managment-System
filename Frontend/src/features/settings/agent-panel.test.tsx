@@ -23,6 +23,9 @@ const settings = {
   repQuietHours: 24,
   autoEnrollNewLeads: false,
   companyDisplayName: null,
+  liveScope: "test_contacts",
+  liveSince: null,
+  liveContactCount: 0,
   currentPlaybookVersion: null,
   updatedBy: "admin-1",
   updatedAt: "2026-10-23T05:30:00.000Z",
@@ -35,7 +38,17 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   restore: vi.fn(),
   settingsQuery: vi.fn(),
+  ready: false,
+  preview: vi.fn(),
 }));
+
+const readiness = (ready: boolean) => ({
+  ready,
+  rated: ready ? 60 : 12,
+  goodPct: ready ? 95 : 80,
+  seriousBad: 0,
+  reasons: ready ? [] : ["Rate at least 50 decisions (12 rated so far)."],
+});
 
 vi.mock("@/store", () => {
   const mutation = (fn: ReturnType<typeof vi.fn>) => ({
@@ -52,6 +65,21 @@ vi.mock("@/store", () => {
     useAgentPlaybooks: () => ({ data: { currentVersion: null, data: [] }, isError: false }),
     useSavePlaybook: () => mutation(mocks.save),
     useRestorePlaybook: () => mutation(mocks.restore),
+    useAgentStats: () => ({
+      data: {
+        mode: "live",
+        readiness: readiness(mocks.ready),
+        live: {
+          scope: "test_contacts",
+          liveSince: null,
+          liveContacts: 1,
+          sentToday: 3,
+          sentThisMonth: 9,
+        },
+      },
+    }),
+    useAgentLivePreview: (scope: string | null) =>
+      mocks.preview(scope) ?? { data: undefined, error: null },
   };
 });
 
@@ -74,7 +102,6 @@ describe("AgentPanel", () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
     render(<AgentPanel />);
-    expect(screen.getByRole("button", { name: "Live (coming later)" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Shadow" }));
     expect(screen.getByText(/Nothing is sent to leads in Shadow mode/)).toBeInTheDocument();
@@ -85,6 +112,86 @@ describe("AgentPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Turn on Shadow" }));
     expect(mocks.update).toHaveBeenCalledWith({ mode: "shadow" }, expect.any(Object));
+  });
+
+  it("Live: the confirm shows the gate numbers, contacts that become live and runs to cancel, then saves mode + scope", () => {
+    mocks.isAdmin = true;
+    mocks.ready = false;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    mocks.preview.mockImplementation((scope: string | null) => ({
+      data: scope && {
+        scope,
+        readiness: readiness(false),
+        allowed: true,
+        message: null,
+        liveContacts: 2,
+        workflowRunsToCancel: 1,
+      },
+      error: null,
+    }));
+    render(<AgentPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Live" }));
+    expect(mocks.preview).toHaveBeenLastCalledWith("test_contacts");
+    expect(screen.getByText("Go live: Test contacts only?")).toBeInTheDocument();
+    expect(screen.getByTestId("live-contacts")).toHaveTextContent(
+      "2 contacts will get real WhatsApp and email",
+    );
+    expect(screen.getByTestId("runs-to-cancel")).toHaveTextContent(
+      "1 workflow run will be cancelled",
+    );
+    expect(screen.getAllByText("12 / 50").length).toBeGreaterThan(0);
+    expect(mocks.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Go live" }));
+    expect(mocks.update).toHaveBeenCalledWith(
+      { mode: "live", liveScope: "test_contacts" },
+      expect.any(Object),
+    );
+  });
+
+  it("Live: pilot and all are disabled until the gate passes; the red Live banner shows", () => {
+    mocks.isAdmin = true;
+    mocks.ready = false;
+    mocks.settingsQuery.mockReturnValue({ data: { ...settings, mode: "live" }, isError: false });
+    mocks.preview.mockReturnValue({ data: undefined, error: null });
+    render(<AgentPanel />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Live: the AI sends real messages to 1 contact (Test contacts only). 3 sent today",
+    );
+    expect(screen.getByRole("button", { name: "Test contacts only" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "New leads (pilot)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "All AI contacts" })).toBeDisabled();
+    expect(screen.getByText(/unlock when the go-live gate passes/)).toBeInTheDocument();
+    expect(screen.getAllByText("Not passed").length).toBeGreaterThan(0);
+  });
+
+  it("Live: a wider scope confirms (refused by the gate → Go live disabled with the reason); narrowing saves at once", () => {
+    mocks.isAdmin = true;
+    mocks.ready = true;
+    mocks.settingsQuery.mockReturnValue({
+      data: { ...settings, mode: "live", liveScope: "new_leads" },
+      isError: false,
+    });
+    mocks.preview.mockImplementation((scope: string | null) => ({
+      data: scope && {
+        scope,
+        readiness: readiness(true),
+        allowed: false,
+        message: "The go-live gate isn't passed yet.",
+        liveContacts: 40,
+        workflowRunsToCancel: 7,
+      },
+      error: null,
+    }));
+    render(<AgentPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "All AI contacts" }));
+    expect(screen.getByText("The go-live gate isn't passed yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go live" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test contacts only" }));
+    expect(mocks.update).toHaveBeenCalledWith({ liveScope: "test_contacts" }, expect.any(Object));
   });
 
   it("saves the limits form with numbers and blank models as null", () => {

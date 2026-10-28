@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { RecordLink } from "@/features/crm/record-link";
 import { DealStagePill } from "@/features/deals/deal-stage-pill";
+import { SendStatusPill } from "./live-mode";
 import type {
   AgentDecisionContext,
   AgentDecisionDetail,
@@ -34,6 +35,7 @@ import {
   RATING_REASON_LABEL,
   RATING_REASONS,
   istDateTime,
+  withIstTimes,
   usd,
 } from "./agent-labels";
 
@@ -88,6 +90,8 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
         {d.regenerated && <StatusBadge value="" display="Regenerated" tone="warning" />}
         <span className="text-xs text-muted-foreground">{istDateTime(d.createdAt)}</span>
       </div>
+      <SendStatusPill state={d} showReason />
+      {d.sentAt && <p className="text-xs text-muted-foreground">Sent {istDateTime(d.sentAt)}</p>}
       <ContextUsed context={d.context} />
 
       <Section title="Message">
@@ -103,7 +107,7 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       <Section title="Why">
         <p className="whitespace-pre-wrap">{d.reasoning || "—"}</p>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <dt>Would send at</dt>
+          <dt>{d.mode === "live" ? "Send at" : "Would send at"}</dt>
           <dd>{istDateTime(d.sendAt)}</dd>
           <dt>Next wake-up</dt>
           <dd>{istDateTime(d.nextWakeAt)}</dd>
@@ -262,12 +266,12 @@ export function ChecksSummary({
           <ul className="ml-4 list-disc text-xs">
             {rules.violations.map((v, i) => (
               <li key={`v${i}`} className="text-destructive">
-                {v.message}
+                {withIstTimes(v.message, istDateTime)}
               </li>
             ))}
             {rules.adjustments.map((a, i) => (
               <li key={`a${i}`} className="text-muted-foreground">
-                Adjusted: {a.message}
+                Adjusted: {withIstTimes(a.message, istDateTime)}
               </li>
             ))}
           </ul>

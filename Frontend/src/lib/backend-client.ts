@@ -451,6 +451,33 @@ export interface AssignmentRules {
 }
 
 export type AgentMode = "off" | "shadow" | "live";
+/** E2: which AI contacts are live in a live workspace. */
+export type AgentLiveScope = "test_contacts" | "new_leads" | "all";
+/** E2: a live send decision's real send; null = a draft / not a send. */
+export type AgentSendStatus = "queued" | "sending" | "sent" | "failed" | "cancelled" | "dry_run";
+export interface AgentSendState {
+  sendStatus: AgentSendStatus | null;
+  sentAt: string | null;
+  sendError: string | null;
+  cancelReason: string | null;
+  channel: "email" | "whatsapp" | null;
+}
+export interface AgentReadiness {
+  ready: boolean;
+  rated: number;
+  goodPct: number | null;
+  seriousBad: number;
+  reasons: string[];
+}
+/** GET /agent/settings/live-preview (admin): what switching to Live with a scope would do. */
+export interface AgentLivePreview {
+  scope: AgentLiveScope;
+  readiness: AgentReadiness;
+  allowed: boolean;
+  message: string | null;
+  liveContacts: number;
+  workflowRunsToCancel: number;
+}
 /** GET/PUT /agent/settings (admin only). Times are "HH:MM" in IST; send days are ISO weekdays (Mon=1). */
 export interface AgentSettings {
   mode: AgentMode;
@@ -476,6 +503,11 @@ export interface AgentSettings {
   autoEnrollNewLeads: boolean;
   /** The selling company name in AI messages; null = the workspace name. */
   companyDisplayName: string | null;
+  liveScope: AgentLiveScope;
+  /** When the new-leads pilot was switched on. */
+  liveSince: string | null;
+  /** Read-only: AI contacts live now. */
+  liveContactCount: number;
   currentPlaybookVersion: number | null;
   updatedBy: string | null;
   updatedAt: string;
@@ -483,7 +515,15 @@ export interface AgentSettings {
   activeLeadCount: number;
 }
 export type AgentSettingsUpdate = Partial<
-  Omit<AgentSettings, "currentPlaybookVersion" | "updatedBy" | "updatedAt" | "activeLeadCount">
+  Omit<
+    AgentSettings,
+    | "currentPlaybookVersion"
+    | "updatedBy"
+    | "updatedAt"
+    | "activeLeadCount"
+    | "liveSince"
+    | "liveContactCount"
+  >
 >;
 export interface AgentPlaybook {
   id: string;
@@ -510,9 +550,10 @@ export interface AgentDecisionFilters {
   from?: string | undefined;
   to?: string | undefined;
 }
-export interface AgentDecisionRow {
+export interface AgentDecisionRow extends AgentSendState {
   id: string;
   createdAt: string;
+  mode: "shadow" | "live";
   lead: { id: string; name: string; company: string };
   ownerName: string | null;
   action: AgentAction;
@@ -549,7 +590,7 @@ export interface AgentDecisionContext {
   company: { id: string; name: string } | null;
   deal: { id: string; name: string; stage: DealStage | null } | null;
 }
-export interface AgentDecisionDetail {
+export interface AgentDecisionDetail extends AgentSendState {
   id: string;
   createdAt: string;
   mode: "shadow" | "live";
@@ -616,13 +657,15 @@ export interface AgentStats {
   spend: { month: string; spentUsd: number; budgetUsd: number | null };
   /** D4a: WhatsApp replies labelled this month (counts only) and the AI cost of labelling them. */
   replies: { byLabel: Partial<Record<ReplyLabel, number>>; costUsd: number };
-  readiness: {
-    ready: boolean;
-    rated: number;
-    goodPct: number | null;
-    seriousBad: number;
-    reasons: string[];
-  };
+  readiness: AgentReadiness;
+  /** E2: the live scope and real AI sends. */
+  live: {
+    scope: AgentLiveScope;
+    liveSince: string | null;
+    liveContacts: number;
+    sentToday: number;
+    sentThisMonth: number;
+  } | null;
 }
 export interface LeadAgentPanel {
   leadId: string;
@@ -631,6 +674,10 @@ export interface LeadAgentPanel {
   statusChangedAt: string | null;
   touchCount: number;
   lastTouchAt: string | null;
+  /** E2: an admin marked this contact as an AI live test contact. */
+  liveTest: boolean;
+  /** E2: how the AI runs for this contact now. */
+  effectiveMode: AgentMode;
   nextWakeup: { id: string; dueAt: string; reason: string } | null;
   decisions: (Pick<
     AgentDecisionDetail,
@@ -652,6 +699,7 @@ export interface LeadAgentPanel {
     | "ratingReason"
     | "ratingNote"
     | "context"
+    | keyof AgentSendState
   > & {
     rules: AgentDecisionDetail["rulesResult"];
     grounding: AgentDecisionDetail["groundingResult"];
@@ -1104,6 +1152,8 @@ export const backend = {
     settings: {
       get: (signal?: AbortSignal) => get<AgentSettings>("/agent/settings", signal),
       update: (input: AgentSettingsUpdate) => send<AgentSettings>("PUT", "/agent/settings", input),
+      livePreview: (scope: AgentLiveScope, signal?: AbortSignal) =>
+        get<AgentLivePreview>(query("/agent/settings/live-preview", { scope }), signal),
     },
     playbooks: {
       list: (signal?: AbortSignal) =>
@@ -1140,6 +1190,9 @@ export const backend = {
       stop: (leadId: string, note?: string) =>
         send<Lead>("POST", `/agent/leads/${leadId}/stop`, { note }),
       wake: (leadId: string) => send<{ wakeup: unknown }>("POST", `/agent/leads/${leadId}/wake`),
+      /** Admin only (E2). */
+      setLiveTest: (leadId: string, enabled: boolean) =>
+        send<LeadAgentPanel>("PUT", `/agent/leads/${leadId}/live-test`, { enabled }),
     },
   },
   assignmentRules: {

@@ -1,5 +1,7 @@
 import type {
   AgentAction,
+  AgentLiveScope,
+  AgentSendStatus,
   AgentEnrollSkipReason,
   AgentOutcome,
   AgentRatingReason,
@@ -62,6 +64,34 @@ export const OUTCOME_TONE: Record<
   blocked: "warning",
   executed: "success",
   failed: "danger",
+};
+
+/** E2: which AI contacts are live. */
+export const LIVE_SCOPE_LABEL: Record<AgentLiveScope, string> = {
+  test_contacts: "Test contacts only",
+  new_leads: "New leads (pilot)",
+  all: "All AI contacts",
+};
+
+/** E2: a live send's state. */
+export const SEND_STATUS_LABEL: Record<AgentSendStatus, string> = {
+  queued: "Queued",
+  sending: "Sending",
+  sent: "Sent",
+  failed: "Send failed",
+  cancelled: "Cancelled",
+  dry_run: "Dry run",
+};
+export const SEND_STATUS_TONE: Record<
+  AgentSendStatus,
+  "muted" | "primary" | "warning" | "danger" | "success" | "info"
+> = {
+  queued: "info",
+  sending: "info",
+  sent: "success",
+  failed: "danger",
+  cancelled: "warning",
+  dry_run: "muted",
 };
 
 export const RATING_REASON_LABEL: Record<AgentRatingReason, string> = {
@@ -129,3 +159,8 @@ export const istDateTime = (iso: string | null | undefined) =>
 
 export const usd = (value: number | null | undefined) =>
   value == null ? "—" : `$${value.toFixed(value < 1 && value > 0 ? 4 : 2)}`;
+
+// Rule notes carry raw ISO times (e.g. "Deferred until 2026-10-29T04:00:00.000Z"); show them in IST.
+const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
+export const withIstTimes = (text: string, format: (iso: string) => string) =>
+  text.replace(ISO_RE, (iso) => format(iso));

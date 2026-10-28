@@ -28,6 +28,8 @@ export {
   useResumeLead,
   useStopLead,
   useWakeLead,
+  useSetLiveTest,
+  useAgentLivePreview,
   useContacts,
   useContactsCount,
   useContact,

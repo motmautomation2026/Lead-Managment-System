@@ -37,6 +37,7 @@ import {
 } from "./agent-labels";
 import { REPLY_LABELS } from "@/types";
 import { DecisionDrawer } from "./decision-drawer";
+import { LiveBanner, SendStatusPill } from "./live-mode";
 
 // Display only: the server's go-live gate (agent/readiness.ts) decides readiness.
 const MIN_RATED = 50;
@@ -68,6 +69,7 @@ export function AiActivityPage() {
             Shadow mode: drafts only, nothing is sent to leads.
           </div>
         )}
+        {s?.mode === "live" && s.live && <LiveBanner live={s.live} />}
 
         {stats.error ? (
           <ErrorBlock error={stats.error} />
@@ -253,6 +255,7 @@ function DecisionBadges({ row }: { row: AgentDecisionRow }) {
     <span className="flex flex-wrap items-center gap-1.5">
       <StatusBadge value="" display={ACTION_LABEL[row.action]} tone="info" />
       <StatusBadge value="" display={OUTCOME_LABEL[row.outcome]} tone={OUTCOME_TONE[row.outcome]} />
+      <SendStatusPill state={row} />
       {row.regenerated && <StatusBadge value="" display="Regenerated" tone="warning" />}
       {row.rating && (
         <StatusBadge

@@ -35,6 +35,12 @@ const row: AgentDecisionRow = {
   rating: null,
   ratingReason: null,
   openReports: 1,
+  mode: "shadow",
+  sendStatus: null,
+  sentAt: null,
+  sendError: null,
+  cancelReason: null,
+  channel: "email",
 };
 const detail = {
   ...row,
