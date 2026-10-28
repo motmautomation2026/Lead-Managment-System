@@ -185,7 +185,7 @@ describe("MeetingsPage", () => {
     expect(
       within(row).getByRole("img", { name: "Calendar: Failed — Calendar disconnected" }),
     ).toBeTruthy();
-    expect(within(row).getByRole("img", { name: "Email: Sent" })).toBeTruthy();
+    expect(within(row).getByText("Email: Sent")).toBeTruthy();
     expect(
       within(row).getByRole("img", { name: "WhatsApp: Failed — No WhatsApp number" }),
     ).toHaveAttribute("title", "WhatsApp: Failed — No WhatsApp number");

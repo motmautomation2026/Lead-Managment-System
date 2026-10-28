@@ -1,3 +1,4 @@
+import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 
 /**
@@ -97,5 +98,54 @@ export async function verifySmtp(config: SmtpConfig, factory: TransportFactory =
     await withTimeout(transport.verify(), CONNECTION_TEST_TIMEOUT_MS);
   } finally {
     transport.close();
+  }
+}
+
+export interface ImapConfig extends SmtpConfig {
+  folder: string;
+}
+
+/** What "Test IMAP login" needs from an IMAP client (tests inject a fake). */
+export interface ImapClient {
+  connect(): Promise<void>;
+  mailboxOpen(path: string, options: { readOnly: true }): Promise<unknown>;
+  logout(): Promise<void>;
+  close(): void;
+}
+
+export type ImapFactory = (config: ImapConfig) => ImapClient;
+
+export const createImapClient: ImapFactory = (config) => {
+  const client = new ImapFlow({
+    host: config.host,
+    port: config.port,
+    secure: config.security === "ssl",
+    doSTARTTLS: config.security === "starttls",
+    auth: { user: config.username, pass: config.password },
+    tls: { minVersion: "TLSv1.2", rejectUnauthorized: true },
+    logger: false,
+    connectionTimeout: CONNECTION_TEST_TIMEOUT_MS,
+    greetingTimeout: CONNECTION_TEST_TIMEOUT_MS,
+    socketTimeout: CONNECTION_TEST_TIMEOUT_MS,
+  });
+  // An unhandled 'error' event would crash the process; the awaited calls reject anyway.
+  client.on("error", () => undefined);
+  return client as unknown as ImapClient;
+};
+
+/** "Test IMAP login": connect + login + open the folder read-only (EXAMINE) + logout. Nothing is read or changed. */
+export async function verifyImap(config: ImapConfig, factory: ImapFactory = createImapClient): Promise<void> {
+  const client = factory(config);
+  try {
+    await withTimeout(
+      (async () => {
+        await client.connect();
+        await client.mailboxOpen(config.folder, { readOnly: true });
+        await client.logout();
+      })(),
+      CONNECTION_TEST_TIMEOUT_MS,
+    );
+  } finally {
+    client.close();
   }
 }

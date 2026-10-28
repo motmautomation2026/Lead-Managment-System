@@ -664,20 +664,109 @@ export type AgentEnrollResult =
   | { leadId: string; result: "skipped"; reason: AgentEnrollSkipReason }
   | { leadId: string; result: "failed"; message: string };
 
-export interface EmailConnection {
-  provider: "resend" | "smtp" | null;
+export type MailSecurity = "ssl" | "starttls";
+
+/** E1b: GET /connections/email/settings (every CRM user; never any secret). */
+export interface EmailSettings {
+  /** SMTP saved (the only provider); false = "Email is not set up". */
+  configured: boolean;
+  /** "resend" = saved before E1b, no longer supported. */
+  legacyProvider: "resend" | null;
   enabled: boolean;
-  senderName: string;
-  senderAddress: string;
   smtpHost: string;
   smtpPort: number;
-  smtpSecurity: "tls" | "starttls";
-  resendApiKeyConfigured: boolean;
+  smtpSecurity: MailSecurity;
   smtpUsernameConfigured: boolean;
   smtpPasswordConfigured: boolean;
-  environmentFallbackConfigured: boolean;
-  source: "database" | "environment" | "unconfigured";
+  fromAddress: string;
+  fromName: string;
+  replyTo: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: MailSecurity;
+  imapSameLogin: boolean;
+  imapUsernameConfigured: boolean;
+  imapPasswordConfigured: boolean;
+  imapFolder: string;
+  dailyCap: number;
+  hourlyCap: number;
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
+  sendWindow: WhatsAppSendWindow;
+  alreadyWarmed: boolean;
+  configuredAt: string | null;
+  warmupDay: number | null;
+  effectiveDailyCap: number;
+  sentToday: number;
+  sentThisHour: number;
+  pause: { reason: string | null; at: string | null; byName: string | null } | null;
+  failures24h: number;
+  rejections24h: number;
+  queuedCount: number;
+  safetyEvents: {
+    kind:
+      | "send_failed"
+      | "recipient_rejected"
+      | "login_rejected"
+      | "rate_limited"
+      | "paused"
+      | "resumed";
+    detail: string | null;
+    at: string;
+  }[];
+  daily: { date: string; sent: number; failed: number; rejected: number }[];
   updatedAt: string;
+}
+
+/** PUT /connections/email/settings (admin). Blank secrets keep the saved ones. */
+export interface EmailSettingsInput {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: MailSecurity;
+  smtpUsername?: string;
+  smtpPassword?: string;
+  fromAddress: string;
+  fromName: string;
+  replyTo: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: MailSecurity;
+  imapSameLogin: boolean;
+  imapUsername?: string;
+  imapPassword?: string;
+  imapFolder: string;
+  dailyCap: number;
+  hourlyCap: number;
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
+  sendWindow: WhatsAppSendWindow;
+  alreadyWarmed: boolean;
+}
+
+export interface EmailConnectionTest {
+  ok: boolean;
+  message: string;
+}
+
+export interface TestEmailStatus {
+  id: string;
+  status: "queued" | "sending" | "sent" | "failed" | "cancelled";
+  to?: string;
+  lastError?: string | null;
+  sentAt?: string | null;
+  dryRun?: boolean;
+}
+
+export interface DeliverabilityCheck {
+  domain: string;
+  checkedAt: string;
+  lines: {
+    check: "mx" | "spf" | "dkim" | "dmarc";
+    status: "green" | "amber" | "red";
+    summary: string;
+    fix: string | null;
+  }[];
 }
 
 export interface WhatsAppSendWindow {
@@ -893,23 +982,20 @@ export const backend = {
   },
   connections: {
     email: {
-      get: (signal?: AbortSignal) => get<EmailConnection>("/connections/email", signal),
-      update: (input: {
-        provider: "resend" | "smtp";
-        enabled: boolean;
-        senderName: string;
-        senderAddress: string;
-        resendApiKey?: string;
-        smtpHost?: string;
-        smtpPort?: number;
-        smtpSecurity?: "tls" | "starttls";
-        smtpUsername?: string;
-        smtpPassword?: string;
-      }) => send<EmailConnection>("PUT", "/connections/email", input),
-      test: (to: string) =>
-        send<{ ok: boolean; providerMessageId: string }>("POST", "/connections/email/test", {
-          to,
-        }),
+      get: (signal?: AbortSignal) => get<EmailSettings>("/connections/email/settings", signal),
+      update: (input: EmailSettingsInput) =>
+        send<EmailSettings>("PUT", "/connections/email/settings", input),
+      testSmtp: () => send<EmailConnectionTest>("POST", "/connections/email/test-smtp"),
+      testImap: () => send<EmailConnectionTest>("POST", "/connections/email/test-imap"),
+      sendTest: () => send<TestEmailStatus>("POST", "/connections/email/test-send"),
+      testStatus: (id: string, signal?: AbortSignal) =>
+        get<TestEmailStatus>(`/connections/email/test-send/${encodeURIComponent(id)}`, signal),
+      resume: () => send<EmailSettings>("POST", "/connections/email/resume"),
+      deliverability: (selector: string, signal?: AbortSignal) =>
+        get<DeliverabilityCheck>(
+          `/connections/email/deliverability${selector ? `?selector=${encodeURIComponent(selector)}` : ""}`,
+          signal,
+        ),
     },
     whatsapp: {
       get: (signal?: AbortSignal) =>

@@ -34,6 +34,7 @@
     "express": "^4.21.1",
     "googleapis": "^176.0.0",
     "helmet": "^7.1.0",
+    "imapflow": "1.7.8",
     "js-tiktoken": "^1.0.21",
     "jszip": "^3.10.2",
     "libphonenumber-js": "1.12.16",

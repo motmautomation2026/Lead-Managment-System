@@ -5,8 +5,8 @@ import { ValidationError } from "../errors.js";
 import { decryptJson, encryptJson, type EncryptedValue } from "../security/encryption.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import { notifyAdmins } from "./whatsappSafety.service.js";
-import { emailWarmupCap, warmupDayFor, type SendWindow } from "../domain/emailSafety.js";
-import type { MailSecurity, SmtpConfig } from "../providers/email.provider.js";
+import { connectionTestMessage, emailWarmupCap, warmupDayFor, type SendWindow } from "../domain/emailSafety.js";
+import { verifyImap, verifySmtp, type ImapFactory, type MailSecurity, type SmtpConfig, type TransportFactory } from "../providers/email.provider.js";
 
 /**
  * E1b: the workspace's SMTP + IMAP mailbox (the `integration_connections` 'email' row),
@@ -386,4 +386,39 @@ export async function updateEmailSettings(actor: Actor, workspaceId: string, inp
     });
   });
   return getEmailSettings(workspaceId);
+}
+
+// ---------------------------------------------------------------------------
+// Connection tests (admin, read-only, 15 s): nothing is sent, read or changed
+
+export type ConnectionTestResult = { ok: true; message: string } | { ok: false; message: string };
+
+async function auditTest(actor: Actor, workspaceId: string, what: "smtp" | "imap", ok: boolean) {
+  await withTransaction((db) =>
+    recordAdminAudit(db, actor, `connection.email.test_${what}_${ok ? "succeeded" : "failed"}`, "integration_connection", `${workspaceId}:email`),
+  );
+}
+
+export async function testSmtpLogin(actor: Actor, workspaceId: string, factory?: TransportFactory): Promise<ConnectionTestResult> {
+  const { row, secrets } = await loadEmailConnection(pool, workspaceId);
+  const mailbox = mailboxOf(row, secrets);
+  if (!mailbox) return { ok: false, message: "Save the SMTP settings first." };
+  const result: ConnectionTestResult = await verifySmtp(mailbox.smtp, factory).then(
+    () => ({ ok: true as const, message: `Logged in to ${mailbox.smtp.host}:${mailbox.smtp.port}. Nothing was sent.` }),
+    (err: unknown) => ({ ok: false as const, message: connectionTestMessage(err, mailbox.smtp) }),
+  );
+  await auditTest(actor, workspaceId, "smtp", result.ok);
+  return result;
+}
+
+export async function testImapLogin(actor: Actor, workspaceId: string, factory?: ImapFactory): Promise<ConnectionTestResult> {
+  const { row, secrets } = await loadEmailConnection(pool, workspaceId);
+  const imap = imapOf(row, secrets);
+  if (!imap) return { ok: false, message: "Save the IMAP settings first." };
+  const result: ConnectionTestResult = await verifyImap(imap, factory).then(
+    () => ({ ok: true as const, message: `Logged in to ${imap.host}:${imap.port} and opened "${imap.folder}". Nothing was read or changed.` }),
+    (err: unknown) => ({ ok: false as const, message: connectionTestMessage(err, imap) }),
+  );
+  await auditTest(actor, workspaceId, "imap", result.ok);
+  return result;
 }

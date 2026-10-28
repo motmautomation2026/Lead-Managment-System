@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/crm/page-header";
 import { EmptyState } from "@/components/crm/empty-state";
 import { useListUrlState } from "@/lib/use-list-url-state";
 import { cn } from "@/lib/utils";
-import { backend, type EmailConnection } from "@/lib/backend-client";
+import { backend } from "@/lib/backend-client";
 import { backendBaseUrl } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { AppearancePanel } from "./appearance-panel";
 import { SETTINGS_TABS, settingsSearchSchema, type SettingsTab } from "./settings-search";
 import { UsersPanel } from "./users-panel";
 import { WhatsAppSafety } from "./whatsapp-safety";
+import { EmailPanel } from "./email-settings";
 
 /**
  * /settings: a left sub-nav (tabs on phone) over Workspace (Email, WhatsApp, Google Calendar),
@@ -111,184 +112,6 @@ export function SettingsPage() {
         </div>
       </div>
     </div>
-  );
-}
-
-function EmailPanel({ workspaceId }: { workspaceId: string }) {
-  const client = useQueryClient();
-  const query = useQuery({
-    queryKey: keys.connection(workspaceId, "email"),
-    queryFn: ({ signal }) => backend.connections.email.get(signal),
-  });
-  const [form, setForm] = useState<EmailConnection | null>(null);
-  const [resendApiKey, setResendApiKey] = useState("");
-  const [smtpUsername, setSmtpUsername] = useState("");
-  const [smtpPassword, setSmtpPassword] = useState("");
-  const [testTo, setTestTo] = useState("");
-  useEffect(() => {
-    if (query.data) setForm(query.data);
-  }, [query.data]);
-  const refresh = () =>
-    void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "email") });
-  const save = useMutation({
-    mutationFn: () =>
-      backend.connections.email.update({
-        provider: form!.provider ?? "resend",
-        enabled: form!.enabled,
-        senderName: form!.senderName,
-        senderAddress: form!.senderAddress,
-        smtpHost: form!.smtpHost,
-        smtpPort: form!.smtpPort,
-        smtpSecurity: form!.smtpSecurity,
-        ...(resendApiKey ? { resendApiKey } : {}),
-        ...(smtpUsername ? { smtpUsername } : {}),
-        ...(smtpPassword ? { smtpPassword } : {}),
-      }),
-    onSuccess: () => {
-      setResendApiKey("");
-      setSmtpUsername("");
-      setSmtpPassword("");
-      refresh();
-      toast.success("Email connection saved.");
-    },
-    onError: (error) => toast.error(messageFromError(error)),
-  });
-  const test = useMutation({
-    mutationFn: () => backend.connections.email.test(testTo),
-    onSuccess: () => toast.success("Test email sent."),
-    onError: (error) => toast.error(messageFromError(error)),
-  });
-  if (!form)
-    return (
-      <Card>
-        <CardContent className="p-6 text-sm text-muted-foreground">
-          {query.isError ? (
-            <div className="space-y-2">
-              <p className="text-destructive">
-                Couldn't load the email connection: {messageFromError(query.error)}
-              </p>
-              <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-                <RefreshCw className="size-3.5" /> Retry
-              </Button>
-            </div>
-          ) : (
-            "Loading email connection…"
-          )}
-        </CardContent>
-      </Card>
-    );
-  const update = <K extends keyof EmailConnection>(key: K, value: EmailConnection[K]) =>
-    setForm({ ...form, [key]: value });
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Mail /> Email
-        </CardTitle>
-        <CardDescription>
-          Secrets are write-only and encrypted. Empty secret fields retain saved values.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {form.source === "environment" && (
-          <Notice>
-            Using the read-only Resend environment fallback until database settings are saved.
-          </Notice>
-        )}
-        <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Active provider">
-            <select
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              value={form.provider ?? "resend"}
-              onChange={(e) => update("provider", e.target.value as "resend" | "smtp")}
-            >
-              <option value="resend">Resend</option>
-              <option value="smtp">SMTP</option>
-            </select>
-          </Field>
-          <Field label="Sender name">
-            <Input value={form.senderName} onChange={(e) => update("senderName", e.target.value)} />
-          </Field>
-          <Field label="Sender address">
-            <Input
-              type="email"
-              value={form.senderAddress}
-              onChange={(e) => update("senderAddress", e.target.value)}
-            />
-          </Field>
-        </div>
-        {(form.provider ?? "resend") === "resend" ? (
-          <Field label={`Resend API key${form.resendApiKeyConfigured ? " (configured)" : ""}`}>
-            <Input
-              type="password"
-              value={resendApiKey}
-              placeholder={form.resendApiKeyConfigured ? "•••••••• - retain current" : "re_…"}
-              onChange={(e) => setResendApiKey(e.target.value)}
-            />
-          </Field>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-3">
-            <Field label="SMTP host">
-              <Input value={form.smtpHost} onChange={(e) => update("smtpHost", e.target.value)} />
-            </Field>
-            <Field label="Port">
-              <Input
-                type="number"
-                value={form.smtpPort}
-                onChange={(e) => update("smtpPort", Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Encryption">
-              <select
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                value={form.smtpSecurity}
-                onChange={(e) => update("smtpSecurity", e.target.value as "tls" | "starttls")}
-              >
-                <option value="starttls">STARTTLS</option>
-                <option value="tls">Implicit TLS</option>
-              </select>
-            </Field>
-            <Field label={`Username${form.smtpUsernameConfigured ? " (configured)" : ""}`}>
-              <Input
-                value={smtpUsername}
-                placeholder={form.smtpUsernameConfigured ? "Retain current" : "Username"}
-                onChange={(e) => setSmtpUsername(e.target.value)}
-              />
-            </Field>
-            <Field label={`Password${form.smtpPasswordConfigured ? " (configured)" : ""}`}>
-              <Input
-                type="password"
-                value={smtpPassword}
-                placeholder={form.smtpPasswordConfigured ? "•••••••• - retain current" : "Password"}
-                onChange={(e) => setSmtpPassword(e.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-          <Switch checked={form.enabled} onCheckedChange={(value) => update("enabled", value)} />
-          <span className="text-sm">Outbound email enabled</span>
-          <Button className="ml-auto" onClick={() => save.mutate()} disabled={save.isPending}>
-            Save email settings
-          </Button>
-        </div>
-        <div className="flex gap-2">
-          <Input
-            type="email"
-            value={testTo}
-            placeholder="Test recipient"
-            onChange={(e) => setTestTo(e.target.value)}
-          />
-          <Button
-            variant="outline"
-            disabled={!testTo || test.isPending}
-            onClick={() => test.mutate()}
-          >
-            Send test
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

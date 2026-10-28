@@ -64,7 +64,11 @@ export function MeetingSheet({
                   { id: "deal", label: "Deal", value: <RefLink type="deal" value={m.deal} /> },
                   { id: "outcome", label: "Outcome", value: m.outcome ? label(m.outcome) : null },
                   { id: "calendar", label: "Calendar", value: <CalendarSyncIcon meeting={m} /> },
-                  { id: "notify", label: "Notifications", value: <NotifyIcons meeting={m} /> },
+                  {
+                    id: "notify",
+                    label: "Notifications",
+                    value: <NotifyIcons meeting={m} showReason />,
+                  },
                   ...(m.notes ? [{ id: "notes", label: "Notes", value: m.notes }] : []),
                 ]}
               />

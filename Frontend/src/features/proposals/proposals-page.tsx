@@ -248,7 +248,7 @@ export function ProposalsPage() {
                     {
                       id: "send",
                       label: "Sent via",
-                      value: <ProposalSendIcons proposal={sheet} />,
+                      value: <ProposalSendIcons proposal={sheet} showReason />,
                     },
                     ...(sheet.lossReason
                       ? [{ id: "loss", label: "Loss reason", value: label(sheet.lossReason) }]

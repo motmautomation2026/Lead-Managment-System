@@ -58,6 +58,7 @@ import { DEAL_STAGE_LABELS, OPEN_DEAL_STAGES, isClosedStage } from "./deal-label
 import { DealStagePill } from "./deal-stage-pill";
 import { RecordLink } from "@/features/crm/record-link";
 import { useRememberRecent } from "@/features/crm/recent";
+import { EmailStatusPill } from "@/features/meetings/meeting-status-icons";
 
 /** HubSpot-style deal record, fetched by id; 404 → a way back to the list. */
 export function DealRecordPage({ dealId }: { dealId: string }) {
@@ -290,6 +291,9 @@ function DealRecord({ deal }: { deal: DealDetail }) {
             <span className="inline-flex flex-wrap justify-end gap-1">
               <StatusBadge value={m.status} />
               {m.outcome && <StatusBadge value={m.outcome} />}
+              {m.notifyEmailStatus && m.notifyEmailStatus !== "not_applicable" && (
+                <EmailStatusPill status={m.notifyEmailStatus} error={m.notifyEmailError} />
+              )}
             </span>
           ),
         }))}
@@ -306,8 +310,11 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           subtitle:
             p.amount === undefined ? null : <Money amount={p.amount} currency={p.currency} />,
           meta: (
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex flex-wrap items-center justify-end gap-1">
               <StatusBadge value={p.status} />
+              {p.emailSendStatus !== "not_applicable" && (
+                <EmailStatusPill status={p.emailSendStatus} error={p.emailSendError} />
+              )}
               <ViewDocumentButton proposal={p} className="h-7" />
               <Button
                 size="sm"

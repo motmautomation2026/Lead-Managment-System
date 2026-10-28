@@ -179,20 +179,37 @@ describe("backend client", () => {
     expect(body.get("document")).toBe(document);
   });
 
-  it("omits retained email secrets from a connections update", async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => response({ provider: "resend" }));
+  it("saves email settings with PUT /connections/email/settings, retained secrets omitted", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ configured: true }));
     vi.stubGlobal("fetch", fetchMock);
 
     await backend.connections.email.update({
-      provider: "resend",
       enabled: true,
-      senderName: "Northbeam",
-      senderAddress: "sales@example.com",
+      smtpHost: "smtp.example.com",
+      smtpPort: 465,
+      smtpSecurity: "ssl",
+      fromAddress: "sales@example.com",
+      fromName: "Northbeam",
+      replyTo: "",
+      imapHost: "imap.example.com",
+      imapPort: 993,
+      imapSecurity: "ssl",
+      imapSameLogin: true,
+      imapFolder: "INBOX",
+      dailyCap: 100,
+      hourlyCap: 20,
+      minDelaySeconds: 30,
+      maxDelaySeconds: 90,
+      sendWindow: { days: [1, 2, 3, 4, 5, 6], start: "09:30", end: "19:00" },
+      alreadyWarmed: false,
     });
 
-    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
-    expect(body).not.toHaveProperty("resendApiKey");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.example.test/api/v1/connections/email/settings");
+    expect(init?.method).toBe("PUT");
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     expect(body).not.toHaveProperty("smtpPassword");
+    expect(body).not.toHaveProperty("provider");
   });
 
   it("attaches X-Workspace-Id once a workspace is selected, and omits it before then", async () => {

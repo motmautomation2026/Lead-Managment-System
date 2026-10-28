@@ -95,6 +95,7 @@ import { ContactAbout } from "./contact-about";
 import { ContactAssociations } from "./contact-associations";
 import { RecordLink } from "@/features/crm/record-link";
 import { useRememberRecent } from "@/features/crm/recent";
+import { EmailStatusPill } from "@/features/meetings/meeting-status-icons";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
 
@@ -610,8 +611,11 @@ function ContactRecord({
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge value={m.status} />
+                {m.notifyEmailStatus && m.notifyEmailStatus !== "not_applicable" && (
+                  <EmailStatusPill status={m.notifyEmailStatus} error={m.notifyEmailError} />
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -664,8 +668,11 @@ function ContactRecord({
                   {p.deal && <> · Deal: {p.deal.name}</>}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge value={p.status} />
+                {p.emailSendStatus !== "not_applicable" && (
+                  <EmailStatusPill status={p.emailSendStatus} error={p.emailSendError} />
+                )}
                 <ViewDocumentButton proposal={p} />
                 <Button size="sm" variant="ghost" onClick={() => setStatusFor(p)}>
                   Change status

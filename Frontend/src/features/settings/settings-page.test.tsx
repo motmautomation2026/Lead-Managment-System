@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   isAdmin: true,
-  emailUpdate: vi.fn(),
   usersCreate: vi.fn(),
   usersUpdate: vi.fn(),
   setTheme: vi.fn(),
@@ -41,31 +40,13 @@ vi.mock("@/app/theme-context", () => ({
 }));
 // Their own tests cover these panels.
 vi.mock("./agent-panel", () => ({ AgentPanel: () => <div>agent panel</div> }));
+vi.mock("./email-settings", () => ({ EmailPanel: () => <div>email panel</div> }));
 vi.mock("./lead-assignment-panel", () => ({
   LeadAssignmentPanel: () => <div>assignment panel</div>,
 }));
 vi.mock("@/lib/backend-client", () => ({
   backend: {
     connections: {
-      email: {
-        get: async () => ({
-          provider: "resend",
-          enabled: true,
-          senderName: "MOTM",
-          senderAddress: "hi@motm.test",
-          smtpHost: "",
-          smtpPort: 587,
-          smtpSecurity: "starttls",
-          resendApiKeyConfigured: true,
-          smtpUsernameConfigured: false,
-          smtpPasswordConfigured: false,
-          environmentFallbackConfigured: false,
-          source: "database",
-          updatedAt: "2026-10-20T00:00:00.000Z",
-        }),
-        update: mocks.emailUpdate,
-        test: vi.fn(),
-      },
       whatsapp: { get: mocks.pending },
       googleCalendar: { get: mocks.pending },
     },
@@ -136,7 +117,7 @@ describe("SettingsPage (C6b)", () => {
   it("admins get every section; the tab lives in the URL", async () => {
     const router = await renderPage();
     expect(sections()).toEqual(["Workspace", "Lead assignment", "AI agent", "Users", "Appearance"]);
-    expect(await screen.findByText("Save email settings")).toBeTruthy();
+    expect(await screen.findByText("email panel")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "AI agent" }));
     await waitFor(() => expect(router.state.location.search).toEqual({ tab: "agent" }));
     expect(screen.getByText("agent panel")).toBeTruthy();
@@ -152,24 +133,6 @@ describe("SettingsPage (C6b)", () => {
     expect(sections()).toEqual(["Workspace", "Appearance"]);
     expect(screen.getByText("Admins only")).toBeTruthy();
     expect(screen.queryByText("Create salesperson")).toBeNull();
-  });
-
-  it("Workspace → Email saves as before (secrets left blank are not sent)", async () => {
-    mocks.emailUpdate.mockResolvedValue({});
-    await renderPage();
-    fireEvent.change(await screen.findByDisplayValue("MOTM"), { target: { value: "MOTM Sales" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save email settings" }));
-    await waitFor(() =>
-      expect(mocks.emailUpdate).toHaveBeenCalledWith({
-        provider: "resend",
-        enabled: true,
-        senderName: "MOTM Sales",
-        senderAddress: "hi@motm.test",
-        smtpHost: "",
-        smtpPort: 587,
-        smtpSecurity: "starttls",
-      }),
-    );
   });
 
   it("the Google Calendar return (?calendar=connected) shows its toast on the Workspace tab", async () => {

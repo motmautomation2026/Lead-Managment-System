@@ -1,17 +1,27 @@
-import { Mail, MessageCircle } from "lucide-react";
-import { StatusIcon } from "@/features/meetings/meeting-status-icons";
+import { MessageCircle } from "lucide-react";
+import { EmailStatusPill, StatusIcon } from "@/features/meetings/meeting-status-icons";
 import { isStillSending } from "@/lib/proposal-sending";
 import type { ProposalListItem } from "@/types";
 
 /** Email + WhatsApp send status icons (error as tooltip); a send stuck > 2 min says so (B19). */
-export function ProposalSendIcons({ proposal: p }: { proposal: ProposalListItem }) {
+export function ProposalSendIcons({
+  proposal: p,
+  showReason = false,
+}: {
+  proposal: ProposalListItem;
+  showReason?: boolean;
+}) {
   const email = p.emailSendStatus !== "not_applicable";
   const whatsapp = p.whatsappSendStatus !== "not_applicable";
   if (!email && !whatsapp) return <span className="text-muted-foreground">–</span>;
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       {email && (
-        <StatusIcon icon={Mail} what="Email" status={p.emailSendStatus} error={p.emailSendError} />
+        <EmailStatusPill
+          status={p.emailSendStatus}
+          error={p.emailSendError}
+          showReason={showReason}
+        />
       )}
       {whatsapp && (
         <StatusIcon

@@ -122,7 +122,12 @@ export function SendProposalDialog({
         dealId,
       });
       onOpenChange(false);
-      toast.success("Proposal sent");
+      // E1b: the request only queues the email; the worker sends it (the status pill follows it).
+      toast.success(
+        proposal.emailSendStatus === "pending"
+          ? "Proposal created. The email is queued and goes out shortly."
+          : "Proposal created",
+      );
       if (proposal.emailSendStatus === "skipped") {
         toast.warning("Email skipped - this lead has no email address.");
       } else if (proposal.emailSendStatus === "failed") {
