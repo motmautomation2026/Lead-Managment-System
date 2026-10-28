@@ -4,133 +4,11 @@ import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { env } from "../env.js";
 import { ValidationError } from "../errors.js";
-import { decryptJson, decryptText, encryptJson, encryptText, type EncryptedValue } from "../security/encryption.js";
+import { decryptText, encryptText } from "../security/encryption.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import { exchangeCodeForTokens, getAuthorizationUrl, type GoogleOAuthClientConfig } from "../providers/google-calendar.provider.js";
 import { warmupCap, warmupDayFor } from "../domain/whatsappSafety.js";
 import { loadSafetyMonitoring, resumeSending, updateSafetySettings, type WhatsAppSafetySettings } from "./whatsappSafety.service.js";
-
-export interface EmailSettings {
-  senderName?: string;
-  senderAddress?: string;
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpSecurity?: "tls" | "starttls";
-}
-
-export interface EmailSecrets {
-  resendApiKey?: string;
-  smtpUsername?: string;
-  smtpPassword?: string;
-}
-
-interface EmailRow {
-  provider: "resend" | "smtp" | null;
-  enabled: boolean;
-  settings: EmailSettings;
-  secret_ciphertext: Buffer | null;
-  secret_iv: Buffer | null;
-  secret_tag: Buffer | null;
-  key_version: number;
-  updated_at: Date;
-}
-
-function encryptedFromRow(row: EmailRow): EncryptedValue | null {
-  if (!row.secret_ciphertext || !row.secret_iv || !row.secret_tag) return null;
-  return { ciphertext: row.secret_ciphertext, iv: row.secret_iv, tag: row.secret_tag, keyVersion: row.key_version };
-}
-
-export async function loadEmailConnection(workspaceId: string, db: Queryable = pool) {
-  const result = await db.query<EmailRow>(
-    `select * from public.integration_connections where workspace_id = $1 and id = 'email'`,
-    [workspaceId],
-  );
-  const row = result.rows[0]!;
-  const encrypted = encryptedFromRow(row);
-  // AAD is deliberately a fixed string, not workspace-namespaced — see
-  // baileys-auth.store.ts's comment for why: existing secrets were
-  // encrypted under this exact AAD before per-workspace scoping shipped,
-  // and AES-GCM throws on any AAD mismatch. Row-level isolation is already
-  // enforced by the `where workspace_id = $1` query above.
-  const secrets = encrypted ? decryptJson<EmailSecrets>(encrypted, "integration:email") : {};
-  return { row, secrets };
-}
-
-export async function getEmailConnection(workspaceId: string) {
-  const { row, secrets } = await loadEmailConnection(workspaceId);
-  const fallbackConfigured = Boolean(process.env.RESEND_API_KEY && process.env.SMTP_FROM_ADDRESS);
-  return {
-    provider: row.provider,
-    enabled: row.enabled,
-    senderName: row.settings.senderName ?? "",
-    senderAddress: row.settings.senderAddress ?? "",
-    smtpHost: row.settings.smtpHost ?? "",
-    smtpPort: row.settings.smtpPort ?? 587,
-    smtpSecurity: row.settings.smtpSecurity ?? "starttls",
-    resendApiKeyConfigured: Boolean(secrets.resendApiKey),
-    smtpUsernameConfigured: Boolean(secrets.smtpUsername),
-    smtpPasswordConfigured: Boolean(secrets.smtpPassword),
-    environmentFallbackConfigured: fallbackConfigured,
-    source: row.provider ? "database" : fallbackConfigured ? "environment" : "unconfigured",
-    updatedAt: row.updated_at.toISOString(),
-  };
-}
-
-export interface UpdateEmailConnectionInput extends EmailSettings {
-  provider: "resend" | "smtp";
-  enabled: boolean;
-  resendApiKey?: string;
-  smtpUsername?: string;
-  smtpPassword?: string;
-}
-
-export async function updateEmailConnection(actor: Actor, workspaceId: string, input: UpdateEmailConnectionInput) {
-  const current = await loadEmailConnection(workspaceId);
-  const secrets: EmailSecrets = { ...current.secrets };
-  if (input.resendApiKey !== undefined && input.resendApiKey !== "") secrets.resendApiKey = input.resendApiKey;
-  if (input.smtpUsername !== undefined && input.smtpUsername !== "") secrets.smtpUsername = input.smtpUsername;
-  if (input.smtpPassword !== undefined && input.smtpPassword !== "") secrets.smtpPassword = input.smtpPassword;
-
-  if (!input.senderAddress || !input.senderName) throw new ValidationError("Sender name and address are required.");
-  if (input.provider === "resend" && !secrets.resendApiKey) throw new ValidationError("A Resend API key is required.");
-  if (input.provider === "smtp") {
-    if (!input.smtpHost || !input.smtpPort || !input.smtpSecurity || !secrets.smtpUsername || !secrets.smtpPassword) {
-      throw new ValidationError("SMTP host, port, encrypted transport, username, and password are required.");
-    }
-  }
-
-  const encrypted = encryptJson(secrets, "integration:email");
-  await withTransaction(async (db) => {
-    await db.query(
-      `update public.integration_connections
-          set provider = $1, enabled = $2, settings = $3,
-              secret_ciphertext = $4, secret_iv = $5, secret_tag = $6, key_version = $7, updated_by = $8
-        where workspace_id = $9 and id = 'email'`,
-      [
-        input.provider,
-        input.enabled,
-        {
-          senderName: input.senderName,
-          senderAddress: input.senderAddress,
-          smtpHost: input.smtpHost,
-          smtpPort: input.smtpPort,
-          smtpSecurity: input.smtpSecurity,
-        },
-        encrypted.ciphertext,
-        encrypted.iv,
-        encrypted.tag,
-        encrypted.keyVersion,
-        actor.id,
-        workspaceId,
-      ],
-    );
-    await recordAdminAudit(db, actor, "connection.email.updated", "integration_connection", `${workspaceId}:email`, {
-      provider: input.provider,
-      enabled: input.enabled,
-    });
-  });
-  return getEmailConnection(workspaceId);
-}
 
 interface WhatsAppRow {
   enabled: boolean;
@@ -382,7 +260,7 @@ export interface UpdateGoogleCalendarCredentialsInput {
   redirectUri: string;
 }
 
-/** Saves the OAuth app's own credentials, entered per workspace — mirrors updateEmailConnection's write-only-secret pattern (an empty clientSecret retains whatever's already saved). */
+/** Saves the OAuth app's own credentials, entered per workspace — mirrors the email settings' write-only-secret pattern (an empty clientSecret retains whatever's already saved). */
 export async function updateGoogleCalendarCredentials(actor: Actor, workspaceId: string, input: UpdateGoogleCalendarCredentialsInput) {
   if (!input.clientId.trim() || !input.redirectUri.trim()) {
     throw new ValidationError("Client ID and redirect URI are required.");

@@ -1,4 +1,5 @@
 import type { Queryable } from "../dto.js";
+import { withTransaction } from "../db.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
@@ -296,4 +297,20 @@ export async function updateProposalStatus(
   await onAgentEvent(db, { workspaceId, leadId: proposal.lead_id, event: "proposal_status", payload: { proposalId: id } });
 
   return getProposalOr404(db, workspaceId, id);
+}
+
+/**
+ * Advances the proposal's overall status to "sent" once a channel succeeds.
+ * Idempotent (updateProposalStatus no-ops if already "sent") and, if the
+ * proposal was independently moved to a terminal status in the meantime
+ * (e.g. a human clicked Accepted/Rejected before this channel finished),
+ * that race is logged and swallowed rather than turned into a false
+ * "this channel failed to send" — the send already happened.
+ */
+export async function tryAdvanceToSent(workspaceId: string, proposalId: string): Promise<void> {
+  try {
+    await withTransaction((client) => updateProposalStatus(client, null, workspaceId, proposalId, "sent"));
+  } catch (err) {
+    console.warn(`[proposalSending] Could not advance proposal ${proposalId} to "sent" after a successful channel send:`, err);
+  }
 }

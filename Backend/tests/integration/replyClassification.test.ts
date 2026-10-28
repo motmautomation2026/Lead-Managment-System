@@ -145,7 +145,7 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
 
     const { buildAgentContext } = await import("../../src/services/agentContext.service.js");
     const { whatsappUsable } = await import("../../src/agent/rules.js");
-    const ctx = await buildAgentContext(pool, ws, leadId, new Date(), { embedder: fakeEmbedder, fallbackSenderAddress: null });
+    const ctx = await buildAgentContext(pool, ws, leadId, new Date(), { embedder: fakeEmbedder });
     expect(whatsappUsable(ctx.rules)).toBe(false);
 
     const { loadSourceEligibility } = await import("../../src/providers/baileys.manager.js");

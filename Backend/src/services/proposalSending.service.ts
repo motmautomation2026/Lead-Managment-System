@@ -4,20 +4,18 @@ import type { Actor } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
 import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
-import { createProposal, getProposalOr404, getProposalRowOr404, updateProposalStatus, type ProposalRow } from "./proposals.service.js";
+import { createProposal, getProposalOr404, getProposalRowOr404, tryAdvanceToSent, type ProposalRow } from "./proposals.service.js";
 import { renderTemplate, type TemplateRenderLead } from "../domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
-import { sendEmail } from "../providers/email.provider.js";
+import { enqueueEmail } from "./emailOutbound.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 
 /**
- * Orchestrates the one-click "Send proposal" flow: create the proposal,
- * email it synchronously (the API process can call sendEmail directly — it
- * has no process affinity), and queue it for WhatsApp (which can only be
- * sent from the worker process — see baileysManager, the only process that
- * ever holds the live socket). worker.ts's poll loop drains the queue via
+ * Orchestrates the one-click "Send proposal" flow: create the proposal and queue
+ * it on both channels. Only the worker sends: the email through the outbound
+ * email queue (emailOutbound.service.ts, E1b), WhatsApp through
  * claimQueuedProposalWhatsappSends/processQueuedProposalWhatsappSend below.
  */
 
@@ -58,52 +56,6 @@ function toRenderLead(lead: LeadRow & { owner_name?: string | null }): TemplateR
     phone: lead.phone,
     ownerName: lead.owner_name ?? null,
   };
-}
-
-/**
- * Advances the proposal's overall status to "sent" once a channel succeeds.
- * Idempotent (updateProposalStatus no-ops if already "sent") and, if the
- * proposal was independently moved to a terminal status in the meantime
- * (e.g. a human clicked Accepted/Rejected before this channel finished),
- * that race is logged and swallowed rather than turned into a false
- * "this channel failed to send" — the send already happened.
- */
-async function tryAdvanceToSent(workspaceId: string, proposalId: string): Promise<void> {
-  try {
-    await withTransaction((client) => updateProposalStatus(client, null, workspaceId, proposalId, "sent"));
-  } catch (err) {
-    console.warn(`[proposalSending] Could not advance proposal ${proposalId} to "sent" after a successful channel send:`, err);
-  }
-}
-
-async function sendProposalEmailNow(
-  proposal: ProposalRow,
-  lead: LeadRow & { owner_name?: string | null },
-  template: TemplateRow,
-): Promise<void> {
-  try {
-    if (!lead.email) throw new Error("Email-eligible send has no lead email (invariant violation).");
-    if (!proposal.document_storage_path) throw new Error("Proposal has no uploaded document (invariant violation).");
-    const rendered = renderTemplate(template, toRenderLead(lead));
-    const { data, error } = await supabaseAdmin.storage.from(PROPOSAL_DOCUMENTS_BUCKET).download(proposal.document_storage_path);
-    if (error || !data) throw new Error(`Failed to download proposal document: ${error?.message ?? "no data"}`);
-    const buffer = Buffer.from(await data.arrayBuffer());
-    const subject = rendered.subject?.trim() || template.name;
-    await sendEmail(proposal.workspace_id, {
-      to: lead.email,
-      subject,
-      html: rendered.body,
-      attachments: [{ filename: proposal.document_file_name ?? "proposal", content: buffer.toString("base64") }],
-    });
-    await pool.query(
-      `update public.proposals set email_send_status = 'sent', email_sent_at = now(), email_send_error = null where id = $1`,
-      [proposal.id],
-    );
-    await tryAdvanceToSent(proposal.workspace_id, proposal.id);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await pool.query(`update public.proposals set email_send_status = 'failed', email_send_error = $2 where id = $1`, [proposal.id, message]);
-  }
 }
 
 export interface CreateAndSendProposalInput {
@@ -151,8 +103,8 @@ export async function createAndSendProposal(actor: Actor, workspaceId: string, i
     .upload(storagePath, file.buffer, { contentType: file.mimeType, upsert: false });
   if (uploadError) throw new Error(`Failed to upload proposal document: ${uploadError.message}`);
 
-  const created = await withTransaction((client) =>
-    createProposal(client, actor, workspaceId, {
+  const created = await withTransaction(async (client) => {
+    const proposal = await createProposal(client, actor, workspaceId, {
       leadId: input.leadId,
       title: input.title,
       amount: input.amount,
@@ -166,14 +118,24 @@ export async function createAndSendProposal(actor: Actor, workspaceId: string, i
       emailSendStatus: emailEligible ? "pending" : "skipped",
       whatsappSendStatus: whatsappEligible ? "queued" : "skipped",
       dealId: input.dealId,
-    }),
-  );
-
-  if (emailEligible) {
-    const proposalRow = await getProposalRowOr404(pool, workspaceId, created.id);
-    await sendProposalEmailNow(proposalRow, lead, emailTemplate);
-  }
-  // WhatsApp (if eligible) is left "queued" — the worker's poll loop drains it.
+    });
+    if (emailEligible) {
+      const rendered = renderTemplate(emailTemplate, toRenderLead(lead));
+      await enqueueEmail(client, {
+        workspaceId,
+        source: "proposal",
+        sourceId: proposal.id,
+        leadId: lead.id,
+        to: lead.email!,
+        subject: rendered.subject?.trim() || emailTemplate.name,
+        html: rendered.body,
+        attachments: [{ bucket: PROPOSAL_DOCUMENTS_BUCKET, path: storagePath, fileName: file.originalName, mimeType: file.mimeType, size: file.size }],
+        createdBy: actor.id,
+      });
+    }
+    return proposal;
+  });
+  // Both channels are left queued ("pending" email, "queued" WhatsApp) — the worker sends them.
 
   return getProposalOr404(pool, workspaceId, created.id);
 }

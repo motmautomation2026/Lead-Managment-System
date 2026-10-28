@@ -80,9 +80,8 @@ const EnvSchema = DbEnvSchema.extend({
 });
 
 // WORKER_* tuning is validated separately in workerEnv.ts. Provider secrets
-// (Resend, etc.) are loaded from encrypted database configuration, entered
-// by an admin in Admin -> Connections — never from environment variables —
-// with only email having an optional legacy Resend environment fallback.
+// (the SMTP/IMAP mailbox, etc.) are loaded from encrypted database configuration,
+// entered by an admin in Settings — never from environment variables.
 // Google Calendar is the exception: the platform-wide OAuth app lives in the
 // GOOGLE_OAUTH_* variables above, and a workspace can still override it with
 // its own client saved (encrypted) in the database.

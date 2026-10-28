@@ -117,8 +117,6 @@ export interface AgentContext {
 
 export interface AgentContextDeps {
   embedder: Embedder;
-  /** The legacy env sender (SMTP_FROM_ADDRESS) used while a workspace has no saved email connection. */
-  fallbackSenderAddress?: string | null;
 }
 
 const companyJson = (alias: string) =>
@@ -270,7 +268,7 @@ export async function buildAgentContext(
       [workspaceId],
     ),
     db.query<{ address: string | null }>(
-      `select case when provider is not null then settings ->> 'senderAddress' end as address
+      `select case when provider = 'smtp' then settings ->> 'senderAddress' end as address
          from public.integration_connections where workspace_id = $1 and id = 'email'`,
       [workspaceId],
     ),
@@ -299,7 +297,7 @@ export async function buildAgentContext(
 
   const status = (channel: string) => channels.rows.find((c) => c.channel === channel)?.status ?? null;
   const weekAgo = now.getTime() - 7 * 24 * 3600 * 1000;
-  const senderAddress = sender.rows[0]?.address || deps.fallbackSenderAddress || null;
+  const senderAddress = sender.rows[0]?.address || null;
   const assets: AgentAssetSummary[] = assetRows.rows.map((a) => ({
     id: a.id,
     title: a.title,

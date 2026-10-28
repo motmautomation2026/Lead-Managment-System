@@ -5,7 +5,7 @@ import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
 import { toRenderMeeting, type MeetingRow } from "./meetings.service.js";
 import { renderTemplate, type TemplateRenderLead } from "../domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
-import { sendEmail } from "../providers/email.provider.js";
+import { enqueueEmail } from "./emailOutbound.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 
@@ -13,10 +13,9 @@ import { ProviderDeferredError } from "../providers/provider-errors.js";
  * Sends the "meeting scheduled" confirmation to the lead on both channels,
  * using ONE fixed default template per channel (set once by an admin in
  * Templates — see the is_default_meeting_scheduled_* columns). Same division
- * of labor as proposalSending.service.ts's createAndSendProposal: email sent
- * synchronously inline (the API process can call sendEmail directly), the
- * WhatsApp side left "queued" for the worker's poll loop to drain (only the
- * worker process ever holds the live Baileys socket). Called as a
+ * of labor as proposalSending.service.ts's createAndSendProposal: only the
+ * worker sends — the email through the outbound email queue (E1b), the
+ * WhatsApp side left "queued" for the worker's poll loop to drain. Called as a
  * best-effort step after the meeting is already scheduled and synced to
  * Calendar — never blocks or fails meeting creation.
  */
@@ -70,9 +69,9 @@ function toRenderLead(lead: LeadRow): TemplateRenderLead {
   };
 }
 
-async function sendMeetingEmailNow(meeting: MeetingRow, lead: LeadRow): Promise<void> {
+/** Renders the default email template and queues it (status "pending" = queued); the worker sends it. */
+async function queueMeetingEmail(meeting: MeetingRow, lead: LeadRow): Promise<void> {
   try {
-    if (!lead.email) throw new Error("Email-eligible meeting notification has no lead email (invariant violation).");
     const template = await getDefaultTemplate(meeting.workspace_id, "email");
     if (!template) {
       await pool.query(
@@ -82,12 +81,17 @@ async function sendMeetingEmailNow(meeting: MeetingRow, lead: LeadRow): Promise<
       return;
     }
     const rendered = renderTemplate(template, toRenderLead(lead), toRenderMeeting(meeting));
-    const subject = rendered.subject?.trim() || template.name;
-    await sendEmail(meeting.workspace_id, { to: lead.email, subject, html: rendered.body });
-    await pool.query(
-      `update public.meetings set notify_email_status = 'sent', notify_email_sent_at = now(), notify_email_error = null where id = $1`,
-      [meeting.id],
-    );
+    // Pending first: the worker may send (→ sent) as soon as the row is queued.
+    await pool.query(`update public.meetings set notify_email_status = 'pending', notify_email_error = null where id = $1`, [meeting.id]);
+    await enqueueEmail(pool, {
+      workspaceId: meeting.workspace_id,
+      source: "meeting",
+      sourceId: meeting.id,
+      leadId: lead.id,
+      to: lead.email!,
+      subject: rendered.subject?.trim() || template.name,
+      html: rendered.body,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await pool.query(`update public.meetings set notify_email_status = 'failed', notify_email_error = $2 where id = $1`, [meeting.id, message]);
@@ -100,7 +104,7 @@ export async function notifyMeetingScheduled(meetingId: string): Promise<void> {
   const lead = await getLeadRowOr404(pool, meeting.workspace_id, meeting.lead_id);
 
   if (lead.email) {
-    await sendMeetingEmailNow(meeting, lead);
+    await queueMeetingEmail(meeting, lead);
   } else {
     await pool.query(`update public.meetings set notify_email_status = 'skipped' where id = $1`, [meetingId]);
   }

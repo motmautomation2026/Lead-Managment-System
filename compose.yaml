@@ -27,11 +27,6 @@ services:
       # Knowledge-base embeddings. Optional; backend and worker only.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      # Legacy env email fallback; the API also sends email inline (test email,
-      # proposal and meeting-scheduled emails), not only the worker.
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MOTM Technologies}
-      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
     restart: unless-stopped
 
   worker:
@@ -48,9 +43,6 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MOTM Technologies}
-      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-10000}
       WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
       WORKER_DRY_RUN: ${WORKER_DRY_RUN:-false}

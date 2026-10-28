@@ -53,7 +53,7 @@ async function main(id: string) {
     if (!env.OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set: knowledge search skipped.");
 
     const now = new Date();
-    const ctx = await buildAgentContext(pool, lead.workspace_id, id, now, { embedder, fallbackSenderAddress: process.env.SMTP_FROM_ADDRESS ?? null });
+    const ctx = await buildAgentContext(pool, lead.workspace_id, id, now, { embedder });
     const messages = buildDecisionMessages(ctx, ctx.settings, now);
 
     section("Context");

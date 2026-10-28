@@ -6,12 +6,11 @@ import { claimQueuedProposalWhatsappSends, processQueuedProposalWhatsappSend } f
 import { claimQueuedMeetingWhatsappSends, processQueuedMeetingWhatsappSend } from "./services/meetingScheduledNotification.service.js";
 import { renderTemplate } from "./domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "./domain/htmlToWhatsAppText.js";
-import { sendEmail } from "./providers/email.provider.js";
+import { queueEmailForAction, runEmailOutbound } from "./services/emailOutbound.service.js";
 import { sendWhatsApp } from "./providers/whatsapp.provider.js";
 import type { WorkflowStepAction } from "./domain/enums.js";
 import { baileysRegistry } from "./providers/baileys-registry.js";
 import { PermanentProviderError, ProviderDeferredError } from "./providers/provider-errors.js";
-import { supabaseAdmin } from "./supabaseAdmin.js";
 import { runKnowledgeIngestion } from "./services/knowledgeIngestion.service.js";
 import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/openai.provider.js";
 import { runAgentTick } from "./services/agentRunner.service.js";
@@ -46,6 +45,24 @@ async function dispatchMessage(ctx: automationService.ActionContext): Promise<Se
     );
   }
 
+  // E1b: the email goes through the outbound queue (which also handles dry run); this step
+  // waits (deferrals never burn attempts) until that email is sent or has failed.
+  if (ctx.action.actionType === "send_email") {
+    if (!ctx.lead.email) throw new Error("Eligible send_email action has no lead email (invariant violation).");
+    const email = await queueEmailForAction({
+      workspaceId: ctx.workspaceId,
+      sourceId: ctx.action.id,
+      leadId: ctx.lead.id,
+      to: ctx.lead.email,
+      subject: rendered.subject?.trim() || ctx.template.name,
+      html: rendered.body,
+      attachments: ctx.template.attachments.map((a) => ({ bucket: "template-attachments", path: a.storagePath, fileName: a.fileName, mimeType: a.mimeType, size: null })),
+    });
+    if (email.status === "sent") return { outcome: "success", providerMessageId: email.message_id ?? (email.dry_run ? "DRY_RUN" : email.id) };
+    if (email.status === "failed") throw new PermanentProviderError(email.last_error ?? "The email could not be sent.");
+    throw new ProviderDeferredError(email.last_error ?? "Email queued.", Math.max(60_000, email.next_attempt_at.getTime() - Date.now()));
+  }
+
   if (env.WORKER_DRY_RUN) {
     console.log(
       `[worker] DRY RUN — would send ${ctx.action.actionType} to lead ${ctx.lead.id}:\n${
@@ -53,26 +70,6 @@ async function dispatchMessage(ctx: automationService.ActionContext): Promise<Se
       }${rendered.body}`,
     );
     return { outcome: "success", providerMessageId: "DRY_RUN" };
-  }
-
-  if (ctx.action.actionType === "send_email") {
-    if (!ctx.lead.email) throw new Error("Eligible send_email action has no lead email (invariant violation).");
-    const subject = rendered.subject?.trim() || ctx.template.name;
-    const attachments = await Promise.all(
-      ctx.template.attachments.map(async (attachment) => {
-        const { data, error } = await supabaseAdmin.storage.from("template-attachments").download(attachment.storagePath);
-        if (error || !data) throw new Error(`Failed to download email attachment "${attachment.fileName}": ${error?.message ?? "no data"}`);
-        const buffer = Buffer.from(await data.arrayBuffer());
-        return { filename: attachment.fileName, content: buffer.toString("base64") };
-      }),
-    );
-    const result = await sendEmail(ctx.workspaceId, {
-      to: ctx.lead.email,
-      subject,
-      html: rendered.body,
-      ...(attachments.length ? { attachments } : {}),
-    });
-    return { outcome: "success", providerMessageId: result.providerMessageId };
   }
 
   if (!ctx.lead.phoneE164) throw new PermanentProviderError("Eligible WhatsApp action has no normalized phone number.");
@@ -133,8 +130,7 @@ async function tick(): Promise<void> {
     // Each claimed action owns its own DB transaction and provider call, with
     // no shared mutable state between them, so processing the batch
     // concurrently is safe — and avoids one slow/hung send stalling the rest
-    // of the batch behind it (email.provider.ts bounds each send, but only to
-    // 15s for Resend and up to 10s connect + 30s socket idle for SMTP).
+    // of the batch behind it.
     await Promise.allSettled(
       claimed.map((ctx) =>
         processAction(ctx).catch((err) => {
@@ -143,6 +139,10 @@ async function tick(): Promise<void> {
       ),
     );
   }
+
+  // E1b: every email (workflow steps, proposals, meetings, tests), one per workspace per tick.
+  const emails = await runEmailOutbound({ dryRun: env.WORKER_DRY_RUN });
+  if (emails.length > 0) console.log(`[worker] Emails: ${emails.join(", ")}.`);
 
   const queuedProposals = await withTransaction((client) => claimQueuedProposalWhatsappSends(client, env.WORKER_BATCH_SIZE));
   if (queuedProposals.length > 0) {
@@ -203,7 +203,6 @@ async function tick(): Promise<void> {
   await runAgentTick(env.AGENT_RUNNER_ENABLED, {
     model: decisionModel,
     embedder: getDefaultEmbedder(),
-    fallbackSenderAddress: process.env.SMTP_FROM_ADDRESS ?? null,
   });
 }
 

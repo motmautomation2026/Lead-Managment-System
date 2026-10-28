@@ -11,8 +11,7 @@ import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/tes
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
-const mocks = vi.hoisted(() => ({ sendEmail: vi.fn(), sendWhatsApp: vi.fn() }));
-vi.mock("../../src/providers/email.provider.js", () => ({ sendEmail: mocks.sendEmail }));
+const mocks = vi.hoisted(() => ({ sendWhatsApp: vi.fn() }));
 vi.mock("../../src/providers/whatsapp.provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/providers/whatsapp.provider.js")>()),
   sendWhatsApp: mocks.sendWhatsApp,
@@ -123,16 +122,15 @@ describeIfDb("default meeting templates are per workspace (requires TEST_DATABAS
       scheduleMeeting(client, actor, workspaceA, { leadId: lead.id, title: "Discovery", at: "2030-02-01T04:30:00.000Z", durationMin: 30 }),
     );
 
-    mocks.sendEmail.mockResolvedValue({ providerMessageId: "test-email" });
     mocks.sendWhatsApp.mockResolvedValue({ providerMessageId: "test-wa" });
     await notifyMeetingScheduled(meeting.id);
 
-    expect(mocks.sendEmail).toHaveBeenCalledOnce();
-    const [emailWorkspace, emailInput] = mocks.sendEmail.mock.calls[0]!;
-    expect(emailWorkspace).toBe(workspaceA);
-    expect(emailInput.subject).toBe("Subject ALPHA");
-    expect(emailInput.html).toContain("Email body ALPHA for Asha");
-    expect(emailInput.html).not.toContain("BRAVO");
+    // E1b: the email is only queued (the worker sends it), rendered with A's template.
+    const email = await pool.query(`select workspace_id, subject, html, status from public.email_outbound_messages where source = 'meeting' and source_id = $1`, [meeting.id]);
+    expect(email.rows).toHaveLength(1);
+    expect(email.rows[0]).toMatchObject({ workspace_id: workspaceA, subject: "Subject ALPHA", status: "queued" });
+    expect(email.rows[0].html).toContain("Email body ALPHA for Asha");
+    expect(email.rows[0].html).not.toContain("BRAVO");
 
     // The worker path: claim this one meeting directly (claimQueuedMeetingWhatsappSends scans every workspace).
     const claimed = await pool.query(
@@ -149,6 +147,6 @@ describeIfDb("default meeting templates are per workspace (requires TEST_DATABAS
     expect(waInput.body).not.toContain("BRAVO");
 
     const after = await pool.query(`select notify_email_status, notify_whatsapp_status from public.meetings where id = $1`, [meeting.id]);
-    expect(after.rows[0]).toEqual({ notify_email_status: "sent", notify_whatsapp_status: "sent" });
+    expect(after.rows[0]).toEqual({ notify_email_status: "pending", notify_whatsapp_status: "sent" });
   });
 });

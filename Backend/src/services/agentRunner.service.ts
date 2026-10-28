@@ -46,7 +46,6 @@ export interface AgentRunnerDeps {
   defaultModels?: { decision?: string | undefined; grounding?: string | undefined };
   /** Tests: only claim wakeups in these workspaces. */
   workspaceIds?: string[];
-  fallbackSenderAddress?: string | null;
 }
 
 // --- The decision pipeline (no DB; shared with scripts/agent-preview.ts) ---------
@@ -335,7 +334,7 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
   let ctx: AgentContext | null = null;
   try {
-    ctx = await buildAgentContext(pool, wakeup.workspace_id, wakeup.lead_id, now, { embedder: deps.embedder, fallbackSenderAddress: deps.fallbackSenderAddress ?? null });
+    ctx = await buildAgentContext(pool, wakeup.workspace_id, wakeup.lead_id, now, { embedder: deps.embedder });
     const draft = await draftDecision(ctx, { model: deps.model, ...models, prices, now }, usage);
     return await recordDraft(wakeup, ctx, draft, models, usage);
   } catch (error) {
