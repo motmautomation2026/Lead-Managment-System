@@ -23,6 +23,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none) and `OPENAI_PRICES_JSON`.
 - `CRM_COMPANY_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the company sweeper.
 - `CRM_DEAL_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the deal backfill sweeper.
+- Email has no env vars (E1b): no `RESEND_API_KEY` / `SMTP_FROM_*`; the SMTP + IMAP mailbox is saved per workspace by an
+  admin in Settings → Email. Tests never contact a real SMTP/IMAP server or DNS (fake transport, IMAP client, resolver).
 
 ## Tests
 
@@ -70,7 +72,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `041`).
+  (currently `042`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -91,7 +93,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `041`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `042`).
 
 ## Way of working
 
@@ -450,6 +452,31 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   banner + Resume confirm, stats, last 20 events, 14-day table), `features/contacts/clear-opt-out-dialog.tsx` ("Clear
   opt-out" on the contact's WhatsApp status line, admins), `useLeadMutations().clearWhatsAppOptOut`. Non-admins can no
   longer flip the outbound switch or the daily cap.
+- **E1b (email through SMTP only; Resend removed; nothing new sent to leads):** migration 042: `integration_connections` (the
+  'email' row) gains `configured_at` (warm-up start, set on the first E1b SMTP save; null = no warm-up), `already_warmed`,
+  `daily_cap` 100, `hourly_cap` 20, `min/max_delay_seconds` 30/90, `send_window_days/_start/_end` (Mon–Sat 09:30–19:00 IST),
+  `next_send_at`, `paused_reason/_at/_by`, `resumed_at`; IMAP non-secret fields in `settings`, IMAP login in the same
+  encrypted blob; `email_outbound_messages` (unique `(source, source_id)`, source `scheduled_action|proposal|meeting|test|
+  agent`, rendered subject/html/text, attachments as Storage refs, status `queued|sending|sent|failed|cancelled`, attempts,
+  `next_attempt_at` = due time or reclaim time, `message_id`, `smtp_response`, `dry_run`); `email_safety_events`. Pure
+  `domain/emailSafety.ts` (`decideEmailSend`, `classifySmtpError`, `shouldAutoPauseEmail`, `buildFromName`, `htmlToText`,
+  `messageIdFor`, `connectionTestMessage`) and `domain/emailDeliverability.ts` (grade MX/SPF/DKIM/DMARC).
+  `providers/email.provider.ts`: SMTP only, `TransportCache` (one pooled nodemailer transport per workspace, rebuilt when
+  host/port/security/secret change; connect/greeting 15 s, socket 60 s, TLS ≥ 1.2 checked), `verifySmtp`, `verifyImap`
+  (`imapflow` 1.7.8, EXAMINE only). `services/emailConnection.service.ts` (settings, `mailboxOf`, stats, `autoPauseEmail`,
+  resume, login tests), `services/emailOutbound.service.ts` (`enqueueEmail` idempotent, `queueEmailForAction`,
+  `claimDueEmails` one row per workspace SKIP LOCKED, `processEmail`, `runEmailOutbound` in the worker tick, test email),
+  `services/emailDeliverability.service.ts` (DNS, 5 s, cached 10 min). `POST /proposals` and `POST /meetings` only queue
+  (`email_send_status` / `notify_email_status` `pending` = Queued, the reason in `*_error` while waiting) — **B22, B23
+  fixed**. A workflow `send_email` step queues its email and defers (no attempt) until the email is sent (success) or failed
+  (permanent failure); a step no longer pending/due/executing cancels its email, re-running re-queues it. `tryAdvanceToSent`
+  moved to `proposals.service.ts`. Removed: Resend, the `RESEND_API_KEY` / `SMTP_FROM_*` env fallback (compose, .env
+  examples, agent `fallbackSenderAddress`; agent sender = saved SMTP from address), old `GET|PUT /connections/email` and
+  `POST /connections/email/test`. API `B4-api.md` §7i. Frontend: `features/settings/email-settings.tsx` (`EmailPanel`: SMTP
+  + IMAP + Safety form RHF + Zod for admins, read-only for others, "Email is not set up" notice, login tests, "Send test email
+  to me" with polled status, paused banner + Resume confirm, stats, events, 14-day table, Deliverability card);
+  `EmailStatusPill` ("Email: Queued/Sent/Failed", reason as tooltip or with `showReason`) on proposal/meeting lists, sheets
+  and contact/deal record pages; proposal lists poll while an email is queued.
 
 ## WhatsApp safety (E1)
 
@@ -467,6 +494,29 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   failed reconnects in 30 min, ≥ 3 STOP replies or ≥ 5 % of ≥ 40 sends in 24 h. Paused sends defer, never fail;
   8 clearing a WhatsApp opt-out is admin-only with a reason; 9 `WORKER_DRY_RUN` unchanged.
 - Deferrals never burn attempts. Never hold a DB transaction across a wait or the network send.
+
+## Email safety (E1b)
+
+- Every email — workflow steps, rep proposal/meeting emails, the Settings test and (E2) the AI agent — is a row in
+  `email_outbound_messages` (`enqueueEmail`, one per source) and is sent only by the worker (`runEmailOutbound` →
+  `processEmail`), through `domain/emailSafety.ts` `decideEmailSend`. **E2's AI emails must be queued the same way**
+  (source `agent` = automated). No request handler sends email; nothing else may call `sendMail`.
+- Rules (per workspace, admin-adjustable): 1 SMTP only; provider `resend`/none = not set up → defer 15 min with "Email is not
+  set up. An admin must add the SMTP mailbox in Settings → Email." (never fail); 2 settings admin-only, secrets write-only;
+  3 login tests read-only, 15 s; 4 claim SKIP LOCKED, reclaim `sending` after 15 min, no transaction across the SMTP call;
+  5 4xx/timeouts/connection errors temporary (backoff 5/10/20/40 min, 5 attempts → failed), 5xx recipient → failed + the
+  contact's email `invalid` (5.1.x) or `permanent_bounce`, 535/EAUTH or 421/451/4.7.x or 5.7.x → auto-pause (email
+  re-queued, no attempt); 6 spacing random 30–90 s (> 20 s defers via `next_send_at`), ≤ 20 per IST clock hour, daily cap
+  100, warm-up min(cap, 20/40/70) for IST days 1–3/4–7/8–14 after `configured_at` unless `already_warmed`; 7 automated email
+  only in the send window (Mon–Sat 09:30–19:00 IST) + 0–20 min jitter; proposal/meeting/test ignore the window, not the
+  rest; 8 auto-pause (`enabled` false + reason, admins notified once, admin resume; signals after `resumed_at`): rule 5
+  responses, ≥ 5 temporary failures in 30 min, ≥ 5 % recipient rejections of ≥ 40 attempts in 24 h; paused emails defer;
+  9 recipient checks (syntax, DNC, email contactability `invalid|permanent_bounce|unsubscribed`) fail with the reason;
+  10 From "<owner> | <company display name>" for contacts else the default name, Reply-To, `Message-ID <uuid@from-domain>`
+  stored, Date, text + HTML, `List-Unsubscribe: <mailto:…?subject=unsubscribe>` to contacts, no tracking/`Precedence`,
+  attachments ≤ 10 MB; 11 DNS check reads only; 12 monitoring for every CRM user; 13 `WORKER_DRY_RUN` marks sent
+  (`dry_run`, not counted) without SMTP.
+- Deferrals never burn attempts.
 
 ## Baileys rules (https://baileys.wiki)
 

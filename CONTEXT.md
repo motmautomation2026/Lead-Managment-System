@@ -120,9 +120,9 @@ Workspaces (salesperson; not workspace-scoped, so the list loads before one is s
 
 Connections (salesperson, scoped to the `X-Workspace-Id` workspace; `Backend/src/routes/connections.routes.ts`):
 
-- `GET /connections/email`
-- `PUT /connections/email`
-- `POST /connections/email/test`
+- `GET /connections/email/settings` (every CRM user, no secrets)
+- `PUT /connections/email/settings`, `POST /connections/email/test-smtp|test-imap|test-send|resume`,
+  `GET /connections/email/test-send/:id`, `GET /connections/email/deliverability` (admin only, E1b)
 - `GET /connections/website-leads`
 - `PUT /connections/website-leads`
 - `GET /connections/whatsapp/settings`
@@ -237,7 +237,7 @@ Proposal routing (the Proposal Conversion Funnel and loss-reason taxonomy):
 
 - Creating a proposal requires a document upload plus email and WhatsApp template IDs.
 - The document is uploaded to `proposal-documents`.
-- Email send is attempted immediately through the configured email provider.
+- The email is queued (`email_send_status = pending`, shown as "Queued") and sent by the worker (E1b).
 - WhatsApp send is queued for the worker.
 - `sent` moves to `proposal_decision_pending`, creates a proposal follow-up task, and enrolls `proposal_pending` (the Day 2/4-5/7/10/14 follow-up cadence).
 - `revision_requested` moves back to `proposal_preparation`, creates a revision task, and cancels open proposal follow-ups.
@@ -283,7 +283,7 @@ On each tick it:
 - Rechecks lead lifecycle, DNC, automation mode, contactability, response state, workflow run state, and template resolution.
 - Executes internal actions directly (`create_call_task`, `create_follow_up_task`, `change_lead_stage`, `stop_workflow`).
 - Renders email/WhatsApp templates for message actions.
-- Sends email through configured Resend or SMTP.
+- Sends queued email (workflow steps, proposals, meeting notifications, tests) through the workspace's SMTP mailbox (`runEmailOutbound`).
 - Sends WhatsApp through the workspace's own Baileys socket (one per active workspace, see `Backend/src/providers/baileys-registry.ts`).
 - Records success, failure, deferred retry, or skipped outcomes.
 - Advances workflow runs to their next enabled step or completes/stops them.
@@ -296,11 +296,16 @@ On each tick it:
 
 Email:
 
-- Any salesperson configures Resend or TLS/STARTTLS SMTP per workspace on the Settings page (`/settings`, `PUT /connections/email`).
-- Secrets are write-only in the UI and encrypted in Postgres.
-- Empty secret fields retain existing saved values.
-- `RESEND_API_KEY` plus sender env vars are an optional legacy read-only fallback until a workspace saves database email settings.
-- Email can be disabled per workspace on the Settings page; sends then defer.
+- SMTP only (E1b; Resend was removed). An **admin** saves the workspace's mailbox in Settings → Workspace → Email: SMTP
+  (host, port, SSL/STARTTLS, login, from address, default from name, reply-to) plus an IMAP login for the same mailbox
+  (read for replies and bounces in D3). Everyone else sees it read-only, without secrets.
+- Secrets are write-only and encrypted in Postgres (AAD `integration:email`); blank fields keep the saved values.
+- Only the worker sends: every email (workflow step, proposal, meeting notification, test; later the AI) is a row in
+  `email_outbound_messages` (one per source), sent through one pooled SMTP connection per workspace with spacing, hourly and
+  daily caps, warm-up, a send window for automated email, recipient checks and auto-pause (`domain/emailSafety.ts`).
+- A workspace with no SMTP saved (or still on Resend) is "not set up": emails wait in the queue, they never fail for it.
+- Admins can test the SMTP/IMAP login, send themselves a test email, resume a paused mailbox, and run a DNS
+  deliverability check (MX, SPF, DKIM, DMARC). Every CRM user sees the sending numbers.
 
 WhatsApp:
 
@@ -399,14 +404,11 @@ Optional platform-wide Google OAuth app for the one-click "Connect Google Calend
 
 Worker/provider values:
 
-- `RESEND_API_KEY` optional fallback
-- `SMTP_FROM_NAME`
-- `SMTP_FROM_ADDRESS`
 - `WORKER_POLL_INTERVAL_MS`
 - `WORKER_BATCH_SIZE`
 - `WORKER_DRY_RUN`
 
-The API also sends email inline (test, proposal and meeting-scheduled emails), so under Compose the `backend` service receives `RESEND_API_KEY`, `SMTP_FROM_NAME` and `SMTP_FROM_ADDRESS` too, with the same defaults as `worker`.
+Email has no env settings (E1b): the mailbox is saved per workspace in Settings, and only the worker sends.
 
 Docker Compose only (root `.env`, read by `compose.yaml`):
 
@@ -479,7 +481,7 @@ update public.profiles set role = 'admin' where email = 'admin@example.com';
 
 4. The admin creates a salesperson account (Settings → Users); the salesperson signs in and creates or selects a workspace (workspace switcher in the sidebar). Steps 6-10 can be done by an admin or that salesperson.
 5. Deploy with outbound email and WhatsApp disabled
-6. Configure and test Email on the Settings page (per workspace).
+6. As an admin, configure Email on the Settings page (per workspace): SMTP + IMAP, Test SMTP login, Test IMAP login, Send test email to me, Deliverability check.
 7. Configure Google Calendar OAuth (env vars or the Settings page) and verify a test meeting creates/updates/cancels an event with participants and a Meet link.
 8. Pair a dedicated, opted-in WhatsApp account and verify worker restart reconnects without a second QR.
 9. Send one internal/opted-in email and WhatsApp message, reply on WhatsApp, and confirm automation is stopped without reply content being stored.

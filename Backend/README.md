@@ -159,8 +159,8 @@ There is no external executor and no separate service-auth API surface —
 `src/services/automation.service.ts` in-process: claim due actions
 (concurrency-safe `SKIP LOCKED` claim), recheck eligibility
 (lifecycle/DNC/automation-mode/contactability/response-state), render the
-template, send through the admin-selected Resend/TLS SMTP connection or the
-single shared Baileys socket, and record the
+template, queue email for the workspace's SMTP mailbox (sent by the same worker,
+`services/emailOutbound.service.ts`) or send through the Baileys socket, and record the
 result — which advances the run to the next step or applies backend-owned
 retry/backoff on failure. All business logic (next-step selection, delay
 calculation, template/stage resolution, retry/backoff, eligibility) lives
@@ -192,7 +192,7 @@ restricted to CRM business routes.
    `INTEGRATION_ENCRYPTION_KEY` on both API and worker.
 2. Promote the first admin with the SQL above, then deploy with Email and
    WhatsApp outbound disabled.
-3. Configure and test Resend or encrypted SMTP in Admin → Connections.
+3. As an admin, save and test the SMTP + IMAP mailbox in Settings → Email.
 4. Pair a disposable, dedicated WhatsApp account and verify worker restart
    reconnects without a second QR.
 5. Send one opted-in internal message, reply, and confirm the matching run

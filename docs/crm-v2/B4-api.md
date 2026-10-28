@@ -245,6 +245,50 @@ Migration 041. The send-time rules live in `Backend/src/domain/whatsappSafety.ts
   workflow step's `last_error` holds the reason. A first automated message with a link fails permanently with
   "First WhatsApp message can't contain a link".
 
+## 7i. Email (SMTP only) — `/connections/email/*` (E1b)
+
+Migration 042. The send-time rules live in `Backend/src/domain/emailSafety.ts` (`decideEmailSend`), the DNS grading in
+`domain/emailDeliverability.ts`. Every email is queued in `email_outbound_messages` and sent only by the worker. The old
+`GET|PUT /connections/email` and `POST /connections/email/test` are **removed** (Resend is gone).
+
+- `GET /connections/email/settings` (every CRM user; never a secret): `configured` (SMTP saved; false = "Email is not set
+  up"), `legacyProvider` (`"resend"` when the row was saved on Resend before E1b, else null), `enabled`, `smtpHost`,
+  `smtpPort`, `smtpSecurity` (`ssl` = implicit TLS | `starttls`), `smtpUsernameConfigured`, `smtpPasswordConfigured`,
+  `fromAddress`, `fromName` (default from name), `replyTo` ("" = the from address), `imapHost`, `imapPort` (993),
+  `imapSecurity`, `imapSameLogin`, `imapUsernameConfigured`, `imapPasswordConfigured`, `imapFolder` ("INBOX"), `dailyCap`
+  (100), `hourlyCap` (20), `minDelaySeconds`/`maxDelaySeconds` (30/90), `sendWindow { days, start, end }` (Mon–Sat
+  09:30–19:00 IST), `alreadyWarmed`, `configuredAt` (warm-up start; null = never saved under E1b), `warmupDay` (null =
+  no warm-up), `effectiveDailyCap` (min(cap, 20/40/70) for IST days 1–3/4–7/8–14 unless already warmed), `sentToday`,
+  `sentThisHour` (IST clock hour), `pause` (null unless configured and `enabled` false: `{ reason, at, byName }`),
+  `failures24h` (temporary send failures), `rejections24h` (5xx recipient rejections), `queuedCount`, `safetyEvents` (last
+  20: `{ kind: send_failed|recipient_rejected|login_rejected|rate_limited|paused|resumed, detail, at }`), `daily` (last 14
+  IST days, newest first: `{ date, sent, failed, rejected }`), `updatedAt`. Dry-run sends are not counted.
+- `PUT /connections/email/settings` — **admin only** (403 otherwise). Body: `enabled`, `smtpHost`, `smtpPort` (1–65535),
+  `smtpSecurity`, `smtpUsername?`, `smtpPassword?` (write-only; blank/omitted keeps the saved value; required on the first
+  save), `fromAddress` (email), `fromName`, `replyTo?` (email | "" | null), `imapHost`, `imapPort`, `imapSecurity`,
+  `imapSameLogin`, `imapUsername?`, `imapPassword?` (required unless `imapSameLogin`), `imapFolder`, `dailyCap` (1–10000),
+  `hourlyCap` (1–1000), `minDelaySeconds` ≤ `maxDelaySeconds` (1–3600), `sendWindow { days (1–7 items), start < end }`,
+  `alreadyWarmed`. `provider` may be omitted or `"smtp"`; `"resend"` → 400 "Email goes through SMTP only; Resend is no
+  longer supported.". Saving sets provider `smtp` and `configuredAt` (first time only). `enabled` true → false records a
+  pause "Paused by <admin>."; false → true is a resume. Returns the GET body.
+- `POST /connections/email/test-smtp`, `POST /connections/email/test-imap` — **admin only**, read-only, 15 s: SMTP connect
+  + TLS + AUTH (nothing sent); IMAP connect + login + open the folder read-only (EXAMINE) + logout (nothing read or
+  changed). Always 200 `{ ok, message }`; `message` is plain English (host not found, refused port, TLS mismatch, login
+  rejected + app-password hint, folder missing, timeout). Audited `connection.email.test_{smtp|imap}_{succeeded|failed}`.
+- `POST /connections/email/test-send` — **admin only**: queues a test email to the admin's own address → 202
+  `{ id, status: "queued" }`. `GET /connections/email/test-send/:id` (admin; 400 on a bad id, 404 if not this workspace's
+  test) → `{ id, status: queued|sending|sent|failed|cancelled, to, lastError (why it waits or failed), sentAt, dryRun }`.
+- `POST /connections/email/resume` — **admin only**: `enabled` = true, pause cleared, `resumed_at` = now (auto-pause
+  signals count only after it). Returns the GET body.
+- `GET /connections/email/deliverability?selector=` — **admin only**; 400 until SMTP (the from address) is saved, or for a
+  selector outside `[A-Za-z0-9._-]{1,63}`. DNS for the from domain (5 s per lookup, cached 10 min): `{ domain, checkedAt,
+  lines: [{ check: mx|spf|dkim|dmarc, status: green|amber|red, summary, fix }] }`. DKIM tries the given selector, else
+  google, default, selector1, selector2, zoho, zmail, s1, s2, k1, mail, dkim. Never blocks sending.
+- Proposals / meetings: `POST /proposals` and `POST /meetings` only queue the email. `emailSendStatus` /
+  `notifyEmailStatus` stay `pending` (shown as "Queued") until the worker writes `sent` / `failed`; while waiting,
+  `emailSendError` / `notifyEmailError` hold the reason (e.g. "Email is not set up. An admin must add the SMTP mailbox in
+  Settings → Email.", "Hourly cap (20) reached.").
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
