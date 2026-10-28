@@ -119,7 +119,7 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     expect(await agentStatusOf(leadId)).toMatchObject({ agent_status: "none" });
   });
 
-  it("settings: read, update, live → 422, invalid → 400 (including a cross-field rule against the saved value)", async () => {
+  it("settings: read, update, live (gate → 422), invalid → 400 (including a cross-field rule against the saved value)", async () => {
     const ws = await newWorkspace();
     const initial = await api(admin, ws, "GET", "/agent/settings");
     expect(initial.status).toBe(200);
@@ -131,9 +131,14 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     expect(saved.body).toMatchObject({ sendWindowStart: "10:00", repQuietHours: 12, monthlyBudgetUsd: 50.5, maxDecisionsPerDay: 20, companyDisplayName: "MOTM Technologies", updatedBy: admin.id });
     expect((await api(admin, ws, "PUT", "/agent/settings", { companyDisplayName: null })).body.companyDisplayName).toBeNull();
 
+    // E2: live with test contacts needs no gate; the pilot without the gate is a 422 with the numbers.
+    const pilot = await api(admin, ws, "PUT", "/agent/settings", { mode: "live", liveScope: "new_leads" });
+    expect(pilot.status).toBe(422);
+    expect(pilot.body.error.details.readiness).toMatchObject({ ready: false, rated: 0 });
     const live = await api(admin, ws, "PUT", "/agent/settings", { mode: "live" });
-    expect(live.status).toBe(422);
-    expect(live.body.error.message).toBe("Live mode isn't available yet.");
+    expect(live.status).toBe(200);
+    expect(live.body).toMatchObject({ mode: "live", liveScope: "test_contacts", liveContactCount: 0 });
+    expect((await api(admin, ws, "PUT", "/agent/settings", { mode: "off" })).status).toBe(200);
 
     for (const bad of [{ minGapHours: 0 }, { sendDays: [] }, { sendDays: [1, 1] }, { emailOptOutText: " " }, { repQuietHours: 169 }, { sendWindowStart: "20:00" }, { wakeMinDays: 40 }]) {
       expect((await api(admin, ws, "PUT", "/agent/settings", bad)).status, JSON.stringify(bad)).toBe(400);

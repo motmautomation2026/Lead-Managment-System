@@ -3,6 +3,7 @@ import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError } from "../errors.js";
 import type { AutomationMode, LifecycleState, WorkflowRunStatus, WorkflowStepAction, WorkflowTrigger } from "../domain/enums.js";
 import { isTerminalLifecycle } from "../domain/pipeline.js";
+import { isAiLiveContact } from "./agentSendState.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { findActiveWorkflowsForTrigger, getWorkflowRowOr404 } from "./workflows.service.js";
 
@@ -262,6 +263,8 @@ export async function autoEnroll(
   trigger: WorkflowTrigger,
   reason: string,
 ) {
+  // E2 rule 9: a live AI contact is never in a workflow.
+  if (await isAiLiveContact(db, workspaceId, leadId)) return [];
   const candidates = await findActiveWorkflowsForTrigger(db, workspaceId, trigger);
   const created: ReturnType<typeof runToDto>[] = [];
 

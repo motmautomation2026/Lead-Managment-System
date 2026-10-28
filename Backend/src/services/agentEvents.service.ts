@@ -6,6 +6,7 @@ import { canTransition } from "../agent/status.js";
 import { AGENT_WAKE_EVENTS, wakeFor, type AgentWakeEvent } from "../agent/wakePolicy.js";
 import { cancelPendingWakeups, enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { cancelWorkflowsIfLive } from "./agentSendState.service.js";
 
 /**
  * CRM events the AI agent reacts to. Called at the END of the caller's work,
@@ -13,8 +14,8 @@ import { addTimelineEvent } from "./timeline.service.js";
  * effects apply in every mode (so turning the agent on later never acts on a
  * lead that replied or booked a meeting meanwhile); auto-enroll and wakeups
  * only when the mode isn't off (enqueueWakeup checks that itself). Lifecycle
- * stops are done by the migration 026 trigger, not here. Never touches
- * workflows, runs or automation_mode. Nothing is sent.
+ * stops are done by the migration 026 trigger, not here. Touches workflows only to
+ * cancel the runs of a contact auto-enrolled while AI-live (E2 rule 9). Nothing is sent.
  */
 export type AgentEvent = AgentWakeEvent | "whatsapp_inbound" | "email_inbound";
 
@@ -94,7 +95,11 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
   };
 
   if (event === "lead_created" && settings.mode !== "off" && settings.auto_enroll_new_leads && lead.agent_status === "none") {
-    if (canTransition("none", "enroll", transitionCtx).ok) await setStatus("active", "auto_enroll", "AI Agent Enrolled");
+    if (canTransition("none", "enroll", transitionCtx).ok) {
+      await setStatus("active", "auto_enroll", "AI Agent Enrolled");
+      // E2 rule 9: auto-enrolled while live → out of the workflows createLead just started.
+      await cancelWorkflowsIfLive(client, workspaceId, leadId);
+    }
   } else if (event === "meeting_booked" && lead.agent_status === "active") {
     await setStatus("paused", "meeting_booked", "AI Agent Paused");
   } else if (

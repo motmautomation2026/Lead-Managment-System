@@ -4,6 +4,7 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { effectiveMode, sendRecheck, type LiveScope, type SendRecheck } from "../agent/liveMode.js";
 import type { AgentRuleSettings, AgentStatus } from "../agent/rules.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { cancelRunsForLead } from "./runs.service.js";
 
 /**
  * E2: the AI send's re-check (rule 5) and writing a send's outcome back to its decision.
@@ -157,4 +158,53 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
 
 async function leadName(db: Queryable, leadId: string) {
   return (await db.query<{ name: string }>(`select concat_ws(' ', first_name, nullif(last_name, '')) as name from public.leads where id = $1`, [leadId])).rows[0]?.name ?? "a contact";
+}
+
+// --- Workflow exclusion (rule 9) -----------------------------------------------------
+
+export const MANAGED_BY_AI = "Managed by AI agent";
+export const AI_MANAGED_CONFLICT = "This contact is managed by the AI agent. Stop the AI for this contact first.";
+/** The AI manages a contact in these statuses (an admin can stop it from any of them). */
+export const AI_MANAGED_STATUSES = ["active", "paused", "handed_off"] as const;
+
+/**
+ * SQL mirror of effectiveMode() === 'live' for an AI-managed contact `l`, for bulk counts and
+ * cancellations; scope and live_since are bind parameters. Keep in step with agent/liveMode.ts.
+ */
+export const liveContactSql = (scope: string, since: string) =>
+  `(l.agent_status in ('active', 'paused', 'handed_off')
+    and (l.agent_live_test or ${scope} = 'all' or (${scope} = 'new_leads' and ${since}::timestamptz is not null and l.created_at >= ${since}::timestamptz)))`;
+
+/** True when the contact is AI-managed and live (rule 9: never in a workflow at the same time). */
+export async function isAiLiveContact(db: Queryable, workspaceId: string, leadId: string): Promise<boolean> {
+  const row = (
+    await db.query<{ agent_status: AgentStatus; agent_live_test: boolean; created_at: Date; mode: "off" | "shadow" | "live"; live_scope: LiveScope; live_since: Date | null }>(
+      `select l.agent_status, l.agent_live_test, l.created_at, s.mode, s.live_scope, s.live_since
+         from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
+        where l.id = $1 and l.workspace_id = $2`,
+      [leadId, workspaceId],
+    )
+  ).rows[0];
+  return (
+    Boolean(row) &&
+    (AI_MANAGED_STATUSES as readonly string[]).includes(row!.agent_status) &&
+    effectiveMode(row!, { agentLiveTest: row!.agent_live_test, createdAt: row!.created_at }) === "live"
+  );
+}
+
+/** A contact that just became AI-live leaves its workflows ("Managed by AI agent", timeline rows by cancelRunsForLead). */
+export async function cancelWorkflowsIfLive(db: Queryable, workspaceId: string, leadId: string): Promise<void> {
+  if (await isAiLiveContact(db, workspaceId, leadId)) await cancelRunsForLead(db, leadId, MANAGED_BY_AI);
+}
+
+/** Every live AI contact of the workspace leaves its workflows (after the scope was switched on or widened). Returns how many contacts. */
+export async function cancelWorkflowsOfLiveContacts(db: Queryable, workspaceId: string): Promise<number> {
+  const leads = await db.query<{ id: string }>(
+    `select l.id from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
+      where l.workspace_id = $1 and s.mode = 'live' and ${liveContactSql("s.live_scope", "s.live_since")}
+        and exists (select 1 from public.workflow_runs r where r.lead_id = l.id and r.status not in ('completed', 'cancelled'))`,
+    [workspaceId],
+  );
+  for (const lead of leads.rows) await cancelRunsForLead(db, lead.id, MANAGED_BY_AI);
+  return leads.rows.length;
 }

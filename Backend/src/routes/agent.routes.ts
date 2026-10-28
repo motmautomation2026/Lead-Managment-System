@@ -3,11 +3,11 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { InvalidTransitionError } from "../errors.js";
 import { parseBody, parseParams, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { AGENT_ACTIONS } from "../agent/decisionSchema.js";
 import { RATING_REASONS } from "../agent/readiness.js";
 import { settingsUpdateSchema } from "../agent/settingsSchema.js";
+import { LIVE_SCOPES } from "../agent/liveMode.js";
 import * as review from "../services/agentReview.service.js";
 import * as settings from "../services/agentSettings.service.js";
 import * as agentStatus from "../services/agentStatus.service.js";
@@ -87,11 +87,14 @@ agentRouter.get("/settings", asyncHandler(async (req, res) => res.json(await set
 
 agentRouter.put(
   "/settings",
-  asyncHandler(async (req, res) => {
-    // A valid value that isn't available yet: 422, not a 400.
-    if ((req.body as { mode?: unknown } | undefined)?.mode === "live") throw new InvalidTransitionError("Live mode isn't available yet.");
-    res.json(await settings.updateSettings(req.actor!, ws(req), parseBody(settingsUpdateSchema, req.body)));
-  }),
+  asyncHandler(async (req, res) => res.json(await settings.updateSettings(req.actor!, ws(req), parseBody(settingsUpdateSchema, req.body)))),
+);
+
+// E2: the confirm dialog's numbers for switching to Live with a scope; changes nothing.
+const previewQuery = z.object({ scope: z.enum(LIVE_SCOPES) }).strict();
+agentRouter.get(
+  "/settings/live-preview",
+  asyncHandler(async (req, res) => res.json(await settings.getLivePreview(pool, ws(req), parseQuery(previewQuery, req.query).scope))),
 );
 
 agentRouter.get("/playbooks", asyncHandler(async (req, res) => res.json(await settings.listPlaybooks(pool, ws(req)))));
@@ -135,6 +138,16 @@ agentRouter.post(
   asyncHandler(async (req, res) => {
     const { note } = parseBody(stopSchema, req.body ?? {});
     res.json(await withNextAction(await withTransaction((c) => agentStatus.stopLead(c, req.actor!, ws(req), req.params.id!, note))));
+  }),
+);
+
+const liveTestSchema = z.object({ enabled: z.boolean() }).strict();
+agentRouter.put(
+  "/leads/:id/live-test",
+  asyncHandler(async (req, res) => {
+    const { enabled } = parseBody(liveTestSchema, req.body);
+    await withTransaction((c) => agentStatus.setLiveTest(c, req.actor!, ws(req), req.params.id!, enabled));
+    res.json(await review.getLeadAgentPanel(pool, ws(req), req.params.id!));
   }),
 );
 

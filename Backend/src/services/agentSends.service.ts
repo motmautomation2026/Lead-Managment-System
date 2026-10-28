@@ -8,7 +8,6 @@ import { PermanentProviderError, ProviderDeferredError, SendCancelledError } fro
 import type { WhatsAppSendSource } from "../providers/baileys.manager.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
-import { cancelRunsForLead } from "./runs.service.js";
 import { createTask } from "./tasks.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
@@ -29,7 +28,6 @@ const MAX_SEND_ATTEMPTS = 3;
 const RETRY_MS = 5 * 60_000;
 const BATCH = 5;
 export const HANDOFF_TASK_TITLE = "AI handed off — please follow up";
-export const MANAGED_BY_AI = "Managed by AI agent";
 
 
 // --- WhatsApp: the claim loop -------------------------------------------------------
@@ -188,11 +186,4 @@ export async function executeStageChange(db: Queryable, workspaceId: string, lea
 async function setAgentStatus(db: Queryable, leadId: string, to: AgentStatus, reason: string) {
   await db.query(`update public.leads set agent_status = $2, agent_status_reason = $3, agent_status_changed_at = now() where id = $1`, [leadId, to, reason]);
   await cancelPendingWakeups(db, leadId, reason);
-}
-
-// --- Workflow exclusion (rule 9) -----------------------------------------------------
-
-/** A contact that just became AI-live leaves its workflows (timeline rows by cancelRunsForLead). */
-export async function cancelWorkflowsForLiveContact(db: Queryable, leadId: string): Promise<void> {
-  await cancelRunsForLead(db, leadId, MANAGED_BY_AI);
 }

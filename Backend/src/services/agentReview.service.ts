@@ -3,9 +3,11 @@ import type { Queryable } from "../dto.js";
 import { ConflictError, ForbiddenError, InvalidTransitionError, NotFoundError, ValidationError } from "../errors.js";
 import { composeOutgoing, type OutgoingMessage } from "../agent/composeMessage.js";
 import type { AgentAction, SendDecision } from "../agent/decisionSchema.js";
-import { goLiveReadiness, RATING_REASONS, type RatingReason } from "../agent/readiness.js";
+import { goLiveReadiness, RATING_REASONS, type GoLiveReadiness, type RatingReason } from "../agent/readiness.js";
+import { effectiveMode, type LiveScope } from "../agent/liveMode.js";
 import { isUuid } from "../validation/parse.js";
 import { IST_MONTH, MONTH_SPEND_SQL } from "./agentRunner.service.js";
+import { liveContactSql } from "./agentSendState.service.js";
 
 /**
  * Reviewing the agent's decisions (3D-1): the decision log, ratings, problem
@@ -37,6 +39,10 @@ const HEADLINE = `case d.action when 'send_email' then d.message_subject when 'h
   when 'update_stage' then d.new_stage when 'stop' then d.stop_reason end`;
 const LEAD_NAME = `concat_ws(' ', l.first_name, nullif(l.last_name, ''))`;
 const OPEN_REPORTS = `(select count(*)::int from public.agent_decision_reports r where r.decision_id = d.id and r.resolved_at is null)`;
+// E2: a live decision's send state; channel for send decisions.
+const SEND_COLUMNS = `d.mode, d.send_status as "sendStatus", d.sent_at as "sentAt", d.send_error as "sendError", d.cancel_reason as "cancelReason",
+              case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel`;
+const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
 
 /** Opaque keyset cursor: the row's created_at as Postgres text (keeps microseconds) and id. */
 const PG_TIMESTAMPTZ = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
@@ -82,7 +88,7 @@ export async function listDecisions(db: Queryable, workspaceId: string, filters:
               json_build_object('id', l.id, 'name', ${LEAD_NAME}, 'company', l.company) as lead,
               o.full_name as "ownerName", d.action, d.outcome, ${HEADLINE} as subject,
               left(d.message_body, ${PREVIEW_CHARS}) as "bodyPreview", d.regenerated, d.rating,
-              d.rating_reason as "ratingReason", ${OPEN_REPORTS} as "openReports"
+              d.rating_reason as "ratingReason", ${OPEN_REPORTS} as "openReports", ${SEND_COLUMNS}
          from public.agent_decisions d
          join public.leads l on l.id = d.lead_id
          left join public.profiles o on o.id = l.owner_id
@@ -134,6 +140,8 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               d.cost_usd::float8 as "costUsd", d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote",
               d.rated_by as "ratedBy", rb.full_name as "ratedByName", d.rated_at as "ratedAt",
               d.lead_id as "leadId", json_build_object('id', l.id, 'name', ${LEAD_NAME}, 'company', l.company, 'ownerId', l.owner_id) as lead,
+              d.send_status as "sendStatus", d.sent_at as "sentAt", d.send_error as "sendError", d.cancel_reason as "cancelReason",
+              case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel,
               ${DECISION_CONTEXT} as context,
               o.full_name as "_ownerName", coalesce(s.company_display_name, w.name) as "_companyName",
               s.email_opt_out_text as "_emailOptOut", s.whatsapp_opt_out_text as "_whatsappOptOut",
@@ -270,17 +278,35 @@ export async function resolveReport(db: Queryable, workspaceId: string, id: stri
   throw new ConflictError("This report is already resolved.");
 }
 
+/** Ratings for the go-live gate (failed decisions excluded). */
+async function loadRatings(db: Queryable, workspaceId: string) {
+  const rows = (
+    await db.query<{ rating: "good" | "bad"; reason: RatingReason | null; n: number }>(
+      `select rating, rating_reason as reason, count(*)::int as n from public.agent_decisions
+        where workspace_id = $1 and outcome <> 'failed' and rating is not null group by rating, rating_reason`,
+      [workspaceId],
+    )
+  ).rows;
+  const badByReason = Object.fromEntries(RATING_REASONS.map((r) => [r, 0])) as Record<RatingReason, number>;
+  let good = 0;
+  for (const { rating, reason, n } of rows) {
+    if (rating === "good") good += n;
+    else if (reason) badByReason[reason] += n;
+  }
+  return { good, badByReason };
+}
+
+export async function loadReadiness(db: Queryable, workspaceId: string): Promise<GoLiveReadiness> {
+  return goLiveReadiness(await loadRatings(db, workspaceId));
+}
+
 export async function getAgentStats(db: Queryable, workspaceId: string) {
-  const [counts, ratings, openReports, spend, replies] = await Promise.all([
+  const [counts, ratingCounts, openReports, spend, replies, live] = await Promise.all([
     db.query<{ action: string; outcome: string; n: number }>(
       `select action, outcome, count(*)::int as n from public.agent_decisions where workspace_id = $1 group by action, outcome`,
       [workspaceId],
     ),
-    db.query<{ rating: "good" | "bad"; reason: RatingReason | null; n: number }>(
-      `select rating, rating_reason as reason, count(*)::int as n from public.agent_decisions
-        where workspace_id = $1 and outcome <> 'failed' and rating is not null group by rating, rating_reason`,
-      [workspaceId],
-    ),
+    loadRatings(db, workspaceId),
     db.query<{ n: number }>(`select count(*)::int as n from public.agent_decision_reports where workspace_id = $1 and resolved_at is null`, [workspaceId]),
     db.query<{ spent: number; budget: number | null; month: string; mode: string | null }>(
       `select ${MONTH_SPEND_SQL}::float8 as spent,
@@ -299,6 +325,17 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
         group by reply_label`,
       [workspaceId],
     ),
+    // E2: the live scope and real AI sends.
+    db.query<{ scope: LiveScope; live_since: Date | null; live_contacts: number; sent_today: number; sent_month: number }>(
+      `select s.live_scope as scope, s.live_since,
+              case when s.mode = 'live' then (select count(*)::int from public.leads l where l.workspace_id = s.workspace_id and ${liveContactSql("s.live_scope", "s.live_since")}) else 0 end as live_contacts,
+              (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
+                and sent_at >= (${IST_DAY} at time zone 'Asia/Kolkata')) as sent_today,
+              (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
+                and sent_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')) as sent_month
+         from public.agent_settings s where s.workspace_id = $1`,
+      [workspaceId],
+    ),
   ]);
 
   const byAction: Record<string, number> = {};
@@ -312,12 +349,7 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
     byAction[action] = (byAction[action] ?? 0) + n;
     byOutcome[outcome] = (byOutcome[outcome] ?? 0) + n;
   }
-  const badByReason = Object.fromEntries(RATING_REASONS.map((r) => [r, 0])) as Record<RatingReason, number>;
-  let good = 0;
-  for (const { rating, reason, n } of ratings.rows) {
-    if (rating === "good") good += n;
-    else if (reason) badByReason[reason] += n;
-  }
+  const { good, badByReason } = ratingCounts;
   const bad = Object.values(badByReason).reduce((a, b) => a + b, 0);
   const s = spend.rows[0]!;
   return {
@@ -334,19 +366,33 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       costUsd: Math.round(replies.rows.reduce((sum, r) => sum + r.cost, 0) * 1e6) / 1e6,
     },
     readiness: goLiveReadiness({ good, badByReason }),
+    live: live.rows[0]
+      ? {
+          scope: live.rows[0].scope,
+          liveSince: live.rows[0].live_since?.toISOString() ?? null,
+          liveContacts: live.rows[0].live_contacts,
+          sentToday: live.rows[0].sent_today,
+          sentThisMonth: live.rows[0].sent_month,
+        }
+      : null,
   };
 }
 
 export async function getLeadAgentPanel(db: Queryable, workspaceId: string, leadId: string) {
-  const lead = (
-    await db.query(
-      `select id as "leadId", agent_status as status, agent_status_reason as "statusReason", agent_status_changed_at as "statusChangedAt",
-              agent_touch_count as "touchCount", agent_last_touch_at as "lastTouchAt"
-         from public.leads where id = $1 and workspace_id = $2`,
+  const row = (
+    await db.query<{ _createdAt: Date; _mode: "off" | "shadow" | "live"; _scope: LiveScope; _since: Date | null; liveTest: boolean; [key: string]: unknown }>(
+      `select l.id as "leadId", l.agent_status as status, l.agent_status_reason as "statusReason", l.agent_status_changed_at as "statusChangedAt",
+              l.agent_touch_count as "touchCount", l.agent_last_touch_at as "lastTouchAt", l.agent_live_test as "liveTest",
+              l.created_at as "_createdAt", s.mode as "_mode", s.live_scope as "_scope", s.live_since as "_since"
+         from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
+        where l.id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId],
     )
   ).rows[0];
-  if (!lead) throw new NotFoundError("Lead");
+  if (!row) throw new NotFoundError("Lead");
+  const { _createdAt, _mode, _scope, _since, ...lead } = row;
+  // E2 rule 2: whether this contact runs live or as shadow (off when the agent is off).
+  const mode = effectiveMode({ mode: _mode, live_scope: _scope, live_since: _since }, { agentLiveTest: row.liveTest, createdAt: _createdAt });
   const [wakeup, decisions] = await Promise.all([
     db.query(
       `select id, due_at as "dueAt", reason from public.agent_wakeups
@@ -356,7 +402,7 @@ export async function getLeadAgentPanel(db: Queryable, workspaceId: string, lead
     db.query(
       `select d.id, d.created_at as "createdAt", d.mode, d.action, d.outcome, d.reasoning, d.message_subject as "messageSubject",
               d.message_body as "messageBody", d.send_at as "sendAt", d.handoff_title as "handoffTitle", d.new_stage as "newStage",
-              d.stop_reason as "stopReason", d.regenerated, d.error,
+              d.stop_reason as "stopReason", d.regenerated, d.error, ${SEND_COLUMNS},
               case when d.rules_result is null then null else json_build_object(
                 'allowed', d.rules_result -> 'allowed', 'outcome', d.rules_result -> 'outcome',
                 'violations', d.rules_result -> 'violations', 'adjustments', d.rules_result -> 'adjustments') end as rules,
@@ -371,5 +417,5 @@ export async function getLeadAgentPanel(db: Queryable, workspaceId: string, lead
       [leadId, workspaceId],
     ),
   ]);
-  return { ...lead, nextWakeup: wakeup.rows[0] ?? null, decisions: decisions.rows };
+  return { ...lead, effectiveMode: mode, nextWakeup: wakeup.rows[0] ?? null, decisions: decisions.rows };
 }

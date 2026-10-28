@@ -1,9 +1,11 @@
 import type { Actor } from "../authMiddleware.js";
 import { withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
-import { NotFoundError, ValidationError } from "../errors.js";
+import { InvalidTransitionError, NotFoundError, ValidationError } from "../errors.js";
 import type { AgentMode } from "../agent/rules.js";
-import type { LiveScope } from "../agent/liveMode.js";
+import { canSetScope, type LiveScope } from "../agent/liveMode.js";
+import { cancelWorkflowsOfLiveContacts, liveContactSql } from "./agentSendState.service.js";
+import { loadReadiness } from "./agentReview.service.js";
 import { settingsCrossFieldProblems, type SettingsUpdate } from "../agent/settingsSchema.js";
 import { enqueueWakeups } from "./agentWakeups.service.js";
 
@@ -67,8 +69,8 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */
 const MODE_ON_SPREAD_MS = 60 * 60 * 1000;
 
-/** `activeLeadCount`: leads agent_status 'active', the ones the off → shadow switch wakes. */
-function settingsToDto(row: SettingsRow, activeLeadCount: number) {
+/** `activeLeadCount`: leads agent_status 'active', the ones the off → shadow switch wakes; `liveContactCount`: AI contacts live now (E2). */
+function settingsToDto(row: SettingsRow, activeLeadCount: number, liveContactCount: number) {
   return {
     mode: row.mode,
     sendDays: row.send_days,
@@ -91,6 +93,9 @@ function settingsToDto(row: SettingsRow, activeLeadCount: number) {
     repQuietHours: row.rep_quiet_hours,
     autoEnrollNewLeads: row.auto_enroll_new_leads,
     companyDisplayName: row.company_display_name,
+    liveScope: row.live_scope,
+    liveSince: row.live_since?.toISOString() ?? null,
+    liveContactCount,
     currentPlaybookVersion: row.current_playbook_version,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at.toISOString(),
@@ -117,15 +122,47 @@ async function loadSettingsRow(db: Queryable, workspaceId: string, forUpdate = f
   return row;
 }
 
+/** AI contacts that would be live with this scope (and live_since), and their unfinished workflow runs. */
+async function countLive(db: Queryable, workspaceId: string, scope: LiveScope, since: Date | null) {
+  const result = await db.query<{ contacts: number; runs: number }>(
+    `select count(*)::int as contacts,
+            coalesce(sum((select count(*) from public.workflow_runs r where r.lead_id = l.id and r.status not in ('completed', 'cancelled'))), 0)::int as runs
+       from public.leads l where l.workspace_id = $1 and ${liveContactSql("$2::text", "$3")}`,
+    [workspaceId, scope, since],
+  );
+  return result.rows[0]!;
+}
+
+const liveCount = async (db: Queryable, row: SettingsRow) => (row.mode === "live" ? (await countLive(db, row.workspace_id, row.live_scope, row.live_since)).contacts : 0);
+
 export async function getSettings(db: Queryable, workspaceId: string) {
-  return settingsToDto(await loadSettingsRow(db, workspaceId), await countActiveLeads(db, workspaceId));
+  const row = await loadSettingsRow(db, workspaceId);
+  return settingsToDto(row, await countActiveLeads(db, workspaceId), await liveCount(db, row));
 }
 
 /**
- * Applies a partial update. Turning the agent on (off → shadow) queues a
+ * E2: what switching to Live with `scope` would do, for the confirm dialog (nothing changes):
+ * the go-live gate, whether the scope is allowed, how many AI contacts become live and how
+ * many of their workflow runs get cancelled.
+ */
+export async function getLivePreview(db: Queryable, workspaceId: string, scope: LiveScope) {
+  const [current, readiness] = await Promise.all([loadSettingsRow(db, workspaceId), loadReadiness(db, workspaceId)]);
+  // new_leads counts from the switch-on moment (now) unless it is already on.
+  const since = scope === "new_leads" ? (current.mode === "live" && current.live_scope === "new_leads" ? current.live_since : new Date()) : null;
+  const allowed = canSetScope(scope, readiness);
+  const counts = await countLive(db, workspaceId, scope, since);
+  return { scope, readiness, allowed: allowed.ok, message: allowed.ok ? null : allowed.message, liveContacts: counts.contacts, workflowRunsToCancel: counts.runs };
+}
+
+/**
+ * Applies a partial update. Turning the agent on (off → shadow/live) queues a
  * wakeup for every lead already agent_status 'active', spread over the next
  * hour. Turning it off leaves pending wakeups alone (the 3C loop ignores
- * workspaces whose mode is off). Never touches workflows or runs.
+ * workspaces whose mode is off). E2: switching into Live or changing the live scope
+ * needs the go-live gate for new_leads/all (422 with the numbers); switching
+ * new_leads on sets live_since; contacts that are live afterwards leave their
+ * workflows (rule 9). Leaving Live cancels nothing directly: queued sends are
+ * cancelled by the send-time re-check (rule 10).
  */
 export async function updateSettings(actor: Actor, workspaceId: string, input: SettingsUpdate) {
   return withTransaction(async (client) => {
@@ -139,6 +176,15 @@ export async function updateSettings(actor: Actor, workspaceId: string, input: S
     const problem = settingsCrossFieldProblems(merged)[0];
     if (problem) throw new ValidationError(problem.message, { fieldErrors: { [problem.path[0]!]: [problem.message] } });
 
+    const nextMode = input.mode ?? current.mode;
+    const nextScope = input.liveScope ?? current.live_scope;
+    const switching = (nextMode === "live" && current.mode !== "live") || nextScope !== current.live_scope;
+    if (nextMode === "live" && switching) {
+      const readiness = await loadReadiness(client, workspaceId);
+      const allowed = canSetScope(nextScope, readiness);
+      if (!allowed.ok) throw new InvalidTransitionError(allowed.message, { readiness });
+    }
+
     const fields = (Object.keys(COLUMNS) as (keyof SettingsUpdate)[]).filter((key) => input[key] !== undefined);
     const sets = fields.map((key, i) => `${COLUMNS[key]} = $${i + 3}`);
     const result = await client.query<SettingsRow>(
@@ -146,9 +192,12 @@ export async function updateSettings(actor: Actor, workspaceId: string, input: S
         where workspace_id = $1 returning *`,
       [workspaceId, actor.id, ...fields.map((key) => input[key])],
     );
-    const updated = result.rows[0]!;
+    let updated = result.rows[0]!;
+    if (updated.mode === "live" && updated.live_scope === "new_leads" && !(current.mode === "live" && current.live_scope === "new_leads")) {
+      updated = (await client.query<SettingsRow>(`update public.agent_settings set live_since = now() where workspace_id = $1 returning *`, [workspaceId])).rows[0]!;
+    }
 
-    if (current.mode === "off" && updated.mode === "shadow") {
+    if (current.mode === "off" && updated.mode !== "off") {
       const leads = await client.query<{ id: string }>(
         `select id from public.leads where workspace_id = $1 and agent_status = 'active' order by id`,
         [workspaceId],
@@ -163,7 +212,8 @@ export async function updateSettings(actor: Actor, workspaceId: string, input: S
         { source: "mode_on" },
       );
     }
-    return settingsToDto(updated, await countActiveLeads(client, workspaceId));
+    if (updated.mode === "live") await cancelWorkflowsOfLiveContacts(client, workspaceId);
+    return settingsToDto(updated, await countActiveLeads(client, workspaceId), await liveCount(client, updated));
   });
 }
 

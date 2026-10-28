@@ -8,6 +8,7 @@ import { ADMIN_STATUS_REASONS, canTransition, type AgentStatusAction, type Trans
 import { cancelPendingWakeups, enqueueWakeup, type EnqueueOutcome, type WakeupReason } from "./agentWakeups.service.js";
 import { actorEvent, addTimelineEvent } from "./timeline.service.js";
 import { getLeadRowOr404 } from "./leads.service.js";
+import { cancelWorkflowsIfLive } from "./agentSendState.service.js";
 
 /**
  * Admin changes to leads.agent_status. Touches only agent_* columns,
@@ -83,6 +84,8 @@ async function applyAction(
     metadata: { agentStatusFrom: lead.agent_status, agentStatusTo: check.to, reason },
   });
 
+  // E2 rule 9: enrolled while live → out of its workflows.
+  if (action === "enroll") await cancelWorkflowsIfLive(client, workspaceId, leadId);
   const wakeReason = WAKE_REASONS[action];
   if (wakeReason) return { ok: true, wakeup: await enqueueWakeup(client, { workspaceId, leadId, reason: wakeReason, dueAt: new Date() }) };
   await cancelPendingWakeups(client, leadId, reason);
@@ -138,6 +141,26 @@ export const resumeLead = (client: Queryable, actor: Actor, workspaceId: string,
   changeLeadAgentStatus(client, actor, workspaceId, leadId, "resume");
 export const stopLead = (client: Queryable, actor: Actor, workspaceId: string, leadId: string, note?: string) =>
   changeLeadAgentStatus(client, actor, workspaceId, leadId, "stop", note);
+
+/**
+ * E2: an admin marks (or unmarks) a contact as an AI live test contact. Any lifecycle.
+ * Marking a contact that is then AI-live takes it out of its workflows (rule 9);
+ * unmarking cancels its queued AI sends at the send-time re-check.
+ */
+export async function setLiveTest(client: Queryable, actor: Actor, workspaceId: string, leadId: string, enabled: boolean): Promise<void> {
+  const lead = (await client.query<{ agent_live_test: boolean }>(`select agent_live_test from public.leads where id = $1 and workspace_id = $2 for update`, [leadId, workspaceId])).rows[0];
+  if (!lead) throw new NotFoundError("Lead");
+  if (lead.agent_live_test === enabled) return;
+  await client.query(`update public.leads set agent_live_test = $2, agent_live_test_by = $3, agent_live_test_at = now() where id = $1`, [leadId, enabled, actor.id]);
+  await addTimelineEvent(client, {
+    leadId,
+    kind: "automation",
+    title: enabled ? `Marked as AI live test by ${actor.fullName}` : `AI live test removed by ${actor.fullName}`,
+    ...actorEvent(actor),
+    metadata: { agentLiveTest: enabled },
+  });
+  if (enabled) await cancelWorkflowsIfLive(client, workspaceId, leadId);
+}
 
 /** Queues a wakeup due now. 'skipped' when the agent is off for the workspace. Not a status change, so no timeline event. */
 export async function wakeNow(client: Queryable, workspaceId: string, leadId: string): Promise<{ wakeup: EnqueueOutcome }> {

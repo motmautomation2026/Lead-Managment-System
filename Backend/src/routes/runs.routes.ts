@@ -5,9 +5,10 @@ import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { SCHEDULED_ACTION_STATUSES, WORKFLOW_RUN_STATUSES } from "../domain/enums.js";
-import { ValidationError } from "../errors.js";
+import { ConflictError, ValidationError } from "../errors.js";
 import * as runsService from "../services/runs.service.js";
 import { autoEnroll, enrollLeadInWorkflow } from "../services/runs.service.js";
+import { AI_MANAGED_CONFLICT, isAiLiveContact } from "../services/agentSendState.service.js";
 import * as lists from "../services/automationLists.service.js";
 
 export const runsRouter = Router();
@@ -57,6 +58,7 @@ runsRouter.post(
   asyncHandler(async (req, res) => {
     const { leadId, workflowId, reason } = parseBody(enrollSchema, req.body);
     const enrolledReason = reason ?? "Manually enrolled";
+    if (await isAiLiveContact(pool, req.workspaceId!, leadId)) throw new ConflictError(AI_MANAGED_CONFLICT);
 
     if (workflowId) {
       const run = await withTransaction((client) => enrollLeadInWorkflow(client, req.workspaceId!, leadId, workflowId, enrolledReason));
