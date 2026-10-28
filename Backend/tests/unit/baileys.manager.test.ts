@@ -53,6 +53,7 @@ const PHONE = "+919876543210";
 const JID = "919876543210@s.whatsapp.net";
 
 const norm = (sql: string) => sql.replace(/\s+/g, " ").trim();
+const QUIET_STATS = { sent_today: 0, new_chats_today: 0, sends_24h: 0, stops_24h: 0, failures_30m: 0, reconnects_30m: 0, is_first: false };
 
 // Copied verbatim from performSend before the B1 refactor, to pin them.
 const SCHEDULED_ACTION_ELIGIBILITY_SQL = norm(`select l.phone_e164
@@ -94,12 +95,20 @@ function installFakeDb({ eligibility, registered = true }: FakeOptions) {
             max_delay_seconds: 0,
             reachout_lock: null,
             new_chat_cap: null,
+            paired_at: null,
+            max_new_chats_per_day: 20,
+            // Always inside the window, whenever the suite runs.
+            send_window_days: [1, 2, 3, 4, 5, 6, 7],
+            send_window_start: "00:00",
+            send_window_end: "23:59:59",
+            next_send_at: null,
+            paused_reason: null,
+            resumed_at: null,
           },
         ],
       };
     }
-    if (s.startsWith("select count(*)")) return { rows: [{ count: "0" }] };
-    if (s.startsWith("select max(sent_at)")) return { rows: [{ sent_at: null }] };
+    if (s.startsWith("with since as")) return { rows: [QUIET_STATS] };
     if (/^select .* from public\.(scheduled_actions|proposals|meetings) /.test(s) && s.includes("for update")) {
       return { rows: eligibility };
     }
@@ -113,12 +122,13 @@ function installFakeDb({ eligibility, registered = true }: FakeOptions) {
     fetchNewChatMessageCap: vi.fn(async () => null),
     onWhatsApp: vi.fn(async () => [{ exists: registered }]),
     sendMessage: vi.fn(async () => ({ message: { conversation: "hi" } })),
+    sendPresenceUpdate: vi.fn(async () => undefined),
   };
   return socket;
 }
 
 function connectedManager(socket: unknown) {
-  const manager = new BaileysManager(WS);
+  const manager = new BaileysManager(WS, async () => undefined);
   Object.assign(manager as unknown as Record<string, unknown>, { socket, connected: true });
   return manager;
 }

@@ -17,6 +17,8 @@ import { PermanentProviderError, ProviderDeferredError } from "./provider-errors
 import { processInboundUpsert } from "../services/whatsapp-inbound.service.js";
 import { isOutboundRestricted, isTerminalDisconnect, randomSpacingMs, reconnectDelayMs } from "../domain/baileys-policy.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
+import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
+import { autoPause, loadSendStats, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 
 export interface WhatsAppAttachment {
   storagePath: string;
@@ -185,7 +187,33 @@ interface ConnectionControl {
   max_delay_seconds: number;
   reachout_lock: { isActive?: boolean } | null;
   new_chat_cap: { capping_status?: string; ote_status?: string } | null;
+  paired_at: Date | null;
+  max_new_chats_per_day: number;
+  send_window_days: number[];
+  send_window_start: string;
+  send_window_end: string;
+  next_send_at: Date | null;
+  paused_reason: string | null;
+  resumed_at: Date | null;
 }
+
+const RESTRICTED_REASON = "WhatsApp applied a reach-out or new-chat restriction to this number.";
+
+/** The claim transaction's outcome; errors are thrown after it commits. */
+type Claim =
+  | { kind: "alreadySent"; messageId: string }
+  | { kind: "defer"; reason: string; retryAfterMs: number }
+  | { kind: "permanent"; reason: string }
+  | {
+      kind: "send";
+      messageId: string;
+      text: string;
+      typingMs: number;
+      spacingMs: number;
+      newChat: boolean;
+      minDelaySeconds: number;
+      maxDelaySeconds: number;
+    };
 
 interface OutboundRow {
   message_id: string;
@@ -218,7 +246,11 @@ export class BaileysManager {
   private credsSaveTail: Promise<void> = Promise.resolve();
   private readonly logger: pino.Logger;
 
-  constructor(private readonly workspaceId: string) {
+  constructor(
+    private readonly workspaceId: string,
+    /** Spacing and typing waits; tests inject a no-op. */
+    private readonly wait: (ms: number) => Promise<unknown> = sleep,
+  ) {
     this.logger = pino({
       level: process.env.NODE_ENV === "production" ? "warn" : "info",
       redact: BAILEYS_LOG_REDACTION,
@@ -381,6 +413,8 @@ export class BaileysManager {
   private async handleConnectionUpdate(source: WASocket, update: Partial<ConnectionState>) {
     if (this.socket !== source) return;
     if (update.qr) await this.storeQr(update.qr);
+    // A QR scan just paired this number: warm-up (rule 3) counts from now.
+    if (update.isNewLogin) await pool.query(`update public.whatsapp_connection set paired_at = now() where workspace_id = $1`, [this.workspaceId]);
     if (update.reachoutTimeLock !== undefined) {
       await pool.query(`update public.whatsapp_connection set reachout_lock = $1 where workspace_id = $2`, [jsonSafe(update.reachoutTimeLock), this.workspaceId]);
     }
@@ -478,7 +512,7 @@ export class BaileysManager {
     await pool.query(
       `update public.whatsapp_connection
           set status = 'disconnected', connected_jid = null, connected_phone = null, display_name = null,
-              last_error = null, reachout_lock = null, new_chat_cap = null, last_disconnected_at = now(),
+              last_error = null, reachout_lock = null, new_chat_cap = null, last_disconnected_at = now(), paired_at = null,
               qr_ciphertext = null, qr_iv = null, qr_tag = null, qr_expires_at = null
         where workspace_id = $1`,
       [this.workspaceId],
@@ -535,49 +569,70 @@ export class BaileysManager {
     if (prepared.remote_jid !== jid) {
       throw new PermanentProviderError("The lead phone changed after this WhatsApp action was prepared; the action was not redirected.");
     }
-    // Claim the send: validate the emergency switch, restrictions, eligibility, and
-    // daily cap, and compute the send-spacing wait — all inside a short transaction
-    // that releases its row locks immediately, instead of holding them across the
-    // spacing sleep below (which would otherwise block the admin's disable toggle
-    // for up to max_delay_seconds).
-    const claim = await withTransaction(async (db) => {
+    // Claim the send: connection, restrictions, eligibility, idempotency and the
+    // E1 safety decision (pause, window, caps, first-message rules, spacing) — all
+    // inside a short transaction that releases its row locks before any wait. The
+    // transaction returns its outcome and errors are thrown after commit, so its
+    // writes (auto-pause, a not-registered number) are kept.
+    const claim = await withTransaction(async (db): Promise<Claim> => {
       await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [input.phoneE164]);
       const state = await db.query<ConnectionControl>(`select * from public.whatsapp_connection where workspace_id = $1 for update`, [this.workspaceId]);
       const control = state.rows[0]!;
-      if (!control.enabled) throw new ProviderDeferredError("WhatsApp outbound is disabled by the emergency switch.");
-      if (control.status !== "connected" || !this.socket || !this.connected) throw new ProviderDeferredError("WhatsApp is not connected.");
-      const [liveReachout, liveCap] = await Promise.all([
-        this.socket.fetchAccountReachoutTimelock().catch(() => control.reachout_lock),
-        this.socket.fetchNewChatMessageCap().catch(() => control.new_chat_cap),
-      ]);
-      await db.query(`update public.whatsapp_connection set reachout_lock = $1, new_chat_cap = $2 where workspace_id = $3`, [
-        jsonSafe(liveReachout),
-        jsonSafe(liveCap),
-        this.workspaceId,
-      ]);
-      if (isOutboundRestricted(liveReachout, liveCap))
-        throw new ProviderDeferredError("WhatsApp has applied a reachout or new-chat restriction.", 300_000);
+      if (control.status !== "connected" || !this.socket || !this.connected) return { kind: "defer", reason: "WhatsApp is not connected.", retryAfterMs: 60_000 };
+      let paused = !control.enabled;
+      if (!paused) {
+        const [liveReachout, liveCap] = await Promise.all([
+          this.socket.fetchAccountReachoutTimelock().catch(() => control.reachout_lock),
+          this.socket.fetchNewChatMessageCap().catch(() => control.new_chat_cap),
+        ]);
+        await db.query(`update public.whatsapp_connection set reachout_lock = $1, new_chat_cap = $2 where workspace_id = $3`, [
+          jsonSafe(liveReachout),
+          jsonSafe(liveCap),
+          this.workspaceId,
+        ]);
+        if (isOutboundRestricted(liveReachout, liveCap)) {
+          await recordSafetyEvent(db, this.workspaceId, "restricted", "WhatsApp applied a reach-out or new-chat restriction.");
+          await autoPause(db, this.workspaceId, RESTRICTED_REASON);
+          paused = true;
+        }
+      }
       const eligiblePhone = await loadSourceEligibility(db, this.workspaceId, input.source);
-      if (eligiblePhone !== input.phoneE164) {
-        throw new PermanentProviderError("The lead is no longer eligible for this WhatsApp action.");
-      }
-      const daily = await db.query<{ count: string }>(
-        `select count(*)::text as count from public.whatsapp_outbound_messages
-          where workspace_id = $1 and status = 'sent'
-            and sent_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'`,
-        [this.workspaceId],
-      );
-      if (Number(daily.rows[0]?.count ?? 0) >= control.daily_cap) {
-        throw new ProviderDeferredError("The Asia/Kolkata WhatsApp daily cap has been reached.", 300_000);
-      }
+      if (eligiblePhone !== input.phoneE164) return { kind: "permanent", reason: "The lead is no longer eligible for this WhatsApp action." };
       const existing = await db.query<OutboundRow>(
         `select message_id, remote_jid, status from public.whatsapp_outbound_messages where ${column} = $1`,
         [sourceId],
       );
-      if (existing.rows[0]?.status === "sent") {
-        return { alreadySent: true as const, messageId: existing.rows[0].message_id, waitMs: 0 };
-      }
+      if (existing.rows[0]?.status === "sent") return { kind: "alreadySent", messageId: existing.rows[0].message_id };
       const messageId = existing.rows[0]?.message_id ?? prepared.message_id;
+
+      const stats = await loadSendStats(db, this.workspaceId, jid, input.phoneE164, control.resumed_at);
+      const signal = paused ? null : shouldAutoPause(stats);
+      if (signal && (await autoPause(db, this.workspaceId, signal))) paused = true;
+      const now = new Date();
+      const decision = decideSend({
+        source: input.source.type,
+        now,
+        window: { days: control.send_window_days, start: control.send_window_start, end: control.send_window_end },
+        dailyCap: control.daily_cap,
+        warmupDay: warmupDayFor(control.paired_at, now),
+        sentToday: stats.sentToday,
+        maxNewChatsPerDay: control.max_new_chats_per_day,
+        newChatsToday: stats.newChatsToday,
+        isFirstMessage: stats.isFirstMessage,
+        text: input.body,
+        paused,
+        nextSendAt: control.next_send_at,
+      });
+      if ("defer" in decision) {
+        const pausedReason = signal ?? control.paused_reason;
+        const reason = paused && pausedReason ? `WhatsApp sending is paused: ${pausedReason}` : decision.reason;
+        return { kind: "defer", reason, retryAfterMs: Math.max(decision.defer.getTime() - now.getTime(), 1_000) };
+      }
+      if ("block" in decision) {
+        await db.query(`update public.whatsapp_outbound_messages set status = 'failed', last_error = $2 where ${column} = $1`, [sourceId, decision.block]);
+        return { kind: "permanent", reason: decision.block };
+      }
+
       const registered = await this.socket.onWhatsApp(input.phoneE164.slice(1));
       if (!registered?.some((entry) => entry.exists)) {
         await db.query(
@@ -594,18 +649,23 @@ export class BaileysManager {
             [leadId],
           );
         }
-        throw new PermanentProviderError("Recipient is not registered on WhatsApp.");
+        return { kind: "permanent", reason: "Recipient is not registered on WhatsApp." };
       }
-      const latest = await db.query<{ sent_at: Date | null }>(
-        `select max(sent_at) as sent_at from public.whatsapp_outbound_messages where workspace_id = $1 and status = 'sent'`,
-        [this.workspaceId],
-      );
-      const spacing = randomSpacingMs(control.min_delay_seconds, control.max_delay_seconds);
-      const elapsed = latest.rows[0]?.sent_at ? Date.now() - latest.rows[0].sent_at.getTime() : spacing;
-      return { alreadySent: false as const, messageId, waitMs: elapsed < spacing ? spacing - elapsed : 0 };
+      return {
+        kind: "send",
+        messageId,
+        text: decision.text,
+        typingMs: decision.typingMs,
+        spacingMs: decision.spacingMs,
+        newChat: stats.isFirstMessage,
+        minDelaySeconds: control.min_delay_seconds,
+        maxDelaySeconds: control.max_delay_seconds,
+      };
     });
-    if (claim.alreadySent) return { providerMessageId: claim.messageId };
-    if (claim.waitMs > 0) await sleep(claim.waitMs);
+    if (claim.kind === "alreadySent") return { providerMessageId: claim.messageId };
+    if (claim.kind === "defer") throw new ProviderDeferredError(claim.reason, claim.retryAfterMs);
+    if (claim.kind === "permanent") throw new PermanentProviderError(claim.reason);
+    if (claim.spacingMs > 0) await this.wait(claim.spacingMs);
 
     // Re-check the emergency switch and live connection state after the spacing
     // sleep: the row lock above was released before sleeping, so a disable made
@@ -619,7 +679,7 @@ export class BaileysManager {
       throw new ProviderDeferredError("WhatsApp is not connected.");
     }
 
-    let messageContent: AnyMessageContent = { text: input.body };
+    let messageContent: AnyMessageContent = { text: claim.text };
     if (input.attachment) {
       const { data, error } = await supabaseAdmin.storage
         .from(input.attachment.bucket)
@@ -627,32 +687,67 @@ export class BaileysManager {
       if (error || !data) throw new Error(`Failed to download WhatsApp attachment: ${error?.message ?? "no data"}`);
       const buffer = Buffer.from(await data.arrayBuffer());
       messageContent = input.attachment.mimeType.startsWith("image/")
-        ? { image: buffer, caption: input.body }
-        : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: input.body };
+        ? { image: buffer, caption: claim.text }
+        : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: claim.text };
     }
 
     // The socket can still go away after the recheck (e.g. the session lock
-    // connection drops and stop() nulls it). Nothing went out, so defer.
-    const socket = this.socket;
+    // connection drops and stop() nulls it) or during typing. Nothing went out, so defer.
+    if (!this.socket || !this.connected) throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
+    await this.showTyping(this.socket, jid, claim.typingMs);
+    const socket = this.socket as WASocket | null;
     if (!socket || !this.connected) throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
-    return withTransaction(async (db) => {
-      const sent = await socket.sendMessage(jid, messageContent, { messageId: claim.messageId }).catch((error: unknown) => {
-        if ((error as { output?: { statusCode?: number } }).output?.statusCode === DisconnectReason.connectionClosed) {
-          throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
-        }
-        throw error;
-      });
-      if (!sent?.message) throw new Error("Baileys returned no message payload.");
-      const payload = proto.Message.toObject(proto.Message.fromObject(sent.message));
-      const encrypted = encryptBytes(Buffer.from(JSON.stringify(payload), "utf8"), `whatsapp:outbound:${claim.messageId}`);
+    // No DB transaction is held across the network send.
+    const sent = await socket.sendMessage(jid, messageContent, { messageId: claim.messageId }).catch(async (error: unknown) => {
+      if ((error as { output?: { statusCode?: number } }).output?.statusCode === DisconnectReason.connectionClosed) {
+        throw new ProviderDeferredError("WhatsApp disconnected before the message could be sent.");
+      }
+      await this.recordSendFailure(error).catch((e: unknown) => this.logger.error({ err: e }, "Failed to record a WhatsApp send failure"));
+      throw error;
+    });
+    if (!sent?.message) throw new Error("Baileys returned no message payload.");
+    const payload = proto.Message.toObject(proto.Message.fromObject(sent.message));
+    const encrypted = encryptBytes(Buffer.from(JSON.stringify(payload), "utf8"), `whatsapp:outbound:${claim.messageId}`);
+    await withTransaction(async (db) => {
       await db.query(
         `update public.whatsapp_outbound_messages
             set status = 'sent', payload_ciphertext = $2, payload_iv = $3, payload_tag = $4,
-                key_version = $5, sent_at = now(), last_error = null, updated_at = now()
+                key_version = $5, sent_at = now(), last_error = null, updated_at = now(), new_chat = $6
           where ${column} = $1`,
-        [sourceId, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion],
+        [sourceId, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion, claim.newChat],
       );
-      return { providerMessageId: claim.messageId };
+      // Spacing: the next send of this workspace waits a fresh random min–max delay (45–120 s by default).
+      await db.query(`update public.whatsapp_connection set next_send_at = now() + make_interval(secs => $2) where workspace_id = $1`, [
+        this.workspaceId,
+        randomSpacingMs(claim.minDelaySeconds, claim.maxDelaySeconds) / 1_000,
+      ]);
     });
+    return { providerMessageId: claim.messageId };
+  }
+
+  /** "typing…" for `ms`, then paused. Presence errors never fail a send. */
+  private async showTyping(socket: WASocket, jid: string, ms: number) {
+    await socket.sendPresenceUpdate("composing", jid).catch(() => undefined);
+    await this.wait(ms);
+    await socket.sendPresenceUpdate("paused", jid).catch(() => undefined);
+  }
+
+  /** Rule 7: a failed send is a signal; 5 within 30 min pause the workspace. */
+  private async recordSendFailure(error: unknown) {
+    await withTransaction(async (db) => {
+      await recordSafetyEvent(db, this.workspaceId, "send_failed", error instanceof Error ? error.message.slice(0, 500) : null);
+      await this.checkAutoPause(db);
+    });
+  }
+
+  /** Pauses when the counted signals (failures, reconnects, STOPs) cross a rule-7 limit. */
+  private async checkAutoPause(db: Queryable) {
+    const control = await db.query<{ enabled: boolean; resumed_at: Date | null }>(
+      `select enabled, resumed_at from public.whatsapp_connection where workspace_id = $1 for update`,
+      [this.workspaceId],
+    );
+    if (!control.rows[0]?.enabled) return;
+    const signal = shouldAutoPause(await loadSendStats(db, this.workspaceId, "", "", control.rows[0].resumed_at));
+    if (signal) await autoPause(db, this.workspaceId, signal);
   }
 }
