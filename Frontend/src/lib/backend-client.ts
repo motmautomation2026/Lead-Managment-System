@@ -680,6 +680,22 @@ export interface EmailConnection {
   updatedAt: string;
 }
 
+export interface WhatsAppSendWindow {
+  /** ISO weekdays, 1 = Monday. */
+  days: number[];
+  start: string;
+  end: string;
+}
+
+export interface WhatsAppSafetyInput {
+  enabled: boolean;
+  dailyCap: number;
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
+  maxNewChatsPerDay: number;
+  sendWindow: WhatsAppSendWindow;
+}
+
 export interface WhatsAppConnection {
   enabled: boolean;
   desiredState: string;
@@ -701,6 +717,25 @@ export interface WhatsAppConnection {
   pendingCount: number;
   invalidPhoneCount: number;
   outboundRestricted: boolean;
+  /** E1 safety settings (admin-editable) and monitoring. */
+  pairedAt: string | null;
+  /** Day since pairing (1 = pairing day, IST); null = paired before E1, fully warmed up. */
+  warmupDay: number | null;
+  effectiveDailyCap: number;
+  maxNewChatsPerDay: number;
+  sendWindow: WhatsAppSendWindow;
+  /** Set while outbound is off (`enabled` false). */
+  pause: { reason: string | null; at: string | null; byName: string | null } | null;
+  newChatsToday: number;
+  failures24h: number;
+  stops24h: number;
+  safetyEvents: {
+    kind: "send_failed" | "reconnect_failed" | "disconnected" | "restricted" | "paused" | "resumed";
+    detail: string | null;
+    at: string;
+  }[];
+  /** Last 14 IST days, newest first. */
+  daily: { date: string; sent: number; failed: number; stops: number }[];
   inboundReview: {
     messageId: string;
     senderPhoneE164: string | null;
@@ -879,8 +914,9 @@ export const backend = {
     whatsapp: {
       get: (signal?: AbortSignal) =>
         get<WhatsAppConnection>("/connections/whatsapp/settings", signal),
-      update: (input: { enabled: boolean; dailyCap: number }) =>
+      update: (input: WhatsAppSafetyInput) =>
         send<WhatsAppConnection>("PUT", "/connections/whatsapp/settings", input),
+      resume: () => send<WhatsAppConnection>("POST", "/connections/whatsapp/resume"),
       command: (command: "connect" | "restart" | "logout") =>
         send<WhatsAppConnection>("POST", `/connections/whatsapp/${command}`),
     },
@@ -994,6 +1030,10 @@ export const backend = {
       get<{ data: LeadNote[] }>(`/leads/${id}/notes`, signal),
     contactability: (id: string, signal?: AbortSignal) =>
       get<{ data: Contactability[] }>(`/leads/${id}/contactability`, signal),
+    setContactability: (
+      id: string,
+      input: { channel: Contactability["channel"]; status: string; reason?: string },
+    ) => send<{ data: Contactability[] }>("POST", `/leads/${id}/contactability`, input),
     setAutomation: (id: string, mode: AutomationMode, reason?: string) =>
       send<Lead>("POST", `/leads/${id}/automation`, { mode, reason }),
     markDnc: (id: string, reason: string) => send<Lead>("POST", `/leads/${id}/dnc`, { reason }),

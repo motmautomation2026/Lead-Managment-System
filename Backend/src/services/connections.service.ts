@@ -7,6 +7,8 @@ import { ValidationError } from "../errors.js";
 import { decryptJson, decryptText, encryptJson, encryptText, type EncryptedValue } from "../security/encryption.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import { exchangeCodeForTokens, getAuthorizationUrl, type GoogleOAuthClientConfig } from "../providers/google-calendar.provider.js";
+import { warmupCap, warmupDayFor } from "../domain/whatsappSafety.js";
+import { loadSafetyMonitoring, resumeSending, updateSafetySettings, type WhatsAppSafetySettings } from "./whatsappSafety.service.js";
 
 export interface EmailSettings {
   senderName?: string;
@@ -150,6 +152,13 @@ interface WhatsAppRow {
   daily_cap: number;
   min_delay_seconds: number;
   max_delay_seconds: number;
+  paired_at: Date | null;
+  max_new_chats_per_day: number;
+  send_window_days: number[];
+  send_window_start: string;
+  send_window_end: string;
+  paused_reason: string | null;
+  paused_at: Date | null;
 }
 
 export async function getWhatsAppConnection(workspaceId: string) {
@@ -162,7 +171,7 @@ export async function getWhatsAppConnection(workspaceId: string) {
           "whatsapp:pairing-qr",
         )
       : null;
-  const [counts, invalid, review] = await Promise.all([
+  const [counts, invalid, review, safety] = await Promise.all([
     pool.query<{ today: string; pending: string }>(
       `select
          count(*) filter (where sent_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')::text as today,
@@ -190,7 +199,9 @@ export async function getWhatsAppConnection(workspaceId: string) {
         limit 20`,
       [workspaceId],
     ),
+    loadSafetyMonitoring(pool, workspaceId),
   ]);
+  const warmupDay = warmupDayFor(row.paired_at, new Date());
   return {
     enabled: row.enabled,
     desiredState: row.desired_state,
@@ -216,6 +227,18 @@ export async function getWhatsAppConnection(workspaceId: string) {
         (row.new_chat_cap as { capping_status?: string; ote_status?: string } | null)?.capping_status === "CAPPED" ||
         (row.new_chat_cap as { capping_status?: string; ote_status?: string } | null)?.ote_status === "EXHAUSTED",
     ),
+    // E1 safety: settings (admin-editable) and monitoring.
+    pairedAt: row.paired_at?.toISOString() ?? null,
+    warmupDay,
+    effectiveDailyCap: warmupCap(warmupDay, row.daily_cap),
+    maxNewChatsPerDay: row.max_new_chats_per_day,
+    sendWindow: { days: row.send_window_days, start: row.send_window_start.slice(0, 5), end: row.send_window_end.slice(0, 5) },
+    pause: row.enabled ? null : { reason: row.paused_reason, at: row.paused_at?.toISOString() ?? null, byName: safety.pausedByName },
+    newChatsToday: safety.newChatsToday,
+    failures24h: safety.failures24h,
+    stops24h: safety.stops24h,
+    safetyEvents: safety.safetyEvents,
+    daily: safety.daily,
     inboundReview: review.rows.map((event) => ({
       messageId: event.message_id,
       senderPhoneE164: event.sender_phone_e164,
@@ -227,20 +250,13 @@ export async function getWhatsAppConnection(workspaceId: string) {
   };
 }
 
-export async function updateWhatsAppSettings(
-  actor: Actor,
-  workspaceId: string,
-  input: { enabled: boolean; dailyCap: number },
-) {
-  await withTransaction(async (db) => {
-    await db.query(
-      `update public.whatsapp_connection
-          set enabled = $1, daily_cap = $2, updated_by = $3
-        where workspace_id = $4`,
-      [input.enabled, input.dailyCap, actor.id, workspaceId],
-    );
-    await recordAdminAudit(db, actor, "connection.whatsapp.settings_updated", "whatsapp_connection", workspaceId, input);
-  });
+export async function updateWhatsAppSettings(actor: Actor, workspaceId: string, input: WhatsAppSafetySettings) {
+  await withTransaction((db) => updateSafetySettings(db, actor, workspaceId, input));
+  return getWhatsAppConnection(workspaceId);
+}
+
+export async function resumeWhatsApp(actor: Actor, workspaceId: string) {
+  await withTransaction((db) => resumeSending(db, actor, workspaceId));
   return getWhatsAppConnection(workspaceId);
 }
 

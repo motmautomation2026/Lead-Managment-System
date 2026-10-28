@@ -21,7 +21,8 @@ import {
   validateLeadForm,
   type LeadFormErrors,
 } from "@/lib/lead-validation";
-import { messageFromError, useLeadMutations, useSession } from "@/store";
+import { messageFromError, useIsAdmin, useLeadMutations, useSession } from "@/store";
+import { ClearOptOutDialog } from "./clear-opt-out-dialog";
 import { LEAD_SOURCES, PIPELINE_STAGES, type ContactDetail, type Contactability } from "@/types";
 import type { UpdateLeadInput } from "@/lib/backend-client";
 
@@ -177,6 +178,8 @@ export function ContactAbout({
 }) {
   const { users } = useSession();
   const { updateLead } = useLeadMutations();
+  const isAdmin = useIsAdmin();
+  const [clearOpen, setClearOpen] = useState(false);
   const text = ([field, name]: [TextField, string]): Property => ({
     id: field,
     label: name,
@@ -247,14 +250,34 @@ export function ContactAbout({
       // Stage override as today: active contacts only.
       ...(contact.lifecycleState === "active" && stageEditor ? { editor: stageEditor } : {}),
     },
-    ...contactability.map((c) => ({
-      id: `contactability-${c.channel}`,
-      label: `${label(c.channel)} status`,
+    ...contactability.map((c) => {
       // D4a: a STOP opt-out says why ("Asked to stop on WhatsApp").
-      value:
-        c.status === "opted_out" && c.reason ? `${label(c.status)} — ${c.reason}` : label(c.status),
-    })),
+      const text =
+        c.status === "opted_out" && c.reason ? `${label(c.status)} — ${c.reason}` : label(c.status);
+      return {
+        id: `contactability-${c.channel}`,
+        label: `${label(c.channel)} status`,
+        value:
+          c.channel === "whatsapp" && c.status === "opted_out" && isAdmin ? (
+            <div className="space-y-1">
+              <p>{text}</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => setClearOpen(true)}>
+                Clear opt-out
+              </Button>
+            </div>
+          ) : (
+            text
+          ),
+      };
+    }),
     { id: "createdAt", label: "Created", value: <RelativeTime value={contact.createdAt} /> },
   ];
-  return <PropertyList items={items} />;
+  return (
+    <>
+      <PropertyList items={items} />
+      {isAdmin && (
+        <ClearOptOutDialog contactId={contact.id} open={clearOpen} onOpenChange={setClearOpen} />
+      )}
+    </>
+  );
 }

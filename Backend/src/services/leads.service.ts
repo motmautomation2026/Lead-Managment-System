@@ -1,7 +1,7 @@
 import type { Queryable } from "../dto.js";
 import { addDaysIso } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, DoNotContactError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
 import { assertPipelineStageEditable, assertValidLifecycleState, assertValidPipelineStage, isTerminalLifecycle } from "../domain/pipeline.js";
 import type {
   AutomationMode,
@@ -969,6 +969,17 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
   }
   await getLeadRowOr404(db, workspaceId, leadId);
 
+  // E1 rule 8: only an admin clears a WhatsApp opt-out (the contact asked us to stop), with a reason.
+  const current = await db.query<{ status: string }>(`select status from public.lead_contact_channels where lead_id = $1 and channel = $2 for update`, [
+    leadId,
+    input.channel,
+  ]);
+  const clearsOptOut = input.channel === "whatsapp" && current.rows[0]?.status === "opted_out" && input.status !== "opted_out";
+  if (clearsOptOut) {
+    if (actor.role !== "admin") throw new ForbiddenError("Only an admin can clear a WhatsApp opt-out.");
+    if (!input.reason?.trim()) throw new ValidationError("A reason is required to clear a WhatsApp opt-out.");
+  }
+
   await db.query(
     `insert into public.lead_contact_channels (lead_id, channel, status, reason, updated_by, updated_by_name)
      values ($1,$2,$3,$4,$5,$6)
@@ -981,7 +992,9 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
   await addTimelineEvent(db, {
     leadId,
     kind: "system",
-    title: `${input.channel} contactability: ${input.status}`,
+    title: clearsOptOut
+      ? `WhatsApp opt-out cleared by ${actor.fullName}: ${input.reason!.trim()}`
+      : `${input.channel} contactability: ${input.status}`,
     detail: input.reason,
     ...actorEvent(actor),
   });

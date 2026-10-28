@@ -178,6 +178,12 @@ export function useLeadMutations() {
               : backend.leads.reactivate(id, reason),
     onSuccess: (lead) => refresh(lead.id),
   });
+  // E1: clearing a WhatsApp opt-out is admin-only and needs a reason (backend enforces it).
+  const contactability = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      backend.leads.setContactability(id, { channel: "whatsapp", status: "valid", reason }),
+    onSuccess: (_data, variables) => refresh(variables.id),
+  });
   const isPending = [
     create,
     importCsv,
@@ -190,6 +196,7 @@ export function useLeadMutations() {
     call,
     communication,
     lifecycle,
+    contactability,
   ].some((mutation) => mutation.isPending);
   return {
     isPending,
@@ -211,6 +218,7 @@ export function useLeadMutations() {
       reason?: string,
       lossReason?: LeadLossReason,
     ) => lifecycle.mutateAsync({ id, action, reason, lossReason }),
+    clearWhatsAppOptOut: (id: string, reason: string) => contactability.mutateAsync({ id, reason }),
   };
 }
 

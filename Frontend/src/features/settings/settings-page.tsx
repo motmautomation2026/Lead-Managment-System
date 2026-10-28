@@ -22,6 +22,7 @@ import { AgentPanel } from "./agent-panel";
 import { AppearancePanel } from "./appearance-panel";
 import { SETTINGS_TABS, settingsSearchSchema, type SettingsTab } from "./settings-search";
 import { UsersPanel } from "./users-panel";
+import { WhatsAppSafety } from "./whatsapp-safety";
 
 /**
  * /settings: a left sub-nav (tabs on phone) over Workspace (Email, WhatsApp, Google Calendar),
@@ -299,33 +300,8 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
     refetchInterval: 5_000,
   });
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [settings, setSettings] = useState({
-    enabled: false,
-    dailyCap: 200,
-  });
-  useEffect(() => {
-    if (query.data && !dirty)
-      setSettings({
-        enabled: query.data.enabled,
-        dailyCap: query.data.dailyCap,
-      });
-  }, [query.data, dirty]);
-  const updateSettings = (patch: Partial<typeof settings>) => {
-    setDirty(true);
-    setSettings((prev) => ({ ...prev, ...patch }));
-  };
   const refresh = () =>
     void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "whatsapp") });
-  const save = useMutation({
-    mutationFn: () => backend.connections.whatsapp.update(settings),
-    onSuccess: () => {
-      setDirty(false);
-      refresh();
-      toast.success("WhatsApp controls saved.");
-    },
-    onError: (error) => toast.error(messageFromError(error)),
-  });
   const command = useMutation({
     mutationFn: backend.connections.whatsapp.command,
     onSuccess: () => {
@@ -363,13 +339,12 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
           )
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-3">
               <Metric label="Status" value={data.status.replaceAll("_", " ")} />
               <Metric
                 label="Connected account"
                 value={data.displayName || data.connectedPhone || "Not paired"}
               />
-              <Metric label="Sent today" value={`${data.todayCount} / ${data.dailyCap}`} />
               <Metric label="Pending" value={String(data.pendingCount)} />
             </div>
             {data.lastError && <Notice danger>{data.lastError}</Notice>}
@@ -387,31 +362,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
                 </p>
               </div>
             )}
-            <div className="grid gap-4 md:grid-cols-3">
-              <Field label="Daily cap (IST)">
-                <Input
-                  type="number"
-                  min={1}
-                  max={10000}
-                  value={settings.dailyCap}
-                  onChange={(e) => updateSettings({ dailyCap: Number(e.target.value) })}
-                />
-              </Field>
-              <Field label="Send spacing">
-                <Input value="Randomized 5-15 seconds" disabled />
-              </Field>
-              <div className="flex items-end gap-2 pb-2">
-                <Switch
-                  checked={settings.enabled}
-                  onCheckedChange={(enabled) => updateSettings({ enabled })}
-                />
-                <span className="text-sm font-medium">Outbound enabled</span>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 border-t pt-4">
-              <Button onClick={() => save.mutate()} disabled={save.isPending}>
-                Save controls
-              </Button>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 onClick={() => command.mutate("connect")}
@@ -435,6 +386,7 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
               {data.workerHeartbeatAt ? new Date(data.workerHeartbeatAt).toLocaleString() : "Never"}{" "}
               · Invalid existing phone values: {data.invalidPhoneCount}
             </div>
+            <WhatsAppSafety workspaceId={workspaceId} data={data} />
             {data.inboundReview.length > 0 && (
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="text-sm font-medium">Inbound replies needing review</div>

@@ -8,6 +8,7 @@ import { sendEmail } from "../providers/email.provider.js";
 import { toProviderHttpError } from "../providers/provider-errors.js";
 import { withTransaction } from "../db.js";
 import { recordAdminAudit } from "../services/admin-audit.service.js";
+import { requireAdmin } from "../authMiddleware.js";
 
 /**
  * Workspace-scoped Email/WhatsApp/Google Calendar connection management.
@@ -78,15 +79,35 @@ connectionsRouter.get(
   "/whatsapp/settings",
   asyncHandler(async (req, res) => res.json(await connections.getWhatsAppConnection(req.workspaceId!))),
 );
-const whatsappSettingsSchema = z.object({
-  enabled: z.boolean(),
-  dailyCap: z.number().int().min(1).max(10_000),
-});
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour).");
+const whatsappSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    dailyCap: z.number().int().min(1).max(10_000),
+    minDelaySeconds: z.number().int().min(1).max(300).optional(),
+    maxDelaySeconds: z.number().int().min(1).max(600).optional(),
+    maxNewChatsPerDay: z.number().int().min(0).max(1000).optional(),
+    sendWindow: z
+      .object({ days: z.array(z.number().int().min(1).max(7)).min(1).max(7), start: hhmm, end: hhmm })
+      .refine((w) => w.start < w.end, { message: "The send window must start before it ends.", path: ["end"] })
+      .optional(),
+  })
+  .refine((s) => s.minDelaySeconds === undefined || s.maxDelaySeconds === undefined || s.minDelaySeconds <= s.maxDelaySeconds, {
+    message: "The minimum spacing can't be more than the maximum.",
+    path: ["maxDelaySeconds"],
+  });
+// E1: WhatsApp safety settings, the emergency switch and resume are admin-only; connect/restart/logout stay open.
 connectionsRouter.put(
   "/whatsapp/settings",
+  requireAdmin,
   asyncHandler(async (req, res) =>
     res.json(await connections.updateWhatsAppSettings(req.actor!, req.workspaceId!, parseBody(whatsappSettingsSchema, req.body))),
   ),
+);
+connectionsRouter.post(
+  "/whatsapp/resume",
+  requireAdmin,
+  asyncHandler(async (req, res) => res.json(await connections.resumeWhatsApp(req.actor!, req.workspaceId!))),
 );
 
 for (const command of ["connect", "restart", "logout"] as const) {
