@@ -164,6 +164,8 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
 
   afterAll(async () => {
     await deleteCreatedTestWorkspaces(pool);
+    // resumeEmail writes an append-only admin audit row, so the admin can't be deleted: deactivate it first.
+    await pool.query(`update public.profiles set is_active = false where id = any($1::uuid[])`, [authUserIds]);
     for (const id of authUserIds) {
       await pool.query(`delete from auth.users where id = $1`, [id]).catch((error) => console.warn("[emailOutbound] test user cleanup failed:", error));
     }

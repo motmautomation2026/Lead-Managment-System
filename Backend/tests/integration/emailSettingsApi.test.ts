@@ -115,6 +115,8 @@ describeIfDb("E1b email settings API (requires TEST_DATABASE_URL)", () => {
 
   afterAll(async () => {
     await deleteCreatedTestWorkspaces(pool);
+    // Admin audit rows are append-only, so the admin can't be deleted: leave no active test user behind.
+    await pool.query(`update public.profiles set is_active = false where id = any($1::uuid[])`, [[admin.id, rep.id]]);
     await api.close();
     await pool.end();
   });
