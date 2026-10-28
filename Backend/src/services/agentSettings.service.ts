@@ -3,6 +3,7 @@ import { withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { NotFoundError, ValidationError } from "../errors.js";
 import type { AgentMode } from "../agent/rules.js";
+import type { LiveScope } from "../agent/liveMode.js";
 import { settingsCrossFieldProblems, type SettingsUpdate } from "../agent/settingsSchema.js";
 import { enqueueWakeups } from "./agentWakeups.service.js";
 
@@ -30,6 +31,8 @@ interface SettingsRow {
   rep_quiet_hours: number;
   auto_enroll_new_leads: boolean;
   company_display_name: string | null;
+  live_scope: LiveScope;
+  live_since: Date | null;
   current_playbook_version: number | null;
   updated_by: string | null;
   updated_at: Date;
@@ -58,6 +61,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   repQuietHours: "rep_quiet_hours",
   autoEnrollNewLeads: "auto_enroll_new_leads",
   companyDisplayName: "company_display_name",
+  liveScope: "live_scope",
 };
 
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */

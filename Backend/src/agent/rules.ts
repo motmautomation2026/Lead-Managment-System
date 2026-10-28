@@ -49,7 +49,17 @@ export interface RulesContext {
   assets: AgentAssetInfo[];
   /** Contacts the message may mention: the lead's own plus the workspace's / owner's. */
   allowedContacts: { emails: string[]; phones: string[] };
+  /** The contact's effective mode (E2: in a live workspace, a contact outside the live scope runs as shadow). */
   mode: AgentMode;
+  /** E2 rule 4: why AI email is unavailable for this contact (live without healthy reply reading); null/absent = available. */
+  emailBlockedReason?: string | null;
+}
+
+/** What the channel checks read. */
+export interface ChannelContext {
+  lead: { email: string | null; phoneE164: string | null };
+  contactability: RulesContext["contactability"];
+  emailBlockedReason?: string | null;
 }
 
 export interface RuleNote {
@@ -104,11 +114,11 @@ function isSend(decision: AgentDecision): decision is SendDecision {
   return decision.action === "send_email" || decision.action === "send_whatsapp";
 }
 
-export function emailUsable(ctx: RulesContext): boolean {
-  return Boolean(ctx.lead.email?.trim()) && !EMAIL_BLOCKED_STATUSES.includes(ctx.contactability.email ?? "");
+export function emailUsable(ctx: ChannelContext): boolean {
+  return !ctx.emailBlockedReason && Boolean(ctx.lead.email?.trim()) && !EMAIL_BLOCKED_STATUSES.includes(ctx.contactability.email ?? "");
 }
 
-export function whatsappUsable(ctx: RulesContext): boolean {
+export function whatsappUsable(ctx: ChannelContext): boolean {
   return (
     Boolean(ctx.lead.phoneE164) &&
     !WHATSAPP_BLOCKED_STATUSES.includes(ctx.contactability.whatsapp ?? "") &&

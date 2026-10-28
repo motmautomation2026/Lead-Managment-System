@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LIVE_SCOPES } from "./liveMode.js";
 
 /**
  * A partial agent_settings update (PUT /agent/settings), camelCase. Mirrors the
@@ -6,8 +7,6 @@ import { z } from "zod";
  * fields are sent; the service re-checks them on the merged row
  * (settingsCrossFieldProblem) so a single-field update can't break them either.
  */
-
-export const LIVE_MODE_UNAVAILABLE = "Live mode isn't available yet.";
 
 const positiveInt = z.number().int().positive();
 const nonBlank = z.string().trim().min(1, "Can't be blank.").max(1000);
@@ -20,7 +19,9 @@ const modelName = z.string().trim().min(1).max(100).nullable();
 
 export const settingsUpdateSchema = z
   .object({
-    mode: z.enum(["off", "shadow", "live"]).refine((mode) => mode !== "live", LIVE_MODE_UNAVAILABLE),
+    mode: z.enum(["off", "shadow", "live"]),
+    // E2: which AI contacts are live in a live workspace; new_leads / all need the go-live gate (checked by the service).
+    liveScope: z.enum(LIVE_SCOPES),
     sendDays: z
       .array(z.number().int().min(1).max(7))
       .min(1, "Pick at least one day.")

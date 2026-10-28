@@ -7,7 +7,7 @@ import { InvalidTransitionError } from "../errors.js";
 import { parseBody, parseParams, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { AGENT_ACTIONS } from "../agent/decisionSchema.js";
 import { RATING_REASONS } from "../agent/readiness.js";
-import { LIVE_MODE_UNAVAILABLE, settingsUpdateSchema } from "../agent/settingsSchema.js";
+import { settingsUpdateSchema } from "../agent/settingsSchema.js";
 import * as review from "../services/agentReview.service.js";
 import * as settings from "../services/agentSettings.service.js";
 import * as agentStatus from "../services/agentStatus.service.js";
@@ -89,7 +89,7 @@ agentRouter.put(
   "/settings",
   asyncHandler(async (req, res) => {
     // A valid value that isn't available yet: 422, not a 400.
-    if ((req.body as { mode?: unknown } | undefined)?.mode === "live") throw new InvalidTransitionError(LIVE_MODE_UNAVAILABLE);
+    if ((req.body as { mode?: unknown } | undefined)?.mode === "live") throw new InvalidTransitionError("Live mode isn't available yet.");
     res.json(await settings.updateSettings(req.actor!, ws(req), parseBody(settingsUpdateSchema, req.body)));
   }),
 );

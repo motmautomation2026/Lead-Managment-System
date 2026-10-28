@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIVE_MODE_UNAVAILABLE, settingsUpdateSchema } from "../../src/agent/settingsSchema.js";
+import { settingsUpdateSchema } from "../../src/agent/settingsSchema.js";
 
 const parse = (value: unknown) => settingsUpdateSchema.safeParse(value);
 const messages = (value: unknown) => {
@@ -14,9 +14,11 @@ describe("agent settings update schema", () => {
     expect(parse({}).success).toBe(true);
   });
 
-  it("rejects live mode with a clear message", () => {
-    expect(messages({ mode: "live" })).toEqual([LIVE_MODE_UNAVAILABLE]);
+  it("accepts live mode with a live scope (E2); rejects unknown modes and scopes", () => {
+    expect(parse({ mode: "live", liveScope: "test_contacts" }).success).toBe(true);
+    expect(parse({ liveScope: "all" }).success).toBe(true);
     expect(parse({ mode: "on" }).success).toBe(false);
+    expect(parse({ liveScope: "everyone" }).success).toBe(false);
   });
 
   it("rejects non-positive numbers and out-of-range quiet hours", () => {
