@@ -10,8 +10,8 @@ import { htmlToText } from "./emailSafety.js";
 export type InboundEmailKind = "reply" | "bounce" | "bounce_temporary" | "auto_reply" | "unsubscribe" | "ignored";
 
 export const MAX_REPLY_CHARS = 4000;
-/** Larger messages are read only this far: the text and DSN parts come first. */
-export const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+/** Larger messages are read only this far (50 per poll stay small): the text and DSN parts come first. */
+export const MAX_SOURCE_BYTES = 1024 * 1024;
 
 // No linkify / html-to-text on attacker-controlled mail (both have DoS advisories): HTML is converted
 // with our own htmlToText only when there is no text part. keepDeliveryStatus (missing from
