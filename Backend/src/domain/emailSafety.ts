@@ -113,13 +113,17 @@ function enhancedCode(text: string): string | null {
   return /\b([245]\.\d{1,3}\.\d{1,3})\b/.exec(text)?.[1] ?? null;
 }
 
+// "\brate" so "generate" / "separate" don't count.
+const RATE_WORDING = /\brate|limit|too many|throttl/i;
+
 export function classifySmtpError(err: unknown): SmtpErrorClass {
   const e = (err ?? {}) as SmtpLikeError;
   const text = `${e.response ?? ""} ${e.message ?? ""}`;
   const code = e.responseCode;
   const enhanced = enhancedCode(text);
   if (code === 535 || code === 534 || code === 530 || e.code === "EAUTH") return "login_rejected";
-  if (code === 421 || code === 451 || enhanced?.startsWith("4.7.")) return "rate_limited";
+  // D3 8a: a 451 pauses only with a 4.7.x code or rate-limit wording; other 451s are temporary.
+  if (code === 421 || enhanced?.startsWith("4.7.") || (code === 451 && RATE_WORDING.test(text))) return "rate_limited";
   if (enhanced?.startsWith("5.7.")) return "policy_blocked";
   if (code && code >= 500) return "recipient_permanent";
   return "temporary";

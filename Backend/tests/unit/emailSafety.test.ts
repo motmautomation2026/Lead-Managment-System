@@ -130,7 +130,12 @@ describe("SMTP errors (rule 5)", () => {
     [smtp(535, "535 5.7.8 Username and Password not accepted"), "login_rejected"],
     [Object.assign(new Error("Invalid login"), { code: "EAUTH" }), "login_rejected"],
     [smtp(421, "421 4.7.0 Try again later, closing connection"), "rate_limited"],
-    [smtp(451, "451 4.3.0 Temporary local problem"), "rate_limited"],
+    // D3 8a: a 451 pauses only with 4.7.x or rate-limit wording.
+    [smtp(451, "451 4.7.0 Temporary server error, try again later"), "rate_limited"],
+    [smtp(451, "451 4.3.0 Temporary local problem"), "temporary"],
+    [smtp(451, "451 Too many connections from your IP"), "rate_limited"],
+    [smtp(451, "451 4.4.1 Throttled: sending rate exceeded"), "rate_limited"],
+    [smtp(451, "451 Requested action aborted: local error in processing"), "temporary"],
     [smtp(450, "450 4.7.1 Too many messages, slow down"), "rate_limited"],
     [smtp(450, "450 4.2.1 Mailbox busy"), "temporary"],
     [net("ETIMEDOUT"), "temporary"],
