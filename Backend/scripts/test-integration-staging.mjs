@@ -18,7 +18,8 @@ const supabaseUrl = dotEnv.SUPABASE_URL?.trim();
 if (supabaseUrl?.includes(PRODUCTION_REF)) throw new Error("SUPABASE_URL points at the production project; refusing to run.");
 const supabase = supabaseUrl && dotEnv.SUPABASE_SERVICE_ROLE_KEY ? { SUPABASE_URL: supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: dotEnv.SUPABASE_SERVICE_ROLE_KEY.trim() } : {};
 
-const result = spawnSync("npx", ["vitest", "run", "tests/integration"], {
+// Extra arguments narrow the run (e.g. `npm run test:integration:staging -- tests/integration/agentContext.test.ts`).
+const result = spawnSync("npx", ["vitest", "run", ...(process.argv.length > 2 ? process.argv.slice(2) : ["tests/integration"])], {
   cwd: backendDir,
   stdio: "inherit",
   shell: process.platform === "win32",

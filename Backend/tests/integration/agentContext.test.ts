@@ -201,6 +201,46 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     }
   });
 
+  it("E2: a live contact sees only real sends (history and limits); email is unavailable without healthy IMAP", async () => {
+    const lead = await newLead(WS);
+    const sentAt = new Date(Date.now() - 3 * DAY);
+    await pool.query(
+      `insert into public.agent_decisions (workspace_id, lead_id, mode, action, reasoning, message_body, send_at, rules_result, outcome, send_status, sent_at, created_at)
+       values ($1, $2, 'shadow', 'send_whatsapp', 'draft', 'Draft one', now(), '{"allowed": true}', 'draft', null, null, now() - interval '2 hours'),
+              ($1, $2, 'shadow', 'send_email', 'draft', 'Draft two', now(), '{"allowed": true}', 'draft', null, null, now() - interval '1 hour'),
+              ($1, $2, 'live', 'send_whatsapp', 'sent', 'Real one', $3, '{"allowed": true}', 'sent', 'sent', $3, $3)`,
+      [WS, lead, sentAt],
+    );
+    await pool.query(`update public.leads set agent_touch_count = 1, agent_last_touch_at = $2, agent_live_test = true where id = $1`, [lead, sentAt]);
+    await pool.query(`update public.agent_settings set mode = 'live', live_scope = 'test_contacts' where workspace_id = $1`, [WS]);
+    try {
+      const live = await build(WS, lead);
+      expect(live.rules.mode).toBe("live");
+      expect(live.pastMessages.map((m) => [m.body, m.outcome])).toEqual([["Real one", "sent"]]);
+      expect(live.rules.lead.agentTouchCount).toBe(1);
+      expect(live.rules.recentTouchTimes.map((t) => t.getTime())).toEqual([sentAt.getTime()]);
+      // No IMAP poll ever succeeded in this workspace.
+      expect(live.rules.emailBlockedReason).toMatch(/AI email is unavailable/);
+
+      await pool.query(
+        `insert into public.email_imap_state (workspace_id, last_success_at) values ($1, now())
+         on conflict (workspace_id) do update set last_success_at = now()`,
+        [WS],
+      );
+      expect((await build(WS, lead)).rules.emailBlockedReason).toBeUndefined();
+
+      // The same workspace, an unmarked contact: shadow, drafts count and are shown.
+      await pool.query(`update public.leads set agent_live_test = false where id = $1`, [lead]);
+      const shadow = await build(WS, lead);
+      expect(shadow.rules.mode).toBe("shadow");
+      expect(shadow.pastMessages).toHaveLength(3);
+      expect(shadow.rules.lead.agentTouchCount).toBe(3);
+    } finally {
+      await pool.query(`update public.agent_settings set mode = 'shadow' where workspace_id = $1`, [WS]);
+      await pool.query(`delete from public.email_imap_state where workspace_id = $1`, [WS]);
+    }
+  });
+
   it("names the selling company by the display name when set, else the workspace name", async () => {
     const workspaceName = (await pool.query(`select name from public.workspaces where id = $1`, [WS])).rows[0].name;
     await pool.query(`update public.agent_settings set company_display_name = 'MOTM Technologies' where workspace_id = $1`, [WS]);

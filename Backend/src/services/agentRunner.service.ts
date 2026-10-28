@@ -4,6 +4,7 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
+import { countQuestions } from "../agent/messageChecks.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -27,6 +28,8 @@ const PLAYBOOK_RETRY_MS = 60 * MINUTE;
 const BUDGET_RETRY_MS = 60 * MINUTE;
 const FAILURE_RETRY_MS = 5 * MINUTE;
 const HANDOFF_TITLE = "AI couldn't write a safe message";
+const QUESTION_HANDOFF_TITLE = "AI couldn't write a one-question message";
+const QUESTION_RULE = "one_question";
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
@@ -113,11 +116,17 @@ export async function draftDecision(
       grounding = applyGroundingAllowList(checked.json, ctx);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
+    // E2 rule 7 (both modes): at most one question per message.
+    const questions = isSend(rules.finalDecision) ? countQuestions(rules.finalDecision.body) : 0;
     return {
       decision: decided.json,
       rules,
       grounding,
-      problems: [...rules.violations.map((v) => `${v.rule}: ${v.message}`), ...unsupported.map((claim) => `Unsupported claim: ${claim}`)],
+      problems: [
+        ...rules.violations.map((v) => `${v.rule}: ${v.message}`),
+        ...unsupported.map((claim) => `Unsupported claim: ${claim}`),
+        ...(questions > 1 ? [`${QUESTION_RULE}: The message asks ${questions} questions; ask at most one.`] : []),
+      ],
     };
   };
 
@@ -138,7 +147,7 @@ export async function draftDecision(
   return {
     decision: {
       action: "handoff",
-      title: HANDOFF_TITLE,
+      title: second.problems.every((p) => p.startsWith(`${QUESTION_RULE}:`)) ? QUESTION_HANDOFF_TITLE : HANDOFF_TITLE,
       urgency: "normal",
       reasoning: `Two attempts failed the checks: ${second.problems.join("; ")}`.slice(0, 2000),
     },

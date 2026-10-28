@@ -93,7 +93,8 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
 
   const timeline = ctx.timeline.map((t) => `- ${t.at} [${t.kind}] ${t.title}${t.detail ? ` — ${t.detail}` : ""}`).join("\n");
   const past = ctx.pastMessages
-    .map((m) => `- ${m.at} ${m.channel} (${m.outcome})${m.subject ? `\n  Subject: ${m.subject}` : ""}\n  ${m.body.replace(/\n/g, "\n  ")}`)
+    // E2 rule 6: anything not really sent is labelled, so the AI never says "following up on my message" about a draft.
+    .map((m) => `- ${m.at} ${m.channel} (${m.outcome === "sent" ? "sent" : "draft — never sent to the contact"})${m.subject ? `\n  Subject: ${m.subject}` : ""}\n  ${m.body.replace(/\n/g, "\n  ")}`)
     .join("\n");
   const summaries = ctx.decisionSummaries.map((d) => `- ${d.at} ${d.action} (${d.outcome}): ${d.reasoning}`).join("\n");
   const knowledge = knowledgeBlock(ctx.knowledge.chunks);
@@ -142,6 +143,7 @@ function leadDataText(ctx: AgentContext): string {
     `Owner (you): ${lead.ownerName ?? "unassigned"}`,
     `Email status: ${rules.contactability.email ?? "unknown"}; WhatsApp status: ${rules.contactability.whatsapp ?? "unknown"}; phone status: ${rules.contactability.phone ?? "unknown"}`,
     `Has email: ${rules.lead.email ? "yes" : "no"}; has WhatsApp number: ${rules.lead.phoneE164 ? "yes" : "no"}`,
+    ...(rules.emailBlockedReason ? [rules.emailBlockedReason] : []),
     `Website enquiry: ${lead.websiteMessage ?? "none"}`,
     ...companyLines(ctx),
   ].join("\n");

@@ -5,6 +5,7 @@ import type { AgentMode, AgentRuleSettings, AgentStatus, RulesContext } from "..
 import { buildKbQuery } from "../agent/kbQuery.js";
 import { companyDescription, companyFacts, resolveCompany, type CompanyFacts, type CompanyRecord } from "../agent/companyFacts.js";
 import { buildDealContext, type AgentDealContext, type AgentDealRow } from "../agent/dealContext.js";
+import { effectiveMode, liveChannels, type LiveScope } from "../agent/liveMode.js";
 import { countTokens } from "../knowledge/chunkText.js";
 import type { Embedder } from "../providers/openai.provider.js";
 import { searchKnowledge } from "./knowledge.service.js";
@@ -34,6 +35,8 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   max_decisions_per_day: number;
   current_playbook_version: number | null;
   company_display_name: string | null;
+  live_scope: LiveScope;
+  live_since: Date | null;
 }
 
 export interface AgentContextLead {
@@ -160,6 +163,8 @@ export async function buildAgentContext(
       agent_status: AgentStatus;
       agent_touch_count: number;
       agent_last_touch_at: Date | null;
+      agent_live_test: boolean;
+      created_at: Date;
       owner_id: string | null;
       owner_name: string | null;
       owner_email: string | null;
@@ -170,7 +175,7 @@ export async function buildAgentContext(
     }>(
       `select l.id, l.first_name, l.last_name, l.company, l.job_title, l.industry, l.revenue_range, l.source,
               l.email, l.phone_e164, l.pipeline_stage, l.lifecycle_state, l.objection_type, l.loss_reason,
-              l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.owner_id,
+              l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.agent_live_test, l.created_at, l.owner_id,
               o.full_name as owner_name, o.email as owner_email, w.name as company_name,
               ${companyJson("c")} as linked_company, ${companyJson("cm")} as merge_target,
               coalesce(dl.deals, '[]'::json) as deals
@@ -201,9 +206,11 @@ export async function buildAgentContext(
 
   const settings = (await db.query<AgentSettingsRow>(`select * from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0];
   if (!settings) throw new NotFoundError("Agent settings");
-  const shadow = settings.mode === "shadow";
+  // E2 rule 2: in a live workspace a contact outside the live scope runs as shadow.
+  const mode = effectiveMode(settings, { agentLiveTest: leadRow.agent_live_test, createdAt: leadRow.created_at });
+  const shadow = mode === "shadow";
 
-  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender] = await Promise.all([
+  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap] = await Promise.all([
     db.query<{ message: string | null }>(
       `select t.metadata ->> 'rawMessage' as message
          from public.timeline_events t join public.leads l on l.id = t.lead_id
@@ -219,8 +226,9 @@ export async function buildAgentContext(
     ),
     // Touches: real sends; in shadow also the drafts the rules allowed, so shadow drafts
     // respect the same gaps and limits a live agent would (leads.agent_touch_* stay real-only).
+    // A live contact counts real sends only (E2 rule 6).
     db.query<{ action: string; at: Date }>(
-      `select action, coalesce(send_at, created_at) as at from public.agent_decisions
+      `select action, coalesce(sent_at, send_at, created_at) as at from public.agent_decisions
         where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp')
           and (outcome = 'sent' or ($3::boolean and outcome = 'draft' and coalesce((rules_result ->> 'allowed')::boolean, false)))`,
       [leadId, workspaceId, shadow],
@@ -248,8 +256,10 @@ export async function buildAgentContext(
     db.query<{ created_at: Date; action: "send_email" | "send_whatsapp"; message_subject: string | null; message_body: string | null; outcome: string }>(
       `select created_at, action, message_subject, message_body, outcome from public.agent_decisions
         where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp') and message_body is not null
+          and ($4::boolean or outcome = 'sent')
         order by created_at desc limit $3`,
-      [leadId, workspaceId, PAST_MESSAGES_LIMIT],
+      // Only a live contact's history is limited to real sends (E2 rule 6); drafts are labelled in the prompt.
+      [leadId, workspaceId, PAST_MESSAGES_LIMIT, mode !== "live"],
     ),
     db.query<{ created_at: Date; action: string; outcome: string; reasoning: string | null }>(
       `select created_at, action, outcome, reasoning from public.agent_decisions
@@ -272,6 +282,7 @@ export async function buildAgentContext(
          from public.integration_connections where workspace_id = $1 and id = 'email'`,
       [workspaceId],
     ),
+    db.query<{ last_success_at: Date | null }>(`select last_success_at from public.email_imap_state where workspace_id = $1`, [workspaceId]),
   ]);
 
   const lead: AgentContextLead = {
@@ -298,6 +309,7 @@ export async function buildAgentContext(
   const status = (channel: string) => channels.rows.find((c) => c.channel === channel)?.status ?? null;
   const weekAgo = now.getTime() - 7 * 24 * 3600 * 1000;
   const senderAddress = sender.rows[0]?.address || null;
+  const { emailBlockedReason } = liveChannels(mode, imap.rows[0]?.last_success_at ?? null, now);
   const assets: AgentAssetSummary[] = assetRows.rows.map((a) => ({
     id: a.id,
     title: a.title,
@@ -328,7 +340,9 @@ export async function buildAgentContext(
       emails: [...new Set([leadRow.email, leadRow.owner_email, senderAddress].filter((v): v is string => Boolean(v)).map((v) => v.toLowerCase()))],
       phones: leadRow.phone_e164 ? [leadRow.phone_e164] : [],
     },
-    mode: settings.mode,
+    mode,
+    // Only when blocked, so a shadow contact's rules context (and prompt) is unchanged.
+    ...(emailBlockedReason ? { emailBlockedReason } : {}),
   };
 
   const query = buildKbQuery(lead, lastCall.rows[0] ?? null);
