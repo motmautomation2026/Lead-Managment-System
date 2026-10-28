@@ -115,7 +115,34 @@ export interface ImapClient {
 
 export type ImapFactory = (config: ImapConfig) => ImapClient;
 
-export const createImapClient: ImapFactory = (config) => {
+/** D3: one fetched message (`source` read with BODY.PEEK, so nothing is marked read). */
+export interface ImapMessage {
+  uid: number;
+  internalDate?: Date | string;
+  source?: Buffer;
+}
+
+/**
+ * D3: what the worker's mailbox poller needs: EXAMINE (read-only), SEARCH and FETCH by UID.
+ * Nothing that sets flags, moves, copies, deletes or expunges is part of it.
+ */
+export interface ImapReader extends ImapClient {
+  mailboxOpen(path: string, options: { readOnly: true }): Promise<{ uidValidity: bigint | number; uidNext?: number }>;
+  search(query: { since?: Date; uid?: string }, options: { uid: true }): Promise<number[] | false>;
+  fetch(
+    range: string,
+    query: { uid: true; internalDate?: true; source?: { start: 0; maxLength: number } },
+    options: { uid: true },
+  ): AsyncIterable<ImapMessage>;
+}
+
+export type ImapReaderFactory = (config: ImapConfig) => ImapReader;
+
+export const IMAP_POLL_TIMEOUT_MS = 30_000;
+
+export const createImapReader: ImapReaderFactory = (config) => createImapClient(config, IMAP_POLL_TIMEOUT_MS) as unknown as ImapReader;
+
+export const createImapClient = (config: ImapConfig, timeoutMs = CONNECTION_TEST_TIMEOUT_MS): ImapClient => {
   const client = new ImapFlow({
     host: config.host,
     port: config.port,
@@ -124,9 +151,9 @@ export const createImapClient: ImapFactory = (config) => {
     auth: { user: config.username, pass: config.password },
     tls: { minVersion: "TLSv1.2", rejectUnauthorized: true },
     logger: false,
-    connectionTimeout: CONNECTION_TEST_TIMEOUT_MS,
-    greetingTimeout: CONNECTION_TEST_TIMEOUT_MS,
-    socketTimeout: CONNECTION_TEST_TIMEOUT_MS,
+    connectionTimeout: timeoutMs,
+    greetingTimeout: timeoutMs,
+    socketTimeout: timeoutMs,
   });
   // An unhandled 'error' event would crash the process; the awaited calls reject anyway.
   client.on("error", () => undefined);

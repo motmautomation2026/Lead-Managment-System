@@ -289,10 +289,12 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
               to_char(${IST_MONTH}, 'YYYY-MM') as month`,
       [workspaceId],
     ),
-    // D4a: WhatsApp replies labelled this IST month, by label, and the AI cost of labelling them.
+    // D4a: replies (D3: WhatsApp + email) labelled this IST month, by label, and the AI cost of labelling them.
     db.query<{ label: string; n: number; cost: number }>(
       `select reply_label as label, count(*)::int as n, coalesce(sum(classification_cost_usd), 0)::float8 as cost
-         from public.whatsapp_inbound_events
+         from (select reply_label, classification_cost_usd, classified_at, workspace_id from public.whatsapp_inbound_events
+               union all
+               select reply_label, classification_cost_usd, classified_at, workspace_id from public.email_inbound_events) r
         where workspace_id = $1 and reply_label is not null and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')
         group by reply_label`,
       [workspaceId],

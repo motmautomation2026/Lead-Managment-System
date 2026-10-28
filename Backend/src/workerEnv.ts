@@ -11,6 +11,8 @@ const WorkerEnvSchema = z.object({
   CRM_COMPANY_SWEEP_ENABLED: z.string().default("true").transform((value) => value !== "false"),
   // CRM v2 deal backfill sweeper (B3b): links unlinked meetings/proposals to deals. On unless exactly "false".
   CRM_DEAL_SWEEP_ENABLED: z.string().default("true").transform((value) => value !== "false"),
+  // D3: how often each workspace's mailbox is read over IMAP (read-only).
+  EMAIL_IMAP_POLL_SECONDS: z.coerce.number().int().min(30).max(3600).default(120),
 });
 
 export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env) {

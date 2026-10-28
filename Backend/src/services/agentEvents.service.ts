@@ -16,7 +16,7 @@ import { addTimelineEvent } from "./timeline.service.js";
  * stops are done by the migration 026 trigger, not here. Never touches
  * workflows, runs or automation_mode. Nothing is sent.
  */
-export type AgentEvent = AgentWakeEvent | "whatsapp_inbound";
+export type AgentEvent = AgentWakeEvent | "whatsapp_inbound" | "email_inbound";
 
 export interface AgentEventInput {
   workspaceId: string;
@@ -108,7 +108,7 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
       [leadId, UPCOMING_MEETING_STATUSES],
     );
     if (!upcoming.rowCount) await setStatus("active", "meeting_done", "AI Agent Resumed");
-  } else if (event === "whatsapp_inbound" && (lead.agent_status === "active" || lead.agent_status === "paused")) {
+  } else if ((event === "whatsapp_inbound" || event === "email_inbound") && (lead.agent_status === "active" || lead.agent_status === "paused")) {
     await setStatus("handed_off", "lead_replied", "AI Agent Handed Off");
   }
 

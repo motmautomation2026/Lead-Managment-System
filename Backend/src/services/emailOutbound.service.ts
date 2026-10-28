@@ -213,7 +213,7 @@ async function requeue(db: Queryable, row: EmailOutboundRow, at: Date, reason: s
   await onSourceProblem(db, row, "pending", reason);
 }
 
-async function checkAutoPause(db: Queryable, workspaceId: string) {
+export async function checkAutoPause(db: Queryable, workspaceId: string) {
   const { row } = await loadEmailConnection(db, workspaceId);
   const reason = shouldAutoPauseEmail(await loadEmailStats(db, workspaceId, row.resumed_at));
   if (reason) await autoPauseEmail(db, workspaceId, reason);
@@ -248,6 +248,12 @@ async function workflowStepActive(row: EmailOutboundRow): Promise<boolean> {
   return ["pending", "due", "executing"].includes(result.rows[0]?.status ?? "");
 }
 
+async function staleMeetingReason(meetingId: string, now: Date): Promise<string | null> {
+  const meeting = (await pool.query<{ status: string; scheduled_at: Date }>(`select status, scheduled_at from public.meetings where id = $1`, [meetingId])).rows[0];
+  if (!meeting || meeting.status === "cancelled") return "Meeting was cancelled";
+  return meeting.scheduled_at.getTime() <= now.getTime() ? "Meeting time has passed" : null;
+}
+
 async function downloadAttachment(ref: AttachmentRef): Promise<Buffer> {
   const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
   if (error || !data) throw new Error(`Couldn't download the attachment "${ref.fileName}": ${error?.message ?? "no data"}`);
@@ -276,6 +282,16 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
 
   if (row.source === "scheduled_action" && !(await workflowStepActive(row))) {
     await pool.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, "The workflow step is no longer active."]);
+    return "cancelled";
+  }
+
+  // D3 8b: a meeting email is pointless once the meeting was cancelled or has started.
+  const stale = row.source === "meeting" ? await staleMeetingReason(row.source_id, now) : null;
+  if (stale) {
+    await withTransaction(async (db) => {
+      await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, stale]);
+      await db.query(`update public.meetings set notify_email_status = 'skipped', notify_email_error = $2 where id = $1`, [row.source_id, stale]);
+    });
     return "cancelled";
   }
 

@@ -349,6 +349,50 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     expect(await connection(ws)).toMatchObject({ enabled: false, paused_reason: "The mail server is limiting our sending: 421 4.7.0 Try again later, closing connection" });
   });
 
+  it("D3 8a: 451 pauses only with 4.7.x or rate-limit wording; 451 4.3.0 is a temporary retry", async () => {
+    for (const [response, pauses] of [
+      ["451 4.3.0 Temporary local problem", false],
+      ["451 4.7.0 Temporary server error", true],
+      ["451 Too many connections, try later", true],
+    ] as const) {
+      const ws = await workspace(`451-${pauses}`);
+      const contact = await lead(ws);
+      const { row } = await proposalEmail(ws, contact.id, contact.email);
+      const smtp = fakeSmtp();
+      smtp.errors.push(smtpError(451, response));
+      await run(ws, smtp);
+      expect((await connection(ws)).enabled).toBe(!pauses);
+      expect(await email(row.id)).toMatchObject({ status: "queued", attempts: pauses ? 0 : 1 });
+    }
+  });
+
+  it("D3 8b: a queued meeting email is cancelled once the meeting has started or was cancelled", async () => {
+    const ws = await workspace("meeting-stale");
+    const contact = await lead(ws);
+    const meeting = async (scheduledAt: Date, status: string) =>
+      (
+        await pool.query<{ id: string }>(
+          `insert into public.meetings (workspace_id, lead_id, title, scheduled_at, status, notify_email_status) values ($1, $2, 'Demo', $3, $4, 'pending') returning id`,
+          [ws, contact.id, scheduledAt, status],
+        )
+      ).rows[0]!.id;
+    const cases = [
+      [await meeting(new Date(Date.now() - 60_000), "scheduled"), "Meeting time has passed"],
+      [await meeting(new Date(Date.now() + 86_400_000), "cancelled"), "Meeting was cancelled"],
+    ] as const;
+    const smtp = fakeSmtp();
+    for (const [meetingId, reason] of cases) {
+      const row = await outbound.enqueueEmail(pool, { workspaceId: ws, source: "meeting", sourceId: meetingId, leadId: contact.id, to: contact.email, subject: "Meeting", html: "<p>See you</p>" });
+      expect(await run(ws, smtp)).toEqual(["cancelled"]);
+      expect(await email(row.id)).toMatchObject({ status: "cancelled", last_error: reason });
+      expect((await pool.query(`select notify_email_status, notify_email_error from public.meetings where id = $1`, [meetingId])).rows[0]).toEqual({
+        notify_email_status: "skipped",
+        notify_email_error: reason,
+      });
+    }
+    expect(smtp.sent).toHaveLength(0);
+  });
+
   it("5 temporary failures in 30 minutes pause sending; each burns one attempt", async () => {
     const ws = await workspace("temporary");
     const smtp = fakeSmtp();

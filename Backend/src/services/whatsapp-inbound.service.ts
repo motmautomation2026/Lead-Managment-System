@@ -1,5 +1,6 @@
 import { getContentType, type WAMessage } from "baileys";
 import { withTransaction } from "../db.js";
+import type { Queryable } from "../dto.js";
 import { jidToPhoneE164 } from "../domain/phone.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
@@ -19,6 +20,49 @@ function endOfIstDay(now = new Date()) {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
   ist.setUTCHours(23, 59, 0, 0);
   return new Date(ist.getTime() - IST_OFFSET_MS);
+}
+
+/**
+ * A reply stops automation (4A; D3: email too): the contact responded, goes manual, and its
+ * workflow runs and scheduled actions are cancelled with `reason`.
+ */
+export async function stopAutomationForReply(db: Queryable, leadId: string, reason: string) {
+  await db.query(
+    `update public.leads
+        set response_state = 'responded', automation_mode = 'manual', last_activity_at = now()
+      where id = $1`,
+    [leadId],
+  );
+  await db.query(
+    `update public.workflow_runs
+        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2, next_run_at = null
+      where lead_id = $1 and status in ('running','waiting','paused')`,
+    [leadId, reason],
+  );
+  await db.query(
+    `update public.scheduled_actions
+        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2
+      where lead_id = $1 and status in ('pending','due','paused','executing')`,
+    [leadId, reason],
+  );
+}
+
+/** One open reply task per contact across channels (any reply-task title counts: a label may have re-titled it). */
+export async function ensureReplyTask(db: Queryable, workspaceId: string, lead: { id: string; owner_id: string; owner_name: string | null }, title: string) {
+  const open = await db.query(
+    `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]) limit 1`,
+    [lead.id, REPLY_TASK_TITLES],
+  );
+  if (open.rowCount) return;
+  await createTask(db, null, workspaceId, {
+    leadId: lead.id,
+    ownerId: lead.owner_id,
+    ownerName: lead.owner_name,
+    type: "follow_up",
+    title,
+    dueAt: endOfIstDay().toISOString(),
+    origin: "agent",
+  });
 }
 
 function messageTime(message: WAMessage) {
@@ -91,24 +135,7 @@ export async function processInboundUpsert(workspaceId: string, event: { message
       }
 
       for (const lead of matches.rows) {
-        await db.query(
-          `update public.leads
-              set response_state = 'responded', automation_mode = 'manual', last_activity_at = now()
-            where id = $1`,
-          [lead.id],
-        );
-        await db.query(
-          `update public.workflow_runs
-              set status = 'cancelled', cancelled_at = now(), cancel_reason = 'Inbound WhatsApp reply', next_run_at = null
-            where lead_id = $1 and status in ('running','waiting','paused')`,
-          [lead.id],
-        );
-        await db.query(
-          `update public.scheduled_actions
-              set status = 'cancelled', cancelled_at = now(), cancel_reason = 'Inbound WhatsApp reply'
-            where lead_id = $1 and status in ('pending','due','paused','executing')`,
-          [lead.id],
-        );
+        await stopAutomationForReply(db, lead.id, "Inbound WhatsApp reply");
         await db.query(
           `insert into public.lead_contact_channels
             (lead_id, channel, status, reason, updated_by_name)
@@ -145,22 +172,7 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
         const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused";
         if (disposition === "matched" && lead.owner_id && wasManaged) {
-          // Any reply-task title: an earlier reply's label may have re-titled it (D4a).
-          const open = await db.query(
-            `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]) limit 1`,
-            [lead.id, REPLY_TASK_TITLES],
-          );
-          if (!open.rowCount) {
-            await createTask(db, null, workspaceId, {
-              leadId: lead.id,
-              ownerId: lead.owner_id,
-              ownerName: lead.owner_name,
-              type: "follow_up",
-              title: REPLY_TASK_TITLE,
-              dueAt: endOfIstDay().toISOString(),
-              origin: "agent",
-            });
-          }
+          await ensureReplyTask(db, workspaceId, { id: lead.id, owner_id: lead.owner_id, owner_name: lead.owner_name }, REPLY_TASK_TITLE);
         }
         // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
         if (disposition === "matched") {

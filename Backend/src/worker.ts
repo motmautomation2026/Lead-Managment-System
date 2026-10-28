@@ -7,6 +7,7 @@ import { claimQueuedMeetingWhatsappSends, processQueuedMeetingWhatsappSend } fro
 import { renderTemplate } from "./domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "./domain/htmlToWhatsAppText.js";
 import { queueEmailForAction, runEmailOutbound } from "./services/emailOutbound.service.js";
+import { runEmailInbound } from "./services/emailInbound.service.js";
 import { sendWhatsApp } from "./providers/whatsapp.provider.js";
 import type { WorkflowStepAction } from "./domain/enums.js";
 import { baileysRegistry } from "./providers/baileys-registry.js";
@@ -143,6 +144,13 @@ async function tick(): Promise<void> {
   // E1b: every email (workflow steps, proposals, meetings, tests), one per workspace per tick.
   const emails = await runEmailOutbound({ dryRun: env.WORKER_DRY_RUN });
   if (emails.length > 0) console.log(`[worker] Emails: ${emails.join(", ")}.`);
+
+  // D3: read one due workspace's mailbox (read-only) for replies, bounces and unsubscribes.
+  const inbound = await runEmailInbound({ pollSeconds: env.EMAIL_IMAP_POLL_SECONDS }).catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Email inbound failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return null;
+  });
+  if (inbound?.processed) console.log(`[worker] Email inbound ${inbound.workspaceId}: ${JSON.stringify(inbound.kinds)}.`);
 
   const queuedProposals = await withTransaction((client) => claimQueuedProposalWhatsappSends(client, env.WORKER_BATCH_SIZE));
   if (queuedProposals.length > 0) {

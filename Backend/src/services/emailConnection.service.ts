@@ -192,6 +192,70 @@ export async function resumeEmail(actor: Actor, workspaceId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// D3: IMAP polling state (the worker reads the mailbox: services/emailInbound.service.ts)
+
+/** Settings "Check now" (admin): the next worker tick polls this workspace. Never opens IMAP here. */
+export async function requestImapCheck(db: Queryable, workspaceId: string) {
+  await db.query(
+    `insert into public.email_imap_state (workspace_id, imap_saved_at, next_poll_at)
+     select $1, coalesce((select configured_at from public.integration_connections where workspace_id = $1 and id = 'email'), now()), now()
+     on conflict (workspace_id) do update set next_poll_at = now()`,
+    [workspaceId],
+  );
+}
+
+/** Saving a different IMAP host / port / folder / login starts over: only mail after now is read. */
+export async function resetImapState(db: Queryable, workspaceId: string) {
+  await db.query(
+    `insert into public.email_imap_state (workspace_id, imap_saved_at, next_poll_at) values ($1, now(), now())
+     on conflict (workspace_id) do update
+       set uidvalidity = null, last_uid = null, imap_saved_at = now(), next_poll_at = now(), last_error = null`,
+    [workspaceId],
+  );
+}
+
+export async function loadImapStatus(db: Queryable, workspaceId: string) {
+  const row = (
+    await db.query<{
+      last_poll_at: Date | null;
+      last_success_at: Date | null;
+      last_error: string | null;
+      next_poll_at: Date | null;
+      replies: number;
+      bounces: number;
+      auto_replies: number;
+      unsubscribes: number;
+      unmatched: number;
+      bounces_24h: number;
+    }>(
+      `select s.last_poll_at, s.last_success_at, s.last_error, s.next_poll_at, c.*
+         from (select 1) one
+         left join public.email_imap_state s on s.workspace_id = $1
+         cross join lateral (
+           select count(*) filter (where kind = 'reply' and match_status = 'matched')::int as replies,
+                  count(*) filter (where kind in ('bounce', 'bounce_temporary'))::int as bounces,
+                  count(*) filter (where kind = 'auto_reply')::int as auto_replies,
+                  count(*) filter (where kind = 'unsubscribe' and match_status = 'matched')::int as unsubscribes,
+                  count(*) filter (where kind <> 'ignored' and match_status <> 'matched')::int as unmatched,
+                  (select count(*)::int from public.email_inbound_events b
+                    where b.workspace_id = $1 and b.kind = 'bounce' and b.created_at > now() - interval '24 hours') as bounces_24h
+             from public.email_inbound_events
+            where workspace_id = $1 and created_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'
+         ) c`,
+      [workspaceId],
+    )
+  ).rows[0]!;
+  return {
+    lastCheckAt: row.last_poll_at?.toISOString() ?? null,
+    lastSuccessAt: row.last_success_at?.toISOString() ?? null,
+    lastError: row.last_error,
+    nextCheckAt: row.next_poll_at?.toISOString() ?? null,
+    today: { replies: row.replies, bounces: row.bounces, autoReplies: row.auto_replies, unsubscribes: row.unsubscribes, unmatched: row.unmatched },
+    bounces24h: row.bounces_24h,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Settings (GET: every CRM user, no secrets; PUT: admin)
 
 async function loadMonitoring(db: Queryable, workspaceId: string) {
@@ -239,7 +303,7 @@ async function loadMonitoring(db: Queryable, workspaceId: string) {
 export async function getEmailSettings(workspaceId: string) {
   const { row, secrets } = await loadEmailConnection(pool, workspaceId);
   const s = row.settings;
-  const [stats, monitoring] = await Promise.all([loadEmailStats(pool, workspaceId, null), loadMonitoring(pool, workspaceId)]);
+  const [stats, monitoring, imapStatus] = await Promise.all([loadEmailStats(pool, workspaceId, null), loadMonitoring(pool, workspaceId), loadImapStatus(pool, workspaceId)]);
   const warmupDay = warmupDayFor(row.configured_at, new Date());
   const configured = mailboxOf(row, secrets) !== null;
   return {
@@ -279,6 +343,8 @@ export async function getEmailSettings(workspaceId: string) {
     queuedCount: monitoring.queuedCount,
     safetyEvents: monitoring.safetyEvents,
     daily: monitoring.daily,
+    /** D3: reading replies, bounces and unsubscribes (null until an IMAP login is saved). */
+    imapStatus: imapOf(row, secrets) ? imapStatus : null,
     updatedAt: row.updated_at.toISOString(),
   };
 }
@@ -337,6 +403,10 @@ export async function updateEmailSettings(actor: Actor, workspaceId: string, inp
       imapSameLogin: input.imapSameLogin,
       imapFolder: input.imapFolder,
     };
+    // D3: a different mailbox (host, port, folder or login) is read from now on, not from its history.
+    const imapIdentity = (s: EmailSettingsJson, sec: EmailSecrets) =>
+      [s.imapHost, s.imapPort, s.imapFolder, s.imapSameLogin ? sec.smtpUsername : sec.imapUsername].join("|");
+    if (imapIdentity(row.settings, current) !== imapIdentity(settings, secrets)) await resetImapState(db, workspaceId);
     const encrypted = encryptJson(secrets, "integration:email");
     await db.query(
       `update public.integration_connections

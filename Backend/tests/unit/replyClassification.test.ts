@@ -95,11 +95,11 @@ describe("parseReplyClassification", () => {
 
 describe("replyEffects and task titles", () => {
   it("maps labels to effects", () => {
-    expect(replyEffects("asked_to_stop")).toEqual({ optOutWhatsapp: true, agentStopReason: "asked_to_stop" });
-    expect(replyEffects("not_interested")).toEqual({ optOutWhatsapp: false, agentStopReason: "not_interested" });
-    expect(replyEffects("annoyed")).toEqual({ optOutWhatsapp: false, agentStopReason: "not_interested" });
+    expect(replyEffects("asked_to_stop")).toEqual({ optOut: true, agentStopReason: "asked_to_stop" });
+    expect(replyEffects("not_interested")).toEqual({ optOut: false, agentStopReason: "not_interested" });
+    expect(replyEffects("annoyed")).toEqual({ optOut: false, agentStopReason: "not_interested" });
     for (const label of ["positive", "question", "other", "unclassified"] as const) {
-      expect(replyEffects(label)).toEqual({ optOutWhatsapp: false, agentStopReason: null });
+      expect(replyEffects(label)).toEqual({ optOut: false, agentStopReason: null });
     }
   });
 
@@ -111,8 +111,16 @@ describe("replyEffects and task titles", () => {
     expect(replyTaskTitle("question")).toBe("Asked a question — respond today");
     expect(replyTaskTitle("other")).toBe(DEFAULT_REPLY_TASK_TITLE);
     expect(replyTaskTitle("unclassified")).toBe(DEFAULT_REPLY_TASK_TITLE);
-    expect(REPLY_TASK_TITLES).toHaveLength(6);
+    expect(REPLY_TASK_TITLES).toHaveLength(8);
     expect(REPLY_LABELS).toHaveLength(7);
+  });
+
+  it("D3: email replies get email titles for stop / other / unclassified, shared ones otherwise", () => {
+    expect(replyTaskTitle("asked_to_stop", "email")).toBe("Asked to stop by email — review today");
+    expect(replyTaskTitle("other", "email")).toBe("Lead replied by email — respond today");
+    expect(replyTaskTitle("unclassified", "email")).toBe("Lead replied by email — respond today");
+    expect(replyTaskTitle("positive", "email")).toBe("Wants to talk — respond today");
+    expect(REPLY_TASK_TITLES).toContain("Lead replied by email — respond today");
   });
 });
 

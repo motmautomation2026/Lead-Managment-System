@@ -1,8 +1,8 @@
 /**
- * D2: the text of one inbound WhatsApp reply, for the contact's owner and admins.
- * `decryptInboundBody` is the only decrypt of `whatsapp_inbound_events.body_*`
- * (also used by the D4a worker classifier). Every read that
- * reaches a matched reply of the contact is audited in `inbound_message_views`.
+ * D2: the text of one inbound WhatsApp reply (D3: or email reply), for the contact's owner
+ * and admins. `decryptInboundBody` is the only decrypt of `whatsapp_inbound_events.body_*`
+ * and `email_inbound_events.body_*` (also used by the D4a worker classifier). Every read
+ * that reaches a matched reply of the contact is audited in `inbound_message_views`.
  * Never log, throw or store the decrypted text.
  */
 import type { Queryable } from "../dto.js";
@@ -37,13 +37,19 @@ interface EventRow extends InboundBody {
   body_truncated: boolean;
 }
 
+export const whatsappReplyAad = (messageId: string) => `whatsapp:inbound:${messageId}`;
+export const emailReplyAad = (eventId: string) => `email:inbound:${eventId}`;
+
 /** The reply text, null when none was stored; throws when it can't be decrypted. Never log the result. */
-export function decryptInboundBody(row: InboundBody, messageId: string): string | null {
+export function decryptInboundBody(row: InboundBody, aad: string): string | null {
   if (!row.body_ciphertext || !row.body_iv || !row.body_tag || row.body_key_version === null) return null;
-  return decryptText(
-    { ciphertext: row.body_ciphertext, iv: row.body_iv, tag: row.body_tag, keyVersion: row.body_key_version },
-    `whatsapp:inbound:${messageId}`,
-  );
+  return decryptText({ ciphertext: row.body_ciphertext, iv: row.body_iv, tag: row.body_tag, keyVersion: row.body_key_version }, aad);
+}
+
+/** An email reply is stored as JSON `{ subject, text }` (D3). */
+export interface EmailReplyBody {
+  subject: string;
+  text: string;
 }
 
 /** 404 unless the reply is a matched event of this contact in this workspace (its timeline row links them). */
@@ -74,7 +80,7 @@ export async function readInboundReply(db: Queryable, actor: Actor, workspaceId:
   const base = { messageId, receivedAt: row.received_at.toISOString(), truncated: row.body_truncated };
   let text: string | null;
   try {
-    text = decryptInboundBody(row, messageId);
+    text = decryptInboundBody(row, whatsappReplyAad(messageId));
   } catch {
     // Wrong key, rotated key or tampered row. Ids only: never the ciphertext.
     console.warn(`[replies] could not decrypt inbound message ${messageId} (key version ${row.body_key_version})`);
@@ -87,4 +93,60 @@ export async function readInboundReply(db: Queryable, actor: Actor, workspaceId:
   }
   await audit("shown");
   return { ...base, text };
+}
+
+export interface InboundEmailReply {
+  replyId: string;
+  receivedAt: string;
+  subject: string | null;
+  text: string | null;
+  truncated: boolean;
+  reason?: "not_stored" | "unreadable";
+}
+
+/**
+ * D3: one email reply's subject + text, same rules as `readInboundReply`: 404 unless a matched
+ * email reply of this contact (its timeline row links them), 403 + audit for anyone but the
+ * owner and admins, every read audited (`channel = email`).
+ */
+export async function readEmailReply(db: Queryable, actor: Actor, workspaceId: string, leadId: string, replyId: string): Promise<InboundEmailReply> {
+  const row = (
+    await db.query<EventRow>(
+      `select l.owner_id, e.received_at, e.body_ciphertext, e.body_iv, e.body_tag, e.body_key_version, e.text_truncated as body_truncated
+         from public.leads l
+         join public.email_inbound_events e on e.workspace_id = l.workspace_id and e.id = $3 and e.kind = 'reply' and e.match_status = 'matched'
+        where l.id = $1 and l.workspace_id = $2
+          and exists (select 1 from public.timeline_events t
+                       where t.lead_id = l.id and t.event_kind = 'email' and t.metadata->>'emailReplyId' = e.id::text)`,
+      [leadId, workspaceId, replyId],
+    )
+  ).rows[0];
+  if (!row) throw new NotFoundError("Reply");
+
+  const audit = (outcome: Outcome) =>
+    db.query(
+      `insert into public.inbound_message_views (workspace_id, lead_id, channel, email_event_id, viewer_id, outcome) values ($1, $2, 'email', $3, $4, $5)`,
+      [workspaceId, leadId, replyId, actor.id, outcome],
+    );
+
+  if (!canReadReplies(actor, row.owner_id)) {
+    await audit("denied");
+    throw new ForbiddenError(REPLY_FORBIDDEN_MESSAGE);
+  }
+  const base = { replyId, receivedAt: row.received_at.toISOString(), truncated: row.body_truncated };
+  let body: EmailReplyBody | null;
+  try {
+    const plain = decryptInboundBody(row, emailReplyAad(replyId));
+    body = plain === null ? null : (JSON.parse(plain) as EmailReplyBody);
+  } catch {
+    console.warn(`[replies] could not decrypt email reply ${replyId} (key version ${row.body_key_version})`);
+    await audit("decrypt_failed");
+    return { ...base, subject: null, text: null, reason: "unreadable" };
+  }
+  if (body === null) {
+    await audit("no_text");
+    return { ...base, subject: null, text: null, reason: "not_stored" };
+  }
+  await audit("shown");
+  return { ...base, subject: body.subject || null, text: body.text };
 }

@@ -1,5 +1,5 @@
 /**
- * D4a: the worker's AI step for WhatsApp replies that matched no keyword.
+ * D4a: the worker's AI step for WhatsApp (D3: and email) replies that matched no keyword.
  * Decrypts the reply only here (and in inboundReplies.service.ts), holds no DB
  * client during the model call, and never logs, stores or returns the text:
  * only the label, its confidence and the call's cost are saved.
@@ -7,11 +7,11 @@
 import { pool, withTransaction } from "../db.js";
 import { env } from "../env.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
-import { buildReplyClassificationMessages, finalLabel, REPLY_CLASSIFICATION_JSON_SCHEMA, type ReplyLabel } from "../agent/replyClassification.js";
+import { buildReplyClassificationMessages, finalLabel, REPLY_CLASSIFICATION_JSON_SCHEMA, type ReplyChannel, type ReplyLabel } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
 import { resolveAgentModels, type ReplyClassifierModel } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError } from "../providers/provider-errors.js";
-import { decryptInboundBody, type InboundBody } from "./inboundReplies.service.js";
+import { decryptInboundBody, emailReplyAad, whatsappReplyAad, type EmailReplyBody, type InboundBody } from "./inboundReplies.service.js";
 import { MONTH_SPEND_SQL } from "./agentRunner.service.js";
 import { applyReplyLabel } from "./replyLabels.service.js";
 
@@ -32,7 +32,23 @@ export interface ReplyClassifierDeps {
   backoffMs?: (attempt: number) => number;
 }
 
+/** Per channel: the event table, its key column, the AAD and how the decrypted body becomes the text to label. */
+const CHANNELS: Record<ReplyChannel, { table: string; key: string; aad: (id: string) => string; text: (plain: string) => string }> = {
+  whatsapp: { table: "public.whatsapp_inbound_events", key: "message_id", aad: whatsappReplyAad, text: (plain) => plain },
+  email: {
+    table: "public.email_inbound_events",
+    key: "id",
+    aad: emailReplyAad,
+    text: (plain) => {
+      const body = JSON.parse(plain) as EmailReplyBody;
+      return body.text.trim() ? body.text : body.subject;
+    },
+  },
+};
+
 interface ClaimedReply extends InboundBody {
+  channel: ReplyChannel;
+  /** WhatsApp message id or email event id. */
   message_id: string;
   workspace_id: string;
   lead_id: string | null;
@@ -45,26 +61,28 @@ export interface ReplyOutcome {
   label?: ReplyLabel;
 }
 
-/** Claims up to 10 pending replies (a claim holds the row for 15 min) and labels them one at a time. No-op unless `enabled`. */
+/** Claims up to 10 pending replies per channel (a claim holds the row for 15 min) and labels them one at a time. No-op unless `enabled`. */
 export async function runReplyClassification(enabled: boolean, deps: ReplyClassifierDeps): Promise<ReplyOutcome[]> {
   if (!enabled) return [];
-  const claimed = (
-    await pool.query<ClaimedReply>(
-      `update public.whatsapp_inbound_events e
+  const claimed: ClaimedReply[] = [];
+  for (const [channel, c] of Object.entries(CHANNELS) as [ReplyChannel, (typeof CHANNELS)[ReplyChannel]][]) {
+    const rows = await pool.query<ClaimedReply>(
+      `update ${c.table} e
           set classification_attempts = e.classification_attempts + 1,
               classification_next_at = now() + interval '15 minutes'
-        where e.message_id in (
-          select x.message_id from public.whatsapp_inbound_events x
+        where e.${c.key} in (
+          select x.${c.key} from ${c.table} x
            where x.classification_status = 'pending' and x.classification_next_at <= now()
              and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
            order by x.classification_next_at
            limit $2
            for update skip locked)
-        returning e.message_id, e.workspace_id, e.lead_id, e.classification_attempts,
+        returning $3::text as channel, e.${c.key}::text as message_id, e.workspace_id, e.lead_id, e.classification_attempts,
                   e.body_ciphertext, e.body_iv, e.body_tag, e.body_key_version`,
-      [deps.workspaceIds ?? null, BATCH_SIZE],
-    )
-  ).rows;
+      [deps.workspaceIds ?? null, BATCH_SIZE, channel],
+    );
+    claimed.push(...rows.rows);
+  }
   const outcomes: ReplyOutcome[] = [];
   for (const reply of claimed) outcomes.push(await classifyOne(reply, deps));
   return outcomes;
@@ -73,18 +91,19 @@ export async function runReplyClassification(enabled: boolean, deps: ReplyClassi
 /** Writes the label only while the claim is still ours (pending, same attempt count). */
 async function finish(reply: ClaimedReply, label: ReplyLabel, extra: { source: "keyword" | "ai"; status: "done" | "failed" | "skipped"; confidence?: number; cost?: Parameters<typeof applyReplyLabel>[1]["cost"] }) {
   return withTransaction(async (client) => {
+    const c = CHANNELS[reply.channel];
     const ours = await client.query(
-      `select 1 from public.whatsapp_inbound_events where message_id = $1 and classification_status = 'pending' and classification_attempts = $2 for update`,
+      `select 1 from ${c.table} where ${c.key} = $1 and classification_status = 'pending' and classification_attempts = $2 for update`,
       [reply.message_id, reply.classification_attempts],
     );
     if (!ours.rowCount) return false;
     if (reply.lead_id) {
-      await applyReplyLabel(client, { workspaceId: reply.workspace_id, leadId: reply.lead_id, messageId: reply.message_id, label, ...extra });
+      await applyReplyLabel(client, { channel: reply.channel, workspaceId: reply.workspace_id, leadId: reply.lead_id, messageId: reply.message_id, label, ...extra });
     } else {
       // The contact was deleted meanwhile: record the outcome, no effects.
       await client.query(
-        `update public.whatsapp_inbound_events set reply_label = 'unclassified', reply_label_source = $2, classification_status = 'skipped',
-                classified_at = coalesce(classified_at, now()), classification_next_at = null where message_id = $1`,
+        `update ${c.table} set reply_label = 'unclassified', reply_label_source = $2, classification_status = 'skipped',
+                classified_at = coalesce(classified_at, now()), classification_next_at = null where ${c.key} = $1`,
         [reply.message_id, extra.source],
       );
     }
@@ -93,10 +112,11 @@ async function finish(reply: ClaimedReply, label: ReplyLabel, extra: { source: "
 }
 
 async function retryAt(reply: ClaimedReply, ms: number, restoreAttempt: boolean) {
+  const c = CHANNELS[reply.channel];
   await pool.query(
-    `update public.whatsapp_inbound_events
+    `update ${c.table}
         set classification_next_at = now() + $3 * interval '1 millisecond', classification_attempts = classification_attempts - $4
-      where message_id = $1 and classification_status = 'pending' and classification_attempts = $2`,
+      where ${c.key} = $1 and classification_status = 'pending' and classification_attempts = $2`,
     [reply.message_id, reply.classification_attempts, ms, restoreAttempt ? 1 : 0],
   );
 }
@@ -139,7 +159,8 @@ async function classifyOne(reply: ClaimedReply, deps: ReplyClassifierDeps): Prom
 
   let text: string | null;
   try {
-    text = decryptInboundBody(reply, reply.message_id);
+    const plain = decryptInboundBody(reply, CHANNELS[reply.channel].aad(reply.message_id));
+    text = plain === null ? null : CHANNELS[reply.channel].text(plain);
   } catch {
     console.warn(`[replies] could not decrypt inbound message ${reply.message_id}; not classified.`);
     return done("failed", "unclassified", { source: "ai", status: "failed" });
@@ -149,7 +170,7 @@ async function classifyOne(reply: ClaimedReply, deps: ReplyClassifierDeps): Prom
   try {
     const result = await deps.model.classifyReply({
       model,
-      messages: buildReplyClassificationMessages(text),
+      messages: buildReplyClassificationMessages(text, reply.channel),
       jsonSchema: { name: "reply_label", schema: REPLY_CLASSIFICATION_JSON_SCHEMA as unknown as Record<string, unknown> },
     });
     text = null;

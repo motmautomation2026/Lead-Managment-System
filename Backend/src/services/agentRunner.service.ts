@@ -35,6 +35,8 @@ const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
 export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agent_decisions
      where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
    + coalesce((select sum(classification_cost_usd) from public.whatsapp_inbound_events
+     where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
+   + coalesce((select sum(classification_cost_usd) from public.email_inbound_events
      where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
 
 export interface AgentRunnerDeps {
