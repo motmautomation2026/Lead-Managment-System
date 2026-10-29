@@ -380,6 +380,22 @@ Migration 045.
   (`not_thanking_inbound` only on decisions before E2c; it is checked in code since).
 - New handoff title: "AI couldn't write a message that meets the playbook".
 
+## 7m. AI quality round 2 — E2f
+
+Migration 046.
+
+- `GET|PUT /agent/settings` and `GET /agent/stats` add read-only `readinessSince: string | null` (ISO; null = all time).
+  The go-live gate (`readiness` in stats and `GET /agent/settings/live-preview`, and the scope gate of `PUT /agent/settings`)
+  and `stats.ratings` count only rated, non-failed decisions **created** on/after it. Earlier ratings stay stored.
+- `POST /agent/settings/reset-readiness` (admin, no body) sets `readinessSince` to now and returns the settings DTO.
+- Decisions: `rulesResult.adjustments` may contain `{ rule: "signal", message: "<title>: handing off|stopping instead of
+  sending." }` — a send turned into the signalled action. New handoff titles: "Lead asked about price", "Lead asked for a
+  visit or in-person meeting", "Lead is ready for a call or next step"; a consumer business → `stop` reason `not_a_fit`
+  with reasoning "Not a B2B business. …".
+- `qualityChecks` may have three entries (two regenerations when the latest attempt failed only fixable code checks).
+- Company linking (B2-design §2.1 step 4): a contact whose company name differs from the domain company's (similarity
+  < 0.6) gets its own company and a pair candidate `same_domain_different_name` (`/company-duplicates` `kind: "pair"`).
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

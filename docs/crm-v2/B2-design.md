@@ -111,11 +111,18 @@ Also:
 
 For a contact being created or edited, in order:
 1. Company text is a placeholder → **no company**.
-2. Compute `normalized_name` and `corporate_domain` (email domain unless free mail; list shared with the AI/inventory).
+2. Compute `normalized_name` and `corporate_domain` (email domain unless free mail or a reserved/test domain —
+   `example.com/.org/.net`, `*.test`, `*.example`, `*.invalid`, `*.localhost` (E2f); one shared list in
+   `domain/companyNormalize.ts`, no SQL copy).
 3. A company with the same normalized name exists:
    - domain empty / same / company has no domain → **link**.
    - company has a *different* domain → link by name **and** open a `name_domain_conflict` candidate.
-4. Else a company with the same domain exists (different name) → **link** and open a `same_domain_different_name` candidate (e.g. "TML" vs "Tata Motors").
+4. Else a company with the same domain exists (different name). **The name wins (E2f):**
+   - trigram similarity of the normalized names ≥ 0.6 (e.g. "Tata Motor" vs "Tata Motors") → **link** to it and open a
+     contact-level `same_domain_different_name` candidate;
+   - similarity < 0.6 (e.g. "TML" vs "Tata Motors") → do **not** link to it and do **not** overwrite `leads.company`:
+     **create** a company by name (without the domain, which belongs to the other company) and open a
+     `same_domain_different_name` **pair** candidate for admin review.
 5. Else → **create** a company (name, normalized name, domain, industry, revenue from the contact) and link.
 6. After creating, if any existing company has trigram similarity ≥ 0.6 on `normalized_name` → open a `similar_name` candidate.
 

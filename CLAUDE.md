@@ -73,7 +73,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `045`).
+  (currently `046`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `045`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `046`).
 
 ## Way of working
 
@@ -599,6 +599,32 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   switch wakes them over 60 min). `npm run staging:remove-ai-test-contacts [-- --confirm]` deletes them via `deleteLead` (marker
   AND a seeded email/phone; linked companies stay). Dry run by default, staging ref only; table in `scripts/output/ai-test-contacts.md`
   (git-ignored).
+- **E2f (AI quality round 2 + company-linking fix; nothing new sent):** migration 046 `agent_settings.readiness_since`
+  (null = all time). Companies: `corporateDomain` also returns null for reserved/test domains (`isReservedDomain`:
+  `example.com/.org/.net`, `*.test`, `*.example`, `*.invalid`, `*.localhost`) and more free mail (rediffmail, yahoo.co.in,
+  hotmail.co.in, outlook.in, live.in, me.com, proton.me, zoho.com, gmx, yandex, mail.com …; one list, no SQL copy); step 4
+  "name wins": `findCompanies` returns the domain company's `similarity()` and `companyMatch` creates a company by name
+  (no domain) + a `same_domain_different_name` PAIR when it is < `SIMILAR_NAME_THRESHOLD` (0.6, exported from
+  `domain/companyMatch.ts`), else links as before. Every seeded @example.com contact had been linked to "Sharda Hydraulics"
+  and its text overwritten: `npm run staging:repair-ai-test-contacts [-- --confirm]` (= seed script `--repair`) restores each
+  seeded contact's company text, dismisses its stale contact-level rows, relinks it (+ its deals) and lists non-seeded contacts
+  linked to a differently named company by domain (list only). Grounding (`buildGroundingMessages`): faithful paraphrases and
+  general statements of our approach are supported; unsupported = specific claims in no source (numbers, named clients,
+  results beyond the case study, "many/most clients", unlisted sectors, promises) with an invented-generalisation example;
+  the website enquiry + calls/notes were already in its lead_data (the "unsupported enquiry" flags came from the wrong company
+  record). Style: `asks_lead_to_describe_business` = written asks only (inviting a call about priorities is allowed);
+  `introduction_mid_conversation` allows describing our approach in a follow-up. `findBannedPhrases`: an occurrence within 3
+  words after not/cannot/can't/don't/never/no/won't/unable doesn't count. Pure `agent/signals.ts` (`detectSignals`,
+  `signalsOf`: website enquiry + industry → consumer; plus the latest call/note → price, visit, ready): one lead_data line +
+  one checklist line per signal; `rules.signal` (most decisive: consumer > price > visit > ready, set by `buildAgentContext`
+  only when present) makes `validateDecision` turn a send into handoff ("Lead asked about price", "Lead asked for a visit or
+  in-person meeting", "Lead is ready for a call or next step") or stop (`not_a_fit`, "Not a B2B business") as adjustment
+  `signal`, no regeneration. `draftDecision`: a second regeneration only while the latest attempt failed only fixable code
+  checks (`FIXABLE_RULES`: one_question, compound_question, banned_phrase, length, exclamation, not_thanking_inbound,
+  introduction_mid_conversation; never after grounding or `internal_info_leak`), then handoff; `quality_checks` up to 3
+  entries; AI Activity lists every failed attempt. Readiness: `loadRatings` counts decisions created since
+  `readiness_since`; `POST /agent/settings/reset-readiness` (admin); settings + stats `readinessSince`; Settings → AI agent gate
+  panel "Counting since <IST>" + "Reset go-live count" (confirm). Staging MOTM reset at 2026-10-29 15:59:32 IST.
 
 ## WhatsApp safety (E1)
 
@@ -679,6 +705,10 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Contacts = rows in `leads` (UI says Contact). `leads.company` stays populated and is kept equal to the linked
   company's name (placeholders such as "Not provided" → no company, text unchanged).
 - Company linking never blocks creating or editing a contact; failures are retried by the sweeper.
+- Name wins over domain (E2f, B2-design §2.1 step 4): free-mail and reserved/test domains are never corporate; a contact whose
+  company name differs from the same-domain company's (trigram similarity < 0.6) gets its own company by name (no domain) +
+  a `same_domain_different_name` pair, and its `leads.company` is not overwritten; ≥ 0.6 links as before. Only new links
+  change; existing links stay.
 - Frontend (C phases, `docs/crm-v2/C1-ui.md`): build pages from `components/crm` (PageHeader, ViewTabs, FilterBar,
   DataTable, RecordLayout, PropertyList, AssociationCard, EmptyState, StatusPill, Money…); theme tokens only, no
   hard-coded colours; lists always server-side via the B4 endpoints (never fetch everything); list state
@@ -694,7 +724,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `stop`. Code enforces the safety rules (`src/agent/rules.ts`), not the model.
 - Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live` (E2). In `live` the **live scope** picks
   the live AI contacts: `test_contacts` (marked "AI live test" by an admin; no gate), `new_leads` (created ≥ `live_since`),
-  `all`; the last two need the go-live gate (`goLiveReadiness`, checked in the backend). Every other AI contact runs as
+  `all`; the last two need the go-live gate (`goLiveReadiness`, checked in the backend; E2f: only decisions created since
+  `agent_settings.readiness_since` count, reset by an admin). Every other AI contact runs as
   shadow. `agent/liveMode.ts` `effectiveMode` is the only place that decides; runner, send path and UI use it (bulk SQL
   mirror: `liveContactSql`). Only admins change mode, scope or the mark.
 - Live sends only from the worker, through the channel queues and their safety rules (WhatsApp `performSend` →
@@ -705,13 +736,18 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   removed, paused/stopped contact → queued sends are cancelled at the re-check; WhatsApp pause defers.
 - Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
   send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
-- One question per message (both modes): > 1 → regenerate once → handoff.
+- One question per message (both modes): > 1 → regenerate (up to twice, E2f) → handoff.
+- E2f (both modes, in code): signals from the website enquiry/industry (consumer business → stop `not_a_fit`) and the latest
+  call/note (price, visit/in-person, ready for a call/next step → handoff) turn any send into that action without a
+  regeneration (`agent/signals.ts`, `rules.signal`); never offer or promise a visit. A banned phrase negated within 3 words
+  ("we cannot guarantee orders") is allowed.
 - E2c/E2d (both modes, in code, never the model): an inbound first message with no conversation yet must thank the lead; when a conversation exists
   (`situationOf(ctx).conversationExists`) no introduction or first-call ask; never ≥ 4 consecutive words of the internal
   company description or open deal name (`internal_info_leak`, serious).
 - Message quality (E2b, both modes, every send decision): code checks first (`checkMessage`: admin-editable banned phrases,
   word limits from settings, one question about one thing, no "!"), then the grounding call also returns playbook style
-  problems; every problem from either goes into the ONE regeneration as feedback, then handoff. The prompt's limits and
+  problems; every problem from either goes into the regeneration as feedback (one; E2f: a second only while the latest
+  attempt failed only fixable code checks, never after a grounding problem or `internal_info_leak`), then handoff. The prompt's limits and
   banned phrases always come from `agent_settings`, never hard-coded. Live handoff = one open owner task "AI handed
   off — please follow up"; stop → `stopped` with the reason; update_stage only within `AGENT_STAGE_ALLOW_LIST` via
   `updateLead`.
