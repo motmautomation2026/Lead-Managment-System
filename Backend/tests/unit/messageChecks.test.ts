@@ -167,7 +167,7 @@ describe("E2c rule 1: inbound first message thanks them", () => {
   });
 
   it("first = no real send and no current-playbook draft (shadow); inbound = website / form", () => {
-    expect(messageFactsOf(sampleContext({ pastMessages: [] })).inboundFirst).toBe(true);
+    expect(messageFactsOf(sampleContext({ pastMessages: [], timeline: [] })).inboundFirst).toBe(true);
     expect(messageFactsOf(sampleContext()).inboundFirst).toBe(false); // the fixture has a v3 draft, playbook v3
     expect(messageFactsOf(sampleContext({ pastMessages: [], lead: { ...sampleContext().lead, source: "cold_call" } })).inboundFirst).toBe(false);
   });
@@ -196,10 +196,8 @@ describe("E2c rule 2: no introduction mid-conversation", () => {
     expect(introductionPhrases("This is Priya from your team's note.", f)).toEqual([]);
   });
 
-  it("an inbound first message may say thank you for contacting us even when a call was logged", () => {
-    const both = facts({ inboundFirst: true, conversationExists: true });
-    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Is Monday good for the call we discussed?"), both)).toEqual([]);
-    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Would an introductory call suit you?"), both)).toEqual(["introduction_mid_conversation"]);
+  it("E2d: with a conversation, thank you for contacting is an introduction phrase (no inbound exception)", () => {
+    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Is Monday good for the call we discussed?"), f)).toEqual(["introduction_mid_conversation"]);
   });
 
   it("the subject counts too", () => {

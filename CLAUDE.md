@@ -576,7 +576,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `not_thanking_inbound` (first message to a website/form lead must say "thank you"/"thanks" followed within 6 words by
   contacting, reaching out, getting in touch, your enquiry/inquiry, your interest, writing to us, filling, submitting or sharing;
   removed from the grounding style schema/prompt), `introduction_mid_conversation` (when `conversationExists`: no "thank you for
-  reaching out/contacting" (allowed on an inbound first message), "this is / I am / I'm <owner first name> from", "introductory
+  reaching out/contacting", "this is / I am / I'm <owner first name> from", "introductory
   call/discussion", "introduce <company>", "introduce ourselves"), `internal_info_leak` (any ≥ 4-word run of the internal company
   description or the open deal name in body or subject, not stop-words only; feedback "Do not mention: …"; a safety problem →
   handoff "AI couldn't write a safe message"). `agent/situation.ts`: `conversationExists` (was `conversationStarted`: call/note,
@@ -586,6 +586,10 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   none yet."; grounding gets `conversationExists: true|false` (the inbound/first-message lines are gone). AI Activity: check names
   in plain words (`CHECK_LABEL`, `checkProblem`), "Internal information leak" in red also among a regenerated attempt's failures.
   `agent:preview --evaluate` prints the three new checks.
+- **E2d (fix):** inbound thanks (`not_thanking_inbound` + its checklist line) only when NO conversation exists
+  (`situationInboundFirst`: inbound && firstMessage && !conversationExists; Raj: inbound, no sends, deal in Negotiation got both
+  contradictory rules). With a conversation the checklist shows only "don't introduce us again…", and "thank you for reaching
+  out/contacting" always count as introduction phrases (the E2c inbound exception is gone).
 
 ## WhatsApp safety (E1)
 
@@ -693,7 +697,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
   send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
 - One question per message (both modes): > 1 → regenerate once → handoff.
-- E2c (both modes, in code, never the model): an inbound first message must thank the lead; when a conversation exists
+- E2c/E2d (both modes, in code, never the model): an inbound first message with no conversation yet must thank the lead; when a conversation exists
   (`situationOf(ctx).conversationExists`) no introduction or first-call ask; never ≥ 4 consecutive words of the internal
   company description or open deal name (`internal_info_leak`, serious).
 - Message quality (E2b, both modes, every send decision): code checks first (`checkMessage`: admin-editable banned phrases,

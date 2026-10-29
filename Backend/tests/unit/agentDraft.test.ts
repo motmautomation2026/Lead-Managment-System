@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import { EMAIL_NO_REPLY_READING } from "../../src/agent/liveMode.js";
 import { buildDecisionMessages, type GroundingResult } from "../../src/agent/prompt.js";
+import { checkMessage, messageFactsOf } from "../../src/agent/messageChecks.js";
 import { situationOf } from "../../src/agent/situation.js";
 import { draftDecision, type Usage } from "../../src/services/agentRunner.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
@@ -157,20 +158,55 @@ describe("E2b rule 4: what the model sees", () => {
     expect(text).toContain("email (draft — never sent to the contact)\n  Subject: Outbound for Acme");
   });
 
-  it("ends with the checklist: banned phrases, limits, inbound thanks, no introduction mid-conversation", () => {
+  it("ends with the checklist: banned phrases, limits, inbound thanks (no conversation yet), no introduction mid-conversation", () => {
     // E2c: a current-playbook shadow draft means it is no longer the first message.
-    const text = userText(sampleContext({ pastMessages: [] }));
+    const text = userText(sampleContext({ pastMessages: [], timeline: [] }));
     const tail = text.slice(text.indexOf("Before you answer, check:"));
     expect(text.endsWith(tail)).toBe(true);
     expect(tail).toContain('- None of these phrases: "thanks for connecting", "just following up", "today", "free".');
     expect(tail).toContain("- Word limits: email body 250 words, WhatsApp 80 words.");
     expect(tail).toContain("thank them for reaching out");
-    expect(tail).toContain("don't introduce us again");
+    expect(userText(sampleContext())).toContain("don't introduce us again");
     const fresh = sampleContext({ lead: { ...sampleContext().lead, source: "cold_call" }, timeline: [] });
     const freshText = userText(fresh);
     const freshTail = freshText.slice(freshText.indexOf("Before you answer, check:"));
     expect(freshTail).not.toContain("thank them");
     expect(freshTail).not.toContain("introduce");
+  });
+
+  // E2d: Raj (inbound, no sends, deal in Negotiation) got both contradictory checklist lines and a forced "thank you".
+  describe("E2d: inbound thanks only when no conversation exists", () => {
+    const wa = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+    const FOLLOW_UP = wa("Hi Asha, following up on our discussion, would Tuesday suit you to go through the next steps?");
+    const THANKS = wa("Hi Asha, thank you for reaching out with your enquiry. Would Tuesday suit you to go through the next steps?");
+    const rules = (ctx: ReturnType<typeof sampleContext>, d: AgentDecision) => checkMessage(d, settings, messageFactsOf(ctx)).map((v) => v.rule);
+    const checklist = (ctx: ReturnType<typeof sampleContext>) => {
+      const text = userText(ctx);
+      return text.slice(text.indexOf("Before you answer, check:"));
+    };
+    // The fixture has a logged call (conversation) and a current-playbook draft (not first).
+    const cases = [
+      { name: "no conversation, first inbound message", ctx: () => sampleContext({ timeline: [], pastMessages: [] }), thanksRequired: true, conversation: false },
+      { name: "no conversation, not the first message", ctx: () => sampleContext({ timeline: [] }), thanksRequired: false, conversation: false },
+      { name: "conversation, first inbound message (Raj)", ctx: () => sampleContext({ pastMessages: [] }), thanksRequired: false, conversation: true },
+      { name: "conversation, not the first message", ctx: () => sampleContext(), thanksRequired: false, conversation: true },
+    ];
+
+    it.each(cases)("$name", ({ ctx, thanksRequired, conversation }) => {
+      const c = ctx();
+      expect(situationOf(c).conversationExists).toBe(conversation);
+      expect(messageFactsOf(c).inboundFirst).toBe(thanksRequired);
+      expect(rules(c, FOLLOW_UP)).toEqual(thanksRequired ? ["not_thanking_inbound"] : []);
+      // With a conversation, "thank you for reaching out" is an introduction phrase (no E2c exception any more).
+      expect(rules(c, THANKS)).toEqual(conversation ? ["introduction_mid_conversation"] : []);
+      const tail = checklist(c);
+      expect(tail.includes("thank them for reaching out")).toBe(thanksRequired);
+      expect(tail.includes("don't introduce us again")).toBe(conversation);
+    });
+
+    it("checklist snapshot for each combination", () => {
+      expect(Object.fromEntries(cases.map(({ name, ctx }) => [name, checklist(ctx())]))).toMatchSnapshot();
+    });
   });
 
   it("situation: nothing yet vs an open deal at a proposal stage (Raj's case: no introduction)", () => {

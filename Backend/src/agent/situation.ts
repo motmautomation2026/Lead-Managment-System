@@ -13,6 +13,9 @@ export interface Situation {
   conversationExists: boolean;
 }
 
+/** E2d: the inbound thanks applies only to a first message with no conversation yet (never both rules at once). */
+export const situationInboundFirst = (s: Situation) => s.inbound && s.firstMessage && !s.conversationExists;
+
 export const INBOUND_SOURCES = ["website", "inbound_form"];
 const MEETING_STAGES = ["meeting_scheduled", "meeting_follow_up"];
 const PROPOSAL_STAGES = ["proposal_preparation", "proposal_sent", "negotiation"];

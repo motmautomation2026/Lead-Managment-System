@@ -1,6 +1,6 @@
 import type { AgentContext } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
-import { situationOf } from "./situation.js";
+import { situationInboundFirst, situationOf } from "./situation.js";
 
 // URLs can carry "?" (query strings); they are not questions.
 const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
@@ -58,7 +58,7 @@ export interface MessageViolation {
 
 /** E2c: what the conversation checks need to know about the contact (from code, never the model). */
 export interface MessageFacts {
-  /** First message to an inbound (website / form) lead: it must thank them. */
+  /** First message to an inbound (website / form) lead with no conversation yet: it must thank them (E2d). */
   inboundFirst: boolean;
   /** A conversation exists: no introduction, no first-call ask. */
   conversationExists: boolean;
@@ -71,7 +71,7 @@ export interface MessageFacts {
 export function messageFactsOf(ctx: AgentContext): MessageFacts {
   const situation = situationOf(ctx);
   return {
-    inboundFirst: situation.inbound && situation.firstMessage,
+    inboundFirst: situationInboundFirst(situation),
     conversationExists: situation.conversationExists,
     ownerFirstName: ctx.lead.ownerName?.trim().split(/\s+/)[0] ?? null,
     companyName: ctx.companyName,
@@ -96,14 +96,14 @@ export function hasInboundThanks(text: string): boolean {
   });
 }
 
-/** E2c rule 2: introduction / first-call phrases the message uses, or [] (thanks phrases skipped when thanks are required). */
-export function introductionPhrases(text: string, facts: Pick<MessageFacts, "ownerFirstName" | "companyName" | "inboundFirst">): string[] {
+/** E2c rule 2: introduction / first-call phrases the message uses, or []. */
+export function introductionPhrases(text: string, facts: Pick<MessageFacts, "ownerFirstName" | "companyName">): string[] {
   const words = tokens(text);
   const owner = facts.ownerFirstName?.toLowerCase();
   const company = tokens(facts.companyName).find((w) => !STOP_WORDS.has(w));
   const phrases = [
-    // An inbound first message must thank them (rule 1), so these are allowed then.
-    ...(facts.inboundFirst ? [] : ["thank you for reaching out", "thank you for contacting"]),
+    "thank you for reaching out",
+    "thank you for contacting",
     ...(owner ? [`this is ${owner} from`, `i am ${owner} from`, `i'm ${owner} from`] : []),
     "introductory call",
     "introductory discussion",

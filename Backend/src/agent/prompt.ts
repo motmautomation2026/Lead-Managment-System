@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
-import { situationOf, type Situation } from "./situation.js";
+import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -176,7 +176,7 @@ function checklist(settings: AgentSettingsRow, situation: Situation): string[] {
     '- At most one question, about ONE thing (never two asks joined with "and"/"or").',
     ...(banned ? [`- None of these phrases: ${banned}.`] : []),
     `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
-    ...(situation.inbound && situation.firstMessage ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
+    ...(situationInboundFirst(situation) ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
     ...(situation.conversationExists ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
   ];
 }
