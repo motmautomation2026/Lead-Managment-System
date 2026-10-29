@@ -3,6 +3,7 @@ import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../ser
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
+import { signalsOf, type AgentSignal } from "./signals.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -127,7 +128,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
       "Return a corrected decision that fixes every problem (or pick wait or handoff).",
     );
   }
-  user.push("", ...checklist(settings, situationOf(ctx)));
+  user.push("", ...checklist(settings, situationOf(ctx), signalsOf(ctx)));
   return [
     { role: "system", content: system },
     { role: "user", content: user.join("\n") },
@@ -157,6 +158,8 @@ function leadDataText(ctx: AgentContext): string {
     situationOf(ctx).conversationExists
       ? `Conversation so far: you are already in discussion with this contact (do not introduce ${ctx.companyName} again or ask for a first call).`
       : "Conversation so far: none yet.",
+    // E2f rule 6: one neutral line per signal (only when present).
+    ...signalsOf(ctx).map((signal) => signal.line),
     ...companyLines(ctx),
   ].join("\n");
 }
@@ -169,7 +172,7 @@ function howTheyCame(source: string): string {
 }
 
 /** E2b rule 4: the closing self-check, last in the user message. */
-function checklist(settings: AgentSettingsRow, situation: Situation): string[] {
+function checklist(settings: AgentSettingsRow, situation: Situation, signals: AgentSignal[]): string[] {
   const banned = settings.banned_phrases.map((p) => `"${p}"`).join(", ");
   return [
     "Before you answer, check:",
@@ -178,6 +181,7 @@ function checklist(settings: AgentSettingsRow, situation: Situation): string[] {
     `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
     ...(situationInboundFirst(situation) ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
     ...(situation.conversationExists ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
+    ...signals.map((signal) => signal.check),
   ];
 }
 

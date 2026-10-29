@@ -53,6 +53,8 @@ export interface RulesContext {
   mode: AgentMode;
   /** E2 rule 4: why AI email is unavailable for this contact (live without healthy reply reading); null/absent = available. */
   emailBlockedReason?: string | null;
+  /** E2f rule 6: the most decisive handoff/stop signal (agent/signals.ts); absent = none. */
+  signal?: { action: "handoff" | "stop"; title: string } | null;
 }
 
 /** What the channel checks read. */
@@ -216,6 +218,16 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
   const lifecycle = ctx.lead.lifecycleState;
 
   let final: AgentDecision = decision;
+
+  // E2f rule 6: the contact asked about price / a visit / is ready, or isn't B2B: never a send.
+  if (isSend(final) && ctx.signal) {
+    const { action, title } = ctx.signal;
+    adjustments.push({ rule: "signal", message: `${title}: ${action === "stop" ? "stopping" : "handing off"} instead of sending.` });
+    final =
+      action === "stop"
+        ? { action: "stop", reason: "not_a_fit", moveToLongTermNurture: false, reasoning: `${title}. ${final.reasoning}` }
+        : { action: "handoff", title, urgency: "normal", reasoning: final.reasoning };
+  }
 
   // 4: total touches
   if (isSend(final) && ctx.lead.agentTouchCount >= settings.max_touches_total) {

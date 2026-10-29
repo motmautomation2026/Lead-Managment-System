@@ -105,6 +105,23 @@ describe("E2 live UI pieces", () => {
     ).toBeTruthy();
   });
 
+  it("E2f: with two regenerations both failed attempts are listed", () => {
+    render(
+      <ChecksSummary
+        rules={{ allowed: true, violations: [], adjustments: [] }}
+        grounding={null}
+        attempts={[
+          { problems: ["one_question: The message asks 2 questions; ask at most one."] },
+          { problems: ['banned_phrase: Uses banned phrase(s): "today".'] },
+          { problems: [] },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/First attempt failed/)).toBeTruthy();
+    expect(screen.getByText(/Second attempt failed/)).toBeTruthy();
+    expect(screen.getByText('Banned phrase: Uses banned phrase(s): "today".')).toBeTruthy();
+  });
+
   it("E2c: an internal information leak is shown in red by name, other checks in plain words", () => {
     const leak =
       'Repeats internal information. Do not mention: "specialty chemicals for textile plants".';

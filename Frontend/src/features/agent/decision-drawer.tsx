@@ -150,7 +150,11 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       <p className="text-xs text-muted-foreground">
         Models {d.decisionModel ?? "—"} / {d.groundingModel ?? "—"} · tokens {d.inputTokens ?? 0} in
         / {d.outputTokens ?? 0} out · cost {usd(d.costUsd)} · playbook v{d.playbookVersion ?? "—"} ·{" "}
-        {d.regenerated ? "regenerated once" : "first attempt"}
+        {!d.regenerated
+          ? "first attempt"
+          : (d.qualityChecks?.length ?? 0) > 2
+            ? "regenerated twice"
+            : "regenerated once"}
       </p>
 
       <RatingControls
@@ -268,7 +272,8 @@ export function ChecksSummary({
   attempts?: AgentDecisionDetail["qualityChecks"];
 }) {
   const style = grounding?.styleViolations ?? [];
-  const firstFailed = attempts && attempts.length > 1 ? attempts[0]!.problems : [];
+  // Every attempt before the recorded one failed (E2f: up to two regenerations).
+  const failedAttempts = attempts && attempts.length > 1 ? attempts.slice(0, -1) : [];
   return (
     <div className="space-y-2">
       <div>
@@ -325,23 +330,28 @@ export function ChecksSummary({
           </ul>
         </div>
       )}
-      {firstFailed.length > 0 && (
-        <div>
-          <span className="font-medium">First attempt failed (regenerated): </span>
-          <ul className="ml-4 list-disc text-xs text-muted-foreground">
-            {firstFailed.map((p, i) => {
-              const { rule, text } = checkProblem(p);
-              return (
-                <li
-                  key={i}
-                  className={cn(rule && SERIOUS_CHECKS.includes(rule) && "text-destructive")}
-                >
-                  {text}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      {failedAttempts.map(
+        (attempt, n) =>
+          attempt.problems.length > 0 && (
+            <div key={n}>
+              <span className="font-medium">
+                {n === 0 ? "First" : "Second"} attempt failed (regenerated):{" "}
+              </span>
+              <ul className="ml-4 list-disc text-xs text-muted-foreground">
+                {attempt.problems.map((p, i) => {
+                  const { rule, text } = checkProblem(p);
+                  return (
+                    <li
+                      key={i}
+                      className={cn(rule && SERIOUS_CHECKS.includes(rule) && "text-destructive")}
+                    >
+                      {text}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ),
       )}
     </div>
   );

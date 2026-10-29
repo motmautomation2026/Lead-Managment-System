@@ -40,6 +40,10 @@ const QUESTION_RULE = "one_question";
 // internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
 const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
+// E2f rule 7: code-checked writing problems a rewrite reliably fixes; only these earn a second regeneration.
+const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation"];
+// Grounding only runs when the code checks pass, so a grounded attempt (unsupported claim / style) is never "fixable only".
+const fixableOnly = (a: DraftAttempt) => !a.grounding && a.rules.violations.length > 0 && a.rules.violations.every((v) => FIXABLE_RULES.includes(v.rule));
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
@@ -95,9 +99,9 @@ const isSend = (d: AgentDecision): d is Extract<AgentDecision, { action: "send_e
   d.action === "send_email" || d.action === "send_whatsapp";
 
 /**
- * decide → validate → ground (allowed sends) → regenerate once on problems →
- * handoff fallback after a second failure. `usage` accumulates over every call,
- * including ones before a thrown error.
+ * decide → validate → ground (allowed sends) → regenerate on problems (once; twice while the
+ * latest attempt failed only fixable code checks, E2f rule 7) → handoff fallback. `usage`
+ * accumulates over every call, including ones before a thrown error.
  */
 export async function draftDecision(
   ctx: AgentContext,
@@ -143,33 +147,38 @@ export async function draftDecision(
     };
   };
 
-  const first = await attempt();
-  const done = (a: DraftAttempt, regenerated: boolean, attempts: DraftAttempt[]): DraftResult => ({
-    decision: a.rules.finalDecision,
-    rules: a.rules,
-    grounding: a.grounding,
-    outcome: a.rules.outcome === "blocked" ? "blocked" : "draft",
-    regenerated,
-    failedAttempt: null,
-    attempts,
-  });
+  const attempts = [await attempt()];
+  let last = attempts[0]!;
   // A block (the lead changed since the precheck) can't be fixed by rewriting.
-  if (!first.problems.length || first.rules.outcome === "blocked") return done(first, false, [first]);
-  const second = await attempt(first.problems);
-  if (!second.problems.length || second.rules.outcome === "blocked") return done(second, true, [first, second]);
+  const finished = (a: DraftAttempt) => !a.problems.length || a.rules.outcome === "blocked";
+  while (!finished(last) && attempts.length < (fixableOnly(last) ? 3 : 2)) {
+    last = await attempt(last.problems);
+    attempts.push(last);
+  }
+  if (finished(last)) {
+    return {
+      decision: last.rules.finalDecision,
+      rules: last.rules,
+      grounding: last.grounding,
+      outcome: last.rules.outcome === "blocked" ? "blocked" : "draft",
+      regenerated: attempts.length > 1,
+      failedAttempt: null,
+      attempts,
+    };
+  }
   return {
     decision: {
       action: "handoff",
-      title: handoffTitle(second.problems),
+      title: handoffTitle(last.problems),
       urgency: "normal",
-      reasoning: `Two attempts failed the checks: ${second.problems.join("; ")}`.slice(0, 2000),
+      reasoning: `${attempts.length === 2 ? "Two" : "Three"} attempts failed the checks: ${last.problems.join("; ")}`.slice(0, 2000),
     },
-    rules: second.rules,
-    grounding: second.grounding,
+    rules: last.rules,
+    grounding: last.grounding,
     outcome: "draft",
     regenerated: true,
-    failedAttempt: second,
-    attempts: [first, second],
+    failedAttempt: last,
+    attempts,
   };
 }
 

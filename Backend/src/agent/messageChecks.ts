@@ -17,14 +17,19 @@ export function wordCount(text: string): number {
 
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The banned phrases the text contains: case-insensitive, whole words (Unicode-aware), URLs ignored. */
+// E2f rule 5: a banned phrase right after one of these (within 3 words) is an honest "no", not a claim.
+const NEGATIONS = new Set(["not", "cannot", "can't", "don't", "never", "no", "won't", "unable"]);
+const negated = (before: string) => tokens(before).slice(-3).some((w) => NEGATIONS.has(w));
+
+/** The banned phrases the text contains: case-insensitive, whole words (Unicode-aware), URLs ignored; an occurrence negated within 3 words ("we cannot guarantee") doesn't count. */
 export function findBannedPhrases(text: string, phrases: readonly string[]): string[] {
   const clean = withoutUrls(text);
   return phrases.filter((phrase) => {
     const trimmed = phrase.trim();
     if (!trimmed) return false;
     const body = escapeRe(trimmed).replace(/\s+/g, "\\s+");
-    return new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "iu").test(clean);
+    const matches = clean.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "giu"));
+    return [...matches].some((m) => !negated(clean.slice(0, m.index)));
   });
 }
 

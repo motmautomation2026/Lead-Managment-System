@@ -4,6 +4,7 @@ import type { LeadLossReason, LifecycleState, ObjectionType, PipelineStage } fro
 import type { AgentMode, AgentRuleSettings, AgentStatus, RulesContext } from "../agent/rules.js";
 import { buildKbQuery } from "../agent/kbQuery.js";
 import { situationOf } from "../agent/situation.js";
+import { signalsOf } from "../agent/signals.js";
 import { companyDescription, companyFacts, resolveCompany, type CompanyFacts, type CompanyRecord } from "../agent/companyFacts.js";
 import { buildDealContext, type AgentDealContext, type AgentDealRow } from "../agent/dealContext.js";
 import { effectiveMode, liveChannels, type LiveScope } from "../agent/liveMode.js";
@@ -397,6 +398,9 @@ export async function buildAgentContext(
     assets,
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },
   };
+  // E2f rule 6: only when present, so a contact without a signal keeps today's rules context.
+  const signal = signalsOf(context)[0];
+  if (signal) context.rules.signal = { action: signal.action, title: signal.title };
   // E2b rule 5: the query adds topics for where the conversation stands.
   const query = buildKbQuery(lead, lastCall.rows[0] ?? null, situationOf(context));
   const hits = await searchKnowledge(db, deps.embedder, workspaceId, query, { limit: KB_LIMIT });

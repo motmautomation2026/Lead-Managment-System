@@ -152,7 +152,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     expect(decideCalls(model)[1]!.input.messages[1]!.content).toContain("Your previous decision was rejected for these reasons:\n- length: ");
   });
 
-  it("two failures record a handoff draft keeping the failed message, with regenerated=true", async () => {
+  it("failures record a handoff draft keeping the failed message, with regenerated=true (a fixable problem gets two regenerations, E2f)", async () => {
     const { ws, leadId } = await scenario();
     const model = createFakeDecisionModel({ decisions: [TOO_LONG, TOO_LONG] });
     expect((await tick(ws, model))[0]).toMatchObject({ result: "draft", action: "handoff" });
@@ -169,8 +169,9 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     });
     expect(row.message_body).toContain("really really");
     expect(row.rules_result.allowed).toBe(false);
-    // E2b: both attempts' failures are recorded for AI Activity.
-    expect(row.quality_checks).toHaveLength(2);
+    // E2b: every attempt's failures are recorded for AI Activity; E2f: a too-long message (fixable) gets a second regeneration.
+    expect(decideCalls(model)).toHaveLength(3);
+    expect(row.quality_checks).toHaveLength(3);
     expect(row.quality_checks[0].problems[0]).toMatch(/^length: /);
     expect(await pendingFor(leadId)).toEqual([]);
     expect((await agentTimeline(leadId)).map((t) => t.title)).toEqual(["AI suggested handoff: AI couldn't write a message that meets the playbook"]);
@@ -426,6 +427,66 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
       [leadId, ws],
     );
     expect(counts.rows[0]).toEqual({ tasks: 0, whatsapp: 0, runs: 0 });
+  });
+
+  describe("E2f: signals, negated banned phrases, regenerations", () => {
+    const whatsapp = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+    const note = (leadId: string, text: string) =>
+      pool.query(
+        `insert into public.timeline_events (lead_id, event_kind, title, detail, actor_name, actor_source, occurred_at)
+         values ($1, 'note', 'Note added', $2, 'Rep', 'manual', now() - interval '3 days')`,
+        [leadId, text],
+      );
+
+    it("a price question in the latest note turns a send into the handoff 'Lead asked about price', without a regeneration", async () => {
+      const { ws, leadId } = await scenario();
+      await note(leadId, "Manoj replied to our email asking: what are your charges?");
+      const model = createFakeDecisionModel({ decisions: [whatsapp("Hi Asha, our charges depend on the scope of work.")] });
+      expect((await tick(ws, model))[0]).toMatchObject({ result: "draft", action: "handoff" });
+      const [row] = await decisions(leadId);
+      expect(row).toMatchObject({ outcome: "draft", action: "handoff", handoff_title: "Lead asked about price", regenerated: false });
+      expect(row.rules_result.adjustments).toContainEqual({ rule: "signal", message: "Lead asked about price: handing off instead of sending." });
+      expect(row.quality_checks).toEqual([{ problems: [] }]);
+      expect(model.calls.map((c) => c.kind)).toEqual(["decide"]);
+      expect(decideCalls(model)[0]!.input.messages[1]!.content).toContain("Signal: the contact asked about price — hand off.");
+    });
+
+    it("a consumer business enquiry turns a send into stop (not a fit)", async () => {
+      const { ws, leadId } = await scenario({ source: "website" });
+      await pool.query(
+        `insert into public.timeline_events (lead_id, event_kind, title, detail, actor_name, actor_source, metadata)
+         values ($1, 'system', 'Website form submission', 'form', 'System', 'system', $2)`,
+        [leadId, { channel: "website_form", rawMessage: "We run a bakery and cafe in Bandra. We want more walk-in customers on weekdays." }],
+      );
+      await tick(ws, createFakeDecisionModel({ decisions: [whatsapp("Hello Asha, thank you for contacting us. Would a short call suit you?")] }));
+      const [row] = await decisions(leadId);
+      expect(row).toMatchObject({ action: "stop", stop_reason: "not_a_fit", regenerated: false });
+      expect(row.reasoning).toMatch(/^Not a B2B business\./);
+    });
+
+    it("\"we cannot guarantee\" passes the banned-phrase check; \"guaranteed results\" is regenerated", async () => {
+      const honest = whatsapp("Hi Asha, we cannot guarantee orders, but we can show you how we find buyers. Would Tuesday suit you for a call?");
+      const { ws, leadId } = await scenario();
+      await tick(ws, createFakeDecisionModel({ decisions: [honest] }));
+      expect((await decisions(leadId))[0]).toMatchObject({ action: "send_whatsapp", regenerated: false });
+
+      const other = await scenario();
+      await tick(other.ws, createFakeDecisionModel({ decisions: [whatsapp("Hi Asha, we offer guaranteed results. Would Tuesday suit you?"), honest] }));
+      const [row] = await decisions(other.leadId);
+      expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true });
+      expect(row.quality_checks[0].problems).toEqual(['banned_phrase: Uses banned phrase(s): "guaranteed".']);
+    });
+
+    it("two questions twice, then one → accepted on the third attempt, all three recorded", async () => {
+      const { ws, leadId } = await scenario();
+      const two = whatsapp("Hi Asha, is Tuesday good? Or Wednesday?");
+      const model = createFakeDecisionModel({ decisions: [two, two, whatsapp("Hi Asha, would Tuesday suit you for a short call?")] });
+      await tick(ws, model);
+      const [row] = await decisions(leadId);
+      expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true });
+      expect(row.quality_checks.map((q: { problems: string[] }) => q.problems.length)).toEqual([1, 1, 0]);
+      expect(decideCalls(model)).toHaveLength(3);
+    });
   });
 
   describe("E2c: message checks in code", () => {

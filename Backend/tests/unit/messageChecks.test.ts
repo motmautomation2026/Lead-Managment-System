@@ -53,6 +53,25 @@ describe("findBannedPhrases", () => {
     expect(findBannedPhrases(text, DEFAULT_BANNED)).toEqual(expected);
   });
 
+  it.each([
+    ["We cannot guarantee orders.", []],
+    ["We can't guarantee specific outcomes", []],
+    ["We can’t guarantee specific outcomes", []],
+    ["We do not guarantee results", []],
+    ["We don't promise or guarantee anything", []],
+    ["We will never guarantee orders", []],
+    ["There is no guarantee of orders", []],
+    ["We won't guarantee orders", []],
+    ["We are unable to guarantee orders", []],
+    ["We offer guaranteed results", ["guaranteed"]],
+    ["Not every firm says this, but we guarantee results", ["guarantee"]],
+    ["We cannot guarantee orders, but we guarantee effort", ["guarantee"]],
+    ["It is not free", []],
+    ["We do not usually work today", []],
+  ])("E2f negation: %s → %j", (text, expected) => {
+    expect(findBannedPhrases(text, DEFAULT_BANNED)).toEqual(expected);
+  });
+
   it("ignores blank phrases and matches custom regex-like phrases literally", () => {
     expect(findBannedPhrases("a (b) c", ["", "  ", "(b)"])).toEqual(["(b)"]);
     expect(findBannedPhrases("abc", ["a.c"])).toEqual([]);
