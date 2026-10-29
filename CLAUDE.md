@@ -590,6 +590,15 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (`situationInboundFirst`: inbound && firstMessage && !conversationExists; Raj: inbound, no sends, deal in Negotiation got both
   contradictory rules). With a conversation the checklist shows only "don't introduce us again…", and "thank you for reaching
   out/contacting" always count as introduction phrases (the E2c inbound exception is gone).
+- **E2e (staging tool, no migration):** `scripts/seed-ai-test-contacts.ts` — `npm run staging:seed-ai-test-contacts [-- --confirm]`
+  creates 20 realistic AI test contacts in MOTM (6 website enquiries, 2 thin, 2 non-engineering B2B, a bakery, 3 after a call,
+  2 objection notes, price, Pune visit, meeting follow-up, proposal sent 5 days ago) through the real services, owner Naitik
+  (fallback demo admin), marker `leads.created_by_name = 'AI test seed'` (set right after create), emails `<first>.<last>@example.com`
+  (the name + phone thin lead has none), phones `+91 90000 000NN`, never "AI live test"; history steps are backdated on the timeline
+  (+ `proposals.sent_at`); enrols them with `enrollLeads`; wake-ups spread over 2 h only when the mode isn't off (off → the Shadow
+  switch wakes them over 60 min). `npm run staging:remove-ai-test-contacts [-- --confirm]` deletes them via `deleteLead` (marker
+  AND a seeded email/phone; linked companies stay). Dry run by default, staging ref only; table in `scripts/output/ai-test-contacts.md`
+  (git-ignored).
 
 ## WhatsApp safety (E1)
 
