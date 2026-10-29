@@ -9,6 +9,7 @@ import { LIVE_SCOPES } from "./liveMode.js";
  */
 
 const positiveInt = z.number().int().positive();
+const maxWords = z.number().int().min(1).max(500);
 const nonBlank = z.string().trim().min(1, "Can't be blank.").max(1000);
 // "HH:MM" or "HH:MM:SS", normalised to "HH:MM:SS" (how pg returns `time`) so strings compare in order.
 const timeOfDay = z
@@ -31,8 +32,14 @@ export const settingsUpdateSchema = z
     minGapHours: positiveInt,
     maxTouches7d: positiveInt,
     maxTouchesTotal: positiveInt,
-    emailMaxWords: positiveInt,
-    whatsappMaxWords: positiveInt,
+    // E2b: 1–500 (migration 045).
+    emailMaxWords: maxWords,
+    whatsappMaxWords: maxWords,
+    // E2b: ≤ 100 phrases, each 1–60 characters; blanks dropped, case-insensitive duplicates removed.
+    bannedPhrases: z
+      .array(z.string().trim().max(60, "Each phrase can be at most 60 characters."))
+      .transform((phrases) => phrases.filter((p, i) => p && phrases.findIndex((q) => q.toLowerCase() === p.toLowerCase()) === i))
+      .pipe(z.array(z.string()).max(100, "At most 100 banned phrases.")),
     wakeMinDays: positiveInt,
     wakeMaxDays: positiveInt,
     nurtureLongTerm: z.boolean(),

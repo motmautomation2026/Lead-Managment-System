@@ -4,7 +4,8 @@ import { z } from "zod";
 export const SETTINGS_TABS = [
   { id: "workspace", label: "Workspace", admin: false },
   { id: "assignment", label: "Lead assignment", admin: true },
-  { id: "agent", label: "AI agent", admin: true },
+  // E2b: everyone sees the message rules (read-only); the rest of the tab is admin-only.
+  { id: "agent", label: "AI agent", admin: false },
   { id: "users", label: "Users", admin: true },
   { id: "appearance", label: "Appearance", admin: false },
 ] as const;

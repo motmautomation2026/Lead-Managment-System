@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const settings = {
@@ -9,8 +9,9 @@ const settings = {
   minGapHours: 48,
   maxTouches7d: 2,
   maxTouchesTotal: 8,
-  emailMaxWords: 250,
-  whatsappMaxWords: 80,
+  emailMaxWords: 160,
+  whatsappMaxWords: 75,
+  bannedPhrases: ["thanks for connecting", "today"],
   wakeMinDays: 1,
   wakeMaxDays: 30,
   nurtureLongTerm: false,
@@ -76,7 +77,13 @@ vi.mock("@/store", () => {
           sentToday: 3,
           sentThisMonth: 9,
         },
+        messageRules: {
+          bannedPhrases: ["thanks for connecting", "today"],
+          emailMaxWords: 160,
+          whatsappMaxWords: 75,
+        },
       },
+      isError: false,
     }),
     useAgentLivePreview: (scope: string | null) =>
       mocks.preview(scope) ?? { data: undefined, error: null },
@@ -91,11 +98,51 @@ afterEach(() => {
 });
 
 describe("AgentPanel", () => {
-  it("is hidden from salespeople and never loads the settings", () => {
+  it("salespeople see only the message rules, read-only, and never load the settings", () => {
     mocks.isAdmin = false;
-    const view = render(<AgentPanel />);
-    expect(view.container).toBeEmptyDOMElement();
+    render(<AgentPanel />);
     expect(mocks.settingsQuery).not.toHaveBeenCalled();
+    expect(screen.getByText("Message rules")).toBeInTheDocument();
+    expect(screen.getByText("WhatsApp 75 words · email 160 words")).toBeInTheDocument();
+    expect(screen.getByText("thanks for connecting, today")).toBeInTheDocument();
+    expect(screen.getByText("Only admins can change these.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save message rules" })).toBeNull();
+    expect(screen.queryByText("AI agent limits")).toBeNull();
+  });
+
+  it("E2b: admins edit banned phrases (one per line) and word limits", async () => {
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    render(<AgentPanel />);
+    expect(screen.getByLabelText("Banned phrases (one per line)")).toHaveValue(
+      "thanks for connecting\ntoday",
+    );
+    fireEvent.change(screen.getByLabelText("Banned phrases (one per line)"), {
+      target: { value: " just checking in \n\nfree\n" },
+    });
+    fireEvent.change(screen.getByLabelText("WhatsApp max words"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save message rules" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        { bannedPhrases: ["just checking in", "free"], whatsappMaxWords: 60, emailMaxWords: 160 },
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("E2b: message rules are validated before saving", async () => {
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    render(<AgentPanel />);
+    fireEvent.change(screen.getByLabelText("Email max words (body)"), { target: { value: "501" } });
+    fireEvent.change(screen.getByLabelText("Banned phrases (one per line)"), {
+      target: { value: "x".repeat(61) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save message rules" }));
+    expect(await screen.findByText("At most 500 words.")).toBeInTheDocument();
+    expect(screen.getByText("Each phrase can be at most 60 characters.")).toBeInTheDocument();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("asks for confirmation before switching Off → Shadow, then saves the mode", () => {

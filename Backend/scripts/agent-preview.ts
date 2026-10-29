@@ -1,6 +1,8 @@
 // Dev only: shows what the AI agent would see and (with --call) draft for one lead, using the
 // runner's pipeline (incl. grounding and one regeneration).
-//   npm run agent:preview -- --lead <uuid> [--call]
+//   npm run agent:preview -- --lead <uuid> [--call] [--evaluate]
+// --evaluate (implies --call, E2b): runs the full pipeline even when the workspace is off, the contact's AI
+// status isn't active or its touch limits are used up (it prints what it ignored), then a "Quality checks" section.
 // Reads only: saves nothing to the database and never sends anything.
 // Refuses to run against the production project.
 import "dotenv/config";
@@ -13,9 +15,10 @@ function arg(name: string): string | undefined {
 }
 
 const leadId = arg("--lead");
-const call = process.argv.includes("--call");
+const evaluate = process.argv.includes("--evaluate");
+const call = evaluate || process.argv.includes("--call");
 if (!leadId || !/^[0-9a-f-]{36}$/i.test(leadId)) {
-  console.error("Usage: npm run agent:preview -- --lead <lead uuid> [--call]");
+  console.error("Usage: npm run agent:preview -- --lead <lead uuid> [--call] [--evaluate]");
   process.exit(1);
 }
 for (const name of ["DATABASE_URL", "SUPABASE_URL"]) {
@@ -42,6 +45,8 @@ async function main(id: string) {
   const { composeOutgoing } = await import("../src/agent/composeMessage.js");
   const { parsePrices } = await import("../src/agent/pricing.js");
   const { countTokens } = await import("../src/knowledge/chunkText.js");
+  const { checkMessage } = await import("../src/agent/messageChecks.js");
+  const { STYLE_RULES } = await import("../src/agent/prompt.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
   try {
@@ -53,7 +58,25 @@ async function main(id: string) {
     if (!env.OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set: knowledge search skipped.");
 
     const now = new Date();
-    const ctx = await buildAgentContext(pool, lead.workspace_id, id, now, { embedder });
+    let ctx = await buildAgentContext(pool, lead.workspace_id, id, now, { embedder });
+    if (evaluate) {
+      // Quality evaluation only: what the rules would block first (mode, AI status, touch limits) is ignored.
+      const { rules } = ctx;
+      const ignored = [
+        rules.mode === "off" && "workspace mode off (evaluated as shadow)",
+        rules.lead.agentStatus !== "active" && `AI status "${rules.lead.agentStatus}" (evaluated as active)`,
+        (rules.lead.agentTouchCount > 0 || rules.recentTouchTimes.length > 0) &&
+          `${rules.lead.agentTouchCount} touch(es) so far, ${rules.recentTouchTimes.length} in the last 7 days (evaluated as none)`,
+      ].filter(Boolean);
+      const mode = rules.mode === "off" ? ("shadow" as const) : rules.mode;
+      ctx = {
+        ...ctx,
+        settings: { ...ctx.settings, mode: ctx.settings.mode === "off" ? "shadow" : ctx.settings.mode },
+        rules: { ...rules, mode, recentTouchTimes: [], lead: { ...rules.lead, agentStatus: "active", agentTouchCount: 0, agentLastTouchAt: null } },
+      };
+      section("Evaluate mode");
+      console.log(ignored.length ? `Ignored: ${ignored.join("; ")}.` : "Nothing ignored: mode, AI status and touch limits already allow a decision.");
+    }
     const messages = buildDecisionMessages(ctx, ctx.settings, now);
 
     section("Context");
@@ -93,6 +116,43 @@ async function main(id: string) {
       console.log(attempt.grounding ? JSON.stringify(attempt.grounding, null, 2) : "(not checked: not an allowed send)");
       if (attempt.problems.length) console.log(`Problems:\n- ${attempt.problems.join("\n- ")}`);
     });
+
+    if (evaluate) {
+      section("Quality checks");
+      draft.attempts.forEach((attempt, i) => {
+        const d = attempt.rules.finalDecision;
+        const converted = attempt.decision.action !== d.action ? `${attempt.decision.action} → ` : "";
+        console.log(`Attempt ${i + 1} (${converted}${d.action}):`);
+        if (d.action !== "send_email" && d.action !== "send_whatsapp") {
+          const why = attempt.rules.violations.map((v) => v.message).join(" ");
+          console.log(`  (not a message: nothing to check${why ? `; ${why}` : ""})`);
+          return;
+        }
+        const failed = checkMessage(d, ctx.settings);
+        const line = (ok: boolean, name: string, detail?: string) => console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
+        for (const [rule, name] of [
+          ["banned_phrase", "no banned phrases"],
+          ["length", "word limit"],
+          ["one_question", "at most one question"],
+          ["compound_question", "question about one thing"],
+          ["exclamation", "no exclamation marks"],
+        ] as const) {
+          const hit = failed.find((v) => v.rule === rule);
+          line(!hit, name, hit?.message);
+        }
+        const other = attempt.rules.violations.filter((v) => !failed.some((f) => f.rule === v.rule));
+        line(other.length === 0, "other rules (contacts, signature, opt-out, HTML, assets, channel)", other.map((v) => v.message).join(" "));
+        if (!attempt.grounding) {
+          console.log("  n/a   facts + style (not grounded: a check above failed first)");
+          return;
+        }
+        line(attempt.grounding.supported, "facts supported", attempt.grounding.unsupportedClaims.join("; "));
+        for (const rule of STYLE_RULES) {
+          const hits = (attempt.grounding.styleViolations ?? []).filter((v) => v.rule === rule);
+          line(hits.length === 0, `style: ${rule}`, hits.map((v) => `"${v.quote}"`).join("; "));
+        }
+      });
+    }
 
     section("Result (what the runner would record as a draft)");
     console.log(JSON.stringify({ outcome: draft.outcome, regenerated: draft.regenerated, decision: draft.decision }, null, 2));

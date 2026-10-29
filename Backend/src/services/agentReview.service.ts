@@ -326,8 +326,17 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       [workspaceId],
     ),
     // E2: the live scope and real AI sends.
-    db.query<{ scope: LiveScope; live_since: Date | null; live_contacts: number; sent_today: number; sent_month: number }>(
-      `select s.live_scope as scope, s.live_since,
+    db.query<{
+      scope: LiveScope;
+      live_since: Date | null;
+      live_contacts: number;
+      sent_today: number;
+      sent_month: number;
+      banned_phrases: string[];
+      email_max_words: number;
+      whatsapp_max_words: number;
+    }>(
+      `select s.live_scope as scope, s.live_since, s.banned_phrases, s.email_max_words, s.whatsapp_max_words,
               case when s.mode = 'live' then (select count(*)::int from public.leads l where l.workspace_id = s.workspace_id and ${liveContactSql("s.live_scope", "s.live_since")}) else 0 end as live_contacts,
               (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
                 and sent_at >= (${IST_DAY} at time zone 'Asia/Kolkata')) as sent_today,
@@ -374,6 +383,10 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
           sentToday: live.rows[0].sent_today,
           sentThisMonth: live.rows[0].sent_month,
         }
+      : null,
+    // E2b: the writing rules, read-only for every CRM user (settings are admin-only).
+    messageRules: live.rows[0]
+      ? { bannedPhrases: live.rows[0].banned_phrases, emailMaxWords: live.rows[0].email_max_words, whatsappMaxWords: live.rows[0].whatsapp_max_words }
       : null,
   };
 }

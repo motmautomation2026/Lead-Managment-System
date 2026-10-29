@@ -92,6 +92,19 @@ describeIfDb("E2 live mode API (requires TEST_DATABASE_URL)", () => {
     expect((await api.call(rep, ws, "GET", `/agent/leads/${l}`)).body).toMatchObject({ liveTest: false, effectiveMode: "off" });
   });
 
+  it("E2b: admins edit banned phrases and word limits (defaults 160/75); every CRM user reads them in stats", async () => {
+    const ws = await createTestWorkspace(pool, "e2b-message-rules");
+    const before = (await api.call(rep, ws, "GET", "/agent/stats")).body.messageRules;
+    expect(before).toMatchObject({ emailMaxWords: 160, whatsappMaxWords: 75 });
+    expect(before.bannedPhrases).toContain("thanks for connecting");
+    expect((await api.call(rep, ws, "PUT", "/agent/settings", { bannedPhrases: ["x"] })).status).toBe(403);
+    expect((await api.call(admin, ws, "PUT", "/agent/settings", { emailMaxWords: 501 })).status).toBe(400);
+    const saved = await api.call(admin, ws, "PUT", "/agent/settings", { bannedPhrases: [" Today ", "today", "per se"], emailMaxWords: 120, whatsappMaxWords: 50 });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ bannedPhrases: ["Today", "per se"], emailMaxWords: 120, whatsappMaxWords: 50 });
+    expect((await api.call(rep, ws, "GET", "/agent/stats")).body.messageRules).toEqual({ bannedPhrases: ["Today", "per se"], emailMaxWords: 120, whatsappMaxWords: 50 });
+  });
+
   it("the gate: pilot / all need it (422 with the numbers); test contacts don't; live_since is set when the pilot is switched on", async () => {
     const ws = await createTestWorkspace(pool, "e2-gate");
     const l = await lead(ws);

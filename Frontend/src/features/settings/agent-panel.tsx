@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { LIVE_SCOPE_LABEL } from "@/features/agent/agent-labels";
 import { GatePanel, LiveBanner, LiveConfirmDialog } from "@/features/agent/live-mode";
+import { MessageRulesCard } from "./message-rules-card";
 import {
   messageFromError,
   useAgentPlaybooks,
@@ -46,8 +47,6 @@ type NumberField =
   | "minGapHours"
   | "maxTouches7d"
   | "maxTouchesTotal"
-  | "emailMaxWords"
-  | "whatsappMaxWords"
   | "wakeMinDays"
   | "wakeMaxDays"
   | "repQuietHours"
@@ -58,8 +57,6 @@ const NUMBER_FIELDS: { key: NumberField; label: string; step?: string }[] = [
   { key: "minGapHours", label: "Minimum gap between messages (hours)" },
   { key: "maxTouches7d", label: "Max messages per 7 days" },
   { key: "maxTouchesTotal", label: "Max messages in total" },
-  { key: "emailMaxWords", label: "Email max words" },
-  { key: "whatsappMaxWords", label: "WhatsApp max words" },
   { key: "wakeMinDays", label: "Check back after at least (days)" },
   { key: "wakeMaxDays", label: "Check back after at most (days)" },
   { key: "repQuietHours", label: "Wait after a rep's call or note (hours)" },
@@ -95,9 +92,39 @@ Topics, prices, guarantees or claims the AI must never make.
 Facts, results and case studies the AI may quote.
 `;
 
-/** Settings → AI agent. Admins only; renders nothing for salespeople. */
+/** Settings → AI agent. Admins edit everything; others see only the message rules, read-only (E2b). */
 export function AgentPanel() {
-  return useIsAdmin() ? <AgentEditor /> : null;
+  return useIsAdmin() ? <AgentEditor /> : <MessageRulesReadOnly />;
+}
+
+function MessageRulesReadOnly() {
+  const stats = useAgentStats();
+  if (stats.isError) {
+    return (
+      <Card>
+        <CardContent className="space-y-2 py-6 text-sm">
+          <p className="text-destructive">
+            Couldn't load the AI message rules: {messageFromError(stats.error)}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void stats.refetch()}>
+            <RefreshCw className="size-3.5" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!stats.data) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-sm text-muted-foreground">
+          Loading AI message rules…
+        </CardContent>
+      </Card>
+    );
+  }
+  return stats.data.messageRules ? (
+    <MessageRulesCard rules={stats.data.messageRules} editable={false} />
+  ) : null;
 }
 
 function AgentEditor() {
@@ -134,6 +161,7 @@ function AgentEditor() {
     <div className="space-y-6">
       <ModeCard settings={settings.data} />
       <LimitsCard settings={settings.data} />
+      <MessageRulesCard rules={settings.data} editable />
       <PlaybookCard />
     </div>
   );

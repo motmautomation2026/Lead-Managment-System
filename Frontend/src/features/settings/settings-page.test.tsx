@@ -127,10 +127,10 @@ describe("SettingsPage (C6b)", () => {
     await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
-  it("salespeople see Workspace and Appearance only; Users by URL says admins only", async () => {
+  it("salespeople see Workspace, AI agent (message rules, read-only) and Appearance; Users by URL says admins only", async () => {
     mocks.isAdmin = false;
     await renderPage({ tab: "users" });
-    expect(sections()).toEqual(["Workspace", "Appearance"]);
+    expect(sections()).toEqual(["Workspace", "AI agent", "Appearance"]);
     expect(screen.getByText("Admins only")).toBeTruthy();
     expect(screen.queryByText("Create salesperson")).toBeNull();
   });

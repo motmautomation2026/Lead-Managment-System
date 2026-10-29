@@ -36,6 +36,22 @@ describe("agent settings update schema", () => {
     expect(parse({ repQuietHours: 168 }).success).toBe(true);
   });
 
+  it("E2b: word limits 1–500", () => {
+    expect(parse({ emailMaxWords: 500, whatsappMaxWords: 1 }).success).toBe(true);
+    expect(parse({ emailMaxWords: 501 }).success).toBe(false);
+    expect(parse({ whatsappMaxWords: 75.5 }).success).toBe(false);
+  });
+
+  it("E2b: banned phrases are trimmed, deduplicated, ≤ 100, each ≤ 60 characters", () => {
+    const result = settingsUpdateSchema.parse({ bannedPhrases: ["  Today ", "today", "", "free"] });
+    expect(result.bannedPhrases).toEqual(["Today", "free"]);
+    expect(parse({ bannedPhrases: [] }).success).toBe(true);
+    expect(parse({ bannedPhrases: ["x".repeat(61)] }).success).toBe(false);
+    expect(parse({ bannedPhrases: Array.from({ length: 101 }, (_, i) => `p${i}`) }).success).toBe(false);
+    expect(parse({ bannedPhrases: Array.from({ length: 100 }, (_, i) => `p${i}`) }).success).toBe(true);
+    expect(parse({ bannedPhrases: "today" }).success).toBe(false);
+  });
+
   it("send days: 1-7, unique, non-empty", () => {
     expect(parse({ sendDays: [] }).success).toBe(false);
     expect(parse({ sendDays: [0] }).success).toBe(false);

@@ -489,6 +489,8 @@ export interface AgentSettings {
   maxTouchesTotal: number;
   emailMaxWords: number;
   whatsappMaxWords: number;
+  /** E2b: phrases an AI message must never contain. */
+  bannedPhrases: string[];
   wakeMinDays: number;
   wakeMaxDays: number;
   nurtureLongTerm: boolean;
@@ -670,7 +672,13 @@ export interface AgentStats {
     sentToday: number;
     sentThisMonth: number;
   } | null;
+  /** E2b: the writing rules, readable by every CRM user. */
+  messageRules: AgentMessageRules | null;
 }
+export type AgentMessageRules = Pick<
+  AgentSettings,
+  "bannedPhrases" | "emailMaxWords" | "whatsappMaxWords"
+>;
 export interface LeadAgentPanel {
   leadId: string;
   status: AgentStatus;
