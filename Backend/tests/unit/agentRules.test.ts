@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { countWords, nextAllowedSendTime, precheck, validateDecision, whatsappUsable, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
+import { nextAllowedSendTime, precheck, validateDecision, whatsappUsable, type AgentRuleSettings, type RulesContext } from "../../src/agent/rules.js";
 
 /** Asia/Kolkata wall-clock time → Date. */
 const ist = (local: string) => new Date(`${local}:00+05:30`);
@@ -206,11 +206,8 @@ describe("validateDecision", () => {
     expect(result.nextWakeAt).toBeNull();
   });
 
-  it("6. word limits per channel", () => {
-    expect(rules(validateDecision(whatsapp({ body: "word ".repeat(81) }), ctx(), settings, NOW))).toEqual(["length"]);
-    expect(validateDecision(whatsapp({ body: "word ".repeat(80) }), ctx(), settings, NOW).allowed).toBe(true);
-    expect(rules(validateDecision(email({ body: "word ".repeat(251) }), ctx(), settings, NOW))).toEqual(["length"]);
-    expect(countWords("  a\n\nb   c ")).toBe(3);
+  it("6. word limits are not a rules.ts rule any more (E2b: messageChecks.checkMessage)", () => {
+    expect(validateDecision(whatsapp({ body: "word ".repeat(81) }), ctx(), settings, NOW).allowed).toBe(true);
   });
 
   it("7. assets: unknown, inactive, wrong channel, too big for WhatsApp, too many", () => {
@@ -255,7 +252,7 @@ describe("validateDecision", () => {
   it("multiple violations are all recorded", () => {
     const body = `${"word ".repeat(90)}\nunsubscribe <br> rival@x.com\n\nRegards,\nRavi`;
     const result = validateDecision(whatsapp({ body, assetIds: ["33333333-3333-4333-8333-333333333333"] }), ctx(), settings, NOW);
-    expect(rules(result)).toEqual(["length", "assets", "content_contacts", "content_opt_out", "content_signature", "content_html"]);
+    expect(rules(result)).toEqual(["assets", "content_contacts", "content_opt_out", "content_signature", "content_html"]);
     expect(result).toMatchObject({ allowed: false, outcome: "draft" });
   });
 

@@ -126,10 +126,6 @@ export function whatsappUsable(ctx: ChannelContext): boolean {
   );
 }
 
-export function countWords(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length;
-}
-
 const digits = (value: string) => value.replace(/\D/g, "");
 
 function contentViolations(decision: SendDecision, ctx: RulesContext): RuleNote[] {
@@ -190,7 +186,7 @@ export function precheck(
  *  3. agent_status active → else BLOCK
  *  4. total touches ≥ max_touches_total on a send → convert to stop (no_response)
  *  5. channel usable (sends) → else convert to wait 1 day (other channel usable) or handoff (none) + violation
- *  6. word count ≤ channel limit (sends) → else violation
+ *  6. (E2b: word limits moved to messageChecks.checkMessage)
  *  7. assets exist / active / allow the channel / count + size limits (sends) → else violation
  *  8. content safety (sends): foreign contacts, opt-out text, signature, HTML → violations
  *  9. update_stage only on an active lead and to the allow-list → else violation
@@ -243,10 +239,6 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
   }
 
   if (isSend(final)) {
-    // 6: length
-    const limit = final.action === "send_email" ? settings.email_max_words : settings.whatsapp_max_words;
-    const words = countWords(final.body);
-    if (words > limit) violations.push({ rule: "length", message: `${words} words; the limit is ${limit}.` });
     // 7: assets
     violations.push(...assetViolations(final, ctx));
     // 8: content safety

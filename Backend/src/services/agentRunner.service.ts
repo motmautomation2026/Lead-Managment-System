@@ -5,7 +5,7 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
-import { countQuestions } from "../agent/messageChecks.js";
+import { checkMessage } from "../agent/messageChecks.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -109,7 +109,10 @@ export async function draftDecision(
     const messages = buildDecisionMessages(ctx, ctx.settings, deps.now, problems ? { previousFailure: { problems } } : {});
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
     add(deps.decisionModel, decided);
-    const rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
+    let rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
+    // E2b rule 1 (both modes): deterministic writing checks, before grounding; recorded as rule violations.
+    const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings);
+    if (messageViolations.length) rules = { ...rules, allowed: false, executable: false, violations: [...rules.violations, ...messageViolations] };
     let grounding: GroundingResult | null = null;
     if (rules.allowed && isSend(rules.finalDecision)) {
       const checked = await deps.model.checkGrounding({
@@ -121,8 +124,6 @@ export async function draftDecision(
       grounding = applyGroundingAllowList(checked.json, ctx);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
-    // E2 rule 7 (both modes): at most one question per message.
-    const questions = isSend(rules.finalDecision) ? countQuestions(rules.finalDecision.body) : 0;
     return {
       decision: decided.json,
       rules,
@@ -130,7 +131,6 @@ export async function draftDecision(
       problems: [
         ...rules.violations.map((v) => `${v.rule}: ${v.message}`),
         ...unsupported.map((claim) => `Unsupported claim: ${claim}`),
-        ...(questions > 1 ? [`${QUESTION_RULE}: The message asks ${questions} questions; ask at most one.`] : []),
       ],
     };
   };

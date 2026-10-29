@@ -37,6 +37,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   company_display_name: string | null;
   live_scope: LiveScope;
   live_since: Date | null;
+  banned_phrases: string[];
 }
 
 export interface AgentContextLead {
