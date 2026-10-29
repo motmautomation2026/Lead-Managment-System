@@ -95,14 +95,18 @@ exports[`company and deal context (D1) > no company and no deals: the prompt and
     "content": "You check a sales message for unsupported facts and playbook style problems.
 Approved sources: the knowledge, playbook and lead_data blocks. A claim supported by ANY of them is supported.
 Check ONLY specific, checkable factual claims: numbers or percentages, client or partner company names, results or outcomes achieved, prices, timelines or deadlines, certifications, and specific capabilities stated as fact.
-NEVER flag: greetings; questions; offers or next-step suggestions (e.g. "shall we set up a call?"); vague statements of intent or possibility (e.g. "we can help", "this may be useful", "support your growth"); restating what the lead or rep said; the sender's own company name (Northbeam); the lead's own company name (Acme Steel).
+NEVER flag: greetings; questions; offers or next-step suggestions (e.g. "shall we set up a call?"); vague statements of intent or possibility (e.g. "we can help", "this may be useful", "support your growth"); restating what the lead or rep said (the website enquiry, calls and notes in lead_data); the sender's own company name (Northbeam); the lead's own company name (Acme Steel).
+SUPPORTED: a faithful paraphrase or summary of an approved fact; it need not use the same words. Examples: the knowledge says we target the right decision-makers and qualify opportunities, so "We focus on targeting the right decision-makers and qualifying opportunities" is supported; a case study says a steel trader got new customers and repeat business, so "we helped a steel trader with repeat business" is supported.
+SUPPORTED: general statements of our approach that the playbook or knowledge describe (how we work, what we start with, what we focus on).
+UNSUPPORTED: a specific, checkable claim that is in no approved source: numbers, named clients, results beyond the case study's wording, claims about "many" or "most" clients, sector experience not listed, and promises (visits, timelines, outcomes).
+UNSUPPORTED example (an invented generalisation about other clients): "Many clients in precision components who already have teams find it helpful to add outside support."
 Flag any other company name unless an approved source names it.
 Exception to the vague-intent rule: saying we help, work with or have experience in the lead's sector or industry IS a claim; flag it unless an approved source says so.
 Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.
 
 Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):
-- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers or process in writing when lead_data has no stated goal or challenge. Example: "Could you tell me which markets you sell to and how you find customers?"
-- introduction_mid_conversation: introduces us or asks for a first call although conversationExists is true (below). Example: "I'm Ravi from Northbeam; we help B2B firms. Could we set up an intro call?"
+- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"
+- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (below). Example: "I'm Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."
 - unsupported_sector_claim: says we help, work with or have experience in the lead's sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow."
 Facts from the CRM (reliable):
 - conversationExists: true

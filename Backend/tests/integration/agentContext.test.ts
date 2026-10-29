@@ -171,6 +171,50 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect(ctx.meta.tokenEstimate).toBeGreaterThan(0);
   });
 
+  it("E2f: a draft quoting the lead's own website enquiry is supported (the enquiry is in grounding's lead_data)", async () => {
+    const { withTransaction } = await import("../../src/db.js");
+    const { ingestWebsiteLead } = await import("../../src/services/leadIngest.service.js");
+    const { draftDecision } = await import("../../src/services/agentRunner.service.js");
+    const enquiry = "We trade HR/CR coils and structural steel. Buyers come once for a project and do not come back.";
+    const created = await withTransaction((c) =>
+      ingestWebsiteLead(c, WS, { name: "Suresh Agarwal", email: `suresh-${randomUUID()}@example.com`, phone: "", company: "Agarwal Steel Traders", message: `${enquiry}\nIndustry: Steel Trading` }),
+    );
+    const id = (created as { leadId: string }).leadId;
+    await pool.query(`update public.leads set owner_id = $2, agent_status = 'active' where id = $1`, [id, owner.id]);
+    const ctx = await build(WS, id);
+    expect(ctx.lead.company).toBe("Agarwal Steel Traders");
+
+    const decision = {
+      action: "send_email" as const,
+      subject: "Your enquiry",
+      body: "Hi Suresh,\n\nThank you for your enquiry. You mentioned that buyers come once for a project and do not come back.\n\nWould a short call in the coming days suit you?",
+      assetIds: [],
+      nextWakeInDays: 3,
+      reasoning: "Reply to the enquiry.",
+    };
+    // The fake grounding model supports the draft only if the quoted enquiry is in its lead_data block.
+    const groundingInputs: string[] = [];
+    const model = {
+      async decide() {
+        return { json: decision, inputTokens: 1, outputTokens: 1, model: "fake" };
+      },
+      async checkGrounding(input: { messages: { role: string; content: string }[] }) {
+        const user = input.messages.find((m) => m.role === "user")!.content;
+        const leadData = user.slice(user.indexOf("<lead_data>"), user.indexOf("</lead_data>"));
+        groundingInputs.push(leadData);
+        const supported = leadData.includes("Buyers come once for a project and do not come back");
+        return { json: { supported, unsupportedClaims: supported ? [] : ["buyers do not come back"], styleViolations: [] }, inputTokens: 1, outputTokens: 1, model: "fake" };
+      },
+    };
+    const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const result = await draftDecision(ctx, { model: model as never, decisionModel: "fake", groundingModel: "fake", prices: {}, now: new Date() }, usage);
+    expect(result.attempts.map((a) => a.problems)).toEqual([[]]);
+    expect(groundingInputs).toHaveLength(1);
+    expect(groundingInputs[0]).toContain(`Website enquiry: ${enquiry}`);
+    expect(result).toMatchObject({ outcome: "draft", regenerated: false, grounding: { supported: true } });
+    expect(result.decision.action).toBe("send_email");
+  });
+
   it("shadow counts drafts the rules allowed as touches; off counts only real sends", async () => {
     const lead = await newLead(WS);
     const allowedAt = new Date(Date.now() + 3 * 3600 * 1000);

@@ -125,6 +125,33 @@ describe("grounding", () => {
     expect(system).toContain("the lead's own company name (Acme Steel)");
   });
 
+  it("E2f: paraphrases and our approach are supported; invented generalisations about clients are not", () => {
+    const { system } = grounding("We focus on targeting the right decision-makers and qualifying opportunities.");
+    expect(system).toContain("SUPPORTED: a faithful paraphrase or summary of an approved fact");
+    expect(system).toContain('"We focus on targeting the right decision-makers and qualifying opportunities" is supported');
+    expect(system).toContain('"we helped a steel trader with repeat business" is supported');
+    expect(system).toContain("SUPPORTED: general statements of our approach that the playbook or knowledge describe");
+    expect(system).toContain('claims about "many" or "most" clients, sector experience not listed, and promises (visits, timelines, outcomes)');
+    expect(system).toContain('UNSUPPORTED example (an invented generalisation about other clients): "Many clients in precision components');
+    expect(system).toContain("restating what the lead or rep said (the website enquiry, calls and notes in lead_data)");
+  });
+
+  it("E2f: the style rules allow inviting a call about priorities and describing our approach in a follow-up", () => {
+    const { system } = grounding("Hi Asha");
+    expect(system).toContain('IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?"');
+    expect(system).toContain('ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"');
+    expect(system).toContain("introduces us, thanks them for reaching out, or proposes an \"introductory\" or first call although conversationExists is true");
+    expect(system).toContain("ALLOWED (not a violation): describing the relevant part of our approach in a follow-up");
+  });
+
+  it("E2f: the lead's own website enquiry is in the grounding lead_data, untruncated", () => {
+    const ctx = motm();
+    ctx.lead.websiteMessage = `We run a bakery and cafe in Bandra. We want more walk-in customers on weekdays. ${"x".repeat(1500)}`;
+    const { user } = grounding("You mentioned you want more walk-in customers on weekdays.", ctx);
+    const leadData = user.slice(user.indexOf("<lead_data>"), user.indexOf("</lead_data>"));
+    expect(leadData).toContain(`Website enquiry: ${ctx.lead.websiteMessage}`);
+  });
+
   it("keeps a specific invented claim in scope", () => {
     const { system, user } = grounding("We increased sales by 40% for Tata Steel.");
     expect(system).toContain("Check ONLY specific, checkable factual claims: numbers or percentages, client or partner company names, results or outcomes achieved");
