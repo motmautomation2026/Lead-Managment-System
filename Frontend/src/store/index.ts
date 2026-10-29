@@ -12,6 +12,7 @@ export {
   knowledgePollInterval,
   useAgentSettings,
   useUpdateAgentSettings,
+  useResetReadiness,
   useAgentPlaybooks,
   useSavePlaybook,
   useRestorePlaybook,

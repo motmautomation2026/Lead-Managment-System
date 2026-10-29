@@ -508,6 +508,8 @@ export interface AgentSettings {
   liveScope: AgentLiveScope;
   /** When the new-leads pilot was switched on. */
   liveSince: string | null;
+  /** E2f, read-only: the go-live gate counts decisions created since this time; null = all time. */
+  readinessSince: string | null;
   /** Read-only: AI contacts live now. */
   liveContactCount: number;
   currentPlaybookVersion: number | null;
@@ -524,6 +526,7 @@ export type AgentSettingsUpdate = Partial<
     | "updatedAt"
     | "activeLeadCount"
     | "liveSince"
+    | "readinessSince"
     | "liveContactCount"
   >
 >;
@@ -664,6 +667,8 @@ export interface AgentStats {
   /** D4a: WhatsApp replies labelled this month (counts only) and the AI cost of labelling them. */
   replies: { byLabel: Partial<Record<ReplyLabel, number>>; costUsd: number };
   readiness: AgentReadiness;
+  /** E2f: ratings and readiness count decisions created since this time; null = all time. */
+  readinessSince: string | null;
   /** E2: the live scope and real AI sends. */
   live: {
     scope: AgentLiveScope;
@@ -1166,6 +1171,7 @@ export const backend = {
       update: (input: AgentSettingsUpdate) => send<AgentSettings>("PUT", "/agent/settings", input),
       livePreview: (scope: AgentLiveScope, signal?: AbortSignal) =>
         get<AgentLivePreview>(query("/agent/settings/live-preview", { scope }), signal),
+      resetReadiness: () => send<AgentSettings>("POST", "/agent/settings/reset-readiness"),
     },
     playbooks: {
       list: (signal?: AbortSignal) =>

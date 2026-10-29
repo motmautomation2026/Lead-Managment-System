@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Radio } from "lucide-react";
 import type {
   AgentLiveScope,
@@ -14,9 +15,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/common/status-badge";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorBlock } from "@/components/common/server-state";
 import { useAgentLivePreview } from "@/store";
-import { LIVE_SCOPE_LABEL, SEND_STATUS_LABEL, SEND_STATUS_TONE } from "./agent-labels";
+import { istDateTime, LIVE_SCOPE_LABEL, SEND_STATUS_LABEL, SEND_STATUS_TONE } from "./agent-labels";
 
 // Display only: the server's go-live gate (agent/readiness.ts) decides.
 const MIN_RATED = 50;
@@ -39,8 +41,20 @@ export function LiveBanner({ live }: { live: NonNullable<AgentStats["live"]> }) 
   );
 }
 
-/** The go-live gate's numbers with pass / fail. */
-export function GatePanel({ readiness }: { readiness: AgentReadiness }) {
+/**
+ * The go-live gate's numbers with pass / fail. E2f: `readinessSince` shows where the count
+ * starts; `reset` (admins, Settings) adds "Reset go-live count" with a confirm.
+ */
+export function GatePanel({
+  readiness,
+  readinessSince,
+  reset,
+}: {
+  readiness: AgentReadiness;
+  readinessSince?: string | null;
+  reset?: { onConfirm: () => void; pending: boolean };
+}) {
+  const [confirming, setConfirming] = useState(false);
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex items-center justify-between gap-2">
@@ -75,6 +89,40 @@ export function GatePanel({ readiness }: { readiness: AgentReadiness }) {
             <li key={r}>{r}</li>
           ))}
         </ul>
+      )}
+      {(readinessSince !== undefined || reset) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {readinessSince
+              ? `Counting since ${istDateTime(readinessSince)}`
+              : "Counting all ratings"}
+          </span>
+          {reset && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={reset.pending}
+              onClick={() => setConfirming(true)}
+            >
+              Reset go-live count
+            </Button>
+          )}
+        </div>
+      )}
+      {reset && (
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title="Reset the go-live count?"
+          description="Ratings before now stay saved but no longer count toward the go-live gate."
+          confirmLabel="Reset go-live count"
+          confirmVariant="default"
+          disabled={reset.pending}
+          onConfirm={() => {
+            reset.onConfirm();
+            setConfirming(false);
+          }}
+        />
       )}
     </div>
   );

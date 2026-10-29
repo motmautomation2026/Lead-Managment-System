@@ -63,6 +63,7 @@ vi.mock("@/store", () => {
     useSession: () => ({ userName: () => "Ada Admin" }),
     useAgentSettings: () => mocks.settingsQuery(),
     useUpdateAgentSettings: () => mutation(mocks.update),
+    useResetReadiness: () => mutation(vi.fn()),
     useAgentPlaybooks: () => ({ data: { currentVersion: null, data: [] }, isError: false }),
     useSavePlaybook: () => mutation(mocks.save),
     useRestorePlaybook: () => mutation(mocks.restore),

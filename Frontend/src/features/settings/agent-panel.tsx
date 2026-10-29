@@ -31,6 +31,7 @@ import {
   useSavePlaybook,
   useSession,
   useUpdateAgentSettings,
+  useResetReadiness,
 } from "@/store";
 
 const MODE_HELP: Record<AgentMode, string> = {
@@ -171,6 +172,7 @@ const SCOPE_ORDER: AgentLiveScope[] = ["test_contacts", "new_leads", "all"];
 
 function ModeCard({ settings }: { settings: AgentSettings }) {
   const update = useUpdateAgentSettings();
+  const resetReadiness = useResetReadiness();
   const stats = useAgentStats();
   const readiness = stats.data?.readiness;
   const [confirmShadow, setConfirmShadow] = useState(false);
@@ -264,7 +266,20 @@ function ModeCard({ settings }: { settings: AgentSettings }) {
             )}
           </div>
         )}
-        {readiness && <GatePanel readiness={readiness} />}
+        {readiness && (
+          <GatePanel
+            readiness={readiness}
+            readinessSince={settings.readinessSince}
+            reset={{
+              pending: resetReadiness.isPending,
+              onConfirm: () =>
+                resetReadiness.mutate(undefined, {
+                  onSuccess: () => toast.success("The go-live count starts now."),
+                  onError: (error) => toast.error(messageFromError(error)),
+                }),
+            }}
+          />
+        )}
       </CardContent>
       <ConfirmDialog
         open={confirmShadow}

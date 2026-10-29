@@ -36,6 +36,7 @@ interface SettingsRow {
   company_display_name: string | null;
   live_scope: LiveScope;
   live_since: Date | null;
+  readiness_since: Date | null;
   current_playbook_version: number | null;
   updated_by: string | null;
   updated_at: Date;
@@ -98,6 +99,7 @@ function settingsToDto(row: SettingsRow, activeLeadCount: number, liveContactCou
     companyDisplayName: row.company_display_name,
     liveScope: row.live_scope,
     liveSince: row.live_since?.toISOString() ?? null,
+    readinessSince: row.readiness_since?.toISOString() ?? null,
     liveContactCount,
     currentPlaybookVersion: row.current_playbook_version,
     updatedBy: row.updated_by,
@@ -218,6 +220,20 @@ export async function updateSettings(actor: Actor, workspaceId: string, input: S
     if (updated.mode === "live") await cancelWorkflowsOfLiveContacts(client, workspaceId);
     return settingsToDto(updated, await countActiveLeads(client, workspaceId), await liveCount(client, updated));
   });
+}
+
+/**
+ * E2f: "Reset go-live count". The gate counts only decisions created from now on; earlier
+ * ratings stay saved (and visible) but no longer count.
+ */
+export async function resetReadiness(db: Queryable, actor: Actor, workspaceId: string) {
+  const result = await db.query<SettingsRow>(
+    `update public.agent_settings set readiness_since = now(), updated_by = $2, updated_at = now() where workspace_id = $1 returning *`,
+    [workspaceId, actor.id],
+  );
+  const row = result.rows[0];
+  if (!row) throw new NotFoundError("Agent settings");
+  return settingsToDto(row, await countActiveLeads(db, workspaceId), await liveCount(db, row));
 }
 
 // --- Playbooks ----------------------------------------------------------------

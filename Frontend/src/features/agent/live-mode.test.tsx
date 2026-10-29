@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/store", () => ({ useAgentLivePreview: () => ({ data: undefined, error: null }) }));
 
-import { LiveBanner, SendStatusPill } from "./live-mode";
+import { GatePanel, LiveBanner, SendStatusPill } from "./live-mode";
 import { ChecksSummary } from "./decision-drawer";
 import { istDateTime, withIstTimes } from "./agent-labels";
 
@@ -16,6 +16,50 @@ const state = {
   cancelReason: null,
   channel: "whatsapp" as const,
 };
+
+describe("E2f: Reset go-live count", () => {
+  const readiness = {
+    ready: false,
+    rated: 3,
+    goodPct: 100,
+    seriousBad: 0,
+    reasons: ["Rate at least 50 decisions (3 rated so far)."],
+  };
+
+  it("shows where the count starts; the reset asks for confirmation first", () => {
+    const onConfirm = vi.fn();
+    render(
+      <GatePanel
+        readiness={readiness}
+        readinessSince="2026-10-29T10:00:00.000Z"
+        reset={{ onConfirm, pending: false }}
+      />,
+    );
+    expect(
+      screen.getByText(`Counting since ${istDateTime("2026-10-29T10:00:00.000Z")}`),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Reset go-live count" }));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "Ratings before now stay saved but no longer count toward the go-live gate.",
+      ),
+    ).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      Array.from(dialog.querySelectorAll("button")).find(
+        (b) => b.textContent === "Reset go-live count",
+      )!,
+    );
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("never reset → counting all ratings; no button without `reset` (e.g. the live confirm dialog)", () => {
+    render(<GatePanel readiness={readiness} readinessSince={null} />);
+    expect(screen.getByText("Counting all ratings")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reset go-live count" })).toBeNull();
+  });
+});
 
 describe("E2 live UI pieces", () => {
   it.each([

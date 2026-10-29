@@ -347,6 +347,30 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
     expect((await api(owner, ws, "GET", "/agent/stats")).body.readiness).toMatchObject({ ready: true, goodPct: 92, seriousBad: 0, reasons: [] });
   });
 
+  it("E2f: Reset go-live count — admin only; only decisions created since then count; earlier ratings stay saved", async () => {
+    const ws = await newWorkspace();
+    const leadId = await newLead(ws);
+    for (let i = 0; i < 3; i++) await decision(ws, leadId, { rating: "good", createdAt: new Date(Date.now() - 3_600_000).toISOString() });
+    await decision(ws, leadId, { rating: "bad", reason: "made_up_fact", createdAt: new Date(Date.now() - 3_600_000).toISOString() });
+    const before = (await api(owner, ws, "GET", "/agent/stats")).body;
+    expect(before).toMatchObject({ readinessSince: null, readiness: { rated: 4, seriousBad: 1 } });
+    expect((await api(admin, ws, "GET", "/agent/settings")).body.readinessSince).toBeNull();
+
+    expect((await api(owner, ws, "POST", "/agent/settings/reset-readiness")).status).toBe(403);
+    const reset = await api(admin, ws, "POST", "/agent/settings/reset-readiness");
+    expect(reset.status).toBe(200);
+    expect(Date.parse(reset.body.readinessSince)).toBeGreaterThan(Date.now() - 60_000);
+
+    await decision(ws, leadId, { rating: "good" });
+    const after = (await api(owner, ws, "GET", "/agent/stats")).body;
+    expect(after.readinessSince).toBe(reset.body.readinessSince);
+    expect(after.readiness).toMatchObject({ rated: 1, goodPct: 100, seriousBad: 0 });
+    expect(after.ratings).toMatchObject({ rated: 1, good: 1, bad: 0 });
+    // The gate in the live preview uses the same count; the old ratings are still stored.
+    expect((await api(admin, ws, "GET", "/agent/settings/live-preview?scope=all")).body.readiness).toMatchObject({ rated: 1, seriousBad: 0 });
+    expect((await pool.query(`select count(*)::int as n from public.agent_decisions where workspace_id = $1 and rating is not null`, [ws])).rows[0].n).toBe(5);
+  });
+
   it("lead panel: agent status, the next pending wakeup and the last 10 decisions", async () => {
     const ws = await newWorkspace();
     const leadId = await newLead(ws);

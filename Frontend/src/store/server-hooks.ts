@@ -534,6 +534,19 @@ export function useUpdateAgentSettings() {
   });
 }
 
+/** E2f (admin): "Reset go-live count" — the gate counts only decisions created from now on. */
+export function useResetReadiness() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: () => backend.agent.settings.resetReadiness(),
+    onSuccess: (data) => {
+      client.setQueryData(keys.agentSettings(currentWorkspaceId), data);
+      void client.invalidateQueries({ queryKey: keys.agentStats(currentWorkspaceId) });
+    },
+  });
+}
+
 /** E2 (admin): the confirm dialog's numbers for switching to Live with `scope`; fresh each time. */
 export function useAgentLivePreview(scope: AgentLiveScope | null) {
   const { currentWorkspaceId } = useWorkspace();

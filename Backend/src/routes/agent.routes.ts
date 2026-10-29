@@ -97,6 +97,9 @@ agentRouter.get(
   asyncHandler(async (req, res) => res.json(await settings.getLivePreview(pool, ws(req), parseQuery(previewQuery, req.query).scope))),
 );
 
+// E2f: the go-live gate counts only decisions created from now on.
+agentRouter.post("/settings/reset-readiness", asyncHandler(async (req, res) => res.json(await settings.resetReadiness(pool, req.actor!, ws(req)))));
+
 agentRouter.get("/playbooks", asyncHandler(async (req, res) => res.json(await settings.listPlaybooks(pool, ws(req)))));
 
 const playbookSchema = z.object({ body: z.string().trim().min(1, "The playbook can't be empty.").max(50_000) });

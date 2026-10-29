@@ -278,12 +278,14 @@ export async function resolveReport(db: Queryable, workspaceId: string, id: stri
   throw new ConflictError("This report is already resolved.");
 }
 
-/** Ratings for the go-live gate (failed decisions excluded). */
+/** Ratings for the go-live gate (failed decisions excluded; E2f: only decisions created since agent_settings.readiness_since). */
 async function loadRatings(db: Queryable, workspaceId: string) {
   const rows = (
     await db.query<{ rating: "good" | "bad"; reason: RatingReason | null; n: number }>(
       `select rating, rating_reason as reason, count(*)::int as n from public.agent_decisions
-        where workspace_id = $1 and outcome <> 'failed' and rating is not null group by rating, rating_reason`,
+        where workspace_id = $1 and outcome <> 'failed' and rating is not null
+          and created_at >= coalesce((select readiness_since from public.agent_settings where workspace_id = $1), '-infinity')
+        group by rating, rating_reason`,
       [workspaceId],
     )
   ).rows;
@@ -329,6 +331,7 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
     db.query<{
       scope: LiveScope;
       live_since: Date | null;
+      readiness_since: Date | null;
       live_contacts: number;
       sent_today: number;
       sent_month: number;
@@ -336,7 +339,7 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       email_max_words: number;
       whatsapp_max_words: number;
     }>(
-      `select s.live_scope as scope, s.live_since, s.banned_phrases, s.email_max_words, s.whatsapp_max_words,
+      `select s.live_scope as scope, s.live_since, s.readiness_since, s.banned_phrases, s.email_max_words, s.whatsapp_max_words,
               case when s.mode = 'live' then (select count(*)::int from public.leads l where l.workspace_id = s.workspace_id and ${liveContactSql("s.live_scope", "s.live_since")}) else 0 end as live_contacts,
               (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
                 and sent_at >= (${IST_DAY} at time zone 'Asia/Kolkata')) as sent_today,
@@ -375,6 +378,8 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       costUsd: Math.round(replies.rows.reduce((sum, r) => sum + r.cost, 0) * 1e6) / 1e6,
     },
     readiness: goLiveReadiness({ good, badByReason }),
+    // E2f: ratings (and readiness) count decisions created since this time; null = all time.
+    readinessSince: live.rows[0]?.readiness_since?.toISOString() ?? null,
     live: live.rows[0]
       ? {
           scope: live.rows[0].scope,
