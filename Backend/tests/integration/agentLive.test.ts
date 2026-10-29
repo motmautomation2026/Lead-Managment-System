@@ -65,7 +65,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     const phone = randomPhone();
     const result = await pool.query<{ id: string; email: string }>(
       `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, agent_status, agent_live_test, pipeline_stage)
-       values ($1, 'Asha', 'Rao', 'Acme Steel', 'website', $2, $3, $3, $4, 'active', $5, 'connected_qualifying') returning id, email`,
+       values ($1, 'Asha', 'Rao', 'Acme Steel', 'linkedin', $2, $3, $3, $4, 'active', $5, 'connected_qualifying') returning id, email`,
       [ws, `live-${randomUUID()}@example.com`, phone, adminId, opts.marked ?? true],
     );
     return { ...result.rows[0]!, phone };

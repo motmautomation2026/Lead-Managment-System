@@ -45,7 +45,7 @@ async function main(id: string) {
   const { composeOutgoing } = await import("../src/agent/composeMessage.js");
   const { parsePrices } = await import("../src/agent/pricing.js");
   const { countTokens } = await import("../src/knowledge/chunkText.js");
-  const { checkMessage } = await import("../src/agent/messageChecks.js");
+  const { checkMessage, messageFactsOf } = await import("../src/agent/messageChecks.js");
   const { STYLE_RULES } = await import("../src/agent/prompt.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
@@ -128,7 +128,7 @@ async function main(id: string) {
           console.log(`  (not a message: nothing to check${why ? `; ${why}` : ""})`);
           return;
         }
-        const failed = checkMessage(d, ctx.settings);
+        const failed = checkMessage(d, ctx.settings, messageFactsOf(ctx));
         const line = (ok: boolean, name: string, detail?: string) => console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
         for (const [rule, name] of [
           ["banned_phrase", "no banned phrases"],
@@ -136,6 +136,9 @@ async function main(id: string) {
           ["one_question", "at most one question"],
           ["compound_question", "question about one thing"],
           ["exclamation", "no exclamation marks"],
+          ["not_thanking_inbound", "inbound first message thanks them"],
+          ["introduction_mid_conversation", "no introduction mid-conversation"],
+          ["internal_info_leak", "no internal information"],
         ] as const) {
           const hit = failed.find((v) => v.rule === rule);
           line(!hit, name, hit?.message);

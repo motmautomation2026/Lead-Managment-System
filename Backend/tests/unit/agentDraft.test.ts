@@ -158,7 +158,8 @@ describe("E2b rule 4: what the model sees", () => {
   });
 
   it("ends with the checklist: banned phrases, limits, inbound thanks, no introduction mid-conversation", () => {
-    const text = userText(sampleContext());
+    // E2c: a current-playbook shadow draft means it is no longer the first message.
+    const text = userText(sampleContext({ pastMessages: [] }));
     const tail = text.slice(text.indexOf("Before you answer, check:"));
     expect(text.endsWith(tail)).toBe(true);
     expect(tail).toContain('- None of these phrases: "thanks for connecting", "just following up", "today", "free".');
@@ -174,12 +175,17 @@ describe("E2b rule 4: what the model sees", () => {
 
   it("situation: nothing yet vs an open deal at a proposal stage (Raj's case: no introduction)", () => {
     const base = sampleContext({ timeline: [], pastMessages: [] });
-    expect(situationOf(base)).toEqual({ inbound: true, firstMessage: true, hasCallOrNote: false, proposalStage: false, conversationStarted: false });
+    expect(situationOf(base)).toEqual({ inbound: true, firstMessage: true, hasCallOrNote: false, proposalStage: false, conversationExists: false });
     const open = { id: "d-1", name: "TRC", stage: "negotiation" as const, stageLabel: "Negotiation", daysInStage: 3, expectedCloseMonth: null, latestMeeting: null, latestProposal: null };
     const raj = sampleContext({ timeline: [], pastMessages: [], internal: { companyDescription: null, deal: { open, wonCount: 0, lostCount: 0 } } });
-    expect(situationOf(raj)).toMatchObject({ proposalStage: true, conversationStarted: true });
+    expect(situationOf(raj)).toMatchObject({ proposalStage: true, conversationExists: true });
     const sent = sampleContext({ timeline: [], pastMessages: [{ ...sampleContext().pastMessages[0]!, outcome: "sent" }] });
     expect(situationOf(sent).firstMessage).toBe(false);
+    // E2c: in shadow a current-playbook draft counts as the first message having been written; an older playbook's does not.
+    expect(situationOf(sampleContext({ timeline: [] })).firstMessage).toBe(false);
+    expect(situationOf(sampleContext({ timeline: [], pastMessages: [{ ...sampleContext().pastMessages[0]!, playbookVersion: 2 }] })).firstMessage).toBe(true);
+    // E2c: a real AI send that got a reply.
+    expect(situationOf(sampleContext({ timeline: [], pastMessages: [], aiSendReplied: true })).conversationExists).toBe(true);
   });
 
   it("the checklist stays last after regeneration feedback", () => {

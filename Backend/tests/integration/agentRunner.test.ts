@@ -36,7 +36,8 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   let adminId: string;
   const workspaces: string[] = [];
 
-  async function scenario(settings: { mode?: string; monthly_budget_usd?: number; nurture_long_term?: boolean; playbook?: boolean } = {}) {
+  // Outbound (linkedin) by default: an inbound first message must thank the lead (E2c), tested on its own below.
+  async function scenario(settings: { mode?: string; monthly_budget_usd?: number; nurture_long_term?: boolean; playbook?: boolean; source?: string } = {}) {
     const ws = randomUUID();
     await createTestWorkspace(pool, "runner", { id: ws });
     workspaces.push(ws);
@@ -52,8 +53,8 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     );
     const lead = await pool.query(
       `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, agent_status, pipeline_stage)
-       values ($1, 'Asha', 'Rao', 'Acme Steel', 'website', $2, '+919800000002', '+919800000002', $3, 'active', 'connected_qualifying') returning id`,
-      [ws, `runner-${randomUUID()}@example.com`, adminId],
+       values ($1, 'Asha', 'Rao', 'Acme Steel', $4, $2, '+919800000002', '+919800000002', $3, 'active', 'connected_qualifying') returning id`,
+      [ws, `runner-${randomUUID()}@example.com`, adminId, settings.source ?? "linkedin"],
     );
     const leadId = lead.rows[0].id as string;
     const wakeupId = await wakeup(ws, leadId);
@@ -425,5 +426,80 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
       [leadId, ws],
     );
     expect(counts.rows[0]).toEqual({ tasks: 0, whatsapp: 0, runs: 0 });
+  });
+
+  describe("E2c: message checks in code", () => {
+    const whatsapp = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+
+    it("an inbound first message that thanks the lead is accepted (Suyash); one without thanks is regenerated", async () => {
+      const { ws, leadId } = await scenario({ source: "website" });
+      const thanks = whatsapp("Hello Asha, thank you for contacting Northbeam. We focus on relevant business opportunities. Would a short introductory call in the coming days suit you?");
+      const model = createFakeDecisionModel({ decisions: [thanks] });
+      expect((await tick(ws, model))[0]).toMatchObject({ result: "draft", action: "send_whatsapp" });
+      const [row] = await decisions(leadId);
+      expect(row).toMatchObject({ action: "send_whatsapp", regenerated: false });
+      expect(row.rules_result.allowed).toBe(true);
+      const prompt = decideCalls(model)[0]!.input.messages[1]!.content;
+      expect(prompt).toContain("Conversation so far: none yet.");
+      // The model no longer judges the thanks rule.
+      expect(model.calls.find((c) => c.kind === "grounding")!.input.messages[0]!.content).not.toContain("not_thanking_inbound");
+
+      const other = await scenario({ source: "website" });
+      const noThanks = createFakeDecisionModel({ decisions: [whatsapp("Hello Asha, hope you are well. Would a short call suit you?"), thanks] });
+      await tick(other.ws, noThanks);
+      const [retried] = await decisions(other.leadId);
+      expect(retried).toMatchObject({ action: "send_whatsapp", regenerated: true });
+      expect(retried.quality_checks[0].problems[0]).toMatch(/^not_thanking_inbound: /);
+      expect(decideCalls(noThanks)).toHaveLength(2);
+    });
+
+    it("with a logged note, an introduction is regenerated, then accepted; twice → handoff", async () => {
+      const intro = whatsapp("Hi Asha, thank you for reaching out. Could we set up an introductory call?");
+      const followUp = whatsapp("Hi Asha, following your note about outbound for Acme Steel, would Tuesday suit you for a call?");
+      const { ws, leadId } = await scenario();
+      await pool.query(`insert into public.lead_notes (lead_id, author_name, body, created_at) values ($1, 'Rep', 'Interested in outbound.', now() - interval '3 days')`, [leadId]);
+      const model = createFakeDecisionModel({ decisions: [intro, followUp] });
+      await tick(ws, model);
+      const [row] = await decisions(leadId);
+      expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true, message_body: followUp.action === "send_whatsapp" ? followUp.body : null });
+      expect(row.quality_checks[0].problems[0]).toMatch(/^introduction_mid_conversation: /);
+      expect(decideCalls(model)[0]!.input.messages[1]!.content).toContain("Conversation so far: you are already in discussion with this contact");
+
+      const other = await scenario();
+      await pool.query(`insert into public.lead_notes (lead_id, author_name, body, created_at) values ($1, 'Rep', 'Interested.', now() - interval '3 days')`, [other.leadId]);
+      await tick(other.ws, createFakeDecisionModel({ decisions: [intro, intro] }));
+      const [handoff] = await decisions(other.leadId);
+      expect(handoff).toMatchObject({ action: "handoff", handoff_title: "AI couldn't write a message that meets the playbook" });
+    });
+
+    it("repeating 4+ words of the internal company description → internal_info_leak → regenerated; still leaking → handoff", async () => {
+      const leak = whatsapp("Hi Asha, we support firms in specialty chemicals for textile plants. Would Tuesday suit you for a call?");
+      const clean = whatsapp("Hi Asha, would Tuesday suit you for a short call about outbound for Acme Steel?");
+      const withCompany = async () => {
+        const s = await scenario();
+        const company = (
+          await pool.query(
+            `insert into public.companies (workspace_id, name, normalized_name, description) values ($1, 'Acme Steel', 'acme steel', 'Supplier of specialty chemicals for textile plants in Gujarat.') returning id`,
+            [s.ws],
+          )
+        ).rows[0].id as string;
+        await pool.query(`update public.leads set company_id = $2 where id = $1`, [s.leadId, company]);
+        return s;
+      };
+      const first = await withCompany();
+      const model = createFakeDecisionModel({ decisions: [leak, clean] });
+      await tick(first.ws, model);
+      const [row] = await decisions(first.leadId);
+      expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true });
+      expect(row.quality_checks[0].problems[0]).toBe('internal_info_leak: Repeats internal information. Do not mention: "specialty chemicals for textile plants".');
+      expect(decideCalls(model)[1]!.input.messages[1]!.content).toContain('Do not mention: "specialty chemicals for textile plants"');
+
+      const second = await withCompany();
+      await tick(second.ws, createFakeDecisionModel({ decisions: [leak, leak] }));
+      const [handoff] = await decisions(second.leadId);
+      // A leak is a safety problem, not a playbook one.
+      expect(handoff).toMatchObject({ action: "handoff", handoff_title: "AI couldn't write a safe message" });
+      expect(handoff.quality_checks[1].problems.some((p: string) => p.startsWith("internal_info_leak: "))).toBe(true);
+    });
   });
 });

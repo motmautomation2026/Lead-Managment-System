@@ -117,6 +117,8 @@ export interface AgentContext {
   /** Oldest first. */
   decisionSummaries: AgentDecisionSummary[];
   playbook: { version: number; body: string } | null;
+  /** E2c rule 2: a real AI send got a matched reply (WhatsApp or email) after it. */
+  aiSendReplied: boolean;
   knowledge: { query: string; chunks: AgentKnowledgeChunk[] };
   assets: AgentAssetSummary[];
   meta: { tokenEstimate: number; trimmedTimelineEvents: number; trimmedDecisionSummaries: number };
@@ -214,7 +216,7 @@ export async function buildAgentContext(
   const mode = effectiveMode(settings, { agentLiveTest: leadRow.agent_live_test, createdAt: leadRow.created_at });
   const shadow = mode === "shadow";
 
-  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap] = await Promise.all([
+  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied] = await Promise.all([
     db.query<{ message: string | null }>(
       `select t.metadata ->> 'rawMessage' as message
          from public.timeline_events t join public.leads l on l.id = t.lead_id
@@ -287,6 +289,17 @@ export async function buildAgentContext(
       [workspaceId],
     ),
     db.query<{ last_success_at: Date | null }>(`select last_success_at from public.email_imap_state where workspace_id = $1`, [workspaceId]),
+    db.query<{ replied: boolean }>(
+      `select exists (
+         select 1 from public.agent_decisions d
+          where d.lead_id = $1 and d.workspace_id = $2 and d.outcome = 'sent' and d.sent_at is not null
+            and (exists (select 1 from public.whatsapp_inbound_events w
+                          where w.lead_id = $1 and w.workspace_id = $2 and w.disposition = 'matched' and w.received_at > d.sent_at)
+              or exists (select 1 from public.email_inbound_events e
+                          where e.lead_id = $1 and e.workspace_id = $2 and e.kind = 'reply' and e.match_status = 'matched' and e.received_at > d.sent_at))
+       ) as replied`,
+      [leadId, workspaceId],
+    ),
   ]);
 
   const lead: AgentContextLead = {
@@ -379,6 +392,7 @@ export async function buildAgentContext(
       reasoning: truncate(d.reasoning, REASONING_LIMIT) ?? "",
     })),
     playbook: playbookRow.rows[0] ?? null,
+    aiSendReplied: replied.rows[0]?.replied ?? false,
     knowledge: { query: "", chunks: [] },
     assets,
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },

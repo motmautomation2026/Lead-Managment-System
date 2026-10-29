@@ -168,9 +168,11 @@ describe("grounding", () => {
 
   it("E2b: style violations are part of the strict schema and parsed", () => {
     expect(GROUNDING_JSON_SCHEMA.required).toEqual(["supported", "unsupportedClaims", "styleViolations"]);
-    const out = { supported: true, unsupportedClaims: [], styleViolations: [{ rule: "not_thanking_inbound", quote: "Hi Asha" }] };
+    const out = { supported: true, unsupportedClaims: [], styleViolations: [{ rule: "introduction_mid_conversation", quote: "I'm Ravi" }] };
     expect(parseGroundingOutput(JSON.stringify(out))).toEqual(out);
     expect(() => parseGroundingOutput({ ...out, styleViolations: [{ rule: "made_up", quote: "x" }] })).toThrow();
+    // E2c: the inbound-thanks rule moved to code.
+    expect(() => parseGroundingOutput({ ...out, styleViolations: [{ rule: "not_thanking_inbound", quote: "Hi Asha" }] })).toThrow();
   });
 });
 

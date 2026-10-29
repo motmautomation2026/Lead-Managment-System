@@ -153,6 +153,10 @@ function leadDataText(ctx: AgentContext): string {
     `Has email: ${rules.lead.email ? "yes" : "no"}; has WhatsApp number: ${rules.lead.phoneE164 ? "yes" : "no"}`,
     ...(rules.emailBlockedReason ? [rules.emailBlockedReason] : []),
     `Website enquiry: ${lead.websiteMessage ?? "none"}`,
+    // E2c rule 2: one neutral line, never stage names, amounts or other internal details.
+    situationOf(ctx).conversationExists
+      ? `Conversation so far: you are already in discussion with this contact (do not introduce ${ctx.companyName} again or ask for a first call).`
+      : "Conversation so far: none yet.",
     ...companyLines(ctx),
   ].join("\n");
 }
@@ -173,7 +177,7 @@ function checklist(settings: AgentSettingsRow, situation: Situation): string[] {
     ...(banned ? [`- None of these phrases: ${banned}.`] : []),
     `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
     ...(situation.inbound && situation.firstMessage ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
-    ...(situation.conversationStarted ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
+    ...(situation.conversationExists ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
   ];
 }
 
@@ -223,8 +227,8 @@ function knowledgeBlock(chunks: AgentKnowledgeChunk[]) {
 
 // --- Grounding ------------------------------------------------------------------
 
-/** E2b rule 2: playbook style rules the grounding call also checks (no extra API call). */
-export const STYLE_RULES = ["asks_lead_to_describe_business", "not_thanking_inbound", "introduction_mid_conversation", "unsupported_sector_claim"] as const;
+/** E2b rule 2: playbook style rules the grounding call also checks (no extra API call). E2c: inbound thanks is checked in code. */
+export const STYLE_RULES = ["asks_lead_to_describe_business", "introduction_mid_conversation", "unsupported_sector_claim"] as const;
 
 export const GROUNDING_JSON_SCHEMA = {
   type: "object",
@@ -281,13 +285,10 @@ function styleCheckLines(situation: Situation): string[] {
   return [
     "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
     '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers or process in writing when lead_data has no stated goal or challenge. Example: "Could you tell me which markets you sell to and how you find customers?"',
-    '- not_thanking_inbound: the first message to an inbound lead does not thank them for reaching out. Example: "Hi Asha, we help manufacturers grow sales. Shall we talk?" (no thanks for the enquiry).',
-    '- introduction_mid_conversation: introduces us or asks for a first call although a conversation already exists. Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?"',
+    '- introduction_mid_conversation: introduces us or asks for a first call although conversationExists is true (below). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?"',
     '- unsupported_sector_claim: says we help, work with or have experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow."',
     "Facts from the CRM (reliable):",
-    `- Inbound lead (they reached out to us): ${yesNo(situation.inbound)}`,
-    `- First message to this contact: ${yesNo(situation.firstMessage)}`,
-    `- A conversation already exists (call, note, meeting, proposal or an advanced deal): ${yesNo(situation.conversationStarted)}`,
+    `- conversationExists: ${situation.conversationExists}`,
   ];
 }
 

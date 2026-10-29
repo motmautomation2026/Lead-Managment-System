@@ -5,7 +5,7 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
-import { checkMessage } from "../agent/messageChecks.js";
+import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -37,7 +37,8 @@ const QUESTION_HANDOFF_TITLE = "AI couldn't write a one-question message";
 const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playbook";
 const QUESTION_RULE = "one_question";
 // Problems that are about the playbook's writing rules (E2b), not safety or facts.
-const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", ...STYLE_RULES];
+// internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
@@ -114,8 +115,8 @@ export async function draftDecision(
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
     add(deps.decisionModel, decided);
     let rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
-    // E2b rule 1 (both modes): deterministic writing checks, before grounding; recorded as rule violations.
-    const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings);
+    // E2b rule 1 + E2c (both modes): deterministic writing checks, before grounding; recorded as rule violations.
+    const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx));
     if (messageViolations.length) rules = { ...rules, allowed: false, executable: false, violations: [...rules.violations, ...messageViolations] };
     let grounding: GroundingResult | null = null;
     if (rules.allowed && isSend(rules.finalDecision)) {

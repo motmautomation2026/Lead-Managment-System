@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { checkMessage, compoundQuestion, findBannedPhrases, wordCount, type MessageCheckSettings } from "../../src/agent/messageChecks.js";
+import {
+  checkMessage,
+  compoundQuestion,
+  findBannedPhrases,
+  hasInboundThanks,
+  internalLeaks,
+  introductionPhrases,
+  messageFactsOf,
+  wordCount,
+  type MessageCheckSettings,
+  type MessageFacts,
+} from "../../src/agent/messageChecks.js";
+import { sampleContext } from "../helpers/agentContextFixture.js";
 
 const DEFAULT_BANNED = [
   "thanks for connecting",
@@ -113,5 +125,110 @@ describe("checkMessage", () => {
       "exclamation",
     ]);
     expect(checkMessage({ action: "wait", nextWakeInDays: 2, reasoning: "r" }, settings)).toEqual([]);
+  });
+});
+
+// --- E2c ---------------------------------------------------------------------------
+
+const facts = (over: Partial<MessageFacts> = {}): MessageFacts => ({
+  inboundFirst: false,
+  conversationExists: false,
+  ownerFirstName: "Govinda",
+  companyName: "MOTM Technologies",
+  internalTexts: [],
+  ...over,
+});
+const e2cRules = (decision: AgentDecision, f: MessageFacts) => checkMessage(decision, settings, f).map((v) => v.rule);
+
+describe("E2c rule 1: inbound first message thanks them", () => {
+  it.each([
+    ["Hello Suyash, thank you for contacting MOTM Technologies. Would a short call suit you?", true],
+    ["Thanks for your enquiry about outbound calling.", true],
+    ["Thank you for sharing your requirements with us.", true],
+    ["THANK YOU FOR REACHING OUT, Asha.", true],
+    ["Thanks so much for getting in touch with us.", true],
+    ["Thank you for your inquiry on our website.", true],
+    ["Thanks a lot for your interest in MOTM.", true],
+    ["Thank you for writing to us, Raj.", true],
+    ["Thank you for filling in the form on our website.", true],
+    ["Thank you, Ravi, for submitting the enquiry form.", true],
+    ["Thank-you for contacting us.", true],
+    ["Hope you are well. Would a short call suit you?", false],
+    ["Thanks. We help B2B firms; would a call suit you?", false],
+    ["Thank you for your time on the call last week, which was very useful for sharing.", false],
+    ["We are happy you are contacting us, thank you.", false],
+  ])("%s → %s", (body, ok) => {
+    expect(hasInboundThanks(body)).toBe(ok);
+    expect(e2cRules(whatsapp(body), facts({ inboundFirst: true })).includes("not_thanking_inbound")).toBe(!ok);
+  });
+
+  it("is not checked for a message that is not the first one to an inbound lead", () => {
+    expect(e2cRules(whatsapp("Hope you are well. Would a short call suit you?"), facts())).toEqual([]);
+  });
+
+  it("first = no real send and no current-playbook draft (shadow); inbound = website / form", () => {
+    expect(messageFactsOf(sampleContext({ pastMessages: [] })).inboundFirst).toBe(true);
+    expect(messageFactsOf(sampleContext()).inboundFirst).toBe(false); // the fixture has a v3 draft, playbook v3
+    expect(messageFactsOf(sampleContext({ pastMessages: [], lead: { ...sampleContext().lead, source: "cold_call" } })).inboundFirst).toBe(false);
+  });
+});
+
+describe("E2c rule 2: no introduction mid-conversation", () => {
+  const f = facts({ conversationExists: true });
+  it.each([
+    "Hi Raj, thank you for reaching out. Shall we talk?",
+    "Hi Raj, thank you for contacting us.",
+    "Hi Raj, this is Govinda from MOTM Technologies.",
+    "Hi Raj, I am Govinda from MOTM.",
+    "Hi Raj, I’m Govinda from MOTM.",
+    "Would an introductory call next week suit you?",
+    "Shall we set up an introductory discussion?",
+    "I'd like to introduce MOTM Technologies to your team.",
+    "Let us introduce ourselves briefly.",
+  ])("flags %s", (body) => {
+    expect(e2cRules(whatsapp(body), f)).toContain("introduction_mid_conversation");
+  });
+
+  it("passes follow-ups, and is not checked without a conversation", () => {
+    expect(e2cRules(whatsapp("Hi Raj, following the proposal, is the revised scope clear on your side?"), f)).toEqual([]);
+    expect(e2cRules(whatsapp("Hi Raj, this is Govinda from MOTM Technologies."), facts())).toEqual([]);
+    // Another person's name: not our owner introducing themselves.
+    expect(introductionPhrases("This is Priya from your team's note.", f)).toEqual([]);
+  });
+
+  it("an inbound first message may say thank you for contacting us even when a call was logged", () => {
+    const both = facts({ inboundFirst: true, conversationExists: true });
+    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Is Monday good for the call we discussed?"), both)).toEqual([]);
+    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Would an introductory call suit you?"), both)).toEqual(["introduction_mid_conversation"]);
+  });
+
+  it("the subject counts too", () => {
+    expect(e2cRules(email("Hi Raj, shall we review the proposal?", "Introductory call"), f)).toEqual(["introduction_mid_conversation"]);
+  });
+});
+
+describe("E2c rule 3: internal information leak", () => {
+  const description = "TRC is a leading supplier of specialty chemicals for textile plants across Gujarat.";
+  it("flags an exact run of 4+ words from the description, merged into one phrase", () => {
+    expect(internalLeaks("We support TRC in specialty chemicals for textile plants.", [description])).toEqual(["specialty chemicals for textile plants"]);
+  });
+  it("ignores case and punctuation", () => {
+    expect(internalLeaks("Specialty-Chemicals, for TEXTILE plants?", [description])).toEqual(["specialty chemicals for textile plants"]);
+  });
+  it("a 3-word overlap is not a leak", () => {
+    expect(internalLeaks("We know specialty chemicals for many sectors.", [description])).toEqual([]);
+  });
+  it("a run of common words only is not a leak", () => {
+    expect(internalLeaks("It is one of the best options.", ["It is one of the oldest firms in the city."])).toEqual([]);
+  });
+  it("checks the open deal name and the email subject, and feeds the phrase back", () => {
+    const f = facts({ internalTexts: [description, "TRC Gujarat dyeing unit expansion"] });
+    const v = checkMessage(email("Hi Raj, shall we talk?", "About the Gujarat dyeing unit expansion"), settings, f);
+    expect(v).toEqual([{ rule: "internal_info_leak", message: 'Repeats internal information. Do not mention: "gujarat dyeing unit expansion".' }]);
+  });
+  it("messageFactsOf takes the company description and the open deal name", () => {
+    const open = { id: "d-1", name: "TRC deal", stage: "negotiation" as const, stageLabel: "Negotiation", daysInStage: 3, expectedCloseMonth: null, latestMeeting: null, latestProposal: null };
+    const ctx = sampleContext({ internal: { companyDescription: description, deal: { open, wonCount: 0, lostCount: 0 } } });
+    expect(messageFactsOf(ctx)).toMatchObject({ internalTexts: [description, "TRC deal"], conversationExists: true, ownerFirstName: "Ravi" });
   });
 });

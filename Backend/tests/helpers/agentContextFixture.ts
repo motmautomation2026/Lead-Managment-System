@@ -79,6 +79,7 @@ export function sampleContext(overrides: Partial<AgentContext> = {}): AgentConte
     pastMessages: [{ at: "2026-10-21T05:00:00.000Z", channel: "email", subject: "Outbound for Acme", body: "Hi Asha, following up.", outcome: "draft", playbookVersion: 3 }],
     decisionSummaries: [{ at: "2026-10-21T05:00:00.000Z", action: "send_email", outcome: "draft", reasoning: "First follow-up" }],
     playbook: { version: 3, body: "Tone: warm and direct." },
+    aiSendReplied: false,
     knowledge: { query: "q", chunks: [{ id: "c1", title: "Acme case study", text: "Acme booked 40 meetings in 90 days." }] },
     assets: [{ id: "a1", title: "Case study PDF", useWhen: "Lead asks for proof", channels: ["email"], sizeBytes: 1000 }],
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },
