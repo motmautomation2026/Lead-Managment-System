@@ -373,10 +373,11 @@ Migration 045.
   settings row), so non-admins can read the rules.
 - `GET /agent/decisions/:decisionId` adds `qualityChecks: [{ problems: string[] }] | null` — one entry per drafting attempt
   (empty `problems` = passed; null before E2b). Message-check failures also appear in `rulesResult.violations` (rules
-  `banned_phrase`, `length`, `one_question`, `compound_question`, `exclamation`; `length` was a `rules.ts` rule before).
+  `banned_phrase`, `length`, `one_question`, `compound_question`, `exclamation`; E2c adds `not_thanking_inbound`,
+  `introduction_mid_conversation`, `internal_info_leak`; `length` was a `rules.ts` rule before).
 - `groundingResult` (detail) and the lead panel rows' `grounding` add `styleViolations: [{ rule, quote }]` (absent before
-  E2b); rules `asks_lead_to_describe_business`, `not_thanking_inbound`, `introduction_mid_conversation`,
-  `unsupported_sector_claim`.
+  E2b); rules `asks_lead_to_describe_business`, `introduction_mid_conversation`, `unsupported_sector_claim`
+  (`not_thanking_inbound` only on decisions before E2c; it is checked in code since).
 - New handoff title: "AI couldn't write a message that meets the playbook".
 
 ## 8. Performance (B4 check)

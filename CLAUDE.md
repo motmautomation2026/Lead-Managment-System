@@ -571,6 +571,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   decision drawer's Checks show style problems and "First attempt failed (regenerated)". `npm run agent:preview -- --lead <id>
   --evaluate` (implies `--call`) ignores mode off, AI status and touch limits (prints what it ignored), saves/sends nothing,
   and prints "Quality checks" (each rule PASS/FAIL per attempt).
+- **E2c (AI message quality fixes; nothing new sent, no migration):** three checks moved into code (`agent/messageChecks.ts`
+  `checkMessage(decision, settings, messageFactsOf(ctx))`, before grounding, same ONE regeneration then handoff):
+  `not_thanking_inbound` (first message to a website/form lead must say "thank you"/"thanks" followed within 6 words by
+  contacting, reaching out, getting in touch, your enquiry/inquiry, your interest, writing to us, filling, submitting or sharing;
+  removed from the grounding style schema/prompt), `introduction_mid_conversation` (when `conversationExists`: no "thank you for
+  reaching out/contacting" (allowed on an inbound first message), "this is / I am / I'm <owner first name> from", "introductory
+  call/discussion", "introduce <company>", "introduce ourselves"), `internal_info_leak` (any ≥ 4-word run of the internal company
+  description or the open deal name in body or subject, not stop-words only; feedback "Do not mention: …"; a safety problem →
+  handoff "AI couldn't write a safe message"). `agent/situation.ts`: `conversationExists` (was `conversationStarted`: call/note,
+  meeting/proposal, a real AI send with a matched WhatsApp/email reply after it (`ctx.aiSendReplied`), open deal past
+  `qualified`); `firstMessage` also false after a current-playbook shadow draft. Prompt: lead_data line "Conversation so far: you
+  are already in discussion with this contact (do not introduce <company> again or ask for a first call)." / "Conversation so far:
+  none yet."; grounding gets `conversationExists: true|false` (the inbound/first-message lines are gone). AI Activity: check names
+  in plain words (`CHECK_LABEL`, `checkProblem`), "Internal information leak" in red also among a regenerated attempt's failures.
+  `agent:preview --evaluate` prints the three new checks.
 
 ## WhatsApp safety (E1)
 
@@ -678,6 +693,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
   send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
 - One question per message (both modes): > 1 → regenerate once → handoff.
+- E2c (both modes, in code, never the model): an inbound first message must thank the lead; when a conversation exists
+  (`situationOf(ctx).conversationExists`) no introduction or first-call ask; never ≥ 4 consecutive words of the internal
+  company description or open deal name (`internal_info_leak`, serious).
 - Message quality (E2b, both modes, every send decision): code checks first (`checkMessage`: admin-editable banned phrases,
   word limits from settings, one question about one thing, no "!"), then the grounding call also returns playbook style
   problems; every problem from either goes into the ONE regeneration as feedback, then handoff. The prompt's limits and

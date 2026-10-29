@@ -153,13 +153,50 @@ export const ENROLL_SKIP_LABEL: Record<AgentEnrollSkipReason | "failed", string>
   failed: "Failed",
 };
 
-/** E2b playbook style rules checked by the grounding model. */
+/** E2b playbook style rules checked by the grounding model (not_thanking_inbound: before E2c). */
 export const STYLE_RULE_LABEL: Record<string, string> = {
   asks_lead_to_describe_business: "Asks the lead to describe their business",
   not_thanking_inbound: "Doesn't thank an inbound lead",
   introduction_mid_conversation: "Introduces us mid-conversation",
   unsupported_sector_claim: "Unsupported sector claim",
 };
+
+/** Every check name (code rules, E2b/E2c message checks, style rules) in plain words. */
+export const CHECK_LABEL: Record<string, string> = {
+  ...STYLE_RULE_LABEL,
+  banned_phrase: "Banned phrase",
+  length: "Too long",
+  one_question: "More than one question",
+  compound_question: "Asks two things at once",
+  exclamation: "Exclamation mark",
+  internal_info_leak: "Internal information leak",
+  content_contacts: "Contact details not allowed",
+  content_html: "Contains HTML",
+  content_opt_out: "Contains opt-out text",
+  content_signature: "Contains a signature",
+  assets: "Attachments",
+  channel: "Channel not usable",
+  agent_status: "AI status",
+  lifecycle: "Contact lifecycle",
+  max_touches_total: "Message limit reached",
+  mode_off: "AI is off",
+  next_wake: "Next check-in",
+  rep_quiet: "Rep was recently in touch",
+  stage: "Stage change not allowed",
+  timing: "Timing",
+};
+
+/** Serious problems shown in red wherever they appear (also among a regenerated attempt's failures). */
+export const SERIOUS_CHECKS = ["internal_info_leak"];
+
+/** A stored problem ("<rule>: <detail>") with its rule in plain words; other text unchanged. */
+export function checkProblem(problem: string): { rule: string | null; text: string } {
+  const at = problem.indexOf(": ");
+  const rule = at > 0 ? problem.slice(0, at) : "";
+  return CHECK_LABEL[rule]
+    ? { rule, text: `${CHECK_LABEL[rule]}: ${problem.slice(at + 2)}` }
+    : { rule: null, text: problem };
+}
 
 /** Date and time in IST, labelled. */
 export const istDateTime = (iso: string | null | undefined) =>

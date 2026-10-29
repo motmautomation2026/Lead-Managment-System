@@ -101,7 +101,43 @@ describe("E2 live UI pieces", () => {
     );
     expect(screen.getByText("Unsupported sector claim: “we help chemical makers”")).toBeTruthy();
     expect(
-      screen.getByText('banned_phrase: Uses banned phrase(s): "thanks for connecting".'),
+      screen.getByText('Banned phrase: Uses banned phrase(s): "thanks for connecting".'),
     ).toBeTruthy();
+  });
+
+  it("E2c: an internal information leak is shown in red by name, other checks in plain words", () => {
+    const leak =
+      'Repeats internal information. Do not mention: "specialty chemicals for textile plants".';
+    render(
+      <ChecksSummary
+        rules={{
+          allowed: false,
+          violations: [
+            { rule: "internal_info_leak", message: leak },
+            { rule: "not_thanking_inbound", message: "Thank them." },
+          ],
+          adjustments: [],
+        }}
+        grounding={null}
+        attempts={[
+          {
+            problems: [
+              `internal_info_leak: ${leak}`,
+              "introduction_mid_conversation: No intro.",
+              "Unsupported claim: 200 clients",
+            ],
+          },
+          { problems: [`internal_info_leak: ${leak}`] },
+        ]}
+      />,
+    );
+    const [now, before] = screen.getAllByText(`Internal information leak: ${leak}`);
+    expect(now!.className).toContain("text-destructive");
+    expect(before!.className).toContain("text-destructive");
+    expect(screen.getByText("Doesn't thank an inbound lead: Thank them.")).toBeTruthy();
+    expect(screen.getByText("Introduces us mid-conversation: No intro.").className).not.toContain(
+      "text-destructive",
+    );
+    expect(screen.getByText("Unsupported claim: 200 clients")).toBeTruthy();
   });
 });

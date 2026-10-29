@@ -34,7 +34,10 @@ import {
   OUTCOME_TONE,
   RATING_REASON_LABEL,
   RATING_REASONS,
+  CHECK_LABEL,
+  SERIOUS_CHECKS,
   STYLE_RULE_LABEL,
+  checkProblem,
   istDateTime,
   withIstTimes,
   usd,
@@ -275,6 +278,7 @@ export function ChecksSummary({
           <ul className="ml-4 list-disc text-xs">
             {rules.violations.map((v, i) => (
               <li key={`v${i}`} className="text-destructive">
+                {CHECK_LABEL[v.rule] ? `${CHECK_LABEL[v.rule]}: ` : ""}
                 {withIstTimes(v.message, istDateTime)}
               </li>
             ))}
@@ -325,9 +329,17 @@ export function ChecksSummary({
         <div>
           <span className="font-medium">First attempt failed (regenerated): </span>
           <ul className="ml-4 list-disc text-xs text-muted-foreground">
-            {firstFailed.map((p, i) => (
-              <li key={i}>{p}</li>
-            ))}
+            {firstFailed.map((p, i) => {
+              const { rule, text } = checkProblem(p);
+              return (
+                <li
+                  key={i}
+                  className={cn(rule && SERIOUS_CHECKS.includes(rule) && "text-destructive")}
+                >
+                  {text}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
