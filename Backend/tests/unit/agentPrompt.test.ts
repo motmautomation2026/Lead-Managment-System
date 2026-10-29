@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, neutralise, parseGroundingOutput } from "../../src/agent/prompt.js";
+import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, neutralise, parseGroundingOutput } from "../../src/agent/prompt.js";
 import { buildDealContext, type AgentDealRow } from "../../src/agent/dealContext.js";
 
 import { sampleContext, settings } from "../helpers/agentContextFixture.js";
@@ -164,6 +164,13 @@ describe("grounding", () => {
     expect(parseGroundingOutput('{"supported":false,"unsupportedClaims":["200 clients"]}')).toEqual({ supported: false, unsupportedClaims: ["200 clients"] });
     expect(() => parseGroundingOutput({ supported: true })).toThrow();
     expect(() => parseGroundingOutput({ supported: true, unsupportedClaims: [], extra: 1 })).toThrow();
+  });
+
+  it("E2b: style violations are part of the strict schema and parsed", () => {
+    expect(GROUNDING_JSON_SCHEMA.required).toEqual(["supported", "unsupportedClaims", "styleViolations"]);
+    const out = { supported: true, unsupportedClaims: [], styleViolations: [{ rule: "not_thanking_inbound", quote: "Hi Asha" }] };
+    expect(parseGroundingOutput(JSON.stringify(out))).toEqual(out);
+    expect(() => parseGroundingOutput({ ...out, styleViolations: [{ rule: "made_up", quote: "x" }] })).toThrow();
   });
 });
 

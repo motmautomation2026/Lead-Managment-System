@@ -71,6 +71,8 @@ export interface AgentPastMessage {
   subject: string | null;
   body: string;
   outcome: string;
+  /** The playbook version the message was written under (null = before it was recorded). */
+  playbookVersion: number | null;
 }
 
 export interface AgentDecisionSummary {
@@ -254,8 +256,8 @@ export async function buildAgentContext(
         order by t.occurred_at desc, t.created_at desc limit $5`,
       [leadId, workspaceId, TIMELINE_KINDS, LIFECYCLE_TITLES, TIMELINE_LIMIT],
     ),
-    db.query<{ created_at: Date; action: "send_email" | "send_whatsapp"; message_subject: string | null; message_body: string | null; outcome: string }>(
-      `select created_at, action, message_subject, message_body, outcome from public.agent_decisions
+    db.query<{ created_at: Date; action: "send_email" | "send_whatsapp"; message_subject: string | null; message_body: string | null; outcome: string; playbook_version: number | null }>(
+      `select created_at, action, message_subject, message_body, outcome, playbook_version from public.agent_decisions
         where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp') and message_body is not null
           and ($4::boolean or outcome = 'sent')
         order by created_at desc limit $3`,
@@ -370,6 +372,7 @@ export async function buildAgentContext(
       subject: d.message_subject,
       body: d.message_body!,
       outcome: d.outcome,
+      playbookVersion: d.playbook_version,
     })),
     decisionSummaries: summaryRows.rows.reverse().map((d) => ({
       at: d.created_at.toISOString(),

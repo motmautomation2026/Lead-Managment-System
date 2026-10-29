@@ -4,7 +4,7 @@ import { env } from "../env.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
 import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
-import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, type GroundingResult } from "../agent/prompt.js";
+import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
 import { checkMessage } from "../agent/messageChecks.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
@@ -34,7 +34,11 @@ const BUDGET_RETRY_MS = 60 * MINUTE;
 const FAILURE_RETRY_MS = 5 * MINUTE;
 const HANDOFF_TITLE = "AI couldn't write a safe message";
 const QUESTION_HANDOFF_TITLE = "AI couldn't write a one-question message";
+const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playbook";
 const QUESTION_RULE = "one_question";
+// Problems that are about the playbook's writing rules (E2b), not safety or facts.
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", ...STYLE_RULES];
+const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
@@ -124,6 +128,8 @@ export async function draftDecision(
       grounding = applyGroundingAllowList(checked.json, ctx);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
+    // E2b rule 2: style problems from the same grounding call.
+    const style = grounding?.styleViolations ?? [];
     return {
       decision: decided.json,
       rules,
@@ -131,6 +137,7 @@ export async function draftDecision(
       problems: [
         ...rules.violations.map((v) => `${v.rule}: ${v.message}`),
         ...unsupported.map((claim) => `Unsupported claim: ${claim}`),
+        ...style.map((v) => `${v.rule}: "${v.quote}"`),
       ],
     };
   };
@@ -152,7 +159,7 @@ export async function draftDecision(
   return {
     decision: {
       action: "handoff",
-      title: second.problems.every((p) => p.startsWith(`${QUESTION_RULE}:`)) ? QUESTION_HANDOFF_TITLE : HANDOFF_TITLE,
+      title: handoffTitle(second.problems),
       urgency: "normal",
       reasoning: `Two attempts failed the checks: ${second.problems.join("; ")}`.slice(0, 2000),
     },
@@ -163,6 +170,12 @@ export async function draftDecision(
     failedAttempt: second,
     attempts: [first, second],
   };
+}
+
+function handoffTitle(problems: string[]): string {
+  const rules = problems.map(ruleOf);
+  if (rules.every((r) => r === QUESTION_RULE)) return QUESTION_HANDOFF_TITLE;
+  return rules.every((r) => PLAYBOOK_RULES.includes(r)) ? PLAYBOOK_HANDOFF_TITLE : HANDOFF_TITLE;
 }
 
 // --- The worker loop -------------------------------------------------------------
@@ -388,8 +401,8 @@ const INSERT_DECISION = `
     (workspace_id, lead_id, wakeup_id, action, reasoning, message_subject, message_body, asset_ids,
      send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
      regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
-     outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at)
-  values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+     outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at, quality_checks)
+  values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
   returning id`;
 
 /** Which company and open deal (stage at the time) the decision saw, for review (D1). */
@@ -453,6 +466,8 @@ async function recordDraft(
       live ? "live" : "shadow",
       queuedSend ? "queued" : null,
       queuedSend ? sendAt : null,
+      // E2b rule 3: what each attempt failed (empty = passed), for AI Activity.
+      JSON.stringify(draft.attempts.map((a) => ({ problems: a.problems }))),
     ]);
     const decisionId = inserted.rows[0]!.id;
 

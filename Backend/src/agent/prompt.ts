@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
+import { situationOf, type Situation } from "./situation.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -92,9 +93,15 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
   ].join("\n");
 
   const timeline = ctx.timeline.map((t) => `- ${t.at} [${t.kind}] ${t.title}${t.detail ? ` — ${t.detail}` : ""}`).join("\n");
+  const currentPlaybook = ctx.playbook?.version ?? null;
   const past = ctx.pastMessages
-    // E2 rule 6: anything not really sent is labelled, so the AI never says "following up on my message" about a draft.
-    .map((m) => `- ${m.at} ${m.channel} (${m.outcome === "sent" ? "sent" : "draft — never sent to the contact"})${m.subject ? `\n  Subject: ${m.subject}` : ""}\n  ${m.body.replace(/\n/g, "\n  ")}`)
+    .map((m) =>
+      // E2b: a draft from an earlier playbook is one line without its text, so its old style isn't copied.
+      m.outcome !== "sent" && (m.playbookVersion === null || m.playbookVersion !== currentPlaybook)
+        ? `- ${m.at} ${m.channel} (draft from an earlier playbook — not sent)`
+        : // E2 rule 6: anything not really sent is labelled, so the AI never says "following up on my message" about a draft.
+          `- ${m.at} ${m.channel} (${m.outcome === "sent" ? "sent" : "draft — never sent to the contact"})${m.subject ? `\n  Subject: ${m.subject}` : ""}\n  ${m.body.replace(/\n/g, "\n  ")}`,
+    )
     .join("\n");
   const summaries = ctx.decisionSummaries.map((d) => `- ${d.at} ${d.action} (${d.outcome}): ${d.reasoning}`).join("\n");
   const knowledge = knowledgeBlock(ctx.knowledge.chunks);
@@ -120,6 +127,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
       "Return a corrected decision that fixes every problem (or pick wait or handoff).",
     );
   }
+  user.push("", ...checklist(settings, situationOf(ctx)));
   return [
     { role: "system", content: system },
     { role: "user", content: user.join("\n") },
@@ -136,7 +144,7 @@ function leadDataText(ctx: AgentContext): string {
     // Company first, contact fallback (companyFacts); the contact's own values without a company.
     `Industry: ${(ctx.company ? ctx.company.industry : lead.industry) ?? "unknown"}`,
     `Revenue range: ${(ctx.company ? ctx.company.revenueRange : lead.revenueRange) ?? "unknown"}`,
-    `Source: ${words(lead.source)}`,
+    `How they came to us: ${howTheyCame(lead.source)}`,
     `Pipeline stage: ${words(lead.pipelineStage)}`,
     `Lifecycle: ${words(lead.lifecycleState)}`,
     `Objection: ${lead.objectionType ? words(lead.objectionType) : "none"}`,
@@ -147,6 +155,26 @@ function leadDataText(ctx: AgentContext): string {
     `Website enquiry: ${lead.websiteMessage ?? "none"}`,
     ...companyLines(ctx),
   ].join("\n");
+}
+
+function howTheyCame(source: string): string {
+  if (source === "website") return "submitted the enquiry form on our website (inbound)";
+  if (source === "inbound_form") return "submitted an enquiry form (inbound)";
+  if (source === "referral") return "referred to us";
+  return `added by our team (source: ${words(source)})`;
+}
+
+/** E2b rule 4: the closing self-check, last in the user message. */
+function checklist(settings: AgentSettingsRow, situation: Situation): string[] {
+  const banned = settings.banned_phrases.map((p) => `"${p}"`).join(", ");
+  return [
+    "Before you answer, check:",
+    '- At most one question, about ONE thing (never two asks joined with "and"/"or").',
+    ...(banned ? [`- None of these phrases: ${banned}.`] : []),
+    `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
+    ...(situation.inbound && situation.firstMessage ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
+    ...(situation.conversationStarted ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
+  ];
 }
 
 /** The linked company record (lead data). Nothing without a company. */
@@ -195,17 +223,36 @@ function knowledgeBlock(chunks: AgentKnowledgeChunk[]) {
 
 // --- Grounding ------------------------------------------------------------------
 
+/** E2b rule 2: playbook style rules the grounding call also checks (no extra API call). */
+export const STYLE_RULES = ["asks_lead_to_describe_business", "not_thanking_inbound", "introduction_mid_conversation", "unsupported_sector_claim"] as const;
+
 export const GROUNDING_JSON_SCHEMA = {
   type: "object",
   properties: {
     supported: { type: "boolean" },
     unsupportedClaims: { type: "array", items: { type: "string" } },
+    styleViolations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { rule: { type: "string", enum: [...STYLE_RULES] }, quote: { type: "string" } },
+        required: ["rule", "quote"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["supported", "unsupportedClaims"],
+  required: ["supported", "unsupportedClaims", "styleViolations"],
   additionalProperties: false,
 } as const;
 
-export const groundingSchema = z.object({ supported: z.boolean(), unsupportedClaims: z.array(z.string()) }).strict();
+export const groundingSchema = z
+  .object({
+    supported: z.boolean(),
+    unsupportedClaims: z.array(z.string()),
+    // Optional so results stored before E2b (and simple fakes) still parse.
+    styleViolations: z.array(z.object({ rule: z.enum(STYLE_RULES), quote: z.string() }).strict()).optional(),
+  })
+  .strict();
 export type GroundingResult = z.infer<typeof groundingSchema>;
 
 /**
@@ -219,12 +266,29 @@ export function applyGroundingAllowList(result: GroundingResult, ctx: AgentConte
   const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)));
   if (!ignored.length) return result;
   const unsupportedClaims = result.unsupportedClaims.filter((claim) => !allowed.has(norm(claim)));
-  return { supported: unsupportedClaims.length === 0, unsupportedClaims, ignoredClaims: ignored };
+  return { ...result, supported: unsupportedClaims.length === 0, unsupportedClaims, ignoredClaims: ignored };
 }
 
 /** Parses the grounding model's output (a JSON string or an object). Throws on invalid input. */
 export function parseGroundingOutput(json: unknown): GroundingResult {
   return groundingSchema.parse(typeof json === "string" ? JSON.parse(json) : json);
+}
+
+const yesNo = (value: boolean) => (value ? "yes" : "no");
+
+/** E2b rule 2: the style rules, each with one example, and the CRM facts they depend on. */
+function styleCheckLines(situation: Situation): string[] {
+  return [
+    "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
+    '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers or process in writing when lead_data has no stated goal or challenge. Example: "Could you tell me which markets you sell to and how you find customers?"',
+    '- not_thanking_inbound: the first message to an inbound lead does not thank them for reaching out. Example: "Hi Asha, we help manufacturers grow sales. Shall we talk?" (no thanks for the enquiry).',
+    '- introduction_mid_conversation: introduces us or asks for a first call although a conversation already exists. Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?"',
+    '- unsupported_sector_claim: says we help, work with or have experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow."',
+    "Facts from the CRM (reliable):",
+    `- Inbound lead (they reached out to us): ${yesNo(situation.inbound)}`,
+    `- First message to this contact: ${yesNo(situation.firstMessage)}`,
+    `- A conversation already exists (call, note, meeting, proposal or an advanced deal): ${yesNo(situation.conversationStarted)}`,
+  ];
 }
 
 /**
@@ -242,13 +306,17 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     .map((t) => `- ${t.at} ${t.title}${t.detail ? ` — ${t.detail}` : ""}`)
     .join("\n");
   const system = [
-    "You check a sales message for unsupported facts.",
+    "You check a sales message for unsupported facts and playbook style problems.",
     "Approved sources: the knowledge, playbook and lead_data blocks. A claim supported by ANY of them is supported.",
     "Check ONLY specific, checkable factual claims: numbers or percentages, client or partner company names, results or outcomes achieved, prices, timelines or deadlines, certifications, and specific capabilities stated as fact.",
     'NEVER flag: greetings; questions; offers or next-step suggestions (e.g. "shall we set up a call?"); vague statements of intent or possibility (e.g. "we can help", "this may be useful", "support your growth"); restating what the lead or rep said; ' +
       `the sender's own company name (${ownNames}); the lead's own company name (${leadNames}).`,
     "Flag any other company name unless an approved source names it.",
+    "Exception to the vague-intent rule: saying we help, work with or have experience in the lead's sector or industry IS a claim; flag it unless an approved source says so.",
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
+    "",
+    ...styleCheckLines(situationOf(ctx)),
+    "",
     DATA_NOTICE,
   ].join("\n");
   const user = [

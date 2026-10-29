@@ -615,8 +615,12 @@ export interface AgentDecisionDetail extends AgentSendState {
     supported: boolean;
     unsupportedClaims: string[];
     ignoredClaims?: string[];
+    /** E2b: playbook style problems from the grounding call (absent before E2b). */
+    styleViolations?: { rule: string; quote: string }[] | null;
   } | null;
   regenerated: boolean;
+  /** E2b: what each drafting attempt failed (empty = passed); null before E2b. */
+  qualityChecks: { problems: string[] }[] | null;
   playbookVersion: number | null;
   decisionModel: string | null;
   groundingModel: string | null;

@@ -159,7 +159,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     expect(row).toMatchObject({
       outcome: "draft",
       action: "handoff",
-      handoff_title: "AI couldn't write a safe message",
+      handoff_title: "AI couldn't write a message that meets the playbook",
       handoff_urgency: "normal",
       regenerated: true,
       message_subject: "Outbound for Acme Steel",
@@ -168,8 +168,11 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     });
     expect(row.message_body).toContain("really really");
     expect(row.rules_result.allowed).toBe(false);
+    // E2b: both attempts' failures are recorded for AI Activity.
+    expect(row.quality_checks).toHaveLength(2);
+    expect(row.quality_checks[0].problems[0]).toMatch(/^length: /);
     expect(await pendingFor(leadId)).toEqual([]);
-    expect((await agentTimeline(leadId)).map((t) => t.title)).toEqual(["AI suggested handoff: AI couldn't write a safe message"]);
+    expect((await agentTimeline(leadId)).map((t) => t.title)).toEqual(["AI suggested handoff: AI couldn't write a message that meets the playbook"]);
   });
 
   it("grounding supported=false is regenerated with the unsupported claims", async () => {

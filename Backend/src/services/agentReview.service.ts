@@ -134,7 +134,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               d.message_subject as "messageSubject", d.message_body as "messageBody", d.asset_ids as "assetIds",
               d.send_at as "sendAt", d.next_wake_at as "nextWakeAt", d.handoff_title as "handoffTitle",
               d.handoff_urgency as "handoffUrgency", d.new_stage as "newStage", d.stop_reason as "stopReason",
-              d.rules_result as "rulesResult", d.grounding_result as "groundingResult", d.regenerated,
+              d.rules_result as "rulesResult", d.grounding_result as "groundingResult", d.regenerated, d.quality_checks as "qualityChecks",
               d.chunk_ids as "chunkIds", d.playbook_version as "playbookVersion", d.decision_model as "decisionModel",
               d.grounding_model as "groundingModel", d.input_tokens as "inputTokens", d.output_tokens as "outputTokens",
               d.cost_usd::float8 as "costUsd", d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote",
@@ -407,7 +407,8 @@ export async function getLeadAgentPanel(db: Queryable, workspaceId: string, lead
                 'allowed', d.rules_result -> 'allowed', 'outcome', d.rules_result -> 'outcome',
                 'violations', d.rules_result -> 'violations', 'adjustments', d.rules_result -> 'adjustments') end as rules,
               case when d.grounding_result is null then null else json_build_object(
-                'supported', d.grounding_result -> 'supported', 'unsupportedClaims', d.grounding_result -> 'unsupportedClaims') end as grounding,
+                'supported', d.grounding_result -> 'supported', 'unsupportedClaims', d.grounding_result -> 'unsupportedClaims',
+                'styleViolations', d.grounding_result -> 'styleViolations') end as grounding,
               d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote", ${OPEN_REPORTS} as "openReports",
               ${DECISION_CONTEXT} as context
          from public.agent_decisions d

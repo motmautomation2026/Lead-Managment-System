@@ -83,4 +83,25 @@ describe("E2 live UI pieces", () => {
     expect(screen.getByText("Adjusted: Deferred until 29 Oct 2026, 9:30 am IST.")).toBeTruthy();
     expect(screen.queryByText(/2026-10-29T04/)).toBeNull();
   });
+
+  it("E2b: style problems and the first attempt's failures are shown", () => {
+    render(
+      <ChecksSummary
+        rules={{ allowed: true, violations: [], adjustments: [] }}
+        grounding={{
+          supported: true,
+          unsupportedClaims: [],
+          styleViolations: [{ rule: "unsupported_sector_claim", quote: "we help chemical makers" }],
+        }}
+        attempts={[
+          { problems: ['banned_phrase: Uses banned phrase(s): "thanks for connecting".'] },
+          { problems: [] },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Unsupported sector claim: “we help chemical makers”")).toBeTruthy();
+    expect(
+      screen.getByText('banned_phrase: Uses banned phrase(s): "thanks for connecting".'),
+    ).toBeTruthy();
+  });
 });

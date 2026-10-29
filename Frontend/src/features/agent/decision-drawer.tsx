@@ -34,6 +34,7 @@ import {
   OUTCOME_TONE,
   RATING_REASON_LABEL,
   RATING_REASONS,
+  STYLE_RULE_LABEL,
   istDateTime,
   withIstTimes,
   usd,
@@ -115,7 +116,11 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       </Section>
 
       <Section title="Checks">
-        <ChecksSummary rules={d.rulesResult} grounding={d.groundingResult} />
+        <ChecksSummary
+          rules={d.rulesResult}
+          grounding={d.groundingResult}
+          attempts={d.qualityChecks}
+        />
       </Section>
 
       <Section title="Knowledge used">
@@ -253,10 +258,14 @@ export function DecisionMessage({ decision: d }: { decision: MessageFields }) {
 export function ChecksSummary({
   rules,
   grounding,
+  attempts,
 }: {
   rules: AgentDecisionDetail["rulesResult"];
   grounding: AgentDecisionDetail["groundingResult"];
+  attempts?: AgentDecisionDetail["qualityChecks"];
 }) {
+  const style = grounding?.styleViolations ?? [];
+  const firstFailed = attempts && attempts.length > 1 ? attempts[0]!.problems : [];
   return (
     <div className="space-y-2">
       <div>
@@ -299,6 +308,29 @@ export function ChecksSummary({
           </ul>
         )}
       </div>
+      {style.length > 0 && (
+        <div>
+          <span className="font-medium">Style: </span>
+          {"doesn't follow the playbook"}
+          <ul className="ml-4 list-disc text-xs text-destructive">
+            {style.map((v, i) => (
+              <li key={i}>
+                {STYLE_RULE_LABEL[v.rule] ?? v.rule}: “{v.quote}”
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {firstFailed.length > 0 && (
+        <div>
+          <span className="font-medium">First attempt failed (regenerated): </span>
+          <ul className="ml-4 list-disc text-xs text-muted-foreground">
+            {firstFailed.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

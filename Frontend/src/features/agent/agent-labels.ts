@@ -153,6 +153,14 @@ export const ENROLL_SKIP_LABEL: Record<AgentEnrollSkipReason | "failed", string>
   failed: "Failed",
 };
 
+/** E2b playbook style rules checked by the grounding model. */
+export const STYLE_RULE_LABEL: Record<string, string> = {
+  asks_lead_to_describe_business: "Asks the lead to describe their business",
+  not_thanking_inbound: "Doesn't thank an inbound lead",
+  introduction_mid_conversation: "Introduces us mid-conversation",
+  unsupported_sector_claim: "Unsupported sector claim",
+};
+
 /** Date and time in IST, labelled. */
 export const istDateTime = (iso: string | null | undefined) =>
   iso ? `${fmtDateTime(iso)} IST` : "—";
