@@ -73,7 +73,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `044`).
+  (currently `045`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `044`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `045`).
 
 ## Way of working
 
@@ -543,6 +543,34 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `LiveBanner` (`features/agent/live-mode.tsx`), contact AI panel Live/Shadow + "Live test" pills + admin "AI live test
   contact" switch (`useSetLiveTest`), `SendStatusPill`, rule notes in IST (`withIstTimes`), enrol dialog shows the 409.
   `npm run test:integration:staging -- <files>` runs only those files. Not in E2: backfilling older leads (handoff note 10).
+- **E2b (AI message quality; nothing new sent):** migration 045: `agent_settings.banned_phrases text[]` (13 defaults, ≤ 100),
+  the EXISTING `email_max_words` / `whatsapp_max_words` (migration 024; there are no `max_words_*` columns) get defaults 160/75
+  (rows still on 250/80 moved) and a 1–500 check; `agent_decisions.quality_checks jsonb` (`[{problems}]` per attempt, null =
+  before E2b; `playbook_version` already existed); `kb_documents.chunker_version` (null = before E2b). Pure
+  `agent/messageChecks.ts` (`findBannedPhrases` whole words, Unicode-aware, URLs ignored; `wordCount`; `compoundQuestion`: a
+  question sentence joining two asks with and/or + an interrogative/auxiliary, not at the sentence start; `checkMessage` →
+  `banned_phrase|length|one_question|compound_question|exclamation`). The word-limit check moved out of `rules.ts` (rule 6) into
+  `checkMessage`; `draftDecision` runs it after `validateDecision` and folds its violations into `rules_result` (so `allowed`
+  keeps meaning "passed every code check" for touch counting and AI Activity), before grounding. Pure `agent/situation.ts`
+  `situationOf` (inbound = source website/inbound_form, firstMessage, hasCallOrNote, proposalStage, conversationStarted).
+  Grounding (same call): strict schema adds `styleViolations [{rule, quote}]` (`STYLE_RULES`: `asks_lead_to_describe_business`,
+  `not_thanking_inbound`, `introduction_mid_conversation`, `unsupported_sector_claim`), each explained with one example plus the
+  CRM facts (inbound / first message / conversation exists, never the deal stage); sector claims are also factual claims. Any
+  message-check or style problem → the ONE regeneration (problems with quotes as feedback) → handoff "AI couldn't write a
+  message that meets the playbook" (only playbook problems; one_question-only keeps its E2 title; anything else "safe
+  message"). Prompt: lead data "How they came to us: …" replaces "Source:"; drafts from another playbook version (or none) are
+  one line "draft from an earlier playbook — not sent"; the user message ends with "Before you answer, check:" (one question,
+  banned phrases, word limits from settings, inbound thanks, no introduction mid-conversation). Knowledge: `chunkText` merges a
+  chunk < 60 tokens into the next chunk of the document (next's metadata; only if both fit 800); `CHUNKER_VERSION` 2: the worker
+  ingestion also claims `ready` documents with an older `chunker_version` and re-chunks + re-embeds them (the unchanged-text
+  shortcut needs the current version), so production re-chunks by itself after deploy (staging MOTM: 31 → 23 chunks). KB query
+  adds designation, source and `Topics:` by situation (`situationTopics`). API (`B4-api.md` §7l): settings `bannedPhrases`,
+  word limits 1–500, `GET /agent/stats.messageRules` (every CRM user), decision detail `qualityChecks`, grounding
+  `styleViolations`. Frontend: Settings → AI agent is visible to everyone; non-admins see only the read-only "Message rules"
+  card (`features/settings/message-rules-card.tsx`, RHF + Zod; admins edit, word limits moved out of the limits card); the
+  decision drawer's Checks show style problems and "First attempt failed (regenerated)". `npm run agent:preview -- --lead <id>
+  --evaluate` (implies `--call`) ignores mode off, AI status and touch limits (prints what it ignored), saves/sends nothing,
+  and prints "Quality checks" (each rule PASS/FAIL per attempt).
 
 ## WhatsApp safety (E1)
 
@@ -649,7 +677,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   removed, paused/stopped contact → queued sends are cancelled at the re-check; WhatsApp pause defers.
 - Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
   send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
-- One question per message (both modes): > 1 → regenerate once → handoff. Live handoff = one open owner task "AI handed
+- One question per message (both modes): > 1 → regenerate once → handoff.
+- Message quality (E2b, both modes, every send decision): code checks first (`checkMessage`: admin-editable banned phrases,
+  word limits from settings, one question about one thing, no "!"), then the grounding call also returns playbook style
+  problems; every problem from either goes into the ONE regeneration as feedback, then handoff. The prompt's limits and
+  banned phrases always come from `agent_settings`, never hard-coded. Live handoff = one open owner task "AI handed
   off — please follow up"; stop → `stopped` with the reason; update_stage only within `AGENT_STAGE_ALLOW_LIST` via
   `updateLead`.
 - A contact is never AI-live and in a workflow: becoming live cancels its runs ("Managed by AI agent"), `autoEnroll`

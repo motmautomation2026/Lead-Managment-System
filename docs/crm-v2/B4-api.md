@@ -362,6 +362,23 @@ Migration 044. Only admins change mode, scope or the test mark; reads are as bef
 - Email queue: `email_outbound_messages` rows with `source = 'agent'`, `source_id` = decision id (From "<owner> | <company
   display name>", automated: send window applies). A cancelled AI email has `status cancelled` + the reason in `last_error`.
 
+## 7l. AI message quality — E2b
+
+Migration 045.
+
+- `GET|PUT /agent/settings` (PUT admin-only) add `bannedPhrases: string[]` (PUT: trimmed, blanks and case-insensitive
+  duplicates dropped, ≤ 100, each ≤ 60 characters, else **400**). `emailMaxWords` / `whatsappMaxWords` are now 1–500 (else
+  **400**); defaults 160 / 75.
+- `GET /agent/stats` (every CRM user) adds `messageRules: { bannedPhrases, emailMaxWords, whatsappMaxWords }` (null without a
+  settings row), so non-admins can read the rules.
+- `GET /agent/decisions/:decisionId` adds `qualityChecks: [{ problems: string[] }] | null` — one entry per drafting attempt
+  (empty `problems` = passed; null before E2b). Message-check failures also appear in `rulesResult.violations` (rules
+  `banned_phrase`, `length`, `one_question`, `compound_question`, `exclamation`; `length` was a `rules.ts` rule before).
+- `groundingResult` (detail) and the lead panel rows' `grounding` add `styleViolations: [{ rule, quote }]` (absent before
+  E2b); rules `asks_lead_to_describe_business`, `not_thanking_inbound`, `introduction_mid_conversation`,
+  `unsupported_sector_claim`.
+- New handoff title: "AI couldn't write a message that meets the playbook".
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
