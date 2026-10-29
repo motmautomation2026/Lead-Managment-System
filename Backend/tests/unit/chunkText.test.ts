@@ -45,7 +45,7 @@ describe("chunkText", () => {
       { text: "Why Northbeam\nSenior callers.", slide: 1, heading: "Why Northbeam" },
       { text: "Our results\n3x reply rates.", slide: 2, heading: "Our results" },
       { text: sentences(120, "Page").join(" "), page: 3 },
-    ]);
+    ], { minTokens: 0 });
     expect(chunks[0]).toMatchObject({ content: "Why Northbeam\nSenior callers.", metadata: { slide: 1, heading: "Why Northbeam" } });
     expect(chunks[1]).toMatchObject({ content: "Our results\n3x reply rates.", metadata: { slide: 2, heading: "Our results" } });
     const pageChunks = chunks.slice(2);
@@ -79,5 +79,36 @@ describe("chunkText", () => {
 
   it("returns nothing for empty sections", () => {
     expect(chunkText([{ text: "   " }, { text: "" }])).toEqual([]);
+  });
+});
+
+describe("chunkText: small chunks merge into the next one (E2b)", () => {
+  const body = sentences(6, "Body").join(" ");
+
+  it("a heading-only section joins the following section, which keeps its metadata", () => {
+    const chunks = chunkText([
+      { text: "MOTM Technologies — example messages", heading: "MOTM Technologies — example messages" },
+      { text: `First example\n${body}`, heading: "First example" },
+    ]);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({ index: 0, content: `MOTM Technologies — example messages\n\nFirst example\n${body}`, metadata: { heading: "First example" } });
+    expect(chunks[0]!.tokenCount).toBe(countTokens(chunks[0]!.content));
+  });
+
+  it("several small chunks in a row cascade into the first big one; indexes are renumbered", () => {
+    const chunks = chunkText([{ text: "Title" }, { text: "Subtitle" }, { text: body }, { text: body }]);
+    expect(chunks.map((c) => c.content.slice(0, 15))).toEqual(["Title\n\nSubtitle", "Body 1 explains"]);
+    expect(chunks.map((c) => c.index)).toEqual([0, 1]);
+  });
+
+  it("a small last chunk stays; a merge that would exceed maxTokens doesn't happen", () => {
+    expect(chunkText([{ text: body }, { text: "The end." }]).map((c) => c.content)).toEqual([body, "The end."]);
+    const big = sentences(40, "Big").join(" ");
+    const chunks = chunkText([{ text: "Heading" }, { text: big }], { maxTokens: countTokens(big) });
+    expect(chunks.map((c) => c.content)).toEqual(["Heading", big]);
+  });
+
+  it("chunks at or above the minimum are untouched", () => {
+    expect(chunkText([{ text: body }, { text: body }])).toHaveLength(2);
   });
 });

@@ -140,7 +140,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ title: "sample", fileName: "sample.pdf", mimeType: "application/pdf", source: "upload", status: "pending" });
     await ingest();
-    expect(await chunkCount(created.body.id)).toBe(3);
+    expect(await chunkCount(created.body.id)).toBe(1); // E2b: the three short pages merge into one chunk
     const { path } = (await pool.query(`select storage_path as path from public.kb_documents where id = $1`, [created.body.id])).rows[0];
     expect(await objectExists("kb-documents", path)).toBe(true);
 
@@ -192,9 +192,11 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
 
     await ingest();
     const first = await pool.query(`select content from public.kb_chunks where document_id = $1 order by chunk_index limit 1`, [docId]);
-    expect(first.rows[0].content).toBe("Asset: Process one-pager. Use when: the lead asks how we work.\n\nOur process starts with research.");
+    expect(first.rows[0].content).toBe(
+      "Asset: Process one-pager. Use when: the lead asks how we work.\n\nOur process starts with research.\n\nThen we run outreach campaigns.\n\nFinally we hand over warm meetings.",
+    );
     const listed = await api(rep, "GET", "/assets");
-    expect(listed.body.data).toEqual([expect.objectContaining({ id: created.body.id, status: "ready", chunkCount: 3, downloadUrl: expect.stringMatching(/^https:\/\//) })]);
+    expect(listed.body.data).toEqual([expect.objectContaining({ id: created.body.id, status: "ready", chunkCount: 1, downloadUrl: expect.stringMatching(/^https:\/\//) })]);
 
     expect(await api(admin, "DELETE", `/documents/${docId}`)).toMatchObject({ status: 409, body: { error: { message: "This document belongs to an asset. Delete the asset instead." } } });
     expect((await api(admin, "PATCH", `/documents/${docId}`, { title: "x" })).status).toBe(409);

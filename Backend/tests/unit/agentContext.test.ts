@@ -3,18 +3,35 @@ import { buildKbQuery } from "../../src/agent/kbQuery.js";
 import { trimToCap, type AgentContext } from "../../src/services/agentContext.service.js";
 
 describe("buildKbQuery", () => {
-  it("combines industry, stage, objection, last call outcome and the first 300 chars of the enquiry", () => {
+  const thin = { industry: " ", designation: null, source: "linkedin", pipelineStage: "new", objectionType: null, websiteMessage: null };
+
+  it("combines industry, designation, source, stage, objection, last call, the first 300 chars of the enquiry and the topics", () => {
     const query = buildKbQuery(
-      { industry: "Steel", pipelineStage: "objection_nurture", objectionType: "budget_price", websiteMessage: `${"x".repeat(400)}` },
+      { industry: "Steel", designation: "Head of Sales", source: "website", pipelineStage: "objection_nurture", objectionType: "budget_price", websiteMessage: `${"x".repeat(400)}` },
       { outcome: "interested_later" },
+      { hasCallOrNote: true, proposalStage: false },
     );
     expect(query).toBe(
-      ["Industry: Steel", "Stage: objection nurture", "Objection: budget price", "Last call: interested later", `Enquiry: ${"x".repeat(300)}`].join("\n"),
+      [
+        "Industry: Steel",
+        "Designation: Head of Sales",
+        "Source: website",
+        "Stage: objection nurture",
+        "Objection: budget price",
+        "Last call: interested later",
+        `Enquiry: ${"x".repeat(300)}`,
+        "Topics: follow-up after discussion next step",
+      ].join("\n"),
     );
   });
 
-  it("skips what's missing", () => {
-    expect(buildKbQuery({ industry: " ", pipelineStage: "new", objectionType: null, websiteMessage: null }, null)).toBe("Stage: new");
+  it("a thin lead gets default topics by situation (E2b)", () => {
+    expect(buildKbQuery(thin, null, { hasCallOrNote: false, proposalStage: false })).toBe(
+      "Source: linkedin\nStage: new\nTopics: first message introduction approach next step discussion",
+    );
+    expect(buildKbQuery(thin, null, { hasCallOrNote: true, proposalStage: false })).toContain("Topics: follow-up after discussion next step");
+    // A proposal-stage deal wins over a call.
+    expect(buildKbQuery(thin, null, { hasCallOrNote: true, proposalStage: true })).toContain("Topics: after proposal follow-up concerns decision timing");
   });
 });
 

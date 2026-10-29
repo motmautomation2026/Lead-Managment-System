@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
-import { chunkText, type TextChunk } from "../knowledge/chunkText.js";
+import { CHUNKER_VERSION, chunkText, type TextChunk } from "../knowledge/chunkText.js";
 import { detectKind, extractText, TextExtractionError, type TextSection } from "../knowledge/extractText.js";
 import type { Embedder } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError } from "../providers/provider-errors.js";
@@ -27,6 +27,7 @@ export interface ClaimedDocument {
   content_hash: string | null;
   embedding_model: string | null;
   chunk_count: number;
+  chunker_version: number | null;
   attempt_count: number;
   /** claimed_at as text (microsecond-exact): the final write only lands while the row is still ours. */
   claim_token: string;
@@ -43,8 +44,9 @@ export const downloadFromStorage: DownloadFile = async (bucket, path) => {
 };
 
 /**
- * Claims up to `limit` documents: pending ones that are due, and processing
- * ones stuck for 15+ minutes (a reclaim uses up an attempt, so a file that
+ * Claims up to `limit` documents: pending ones that are due, ready ones
+ * chunked by an older chunker (re-chunked once, E2b), and processing ones
+ * stuck for 15+ minutes (a reclaim uses up an attempt, so a file that
  * keeps killing the worker ends up failed). SKIP LOCKED, inside the caller's
  * transaction. `workspaceId` narrows the claim (tests).
  */
@@ -60,7 +62,8 @@ export async function claimKnowledgeDocuments(db: Queryable, { limit = INGEST_BA
   const claimed = await db.query<ClaimedDocument>(
     `with picked as (
        select id from public.kb_documents
-        where ((status = 'pending' and (next_attempt_at is null or next_attempt_at <= now())) or (${stuck}))
+        where ((status = 'pending' and (next_attempt_at is null or next_attempt_at <= now())) or (${stuck})
+               or (status = 'ready' and coalesce(chunker_version, 1) < $3))
           and ($2::uuid is null or workspace_id = $2)
         order by created_at
         limit $1
@@ -72,10 +75,10 @@ export async function claimKnowledgeDocuments(db: Queryable, { limit = INGEST_BA
        from picked
       where d.id = picked.id
      returning d.id, d.workspace_id, d.title, d.source, d.storage_bucket, d.storage_path, d.file_name, d.mime_type,
-               d.raw_text, d.content_hash, d.embedding_model, d.chunk_count, d.attempt_count, d.claimed_at::text as claim_token,
+               d.raw_text, d.content_hash, d.embedding_model, d.chunk_count, d.chunker_version, d.attempt_count, d.claimed_at::text as claim_token,
                (select a.title from public.agent_assets a where a.kb_document_id = d.id) as asset_title,
                (select a.use_when from public.agent_assets a where a.kb_document_id = d.id) as asset_use_when`,
-    [limit, workspaceId ?? null],
+    [limit, workspaceId ?? null, CHUNKER_VERSION],
   );
   return claimed.rows;
 }
@@ -143,8 +146,8 @@ async function saveChunks(doc: ClaimedDocument, chunks: TextChunk[], vectors: nu
     await updateClaimed(
       db,
       doc,
-      `status = 'ready', error = null, processed_at = now(), next_attempt_at = null, extracted_text = $3, content_hash = $4, embedding_model = $5${vectors ? ", chunk_count = $6" : ""}`,
-      vectors ? [text, hash, model, chunks.length] : [text, hash, model],
+      `status = 'ready', error = null, processed_at = now(), next_attempt_at = null, extracted_text = $3, content_hash = $4, embedding_model = $5, chunker_version = $6${vectors ? ", chunk_count = $7" : ""}`,
+      vectors ? [text, hash, model, CHUNKER_VERSION, chunks.length] : [text, hash, model, CHUNKER_VERSION],
     );
     return true;
   });
@@ -153,7 +156,7 @@ async function saveChunks(doc: ClaimedDocument, chunks: TextChunk[], vectors: nu
 /**
  * Extracts, chunks and embeds one claimed document, slow work outside any
  * transaction, then swaps its chunks in one transaction. Unchanged text with
- * the same model keeps the existing chunks (no re-embedding). Failures:
+ * the same model and chunker keeps the existing chunks (no re-embedding). Failures:
  * unreadable files and permanent provider errors fail the document; a
  * deferral (OpenAI not configured, rate limit) puts it back to pending later
  * without using an attempt; anything else retries with backoff, 3 attempts.
@@ -166,7 +169,7 @@ export async function processKnowledgeDocument(doc: ClaimedDocument, { embedder,
     const chunks = chunkText(sections);
     if (chunks.length === 0) throw new TextExtractionError("No readable text found in this file.");
 
-    if (hash === doc.content_hash && embedder.model === doc.embedding_model && doc.chunk_count > 0) {
+    if (hash === doc.content_hash && embedder.model === doc.embedding_model && doc.chunker_version === CHUNKER_VERSION && doc.chunk_count > 0) {
       return (await saveChunks(doc, chunks, null, text, hash, embedder.model)) ? "unchanged" : "stale";
     }
     const vectors = await embedder.embed(chunks.map((chunk) => chunk.content));

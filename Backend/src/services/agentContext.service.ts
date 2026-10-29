@@ -3,6 +3,7 @@ import { NotFoundError } from "../errors.js";
 import type { LeadLossReason, LifecycleState, ObjectionType, PipelineStage } from "../domain/enums.js";
 import type { AgentMode, AgentRuleSettings, AgentStatus, RulesContext } from "../agent/rules.js";
 import { buildKbQuery } from "../agent/kbQuery.js";
+import { situationOf } from "../agent/situation.js";
 import { companyDescription, companyFacts, resolveCompany, type CompanyFacts, type CompanyRecord } from "../agent/companyFacts.js";
 import { buildDealContext, type AgentDealContext, type AgentDealRow } from "../agent/dealContext.js";
 import { effectiveMode, liveChannels, type LiveScope } from "../agent/liveMode.js";
@@ -348,9 +349,6 @@ export async function buildAgentContext(
     ...(emailBlockedReason ? { emailBlockedReason } : {}),
   };
 
-  const query = buildKbQuery(lead, lastCall.rows[0] ?? null);
-  const hits = await searchKnowledge(db, deps.embedder, workspaceId, query, { limit: KB_LIMIT });
-
   const context: AgentContext = {
     workspaceId,
     companyName: settings.company_display_name ?? leadRow.company_name,
@@ -381,10 +379,14 @@ export async function buildAgentContext(
       reasoning: truncate(d.reasoning, REASONING_LIMIT) ?? "",
     })),
     playbook: playbookRow.rows[0] ?? null,
-    knowledge: { query, chunks: hits.map((h) => ({ id: h.chunkId, title: h.documentTitle, text: h.content })) },
+    knowledge: { query: "", chunks: [] },
     assets,
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },
   };
+  // E2b rule 5: the query adds topics for where the conversation stands.
+  const query = buildKbQuery(lead, lastCall.rows[0] ?? null, situationOf(context));
+  const hits = await searchKnowledge(db, deps.embedder, workspaceId, query, { limit: KB_LIMIT });
+  context.knowledge = { query, chunks: hits.map((h) => ({ id: h.chunkId, title: h.documentTitle, text: h.content })) };
   return trimToCap(context, CONTEXT_TOKEN_CAP);
 }
 

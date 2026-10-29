@@ -12,6 +12,8 @@ export interface ChunkOptions {
   maxTokens?: number;
   /** Tokens of trailing whole sentences repeated at the start of the next chunk in the same section. */
   overlapTokens?: number;
+  /** A chunk under this many tokens (a title or heading-only section) is merged into the next chunk when both fit. 0 = never. */
+  minTokens?: number;
 }
 
 export interface ChunkMetadata {
@@ -27,7 +29,10 @@ export interface TextChunk {
   metadata: ChunkMetadata;
 }
 
-export const CHUNK_DEFAULTS = { maxTokens: 800, overlapTokens: 80 } as const;
+export const CHUNK_DEFAULTS = { maxTokens: 800, overlapTokens: 80, minTokens: 60 } as const;
+
+/** Bumped when chunking changes: the worker re-chunks and re-embeds ready documents from an older version (E2b). */
+export const CHUNKER_VERSION = 2;
 
 /** A sentence, line or paragraph, with the separator that came before it. */
 interface Unit {
@@ -73,9 +78,11 @@ const sum = (units: Unit[]) => units.reduce((total, unit) => total + unit.tokens
  * (default 80) of whole trailing sentences from the previous chunk. A chunk
  * never spans two sections (page, slide or heading block) and never cuts a
  * sentence unless that sentence alone is longer than a chunk. Deterministic.
+ * Then a chunk under `minTokens` (default 60) is merged into the following
+ * chunk, which keeps its own metadata, when the two fit in `maxTokens`.
  */
 export function chunkText(input: string | TextSection[], options: ChunkOptions = {}): TextChunk[] {
-  const { maxTokens, overlapTokens } = { ...CHUNK_DEFAULTS, ...options };
+  const { maxTokens, overlapTokens, minTokens } = { ...CHUNK_DEFAULTS, ...options };
   const sections: TextSection[] = typeof input === "string" ? [{ text: input }] : input;
   const chunks: TextChunk[] = [];
 
@@ -104,5 +111,23 @@ export function chunkText(input: string | TextSection[], options: ChunkOptions =
     }
     emit(current);
   }
-  return chunks;
+  return mergeSmall(chunks, minTokens, maxTokens);
+}
+
+function mergeSmall(chunks: TextChunk[], minTokens: number, maxTokens: number): TextChunk[] {
+  const merged: TextChunk[] = [];
+  let carry: TextChunk | null = null;
+  for (const chunk of chunks) {
+    let current = chunk;
+    if (carry) {
+      const content = `${carry.content}\n\n${chunk.content}`;
+      const tokenCount = countTokens(content);
+      if (tokenCount <= maxTokens) current = { ...chunk, content, tokenCount };
+      else merged.push(carry);
+    }
+    carry = current.tokenCount < minTokens ? current : null;
+    if (!carry) merged.push(current);
+  }
+  if (carry) merged.push(carry);
+  return merged.map((chunk, index) => ({ ...chunk, index }));
 }

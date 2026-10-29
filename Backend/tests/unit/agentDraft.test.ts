@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import { EMAIL_NO_REPLY_READING } from "../../src/agent/liveMode.js";
 import { buildDecisionMessages, type GroundingResult } from "../../src/agent/prompt.js";
+import { situationOf } from "../../src/agent/situation.js";
 import { draftDecision, type Usage } from "../../src/services/agentRunner.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { sampleContext, settings } from "../helpers/agentContextFixture.js";
@@ -169,6 +170,16 @@ describe("E2b rule 4: what the model sees", () => {
     const freshTail = freshText.slice(freshText.indexOf("Before you answer, check:"));
     expect(freshTail).not.toContain("thank them");
     expect(freshTail).not.toContain("introduce");
+  });
+
+  it("situation: nothing yet vs an open deal at a proposal stage (Raj's case: no introduction)", () => {
+    const base = sampleContext({ timeline: [], pastMessages: [] });
+    expect(situationOf(base)).toEqual({ inbound: true, firstMessage: true, hasCallOrNote: false, proposalStage: false, conversationStarted: false });
+    const open = { id: "d-1", name: "TRC", stage: "negotiation" as const, stageLabel: "Negotiation", daysInStage: 3, expectedCloseMonth: null, latestMeeting: null, latestProposal: null };
+    const raj = sampleContext({ timeline: [], pastMessages: [], internal: { companyDescription: null, deal: { open, wonCount: 0, lostCount: 0 } } });
+    expect(situationOf(raj)).toMatchObject({ proposalStage: true, conversationStarted: true });
+    const sent = sampleContext({ timeline: [], pastMessages: [{ ...sampleContext().pastMessages[0]!, outcome: "sent" }] });
+    expect(situationOf(sent).firstMessage).toBe(false);
   });
 
   it("the checklist stays last after regeneration feedback", () => {

@@ -77,10 +77,10 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
   it("pasted text becomes ready with embedded chunks", async () => {
     const id = await textDoc("# Pricing\n\nPlans start at fifty thousand rupees.\n\n# Process\n\nWe research, then call.");
     expect(await ingest()).toEqual([{ id, outcome: "ready" }]);
-    expect(await docRow(id)).toMatchObject({ status: "ready", error: null, chunk_count: 2, embedding_model: "fake-embedding", claimed_at: null });
+    expect(await docRow(id)).toMatchObject({ status: "ready", error: null, chunk_count: 1, embedding_model: "fake-embedding", claimed_at: null });
+    // E2b: both sections are under 60 tokens, so the first merges into the second (which keeps its heading).
     expect(await chunks(id)).toMatchObject([
-      { chunk_index: 0, content: "Pricing\n\nPlans start at fifty thousand rupees.", metadata: { heading: "Pricing" }, embedded: true },
-      { chunk_index: 1, content: "Process\n\nWe research, then call.", metadata: { heading: "Process" }, embedded: true },
+      { chunk_index: 0, content: "Pricing\n\nPlans start at fifty thousand rupees.\n\nProcess\n\nWe research, then call.", metadata: { heading: "Process" }, embedded: true },
     ]);
   });
 
@@ -88,7 +88,8 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
     const id = await fileDoc("sample.pdf", "application/pdf");
     expect(await ingest()).toEqual([{ id, outcome: "ready" }]);
     expect((await docRow(id)).extracted_text).toContain("Then we run outreach campaigns.");
-    expect((await chunks(id)).map((c) => c.metadata)).toEqual([{ page: 1 }, { page: 2 }, { page: 3 }]);
+    // E2b: the three short pages merge forward into the last page's chunk.
+    expect((await chunks(id)).map((c) => c.metadata)).toEqual([{ page: 3 }]);
   });
 
   it("a scanned PDF fails with the clear message and is not retried", async () => {
@@ -116,6 +117,22 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
     await pool.query(`update public.kb_documents set next_attempt_at = null, attempt_count = 2 where id = $1`, [id]);
     expect(await ingest(broken)).toEqual([{ id, outcome: "failed" }]);
     expect(await docRow(id)).toMatchObject({ status: "failed", attempt_count: 3, error: "Failed after 3 attempts: socket closed" });
+  });
+
+  it("E2b: a ready document from an older chunker is re-chunked and re-embedded once", async () => {
+    const id = await textDoc("# Title only\n\n# Section\n\nThe body of the section.");
+    await ingest();
+    const merged = ["Title only\n\nSection\n\nThe body of the section."];
+    expect((await chunks(id)).map((c) => c.content)).toEqual(merged);
+    // As if chunked before E2b: no chunker version, old chunk text.
+    await pool.query(`update public.kb_documents set chunker_version = null where id = $1`, [id]);
+    await pool.query(`update public.kb_chunks set content = 'old' where document_id = $1`, [id]);
+    const calls = fakeEmbedder.calls.length;
+    expect(await ingest()).toEqual([{ id, outcome: "ready" }]);
+    expect(fakeEmbedder.calls.length).toBe(calls + 1);
+    expect((await chunks(id)).map((c) => c.content)).toEqual(merged);
+    expect((await pool.query(`select chunker_version from public.kb_documents where id = $1`, [id])).rows[0]).toEqual({ chunker_version: 2 });
+    expect(await ingest()).toEqual([]);
   });
 
   it("reprocessing unchanged text keeps the chunks; changed text replaces them", async () => {
@@ -173,7 +190,8 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
     );
     expect(await ingest()).toEqual([{ id, outcome: "ready" }]);
     const assetChunks = await chunks(id);
-    expect(assetChunks[0]!.content).toBe("Asset: Results deck. Use when: the lead asks for proof.\n\nWhy Northbeam\nSenior callers,\nno scripts.");
-    expect(assetChunks.map((c) => c.metadata.slide)).toEqual([1, 2]);
+    // E2b: both short slides merge into one chunk with the last slide's metadata.
+    expect(assetChunks[0]!.content).toBe("Asset: Results deck. Use when: the lead asks for proof.\n\nWhy Northbeam\nSenior callers,\nno scripts.\n\nOur results\n3x reply rates\n<30 day ramp");
+    expect(assetChunks.map((c) => c.metadata.slide)).toEqual([2]);
   });
 });
