@@ -155,6 +155,8 @@ export async function claimDueEmails(db: Queryable, limit: number, workspaceIds:
               and ($2::uuid[] is null or workspace_id = any($2::uuid[]))
             order by workspace_id, next_attempt_at, created_at
          )
+           -- Repeated so the lock re-checks them on the latest row: a concurrent tick that claimed it first wins.
+           and status in ('queued', 'sending') and next_attempt_at <= now()
          limit $1
          for update skip locked
       )
