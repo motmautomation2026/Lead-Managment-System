@@ -10,13 +10,16 @@ export interface CompanyRef {
   domain: string | null;
 }
 
+/** Trigram similarity at or above which two normalized names are "the same company" (pg_trgm similarity()). */
+export const SIMILAR_NAME_THRESHOLD = 0.6;
+
 export interface CompanyMatchInput {
   companyText: string | null;
   email: string | null;
   /** The non-merged company with the contact's normalized name, if any. */
   byName: CompanyRef | null;
-  /** The non-merged company with the contact's corporate domain, if any. */
-  byDomain: CompanyRef | null;
+  /** The non-merged company with the contact's corporate domain, if any, and the trigram similarity of its normalized name to the contact's. */
+  byDomain: (CompanyRef & { similarity: number }) | null;
 }
 
 export type CandidateReason = "similar_name" | "same_domain_different_name" | "name_domain_conflict";
@@ -34,7 +37,7 @@ export interface MatchCandidate {
 export type CompanyMatch =
   | { action: "none"; candidates: [] }
   | { action: "link"; companyId: string; normalizedName: string; domain: string | null; candidates: MatchCandidate[] }
-  | { action: "create"; normalizedName: string; domain: string | null; candidates: [] };
+  | { action: "create"; normalizedName: string; domain: string | null; candidates: MatchCandidate[] };
 
 export function companyMatch(input: CompanyMatchInput): CompanyMatch {
   // 1. Placeholder or only a legal suffix -> no company.
@@ -54,7 +57,17 @@ export function companyMatch(input: CompanyMatchInput): CompanyMatch {
     return { action: "link", companyId: input.byName.id, normalizedName, domain, candidates };
   }
 
-  // 4. Same corporate domain, different name (e.g. "TML" vs "Tata Motors").
+  // 4. Same corporate domain, different name. E2f: the name wins. A similar name ("Tata Motor" vs
+  // "Tata Motors") links by domain; a different one ("TML" vs "Tata Motors") gets its own company
+  // (without the domain, which belongs to the other one) and a pair for admin review.
+  if (input.byDomain && input.byDomain.similarity < SIMILAR_NAME_THRESHOLD) {
+    return {
+      action: "create",
+      normalizedName,
+      domain: null,
+      candidates: [{ otherCompanyId: input.byDomain.id, reason: "same_domain_different_name" }],
+    };
+  }
   if (input.byDomain) {
     return {
       action: "link",

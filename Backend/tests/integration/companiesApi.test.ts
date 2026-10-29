@@ -190,9 +190,9 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
   it("duplicate review: list, merge (pair), relink to an existing and to a new company, dismiss; admin only", async () => {
     const reviewWs = await createTestWorkspace(pool, "companies-api-dupes");
     const as = (method: string, path: string, body?: unknown, who: Actor = admin) => call(method, path, body, who, reviewWs);
-    // "TML" linked to Tata Motors by domain → a contact-level suggestion.
+    // "Tata Motor" linked to Tata Motors by domain (similar name) → a contact-level suggestion.
     const tata = await contact("Tata Motors", "a@tatamotors.example.com", reviewWs);
-    const tml = await contact("TML", "b@tatamotors.example.com", reviewWs);
+    const tml = await contact("Tata Motor", "b@tatamotors.example.com", reviewWs);
     const bolt = (await as("POST", "/companies", { name: "Bolt Motors" })).body.id;
     const bolt2 = (await as("POST", "/companies", { name: "Bolt Motor" })).body.id;
 
@@ -201,7 +201,7 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
     expect(list.status, JSON.stringify(list.body)).toBe(200);
     const contactRow = list.body.data.find((r: { kind: string }) => r.kind === "contact");
     const pairRow = list.body.data.find((r: { kind: string }) => r.kind === "pair");
-    expect(contactRow).toMatchObject({ reason: "same_domain_different_name", status: "open", observedName: "TML", contact: { id: tml }, companyB: null });
+    expect(contactRow).toMatchObject({ reason: "same_domain_different_name", status: "open", observedName: "Tata Motor", contact: { id: tml }, companyB: null });
     expect(contactRow.companyA).toMatchObject({ name: "Tata Motors", contactCount: 2 });
     expect(pairRow.companyA.id === bolt || pairRow.companyB.id === bolt).toBe(true);
     expect((await as("GET", `/company-duplicates${qs({ kind: "pair" })}`)).body.data).toHaveLength(1);
@@ -220,7 +220,7 @@ describeIfDb("companies API (requires TEST_DATABASE_URL)", () => {
     const relinked = await as("POST", `/company-duplicates/${contactRow.id}/relink`, {});
     expect(relinked.status, JSON.stringify(relinked.body)).toBe(200);
     const tmlRow = (await pool.query(`select company, company_id from public.leads where id = $1`, [tml])).rows[0];
-    expect(tmlRow).toEqual({ company: "TML", company_id: relinked.body.companyId });
+    expect(tmlRow).toEqual({ company: "Tata Motor", company_id: relinked.body.companyId });
     expect((await as("POST", `/company-duplicates/${contactRow.id}/dismiss`)).status).toBe(409);
 
     // Relink to an EXISTING company.

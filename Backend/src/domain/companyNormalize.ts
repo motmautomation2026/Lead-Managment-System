@@ -12,18 +12,39 @@ export const FREE_MAIL_DOMAINS: readonly string[] = [
   "yahoo.com",
   "yahoo.co.in",
   "yahoo.in",
+  "ymail.com",
   "outlook.com",
+  "outlook.in",
   "hotmail.com",
+  "hotmail.co.in",
+  "live.com",
+  "live.in",
+  "msn.com",
   "rediffmail.com",
   "rediff.com",
-  "live.com",
   "icloud.com",
-  "protonmail.com",
+  "me.com",
   "aol.com",
-  "ymail.com",
-  "msn.com",
+  "protonmail.com",
+  "proton.me",
+  // Zoho's free personal mail only; companies on Zoho use their own domain.
+  "zoho.com",
+  "zohomail.com",
+  "gmx.com",
+  "yandex.com",
+  "mail.com",
 ];
 const FREE_MAIL = new Set(FREE_MAIL_DOMAINS);
+
+/** RFC 2606 / 6761 reserved names: test data, never a real company. */
+const RESERVED_DOMAINS = new Set(["example.com", "example.org", "example.net"]);
+const RESERVED_TLDS = ["test", "example", "invalid", "localhost"];
+
+/** True for example.com/.org/.net and any *.test, *.example, *.invalid or *.localhost domain. */
+export function isReservedDomain(domain: string): boolean {
+  const tld = domain.slice(domain.lastIndexOf(".") + 1);
+  return RESERVED_DOMAINS.has(domain) || RESERVED_TLDS.includes(tld);
+}
 
 // Legal-form words, stripped only from the END of a name ("ABC Co Pvt Ltd" -> "abc").
 const LEGAL_SUFFIXES = new Set([
@@ -66,11 +87,11 @@ export function isPlaceholderCompany(name: string | null | undefined): boolean {
   return PLACEHOLDERS.has(raw) || PLACEHOLDERS.has(normalizeCompanyName(name));
 }
 
-/** The email's domain, lower-case, or null for free mail or an invalid address. */
+/** The email's domain, lower-case, or null for free mail, a reserved/test domain or an invalid address. */
 export function corporateDomain(email: string | null | undefined): string | null {
   const normalized = email ? normalizeEmail(email) : null;
   const domain = normalized?.split("@")[1]?.replace(/\.$/, "");
-  if (!domain || FREE_MAIL.has(domain)) return null;
+  if (!domain || FREE_MAIL.has(domain) || isReservedDomain(domain)) return null;
   return domain;
 }
 

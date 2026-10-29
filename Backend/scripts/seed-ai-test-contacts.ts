@@ -1,12 +1,16 @@
 /**
  * npm run staging:seed-ai-test-contacts [-- --confirm]
  * npm run staging:remove-ai-test-contacts [-- --confirm]
+ * npm run staging:repair-ai-test-contacts [-- --confirm]
  *
  * STAGING ONLY (E2e): creates ~20 realistic AI test contacts in the MOTM workspace through the real services
  * (website form ingest, createLead, logCall, addNote, meetings, proposals), enrols them in the AI agent and,
  * when the workspace isn't off, spreads their first wake-ups over 2 hours. Nothing is sent: they are never marked
  * "AI live test", so the agent only drafts for them (shadow, or live with scope test_contacts).
  * Marker: leads.created_by_name = 'AI test seed' (removal also requires a seeded email/phone).
+ * --repair (E2f): restores each seeded contact's company text (the domain bug linked every @example.com contact to the
+ * first one's company), relinks it with the fixed linking, dismisses the stale contact-level duplicate rows, and lists
+ * (changes nothing) NON-seeded contacts that were linked to a differently named company by domain.
  * Default is a dry run; --confirm writes. Refuses any database but the staging project.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -57,6 +61,9 @@ export const seedEmail = (s: SeedScenario) => (s.email === false ? null : `${s.f
 export const seedPhone = (s: SeedScenario) => `+91 90000 000${String(s.phoneNo).padStart(2, "0")}`;
 
 const form = (challenge: string, industry: string, revenue: string) => `${challenge}\nIndustry: ${industry}\nRevenue range: ${revenue}`;
+
+/** The company the scenario meant (what the form or createLead was given); "" = none. */
+export const seedCompany = (s: SeedScenario) => s.website?.company ?? s.company;
 
 /** Next Monday 11:00 IST (UTC+05:30), always in the future. */
 function nextMondayIst(now = new Date()): string {
@@ -228,6 +235,7 @@ async function main() {
   assertStagingDatabase(process.env.DATABASE_URL?.trim());
   const confirm = process.argv.includes("--confirm");
   const remove = process.argv.includes("--remove");
+  const repair = process.argv.includes("--repair");
 
   process.env.NORTHBEAM_DB_ROLE = "script";
   const { pool, withTransaction } = await import("../src/db.js");
@@ -238,6 +246,9 @@ async function main() {
   const { createProposal, updateProposalStatus } = await import("../src/services/proposals.service.js");
   const { cancelRunsForLead } = await import("../src/services/runs.service.js");
   const { enrollLeads } = await import("../src/services/agentStatus.service.js");
+  const { linkCompanyForLead } = await import("../src/services/companies.service.js");
+  const { normalizeCompanyName } = await import("../src/domain/companyNormalize.js");
+  const { SIMILAR_NAME_THRESHOLD } = await import("../src/domain/companyMatch.js");
   const { cancelPendingWakeups, enqueueWakeups } = await import("../src/services/agentWakeups.service.js");
   type Actor = import("../src/authMiddleware.js").Actor;
   type Db = import("pg").PoolClient;
@@ -251,6 +262,9 @@ async function main() {
         [ws, SEED_MARKER, SCENARIOS.map(seedEmail).filter(Boolean), SCENARIOS.map((s) => normalizePhoneE164(seedPhone(s)))],
       )
     ).rows;
+
+  const seeded = new Set<string>([...SCENARIOS.map(seedEmail).filter((e): e is string => Boolean(e)), ...SCENARIOS.map((x) => normalizePhoneE164(seedPhone(x)) ?? "")]);
+  seeded.delete("");
 
   try {
     const owner = (
@@ -276,6 +290,75 @@ async function main() {
       if (!confirm) return console.log("Dry run: nothing changed. Re-run with -- --confirm to delete them.");
       for (const row of rows) await withTransaction((db) => deleteLead(db, actor, ws, row.id));
       return console.log(`Deleted ${rows.length} contact(s).`);
+    }
+
+    if (repair) {
+      const rows = (
+        await pool.query<{ id: string; email: string | null; phone_e164: string | null; name: string; company: string; linked: string | null }>(
+          `select l.id, l.email, l.phone_e164, l.first_name || ' ' || l.last_name as name, l.company, c.name as linked
+             from public.leads l left join public.companies c on c.id = l.company_id
+            where l.workspace_id = $1 and l.created_by_name = $2 order by l.created_at`,
+          [ws, SEED_MARKER],
+        )
+      ).rows.filter((r) => seeded.has(r.email ?? "") || seeded.has(r.phone_e164 ?? ""));
+      console.log(`Seeded contacts: ${rows.length}`);
+      for (const row of rows) {
+        const s = SCENARIOS.find((x) => seedEmail(x) === row.email || normalizePhoneE164(seedPhone(x)) === row.phone_e164)!;
+        const intended = seedCompany(s);
+        // A blank form company was stored as a placeholder ("Not provided"): nothing to restore.
+        if (!intended || row.company === intended) {
+          console.log(`ok      ${row.name} · ${row.company} (linked: ${row.linked ?? "none"})`);
+          if (!confirm || !intended) continue;
+        } else {
+          console.log(`${confirm ? "repair" : "would repair"}  ${row.name} · "${row.company}" → "${intended}" (linked: ${row.linked ?? "none"})`);
+          if (!confirm) continue;
+        }
+        const after = await withTransaction(async (db: Db) => {
+          await db.query(`update public.leads set company = $2 where id = $1`, [row.id, intended]);
+          // The bug's contact-level suggestions ("Says <name>" next to the wrong company) are stale now.
+          await db.query(
+            `update public.company_duplicate_candidates set status = 'dismissed', resolved_by = $2, resolved_at = now()
+              where lead_id = $1 and company_b_id is null and status = 'open'`,
+            [row.id, actor.id],
+          );
+          await linkCompanyForLead(db, ws, row.id);
+          // The meeting/proposal scenarios' deals took the wrong company too.
+          await db.query(`update public.deals set company_id = (select company_id from public.leads where id = $1) where lead_id = $1`, [row.id]);
+          return (
+            await db.query<{ company: string; linked: string | null }>(
+              `select l.company, c.name as linked from public.leads l left join public.companies c on c.id = l.company_id where l.id = $1`,
+              [row.id],
+            )
+          ).rows[0]!;
+        });
+        console.log(`   after: ${after.company} (linked: ${after.linked ?? "none"})`);
+      }
+
+      // List only: other contacts whose submitted company name lost to a domain match (their contact-level rows keep it).
+      const others = (
+        await pool.query<{ workspace: string; lead_id: string; name: string; observed: string; company: string; normalized: string; status: string }>(
+          `select w.name as workspace, d.lead_id, l.first_name || ' ' || l.last_name as name, d.observed_name as observed,
+                  c.name as company, c.normalized_name as normalized, d.status
+             from public.company_duplicate_candidates d
+             join public.leads l on l.id = d.lead_id
+             join public.companies c on c.id = d.company_a_id
+             join public.workspaces w on w.id = d.workspace_id
+            where d.reason = 'same_domain_different_name' and d.company_b_id is null
+              and l.created_by_name is distinct from $1 and w.name not like '[test]%'`,
+          [SEED_MARKER],
+        )
+      ).rows;
+      const scored = await Promise.all(
+        others.map(async (o) => ({
+          ...o,
+          similarity: (await pool.query<{ s: number }>(`select extensions.similarity($1, $2)::float8 as s`, [normalizeCompanyName(o.observed), o.normalized])).rows[0]!.s,
+        })),
+      );
+      const differentName = scored.filter((o) => o.similarity < SIMILAR_NAME_THRESHOLD);
+      console.log(`\nNon-seeded contacts linked by domain to a differently named company (similarity < ${SIMILAR_NAME_THRESHOLD}): ${differentName.length}`);
+      for (const o of differentName) console.log(`  ${o.workspace} · ${o.name} (${o.lead_id}) said "${o.observed}", linked to "${o.company}" · row ${o.status}`);
+      if (!confirm) console.log("\nDry run: nothing changed. Re-run with -- --confirm to repair the seeded contacts.");
+      return;
     }
 
     const table: { name: string; company: string; scenario: string; leadId: string }[] = [];

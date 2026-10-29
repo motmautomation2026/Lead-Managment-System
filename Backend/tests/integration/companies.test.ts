@@ -74,10 +74,10 @@ describeIfDb("companies (requires TEST_DATABASE_URL)", () => {
 
   it("creating a lead creates and links its company; the same name with Pvt Ltd links to it", async () => {
     const ws = await workspace();
-    const first = await create(ws, "Bolt Motors", `a@bolt-${tag()}.test`);
+    const first = await create(ws, "Bolt Motors", `a@bolt-${tag()}.co.in`);
     const [company] = await companiesIn(ws);
     expect(company).toMatchObject({ name: "Bolt Motors" });
-    expect(company!.domain).toMatch(/^bolt-.*\.test$/);
+    expect(company!.domain).toMatch(/^bolt-.*\.co\.in$/);
     expect(await lead(first.id)).toMatchObject({ company: "Bolt Motors", company_id: company!.id, company_link_attempts: 0 });
     expect((await lead(first.id)).company_link_checked_at).not.toBeNull();
     expect(leads.leadToDto(first).companyId).toBe(company!.id);
@@ -87,24 +87,53 @@ describeIfDb("companies (requires TEST_DATABASE_URL)", () => {
     expect(await lead(second.id)).toMatchObject({ company: "Bolt Motors", company_id: company!.id });
   });
 
-  it("free mail stores no domain; a known corporate domain with another name links + contact-level candidate", async () => {
+  it("free and reserved/test mail store no domain; a known corporate domain with a similar name links + contact-level candidate", async () => {
     const ws = await workspace();
     await create(ws, "Free Co", `x-${tag()}@gmail.com`);
     expect((await companiesIn(ws))[0]!.domain).toBeNull();
+    // E2f: example.com says nothing about the company: two names → two companies, texts kept.
+    const one = await create(ws, "Sharda Hydraulics Pvt Ltd", `rakesh-${tag()}@example.com`);
+    const two = await create(ws, "Vedant Automation", `meena-${tag()}@example.com`);
+    expect((await lead(one.id)).company).toBe("Sharda Hydraulics Pvt Ltd");
+    expect((await lead(two.id)).company).toBe("Vedant Automation");
+    expect((await companiesIn(ws)).filter((c) => c.domain !== null)).toHaveLength(0);
 
-    const domain = `tatamotors-${tag()}.test`;
+    const domain = `tatamotors-${tag()}.co.in`;
     await create(ws, "Tata Motors", `a@${domain}`);
     const tata = (await companiesIn(ws)).find((c) => c.name === "Tata Motors")!;
-    const tml = await create(ws, "TML", `b@${domain}`);
-    expect(await lead(tml.id)).toMatchObject({ company: "Tata Motors", company_id: tata.id });
+    const motor = await create(ws, "Tata Motor", `b@${domain}`);
+    expect(await lead(motor.id)).toMatchObject({ company: "Tata Motors", company_id: tata.id });
     expect(await candidatesIn(ws)).toContainEqual(
-      expect.objectContaining({ company_a_id: tata.id, company_b_id: null, lead_id: tml.id, observed_name: "TML", reason: "same_domain_different_name", status: "open" }),
+      expect.objectContaining({ company_a_id: tata.id, company_b_id: null, lead_id: motor.id, observed_name: "Tata Motor", reason: "same_domain_different_name", status: "open" }),
     );
+  });
+
+  it("E2f name wins: different names on the same corporate domain → two companies + one pair candidate, texts unchanged", async () => {
+    const ws = await workspace();
+    const domain = `tatamotors-${tag()}.co.in`;
+    const tataLead = await create(ws, "Tata Motors", `a@${domain}`);
+    const tmlLead = await create(ws, "TML", `b@${domain}`);
+    const all = await companiesIn(ws);
+    expect(all).toHaveLength(2);
+    const tata = all.find((c) => c.name === "Tata Motors")!;
+    const tml = all.find((c) => c.name === "TML")!;
+    expect(tata.domain).toBe(domain);
+    expect(tml.domain).toBeNull();
+    expect(await lead(tataLead.id)).toMatchObject({ company: "Tata Motors", company_id: tata.id });
+    expect(await lead(tmlLead.id)).toMatchObject({ company: "TML", company_id: tml.id });
+    const [a, b] = [tata.id, tml.id].sort();
+    expect(await candidatesIn(ws)).toEqual([
+      expect.objectContaining({ company_a_id: a, company_b_id: b, lead_id: null, reason: "same_domain_different_name", status: "open" }),
+    ]);
+    // A similar spelling ("Tata Motors Ltd" normalises to the same name) still links to the existing company.
+    const ltd = await create(ws, "Tata Motors Ltd", `c@${domain}`);
+    expect(await lead(ltd.id)).toMatchObject({ company: "Tata Motors", company_id: tata.id });
+    expect(await companiesIn(ws)).toHaveLength(2);
   });
 
   it("same name with a domain owned by another company links by name + pair candidate", async () => {
     const ws = await workspace();
-    const [acmeDomain, betaDomain] = [`acme-${tag()}.test`, `beta-${tag()}.test`];
+    const [acmeDomain, betaDomain] = [`acme-${tag()}.co.in`, `beta-${tag()}.co.in`];
     await create(ws, "Acme", `a@${acmeDomain}`);
     await create(ws, "Beta", `b@${betaDomain}`);
     const all = await companiesIn(ws);
@@ -156,7 +185,7 @@ describeIfDb("companies (requires TEST_DATABASE_URL)", () => {
   it("website ingest links a new lead; a duplicate submission changes nothing", async () => {
     const ws = await workspace();
     const { ingestWebsiteLead } = await import("../../src/services/leadIngest.service.js");
-    const email = `web-${tag()}@foxtrot-${tag()}.test`;
+    const email = `web-${tag()}@foxtrot-${tag()}.co.in`;
     const form = { name: "Web Person", email, phone: "", company: "Foxtrot Ltd", message: "Hello" };
     const created = await withTransaction((db) => ingestWebsiteLead(db, ws, form));
     expect(created.status).toBe("created");
@@ -242,7 +271,7 @@ describeIfDb("companies (requires TEST_DATABASE_URL)", () => {
   it("mergeCompanies re-points contacts and their text, hides the source, resolves the candidate and deletes nothing", async () => {
     const ws = await workspace();
     const target = await create(ws, "Lima Engineering Works", `l1-${tag()}@gmail.com`);
-    const source = await create(ws, "Lima Engineering Work", `l2@lima-${tag()}.test`);
+    const source = await create(ws, "Lima Engineering Work", `l2@lima-${tag()}.co.in`);
     const [targetCompany, sourceCompany] = await companiesIn(ws);
     const [a, b] = [targetCompany!.id, sourceCompany!.id].sort();
     expect(await candidatesIn(ws)).toContainEqual(expect.objectContaining({ company_a_id: a, company_b_id: b, reason: "similar_name", status: "open" }));

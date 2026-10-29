@@ -2,7 +2,7 @@ import type { Queryable } from "../dto.js";
 import { pool } from "../db.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
-import { companyMatch, type CompanyMatch, type CompanyRef, type MatchCandidate } from "../domain/companyMatch.js";
+import { companyMatch, SIMILAR_NAME_THRESHOLD, type CompanyMatch, type CompanyRef, type MatchCandidate } from "../domain/companyMatch.js";
 import { corporateDomain, isPlaceholderCompany, normalizeCompanyName } from "../domain/companyNormalize.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
 
@@ -12,7 +12,6 @@ import { addTimelineEvent, actorEvent } from "./timeline.service.js";
  * is kept equal to the company name. Contact dedupe is not touched here.
  */
 
-const SIMILAR_NAME_THRESHOLD = 0.6;
 const SIMILAR_NAME_LIMIT = 3;
 export const MAX_COMPANY_LINK_ATTEMPTS = 3;
 
@@ -30,16 +29,17 @@ interface LinkLeadRow {
 export type CompanyLinkResult = { action: CompanyMatch["action"]; companyId: string | null };
 
 async function findCompanies(db: Queryable, workspaceId: string, normalizedName: string, domain: string | null) {
-  const { rows } = await db.query<CompanyRef & { normalized_name: string }>(
-    `select id, domain, normalized_name from public.companies
+  const { rows } = await db.query<CompanyRef & { normalized_name: string; similarity: number }>(
+    `select id, domain, normalized_name, extensions.similarity(normalized_name, $2)::float8 as similarity from public.companies
       where workspace_id = $1 and merged_into_company_id is null
         and (normalized_name = $2 or ($3::text is not null and domain = $3::text))`,
     [workspaceId, normalizedName, domain],
   );
-  const pick = (row?: CompanyRef) => (row ? { id: row.id, domain: row.domain } : null);
+  const byName = rows.find((r) => r.normalized_name === normalizedName);
+  const byDomain = domain ? rows.find((r) => r.domain === domain) : undefined;
   return {
-    byName: pick(rows.find((r) => r.normalized_name === normalizedName)),
-    byDomain: pick(domain ? rows.find((r) => r.domain === domain) : undefined),
+    byName: byName ? { id: byName.id, domain: byName.domain } : null,
+    byDomain: byDomain ? { id: byDomain.id, domain: byDomain.domain, similarity: byDomain.similarity } : null,
   };
 }
 
