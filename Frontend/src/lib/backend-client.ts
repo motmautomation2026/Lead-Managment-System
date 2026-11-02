@@ -491,6 +491,8 @@ export interface AgentSettings {
   whatsappMaxWords: number;
   /** E2b: phrases an AI message must never contain. */
   bannedPhrases: string[];
+  /** E3a: admin-written examples of the style; empty = none. */
+  styleExamples: string;
   wakeMinDays: number;
   wakeMaxDays: number;
   nurtureLongTerm: boolean;
@@ -606,6 +608,11 @@ export interface AgentDecisionAttachments {
   removed: { assetId: string; reason: AttachmentRemovalReason; title: string | null }[];
   issues: { assetId: string; title: string | null; reason: string }[];
 }
+export interface AgentAutoFix {
+  rule: string;
+  before: string;
+  after: string;
+}
 export interface AgentDecisionDetail extends AgentSendState {
   id: string;
   createdAt: string;
@@ -641,6 +648,11 @@ export interface AgentDecisionDetail extends AgentSendState {
         problems: string[];
         /** E2g: attachments the rules removed on this attempt. */
         attachmentsRemoved?: AgentDecisionAttachments["removed"];
+        /** E3a: what code fixed on this attempt's text. */
+        autoFixes?: AgentAutoFix[];
+        /** E3a: this attempt's input tokens and the part served from the prompt cache. */
+        inputTokens?: number;
+        cachedInputTokens?: number;
       }[]
     | null;
   playbookVersion: number | null;
@@ -700,7 +712,7 @@ export interface AgentStats {
 }
 export type AgentMessageRules = Pick<
   AgentSettings,
-  "bannedPhrases" | "emailMaxWords" | "whatsappMaxWords"
+  "bannedPhrases" | "emailMaxWords" | "whatsappMaxWords" | "styleExamples"
 >;
 export interface LeadAgentPanel {
   leadId: string;

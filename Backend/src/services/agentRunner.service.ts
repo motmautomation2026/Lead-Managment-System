@@ -6,6 +6,7 @@ import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchem
 import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
 import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
+import { polishDecision, type AutoFix } from "../agent/polish.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -40,10 +41,10 @@ const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playb
 const QUESTION_RULE = "one_question";
 // Problems that are about the playbook's writing rules (E2b), not safety or facts.
 // internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
-const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", ...STYLE_RULES];
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 // E2f rule 7: code-checked writing problems a rewrite reliably fixes; only these earn a second regeneration.
-const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention"];
+const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts"];
 // Grounding only runs when the code checks pass, so a grounded attempt (unsupported claim / style) is never "fixable only".
 const fixableOnly = (a: DraftAttempt) => !a.grounding && a.rules.violations.length > 0 && a.rules.violations.every((v) => FIXABLE_RULES.includes(v.rule));
 const SHADOW_NOTE = "Shadow mode — not sent";
@@ -82,6 +83,8 @@ export interface Usage {
 export interface DraftAttempt {
   /** E3a: input tokens of this attempt's model calls and the cached part (decide + grounding). */
   tokens: { input: number; cached: number };
+  /** E3a rule 3: what code fixed on this attempt's text (before the checks). */
+  autoFixes: AutoFix[];
   decision: AgentDecision;
   rules: RulesResult;
   grounding: GroundingResult | null;
@@ -129,7 +132,9 @@ export async function draftDecision(
     const messages = buildDecisionMessages(ctx, ctx.settings, deps.now, problems ? { previousFailure: { problems } } : {});
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
     add(deps.decisionModel, decided, tokens);
-    let rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
+    // E3a rule 3: auto-fixes first, so a fixed problem never costs a regeneration.
+    const { decision: polished, autoFixes } = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName });
+    let rules = validateDecision(polished, ctx.rules, ctx.settings, deps.now);
     // E2b rule 1 + E2c (both modes): deterministic writing checks, before grounding; recorded as rule violations.
     const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx));
     if (messageViolations.length) rules = { ...rules, allowed: false, executable: false, violations: [...rules.violations, ...messageViolations] };
@@ -148,6 +153,7 @@ export async function draftDecision(
     const style = grounding?.styleViolations ?? [];
     return {
       tokens,
+      autoFixes,
       decision: decided.json,
       rules,
       grounding,
@@ -431,7 +437,7 @@ const INSERT_DECISION = `
 function qualityCheck(a: DraftAttempt, ctx: AgentContext) {
   const removed = a.rules.attachmentsRemoved ?? [];
   // E3a rule 2: the attempt's input tokens and the part OpenAI served from its prompt cache.
-  const tokens = { inputTokens: a.tokens.input, cachedInputTokens: a.tokens.cached };
+  const tokens = { inputTokens: a.tokens.input, cachedInputTokens: a.tokens.cached, ...(a.autoFixes.length ? { autoFixes: a.autoFixes } : {}) };
   if (!removed.length) return { problems: a.problems, ...tokens };
   return {
     problems: a.problems,

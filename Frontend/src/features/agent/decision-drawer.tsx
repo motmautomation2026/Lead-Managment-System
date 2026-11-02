@@ -37,6 +37,7 @@ import {
   OUTCOME_TONE,
   RATING_REASON_LABEL,
   RATING_REASONS,
+  AUTO_FIX_LABEL,
   CHECK_LABEL,
   SERIOUS_CHECKS,
   STYLE_RULE_LABEL,
@@ -325,6 +326,7 @@ export function ChecksSummary({
   const style = grounding?.styleViolations ?? [];
   // Every attempt before the recorded one failed (E2f: up to two regenerations).
   const failedAttempts = attempts && attempts.length > 1 ? attempts.slice(0, -1) : [];
+  const autoFixes = attempts?.[attempts.length - 1]?.autoFixes ?? [];
   return (
     <div className="space-y-2">
       <div>
@@ -368,6 +370,21 @@ export function ChecksSummary({
           </ul>
         )}
       </div>
+      {autoFixes.length > 0 && (
+        <div>
+          <span className="font-medium">Fixed automatically: </span>
+          {[...new Set(autoFixes.map((f) => AUTO_FIX_LABEL[f.rule] ?? f.rule))].join(", ")}
+          <ul className="ml-4 list-disc text-xs text-muted-foreground">
+            {autoFixes
+              .filter((f) => f.rule !== "spacing")
+              .map((f, i) => (
+                <li key={i}>
+                  “{f.before}” → {f.after ? `“${f.after}”` : "removed"}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
       {style.length > 0 && (
         <div>
           <span className="font-medium">Style: </span>

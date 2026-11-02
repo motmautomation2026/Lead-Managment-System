@@ -167,7 +167,7 @@ describe("checkMessage", () => {
   it("word limits at the boundary, per channel, body only", () => {
     expect(rulesOf(whatsapp("word ".repeat(75)))).toEqual([]);
     expect(rulesOf(whatsapp("word ".repeat(76)))).toEqual(["length"]);
-    expect(rulesOf(email("word ".repeat(160), "a long subject ".repeat(20)))).toEqual([]);
+    expect(rulesOf(email("word ".repeat(160), "a subject of six plain words"))).toEqual([]);
     expect(rulesOf(email("word ".repeat(161)))).toEqual(["length"]);
   });
 
@@ -175,7 +175,8 @@ describe("checkMessage", () => {
     expect(rulesOf(whatsapp("Is Tuesday ok? Or Wednesday?"))).toEqual(["one_question"]);
     expect(rulesOf(whatsapp("Which industries do you target, and how do you handle follow-ups?"))).toEqual(["compound_question"]);
     expect(rulesOf(whatsapp("Great to hear from you! Shall we talk?"))).toEqual(["exclamation"]);
-    expect(rulesOf(whatsapp("See https://acme.in/a?b=1#!x — shall we talk?"))).toEqual([]);
+    // A link's own "?" and "!" don't count (the link itself is a contact_details problem).
+    expect(rulesOf(whatsapp("See https://acme.in/a?b=1#!x — shall we talk?"))).toEqual(["contact_details"]);
   });
 
   it("collects every violation and ignores non-send actions", () => {
@@ -197,6 +198,7 @@ const facts = (over: Partial<MessageFacts> = {}): MessageFacts => ({
   ownerFirstName: "Govinda",
   companyName: "MOTM Technologies",
   internalTexts: [],
+  leadCompany: "Acme Steel",
   ...over,
 });
 const e2cRules = (decision: AgentDecision, f: MessageFacts) => checkMessage(decision, settings, f).map((v) => v.rule);
@@ -289,5 +291,42 @@ describe("E2c rule 3: internal information leak", () => {
     const open = { id: "d-1", name: "TRC deal", stage: "negotiation" as const, stageLabel: "Negotiation", daysInStage: 3, expectedCloseMonth: null, latestMeeting: null, latestProposal: null };
     const ctx = sampleContext({ internal: { companyDescription: description, deal: { open, wonCount: 0, lostCount: 0 } } });
     expect(messageFactsOf(ctx)).toMatchObject({ internalTexts: [description, "TRC deal"], conversationExists: true, ownerFirstName: "Ravi" });
+  });
+});
+
+describe("E3a: subject_style", () => {
+  const facts = { inboundFirst: false, conversationExists: false, ownerFirstName: "Ravi", companyName: "MOTM Technologies", internalTexts: [], leadCompany: "SKF India" };
+  const check = (subject: string) => checkMessage(email("Hi Raj, shall we talk?", subject), settings, facts).filter((v) => v.rule === "subject_style");
+
+  it("accepts a plain, specific subject, acronyms and company names", () => {
+    for (const subject of ["Steel exports to Pune", "Your CRM enquiry", "B2B outbound for SKF", "MOTM and your Gujarat plant"]) expect(check(subject)).toEqual([]);
+  });
+
+  it("rejects more than 60 characters, more than 8 words, all caps words, Re: and Fwd:", () => {
+    expect(check("x".repeat(61))[0]?.message).toContain("61 characters");
+    expect(check("one two three four five six seven eight nine")[0]?.message).toContain("9 words");
+    expect(check("URGENT steel exports")[0]?.message).toContain("URGENT");
+    expect(check("Re: Steel exports")).toHaveLength(1);
+    expect(check("FWD: Steel exports")).toHaveLength(1);
+  });
+});
+
+describe("E3a: new banned phrases and links", () => {
+  const added = ["hope you're doing well", "don't hesitate", "leverage", "feel free to", "in today's fast-paced", "game-changer", "I came across your"];
+
+  it("finds them, also with a curly apostrophe", () => {
+    expect(findBannedPhrases("Hope you\u2019re doing well, Raj. Don\u2019t hesitate to ask.", added)).toEqual(["hope you're doing well", "don't hesitate"]);
+    expect(findBannedPhrases("We can leverage this. It's a game-changer.", added)).toEqual(["leverage", "game-changer"]);
+  });
+
+  it("the E2f negation rule still applies", () => {
+    expect(findBannedPhrases("We will not leverage your data.", added)).toEqual([]);
+  });
+
+  it("a link, address or number polish couldn't remove needs a rewrite", () => {
+    expect(rulesOf(whatsapp("Read more at https://motm.tech today, Raj"))).toContain("contact_details");
+    expect(rulesOf(whatsapp("Write to ravi@motm.tech for details"))).toContain("contact_details");
+    expect(rulesOf(whatsapp("Call me on +91 98765 43210 for details"))).toContain("contact_details");
+    expect(rulesOf(whatsapp("We can start on 2026-11-08 with 40 calls"))).not.toContain("contact_details");
   });
 });

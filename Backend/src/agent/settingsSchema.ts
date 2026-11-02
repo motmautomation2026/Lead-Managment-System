@@ -51,6 +51,8 @@ export const settingsUpdateSchema = z
       .array(z.string().trim().max(60, "Each phrase can be at most 60 characters."))
       .transform((phrases) => phrases.filter((p, i) => p && phrases.findIndex((q) => q.toLowerCase() === p.toLowerCase()) === i))
       .pipe(z.array(z.string()).max(100, "At most 100 banned phrases.")),
+    // E3a: ≤ 6,000 characters (migration 048); empty = no block.
+    styleExamples: z.string().trim().max(6000, "Style examples can be at most 6,000 characters."),
     wakeMinDays: positiveInt,
     wakeMaxDays: positiveInt,
     nurtureLongTerm: z.boolean(),

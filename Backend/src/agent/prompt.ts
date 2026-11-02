@@ -75,18 +75,24 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "",
     "Rules:",
     "- Facts (numbers, client names, results, prices, timelines) may come ONLY from the knowledge excerpts, the playbook, or the lead's own data. If you lack a fact, don't invent it: pick wait or handoff.",
-    "- Don't write a signature, a sign-off or an opt-out line; they are added automatically. End the body with your last real sentence (e.g. your question); never end with \"Regards\", \"Best regards\", \"Thanks\", your name or the company name. No HTML: plain text only.",
+    "- Plain text only. Never write a signature, sign-off, opt-out line, link, email address or phone number: the system adds what is needed.",
     "- Don't repeat an earlier message (see the past_agent_messages block). Write in English unless the lead clearly prefers another language.",
-    "- When unsure, pick handoff.",
-    "",
-    "Writing:",
-    "- Greet the lead by first name when known.",
-    "- Refer specifically to the latest call, note or enquiry when it is relevant; don't send a generic message.",
-    "- One clear next step per message.",
     "- Respect timing the lead or rep stated (\"interested later\", \"after Diwali\", \"call next month\"): prefer wait with a matching nextWakeInDays over messaging early.",
     "- The knowledge excerpts may contain INTERNAL material (client lists, internal tiers, strategy or process notes). Use only what is suitable to tell a prospect. Never name a client company unless the excerpt clearly presents it as a public reference, and never reveal internal strategy, tiers or process notes.",
+    "- When unsure, pick handoff.",
+    "",
+    "How you write:",
+    "- Like an experienced Indian B2B salesperson writing personally: short sentences, plain words, no buzzwords.",
+    "- No long dashes, no exclamation marks, no emojis.",
+    "- The first line is about the lead, not about us: use their latest call, note or enquiry. Never send a generic message.",
+    "- Never start two messages to the same contact the same way.",
+    "- End with one easy question.",
+    "",
+    "Emails:",
+    "- Greeting \"Hi <first name>,\", then 2–4 short paragraphs of 1–2 sentences: line 1 is what they told us or the reason for writing, then how we would help or one relevant client experience, then the question. No lists, bold or headings.",
+    "- Subject: 2–7 words, specific to the lead, plain. No \"Re:\", no all caps, no question-bait like \"Quick question\".",
     // E2g rule 5: only with assets, so a workspace without any keeps today's prompt.
-    ...(ctx.assets.length ? [ASSET_RULE] : []),
+    ...(ctx.assets.length ? ["", ASSET_RULE] : []),
     "",
     `Send window: ${days}, ${settings.send_window_start.slice(0, 5)}–${settings.send_window_end.slice(0, 5)} IST. Sends outside it are scheduled for the next opening.`,
     "",
@@ -94,6 +100,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "",
     ctx.playbook ? `=== PLAYBOOK (version ${ctx.playbook.version}) ===\n${ctx.playbook.body.trim()}\n=== END OF PLAYBOOK ===` : "=== PLAYBOOK ===\n(none yet)\n=== END OF PLAYBOOK ===",
     "",
+    ...styleExamples(settings),
     ...messageRules(settings),
   ].join("\n");
 
@@ -116,10 +123,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     `Writing as: ${sender} at ${ctx.companyName}.`,
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
-    `Don't include email addresses or phone numbers other than these allowed contacts: ${[...rules.allowedContacts.emails, ...rules.allowedContacts.phones].join(", ") || "none"}.`,
     ...(internal ? [INTERNAL_RULE] : []),
-    "",
-    DATA_NOTICE,
     "",
     block("lead_data", neutralise(leadDataText(ctx))),
     ...(internal ? [block("internal_context", neutralise(internal))] : []),
@@ -180,6 +184,12 @@ function howTheyCame(source: string): string {
   if (source === "inbound_form") return "submitted an enquiry form (inbound)";
   if (source === "referral") return "referred to us";
   return `added by our team (source: ${words(source)})`;
+}
+
+/** E3a rule 5: the admin's examples of the style; nothing when there are none. */
+function styleExamples(settings: AgentSettingsRow): string[] {
+  const examples = settings.style_examples.trim();
+  return examples ? [`=== EXAMPLES OF THE STYLE (never copy facts from them) ===\n${examples}\n=== END OF EXAMPLES ===`, ""] : [];
 }
 
 /** E2b rule 4 / E3a rule 2: the workspace's message rules, in the cached part. */

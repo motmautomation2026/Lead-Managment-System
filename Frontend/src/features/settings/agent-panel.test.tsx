@@ -12,6 +12,7 @@ const settings = {
   emailMaxWords: 160,
   whatsappMaxWords: 75,
   bannedPhrases: ["thanks for connecting", "today"],
+  styleExamples: "Hi Ravi, thanks for the call.",
   wakeMinDays: 1,
   wakeMaxDays: 30,
   nurtureLongTerm: false,
@@ -82,6 +83,7 @@ vi.mock("@/store", () => {
           bannedPhrases: ["thanks for connecting", "today"],
           emailMaxWords: 160,
           whatsappMaxWords: 75,
+          styleExamples: "Hi Ravi, thanks for the call.",
         },
       },
       isError: false,
@@ -110,6 +112,33 @@ describe("AgentPanel", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save message rules" })).toBeNull();
     expect(screen.queryByText("AI agent limits")).toBeNull();
+  });
+
+  it("E3a: others read the style examples; admins edit them", async () => {
+    mocks.isAdmin = false;
+    const { unmount } = render(<AgentPanel />);
+    expect(screen.getByText("Hi Ravi, thanks for the call.")).toBeInTheDocument();
+    expect(screen.getByText("Only admins can change the examples.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save style examples" })).toBeNull();
+    unmount();
+
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    render(<AgentPanel />);
+    const field = screen.getByLabelText("Style examples");
+    expect(field).toHaveValue("Hi Ravi, thanks for the call.");
+    fireEvent.change(field, { target: { value: "x".repeat(6001) } });
+    fireEvent.click(screen.getByRole("button", { name: "Save style examples" }));
+    expect(await screen.findByText("At most 6000 characters.")).toBeInTheDocument();
+    expect(mocks.update).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "Hi Asha, good to speak today." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save style examples" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        { styleExamples: "Hi Asha, good to speak today." },
+        expect.any(Object),
+      ),
+    );
   });
 
   it("E2b: admins edit banned phrases (one per line) and word limits", async () => {

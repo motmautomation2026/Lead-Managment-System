@@ -12,6 +12,7 @@ export const settings: AgentSettingsRow = {
   email_max_words: 250,
   whatsapp_max_words: 80,
   banned_phrases: ["thanks for connecting", "just following up", "today", "free"],
+  style_examples: "",
   wake_min_days: 1,
   wake_max_days: 30,
   nurture_long_term: false,

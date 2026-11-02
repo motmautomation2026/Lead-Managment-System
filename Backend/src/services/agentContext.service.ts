@@ -41,6 +41,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   live_scope: LiveScope;
   live_since: Date | null;
   banned_phrases: string[];
+  style_examples: string;
 }
 
 export interface AgentContextLead {

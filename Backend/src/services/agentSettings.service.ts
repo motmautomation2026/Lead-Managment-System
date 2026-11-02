@@ -21,6 +21,7 @@ interface SettingsRow {
   email_max_words: number;
   whatsapp_max_words: number;
   banned_phrases: string[];
+  style_examples: string;
   wake_min_days: number;
   wake_max_days: number;
   nurture_long_term: boolean;
@@ -67,6 +68,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   companyDisplayName: "company_display_name",
   liveScope: "live_scope",
   bannedPhrases: "banned_phrases",
+  styleExamples: "style_examples",
 };
 
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */
@@ -85,6 +87,7 @@ function settingsToDto(row: SettingsRow, activeLeadCount: number, liveContactCou
     emailMaxWords: row.email_max_words,
     whatsappMaxWords: row.whatsapp_max_words,
     bannedPhrases: row.banned_phrases,
+    styleExamples: row.style_examples,
     wakeMinDays: row.wake_min_days,
     wakeMaxDays: row.wake_max_days,
     nurtureLongTerm: row.nurture_long_term,

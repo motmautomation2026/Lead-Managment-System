@@ -21,6 +21,7 @@ import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { LIVE_SCOPE_LABEL } from "@/features/agent/agent-labels";
 import { GatePanel, LiveBanner, LiveConfirmDialog } from "@/features/agent/live-mode";
 import { MessageRulesCard } from "./message-rules-card";
+import { StyleExamplesCard } from "./style-examples-card";
 import {
   messageFromError,
   useAgentPlaybooks,
@@ -124,7 +125,10 @@ function MessageRulesReadOnly() {
     );
   }
   return stats.data.messageRules ? (
-    <MessageRulesCard rules={stats.data.messageRules} editable={false} />
+    <div className="space-y-6">
+      <MessageRulesCard rules={stats.data.messageRules} editable={false} />
+      <StyleExamplesCard examples={stats.data.messageRules.styleExamples} editable={false} />
+    </div>
   ) : null;
 }
 
@@ -164,6 +168,7 @@ function AgentEditor() {
       <LimitsCard settings={settings.data} />
       <MessageRulesCard rules={settings.data} editable />
       <PlaybookCard />
+      <StyleExamplesCard examples={settings.data.styleExamples} editable />
     </div>
   );
 }
@@ -499,6 +504,9 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
               onChange={(e) => set("groundingModel", e.target.value)}
             />
           </div>
+          <p className="text-xs text-muted-foreground sm:col-span-2">
+            A model name; GPT-5 models can add a reasoning effort, e.g. gpt-5.4-mini@low.
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

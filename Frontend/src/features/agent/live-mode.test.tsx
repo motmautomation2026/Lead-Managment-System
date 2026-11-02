@@ -147,6 +147,30 @@ describe("E2 live UI pieces", () => {
     expect(screen.queryByText(/2026-10-29T04/)).toBeNull();
   });
 
+  it("E3a: what code fixed on the final attempt is shown; spacing only by name", () => {
+    render(
+      <ChecksSummary
+        rules={{ allowed: true, violations: [], adjustments: [] }}
+        grounding={null}
+        attempts={[
+          {
+            problems: [],
+            autoFixes: [
+              { rule: "dash", before: "traders — mostly", after: "traders, mostly" },
+              { rule: "sign_off", before: "Best regards, Ravi", after: "" },
+              { rule: "spacing", before: "repeated spaces or blank lines", after: "normalised" },
+            ],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Fixed automatically:")).toBeTruthy();
+    expect(screen.getByText(/Long dash, Sign-off removed, Spacing/)).toBeTruthy();
+    expect(screen.getByText("“traders — mostly” → “traders, mostly”")).toBeTruthy();
+    expect(screen.getByText("“Best regards, Ravi” → removed")).toBeTruthy();
+    expect(screen.queryByText(/normalised/)).toBeNull();
+  });
+
   it("E2b: style problems and the first attempt's failures are shown", () => {
     render(
       <ChecksSummary

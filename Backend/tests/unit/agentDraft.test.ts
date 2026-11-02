@@ -321,3 +321,38 @@ describe("E2g: attachments", () => {
     expect(grounding[1]!.content).not.toContain("Steel trading case study");
   });
 });
+
+describe("E3a: auto-fix instead of rejecting", () => {
+  const draft = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+  const run = async (answers: AgentDecision[]) => {
+    const model = createFakeDecisionModel({ decisions: answers });
+    const result = await draftDecision(sampleContext(), { model, decisionModel: "m-decide", groundingModel: "m-ground", prices: {}, now: NOW }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    return { result, model };
+  };
+
+  it('a draft with "—" and "!" passes after the auto-fix, with no regeneration', async () => {
+    const { result, model } = await run([draft("Hi Asha, great to speak — we can help with your steel buyers! Shall we talk on Monday?")]);
+    expect(result.regenerated).toBe(false);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.decision).toMatchObject({ body: "Hi Asha, great to speak, we can help with your steel buyers. Shall we talk on Monday?" });
+    expect(result.attempts[0]!.autoFixes.map((f) => f.rule)).toEqual(["dash", "exclamation"]);
+    expect(model.calls.filter((c) => c.kind === "decide")).toHaveLength(1);
+    expect(model.calls.find((c) => c.kind === "grounding")!.input.messages[1]!.content).toContain("great to speak, we can help");
+  });
+
+  it('a draft with "I hope this email finds you well" regenerates', async () => {
+    const ctx = sampleContext({ settings: { ...settings, banned_phrases: ["hope this email finds you well"] } });
+    const model = createFakeDecisionModel({ decisions: [draft("Hi Asha, I hope this email finds you well. Shall we talk?"), draft("Hi Asha, shall we talk on Monday?")] });
+    const result = await draftDecision(ctx, { model, decisionModel: "m-decide", groundingModel: "m-ground", prices: {}, now: NOW }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    expect(result.regenerated).toBe(true);
+    expect(result.attempts[0]!.problems[0]).toContain("banned_phrase");
+    expect(result.decision).toMatchObject({ body: "Hi Asha, shall we talk on Monday?" });
+  });
+
+  it("subject_style is fixable: a second regeneration, then a playbook handoff", async () => {
+    const bad: AgentDecision = { action: "send_email", subject: "Re: your enquiry", body: "Hi Asha, shall we talk on Monday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" };
+    const { result, model } = await run([bad]);
+    expect(model.calls.filter((c) => c.kind === "decide")).toHaveLength(3);
+    expect(result.decision).toMatchObject({ action: "handoff", title: "AI couldn't write a message that meets the playbook" });
+  });
+});

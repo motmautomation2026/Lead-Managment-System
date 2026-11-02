@@ -442,7 +442,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await sendTick(ws, send);
     expect(socket.sendMessage).not.toHaveBeenCalled();
     expect(await decisionOf(w.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
-  });
+  }, 90_000); // Uploads a real file over 10 MB to Storage.
 
   it("createAsset stores the real file size", async () => {
     const ws = await workspace("upload");

@@ -1,6 +1,7 @@
 import type { AgentContext } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { situationInboundFirst, situationOf } from "./situation.js";
+import { EMAIL_RE, PHONE_RE } from "./rules.js";
 
 // URLs can carry "?" (query strings); they are not questions.
 export const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
@@ -15,6 +16,7 @@ export function wordCount(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+const straightQuotes = (text: string) => text.replace(/[’‘]/g, "'");
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // E2f rule 5: a banned phrase right after one of these (within 3 words) is an honest "no", not a claim.
@@ -23,9 +25,9 @@ const negated = (before: string) => tokens(before).slice(-3).some((w) => NEGATIO
 
 /** The banned phrases the text contains: case-insensitive, whole words (Unicode-aware), URLs ignored; an occurrence negated within 3 words ("we cannot guarantee") doesn't count. */
 export function findBannedPhrases(text: string, phrases: readonly string[]): string[] {
-  const clean = withoutUrls(text);
+  const clean = straightQuotes(withoutUrls(text));
   return phrases.filter((phrase) => {
-    const trimmed = phrase.trim();
+    const trimmed = straightQuotes(phrase.trim());
     if (!trimmed) return false;
     const body = escapeRe(trimmed).replace(/\s+/g, "\\s+");
     const matches = clean.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "giu"));
@@ -79,7 +81,9 @@ export interface MessageViolation {
     | "not_thanking_inbound"
     | "introduction_mid_conversation"
     | "internal_info_leak"
-    | "attachment_mention";
+    | "attachment_mention"
+    | "subject_style"
+    | "contact_details";
   message: string;
 }
 
@@ -93,6 +97,8 @@ export interface MessageFacts {
   companyName: string;
   /** Decide-only text (company description, open deal name) that must never be repeated. */
   internalTexts: string[];
+  /** The lead's company: its name in capitals in a subject is fine. */
+  leadCompany: string;
 }
 
 export function messageFactsOf(ctx: AgentContext): MessageFacts {
@@ -103,6 +109,7 @@ export function messageFactsOf(ctx: AgentContext): MessageFacts {
     ownerFirstName: ctx.lead.ownerName?.trim().split(/\s+/)[0] ?? null,
     companyName: ctx.companyName,
     internalTexts: [ctx.internal.companyDescription, ctx.internal.deal.open?.name].filter((t): t is string => Boolean(t)),
+    leadCompany: ctx.company?.name ?? ctx.lead.company,
   };
 }
 
@@ -169,6 +176,22 @@ export function internalLeaks(text: string, internalTexts: readonly string[]): s
   return [...new Set(leaks)];
 }
 
+const MAX_SUBJECT_CHARS = 60;
+const MAX_SUBJECT_WORDS = 8;
+// Four letters up, so CRM, ROI and B2B stay; company names (MOTM) are exempt.
+const CAPS_WORD = /\p{Lu}{4,}/u;
+
+/** E3a rule 6: what is wrong with a subject the model wrote, or null. */
+export function subjectProblem(subject: string, companies: readonly string[]): string | null {
+  const words = subject.split(/\s+/).filter(Boolean);
+  if (subject.length > MAX_SUBJECT_CHARS) return `The subject has ${subject.length} characters; the limit is ${MAX_SUBJECT_CHARS}.`;
+  if (words.length > MAX_SUBJECT_WORDS) return `The subject has ${words.length} words; the limit is ${MAX_SUBJECT_WORDS}.`;
+  if (/^\s*(?:re|fwd?)\s*:/i.test(subject)) return 'Don\'t start the subject with "Re:" or "Fwd:".';
+  const names = new Set(companies.flatMap((c) => c.split(/\s+/)).map((w) => w.toUpperCase()));
+  const shouting = words.find((w) => w === w.toUpperCase() && CAPS_WORD.test(w) && !names.has(w.replace(/[^\p{L}\p{N}]/gu, "")));
+  return shouting ? `Don't write words in all caps in the subject ("${shouting}").` : null;
+}
+
 /** E2b rule 1 + E2c: the deterministic writing checks for a send decision (nothing for other actions). */
 export function checkMessage(decision: AgentDecision, settings: MessageCheckSettings, facts?: MessageFacts): MessageViolation[] {
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return [];
@@ -184,6 +207,15 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
 
   const questions = countQuestions(decision.body);
   if (questions > 1) violations.push({ rule: "one_question", message: `The message asks ${questions} questions; ask at most one.` });
+  const contacts = [...(all.match(URL_RE) ?? []), ...(all.match(EMAIL_RE) ?? []), ...(all.match(PHONE_RE) ?? []).filter((p) => p.replace(/\D/g, "").length >= 10)];
+  // E3a rule 3: polish removes these when it can; what is left needs a rewrite.
+  if (contacts.length) violations.push({ rule: "contact_details", message: `Don't write links, email addresses or phone numbers (${contacts.join(", ")}); the system adds what is needed.` });
+
+  if (decision.action === "send_email") {
+    const subject = subjectProblem(decision.subject, facts ? [facts.companyName, facts.leadCompany] : []);
+    if (subject) violations.push({ rule: "subject_style", message: subject });
+  }
+
   const compound = compoundQuestion(decision.body);
   if (compound) violations.push({ rule: "compound_question", message: `The question asks two things at once: "${compound}". Ask about one thing only.` });
 

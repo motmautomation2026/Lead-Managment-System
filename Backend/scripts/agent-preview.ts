@@ -130,6 +130,7 @@ async function main(id: string) {
           return;
         }
         const failed = checkMessage(d, ctx.settings, messageFactsOf(ctx));
+        for (const f of attempt.autoFixes) console.log(`  note  fixed automatically: ${f.rule} — "${f.before}" → "${f.after}"`);
         const line = (ok: boolean, name: string, detail?: string) => console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
         for (const [rule, name] of [
           ["banned_phrase", "no banned phrases"],
@@ -141,6 +142,8 @@ async function main(id: string) {
           ["introduction_mid_conversation", "no introduction mid-conversation"],
           ["internal_info_leak", "no internal information"],
           ["attachment_mention", "no mention of an attachment that isn't there"],
+          ["subject_style", "plain subject"],
+          ["contact_details", "no links, email addresses or phone numbers"],
         ] as const) {
           const hit = failed.find((v) => v.rule === rule);
           line(!hit, name, hit?.message);

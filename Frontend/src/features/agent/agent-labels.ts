@@ -172,6 +172,8 @@ export const CHECK_LABEL: Record<string, string> = {
   exclamation: "Exclamation mark",
   internal_info_leak: "Internal information leak",
   attachment_mention: "Mentioned an attachment that couldn't be attached",
+  subject_style: "Subject line",
+  contact_details: "Link, email address or phone number",
   content_contacts: "Contact details not allowed",
   content_html: "Contains HTML",
   content_opt_out: "Contains opt-out text",
@@ -186,6 +188,16 @@ export const CHECK_LABEL: Record<string, string> = {
   rep_quiet: "Rep was recently in touch",
   stage: "Stage change not allowed",
   timing: "Timing",
+};
+
+/** E3a: what code fixes by itself, in plain words. */
+export const AUTO_FIX_LABEL: Record<string, string> = {
+  dash: "Long dash",
+  exclamation: "Exclamation mark",
+  ellipsis: "Dots",
+  sign_off: "Sign-off removed",
+  contact_details: "Link or contact removed",
+  spacing: "Spacing",
 };
 
 /** Serious problems shown in red wherever they appear (also among a regenerated attempt's failures). */
