@@ -408,7 +408,12 @@ Migration 047.
   issues: [{ assetId, title | null, reason }] }`. `assets` = the decision's (rules-checked) `assetIds` in order, `sent` =
   really went out with the message; `removed` = dropped by the rules (the last attempt's `qualityChecks[].attachmentsRemoved`;
   `reason` `first_message | whatsapp_no_reply | already_sent | count_limit | size_limit`; the message was kept); `issues` =
-  left out at send time (asset deleted/turned off, file missing from Storage; the message went out without it).
+  left out at send time (asset deleted/turned off, file missing from Storage, E2h: file over 10 MB). The message went out
+  without it, unless its text mentioned an attachment (E2h): then `sendStatus` `cancelled`, `cancelReason`
+  `attachment_missing`, nothing sent, no touch counted, a new wake-up queued; `issues` says which file.
+- E2h: a new check `attachment_mention` can appear in `rulesResult.violations` and `qualityChecks[].problems`
+  ("attachment_mention: No file will be attached…"). `sizeBytes` on assets is unchanged (null = unknown; the agent then reads
+  the size from Storage).
 - `qualityChecks[]` entries may carry `attachmentsRemoved: [{ assetId, reason, title }]`; `rulesResult.attachmentsRemoved`
   (same items without `title`) when the rules dropped any.
 - Timeline: "AI sent email: <subject>" / "AI sent WhatsApp" rows get `detail` "With attachment: <title>[, <title>]" and/or

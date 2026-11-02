@@ -652,6 +652,17 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   use when, channels; `ChannelChoices` shared), `AttachmentsUsed` (decision Sheet under Message, contact AI panel rows).
   `agent:preview --evaluate` prints the attachments and each `attachment_removed: <reason>`. Integration
   `tests/integration/agentAssets.test.ts` (real Storage objects in `[test]` workspaces).
+- **E2h (attachment follow-ups; nothing new sent to real leads, no migration):** `messageChecks.ts` `mentionsAttachment`
+  + `checkMessage` rule `attachment_mention` when the rules' FINAL `assetIds` is empty and the text refers to a file (fixable,
+  playbook handoff). Send time: `ATTACHMENT_MISSING` = `attachment_missing` (`agent/assetRules.ts`), a cancel reason.
+  `processEmail` (after the last `agentGate`, `cancelAgentEmail`) and `processAgentWhatsApp` (asset gone) / `performSend`
+  (`textMentionsAttachment`, file missing or > 10 MB → `SendCancelledError(ATTACHMENT_MISSING, detail)`) cancel a text that
+  mentions it; `recordAgentSendOutcome` stores `attachment_issues` on the cancel and enqueues a `timer` wake-up due now. An AI
+  email no longer fails for size: `attachmentFiles` leaves its largest files out until it fits. `performSend` returns
+  `attachmentProblem` (was `attachmentMissing`). Sizes: `knowledgeLibrary.service.ts` `assetFileSize` (Storage metadata), used by
+  `buildAgentContext` when `size_bytes` is null (read each decision, not saved; no backfill needed; unknown = allowed).
+  `buildAgentContext` hides assets with an `attachment_issues` entry on this contact's decisions (stops a cancel → wake →
+  same asset loop). Frontend: `CHECK_LABEL.attachment_mention`, `cancelReasonText` (`SendStatusPill`). `B4-api.md` §7n.
 
 ## WhatsApp safety (E1)
 
@@ -785,8 +796,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   same asset twice, ≤ 2 email / ≤ 1 WhatsApp, ≤ 10 MB in total — these DROP the attachment and keep the message (no
   regeneration, recorded in `quality_checks`). The AI sees only an asset's title and "use when"; asset chunks are never a
   fact source (decide or grounding) and grounding flags numbers/results attributed to an attachment. Live sends attach the
-  file (email attachment / one WhatsApp document with the text as caption); a file gone at send time → sent without it,
-  recorded.
+  file (email attachment / one WhatsApp document with the text as caption); a file gone, turned off or over 10 MB at send
+  time → sent without it, recorded, unless the text mentions an attachment (E2h): then cancelled `attachment_missing`, no
+  touch, a new wake-up. A message never mentions an attachment it won't carry (`attachment_mention`, fixable, then handoff).
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
   facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.

@@ -5,9 +5,28 @@ vi.mock("@/store", () => ({ useAgentLivePreview: () => ({ data: undefined, error
 
 import { GatePanel, LiveBanner, SendStatusPill } from "./live-mode";
 import { ChecksSummary } from "./decision-drawer";
-import { istDateTime, withIstTimes } from "./agent-labels";
+import { checkProblem, istDateTime, withIstTimes } from "./agent-labels";
 
 afterEach(cleanup);
+
+describe("E2h: attachment problems in plain words", () => {
+  it("names the cancel reason and the check", () => {
+    render(
+      <SendStatusPill
+        state={{ ...state, sendStatus: "cancelled", cancelReason: "attachment_missing" }}
+        showReason
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Not sent: the attachment was missing and the message mentioned it; the AI will write a new message",
+      ),
+    ).toBeTruthy();
+    expect(checkProblem("attachment_mention: No file will be attached.").text).toBe(
+      "Mentioned an attachment that couldn't be attached: No file will be attached.",
+    );
+  });
+});
 
 const state = {
   sendStatus: null,

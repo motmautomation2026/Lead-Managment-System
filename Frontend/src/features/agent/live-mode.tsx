@@ -18,7 +18,13 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorBlock } from "@/components/common/server-state";
 import { useAgentLivePreview } from "@/store";
-import { istDateTime, LIVE_SCOPE_LABEL, SEND_STATUS_LABEL, SEND_STATUS_TONE } from "./agent-labels";
+import {
+  cancelReasonText,
+  istDateTime,
+  LIVE_SCOPE_LABEL,
+  SEND_STATUS_LABEL,
+  SEND_STATUS_TONE,
+} from "./agent-labels";
 
 // Display only: the server's go-live gate (agent/readiness.ts) decides.
 const MIN_RATED = 50;
@@ -202,7 +208,7 @@ export function SendStatusPill({
   if (!status) return null;
   const reason =
     status === "cancelled"
-      ? state.cancelReason
+      ? cancelReasonText(state.cancelReason)
       : status === "failed" || status === "queued"
         ? state.sendError
         : null;

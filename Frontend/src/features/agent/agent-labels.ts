@@ -171,6 +171,7 @@ export const CHECK_LABEL: Record<string, string> = {
   compound_question: "Asks two things at once",
   exclamation: "Exclamation mark",
   internal_info_leak: "Internal information leak",
+  attachment_mention: "Mentioned an attachment that couldn't be attached",
   content_contacts: "Contact details not allowed",
   content_html: "Contains HTML",
   content_opt_out: "Contains opt-out text",
@@ -198,6 +199,12 @@ export function checkProblem(problem: string): { rule: string | null; text: stri
     ? { rule, text: `${CHECK_LABEL[rule]}: ${problem.slice(at + 2)}` }
     : { rule: null, text: problem };
 }
+
+/** Why a live send was cancelled, in plain words; the other reasons are already sentences. */
+export const cancelReasonText = (reason: string | null) =>
+  reason === "attachment_missing"
+    ? "Not sent: the attachment was missing and the message mentioned it; the AI will write a new message"
+    : reason;
 
 /** Date and time in IST, labelled. */
 export const istDateTime = (iso: string | null | undefined) =>
