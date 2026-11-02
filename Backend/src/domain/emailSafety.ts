@@ -199,6 +199,12 @@ export function buildFromName(defaultName: string, ownerName: string | null | un
   return owner || defaultName;
 }
 
+const RE_PREFIX = /^(?:\s*re\s*:\s*)+/i;
+/** E3a rule 7: the subject of a follow-up in the same thread, however many replies back. */
+export const threadSubject = (subject: string) => `Re: ${subject.replace(RE_PREFIX, "")}`;
+/** A follow-up whose thread is gone (the earlier email bounced) starts a new one with the plain subject. */
+export const unthreadedSubject = (subject: string) => subject.replace(RE_PREFIX, "");
+
 /** `Message-ID: <uuid@from-domain>` (D3 matches replies by In-Reply-To / References). */
 export function messageIdFor(domain: string, id: string = randomUUID()): string {
   return `<${id}@${domain}>`;

@@ -99,6 +99,8 @@ export interface MessageFacts {
   internalTexts: string[];
   /** The lead's company: its name in capitals in a subject is fine. */
   leadCompany: string;
+  /** E3a rule 7: an email is a follow-up in a thread; its subject comes from code, not the model. */
+  threaded: boolean;
 }
 
 export function messageFactsOf(ctx: AgentContext): MessageFacts {
@@ -110,6 +112,7 @@ export function messageFactsOf(ctx: AgentContext): MessageFacts {
     companyName: ctx.companyName,
     internalTexts: [ctx.internal.companyDescription, ctx.internal.deal.open?.name].filter((t): t is string => Boolean(t)),
     leadCompany: ctx.company?.name ?? ctx.lead.company,
+    threaded: Boolean(ctx.emailThread),
   };
 }
 
@@ -196,7 +199,8 @@ export function subjectProblem(subject: string, companies: readonly string[]): s
 export function checkMessage(decision: AgentDecision, settings: MessageCheckSettings, facts?: MessageFacts): MessageViolation[] {
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return [];
   const violations: MessageViolation[] = [];
-  const all = decision.action === "send_email" ? `${decision.subject}\n${decision.body}` : decision.body;
+  const modelSubject = decision.action === "send_email" && !facts?.threaded ? decision.subject : null;
+  const all = modelSubject === null ? decision.body : `${modelSubject}\n${decision.body}`;
 
   const banned = findBannedPhrases(all, settings.banned_phrases);
   if (banned.length) violations.push({ rule: "banned_phrase", message: `Uses banned phrase(s): ${banned.map((p) => `"${p}"`).join(", ")}.` });
@@ -211,8 +215,8 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
   // E3a rule 3: polish removes these when it can; what is left needs a rewrite.
   if (contacts.length) violations.push({ rule: "contact_details", message: `Don't write links, email addresses or phone numbers (${contacts.join(", ")}); the system adds what is needed.` });
 
-  if (decision.action === "send_email") {
-    const subject = subjectProblem(decision.subject, facts ? [facts.companyName, facts.leadCompany] : []);
+  if (modelSubject !== null) {
+    const subject = subjectProblem(modelSubject, facts ? [facts.companyName, facts.leadCompany] : []);
     if (subject) violations.push({ rule: "subject_style", message: subject });
   }
 

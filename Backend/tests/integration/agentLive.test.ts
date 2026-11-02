@@ -109,12 +109,12 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
   }
 
   function fakeSmtp() {
-    const sent: { from: unknown; subject?: string; messageId?: string; text?: string }[] = [];
+    const sent: { from: unknown; subject?: string; messageId?: string; text?: string; inReplyTo?: string; references?: string | string[] }[] = [];
     const builder = nodemailer.createTransport({ streamTransport: true, buffer: true });
     const transport: EmailTransport = {
       async sendMail(mail) {
         const info = await builder.sendMail(mail);
-        sent.push({ from: mail.from, subject: mail.subject, messageId: mail.messageId, text: mail.text as string });
+        sent.push({ from: mail.from, subject: mail.subject, messageId: mail.messageId, text: mail.text as string, inReplyTo: mail.inReplyTo as string | undefined, references: mail.references as string | undefined });
         return { messageId: info.messageId, response: "250 OK" };
       },
       verify: async () => true,
@@ -242,6 +242,87 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     expect(outbound.message_id).toBe(sent.provider_message_id);
     expect(await aiTimeline(l.id)).toEqual(["AI sent email: Outbound for Acme Steel"]);
     expect((await leadRow(l.id)).agent_touch_count).toBe(1);
+  });
+
+  describe("E3a: email threading", () => {
+    /** Sends one AI email through the runner and queue; `gap` clears the time and touch limits for the next one. */
+    async function sendAiEmail(ws: string, l: { id: string }, smtp: ReturnType<typeof fakeSmtp>, answer: AgentDecision) {
+      await wakeup(ws, l.id);
+      expect((await tick(ws, [answer]))[0]).toMatchObject({ result: "executed", action: "send_email" });
+      expect(await emailTick(ws, smtp)).toEqual(["sent"]);
+      await pool.query(`update public.email_outbound_messages set sent_at = sent_at - interval '10 days' where lead_id = $1`, [l.id]);
+      await pool.query(`update public.agent_decisions set sent_at = sent_at - interval '10 days', created_at = created_at - interval '10 days' where lead_id = $1`, [l.id]);
+      await pool.query(`update public.leads set agent_touch_count = 0, agent_last_touch_at = null where id = $1`, [l.id]);
+      await pool.query(`update public.agent_wakeups set status = 'done' where lead_id = $1 and status = 'pending'`, [l.id]);
+      await pool.query(`update public.integration_connections set next_send_at = null where workspace_id = $1 and id = 'email'`, [ws]);
+    }
+    const FOLLOW_UP: AgentDecision = { ...EMAIL, subject: "-", body: "Hi Asha,\n\nOne more thought on your outbound plan. Would Thursday suit you?" } as AgentDecision;
+
+    it("the second AI email continues the first's thread, with a new Message-ID; the first has no thread headers; a reply still matches", async () => {
+      const ws = await workspace("thread");
+      const l = await lead(ws);
+      const smtp = fakeSmtp();
+      await sendAiEmail(ws, l, smtp, EMAIL);
+      await sendAiEmail(ws, l, smtp, FOLLOW_UP);
+      const [first, second] = smtp.sent;
+      expect(first).toMatchObject({ subject: "Outbound for Acme Steel" });
+      expect(first!.inReplyTo).toBeUndefined();
+      expect(first!.references).toBeUndefined();
+      expect(second).toMatchObject({ subject: "Re: Outbound for Acme Steel", inReplyTo: first!.messageId, references: first!.messageId });
+      expect(second!.messageId).not.toBe(first!.messageId);
+      const stored = (await decisionsOf(l.id)).filter((d) => d.action === "send_email").map((d) => d.message_subject);
+      expect(stored).toEqual(["Outbound for Acme Steel", "Re: Outbound for Acme Steel"]);
+
+      // A third stays "Re: <first subject>", answering the second.
+      await sendAiEmail(ws, l, smtp, FOLLOW_UP);
+      expect(smtp.sent[2]).toMatchObject({ subject: "Re: Outbound for Acme Steel", inReplyTo: second!.messageId });
+      // The Message-ID D3 matches a reply on (emailInbound.test.ts) is stored per email.
+      const { rows } = await pool.query<{ message_id: string }>(`select message_id from public.email_outbound_messages where lead_id = $1 order by sent_at`, [l.id]);
+      expect(new Set(rows.map((r) => r.message_id)).size).toBe(3);
+    });
+
+    it("older than 45 days, or bounced: a new thread with the model's subject", async () => {
+      const ws = await workspace("thread-old");
+      const old = await lead(ws);
+      const bounced = await lead(ws);
+      const smtp = fakeSmtp();
+      await sendAiEmail(ws, old, smtp, EMAIL);
+      await sendAiEmail(ws, bounced, smtp, EMAIL);
+      await pool.query(`update public.email_outbound_messages set sent_at = now() - interval '46 days' where lead_id = $1`, [old.id]);
+      await pool.query(`update public.email_outbound_messages set bounced_at = now() where lead_id = $1`, [bounced.id]);
+      const NEW: AgentDecision = { ...EMAIL, subject: "Next steps for Acme Steel" } as AgentDecision;
+      await sendAiEmail(ws, old, smtp, NEW);
+      await sendAiEmail(ws, bounced, smtp, NEW);
+      for (const mail of smtp.sent.slice(2)) {
+        expect(mail.subject).toBe("Next steps for Acme Steel");
+        expect(mail.inReplyTo).toBeUndefined();
+      }
+    });
+
+    it("a queued follow-up whose earlier email bounced before it went starts a new thread with the plain subject", async () => {
+      const ws = await workspace("thread-race");
+      const l = await lead(ws);
+      const smtp = fakeSmtp();
+      await sendAiEmail(ws, l, smtp, EMAIL);
+      await wakeup(ws, l.id);
+      await tick(ws, [FOLLOW_UP]);
+      await pool.query(`update public.email_outbound_messages set bounced_at = now() where lead_id = $1 and status = 'sent'`, [l.id]);
+      expect(await emailTick(ws, smtp)).toEqual(["sent"]);
+      expect(smtp.sent[1]).toMatchObject({ subject: "Outbound for Acme Steel" });
+      expect(smtp.sent[1]!.inReplyTo).toBeUndefined();
+    });
+
+    it("rep proposal and meeting emails are never threaded", async () => {
+      const ws = await workspace("thread-rep");
+      const l = await lead(ws);
+      const smtp = fakeSmtp();
+      await sendAiEmail(ws, l, smtp, EMAIL);
+      const { enqueueEmail } = await import("../../src/services/emailOutbound.service.js");
+      await enqueueEmail(pool, { workspaceId: ws, source: "test", sourceId: randomUUID(), to: "rep@example.com", subject: "Plain", html: "<p>Hi</p>" });
+      expect(await emailTick(ws, smtp)).toEqual(["sent"]);
+      expect(smtp.sent[1]).toMatchObject({ subject: "Plain" });
+      expect(smtp.sent[1]!.inReplyTo).toBeUndefined();
+    });
   });
 
   it("an AI email is automated: outside the email send window it waits (no attempt)", async () => {

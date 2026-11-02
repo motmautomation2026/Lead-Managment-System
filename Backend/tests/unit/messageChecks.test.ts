@@ -199,6 +199,7 @@ const facts = (over: Partial<MessageFacts> = {}): MessageFacts => ({
   companyName: "MOTM Technologies",
   internalTexts: [],
   leadCompany: "Acme Steel",
+  threaded: false,
   ...over,
 });
 const e2cRules = (decision: AgentDecision, f: MessageFacts) => checkMessage(decision, settings, f).map((v) => v.rule);
@@ -295,7 +296,7 @@ describe("E2c rule 3: internal information leak", () => {
 });
 
 describe("E3a: subject_style", () => {
-  const facts = { inboundFirst: false, conversationExists: false, ownerFirstName: "Ravi", companyName: "MOTM Technologies", internalTexts: [], leadCompany: "SKF India" };
+  const facts = { inboundFirst: false, conversationExists: false, ownerFirstName: "Ravi", companyName: "MOTM Technologies", internalTexts: [], leadCompany: "SKF India", threaded: false };
   const check = (subject: string) => checkMessage(email("Hi Raj, shall we talk?", subject), settings, facts).filter((v) => v.rule === "subject_style");
 
   it("accepts a plain, specific subject, acronyms and company names", () => {

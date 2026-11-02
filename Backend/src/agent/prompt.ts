@@ -124,6 +124,8 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
     ...(internal ? [INTERNAL_RULE] : []),
+    // E3a rule 7: code sets a follow-up's subject.
+    ...(ctx.emailThread ? ['A follow-up email to this contact stays in the same thread and needs no subject: put "-" as the subject.'] : []),
     "",
     block("lead_data", neutralise(leadDataText(ctx))),
     ...(internal ? [block("internal_context", neutralise(internal))] : []),

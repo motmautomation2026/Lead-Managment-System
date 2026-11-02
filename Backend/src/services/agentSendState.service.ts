@@ -103,6 +103,29 @@ export async function agentSendRecheck(
   return { ...result, phoneE164: row.phone_e164, email: row.email };
 }
 
+// --- Email threading (E3a rule 7) ----------------------------------------------------
+
+const THREAD_DAYS = 45;
+
+export interface AiEmailThread {
+  messageId: string;
+  subject: string;
+}
+
+/** The contact's latest real AI email (sent, not bounced) of the last 45 days; a follow-up goes in its thread. */
+export async function latestAiEmail(db: Queryable, leadId: string, now = new Date()): Promise<AiEmailThread | null> {
+  const row = (
+    await db.query<{ message_id: string; subject: string }>(
+      `select message_id, subject from public.email_outbound_messages
+        where lead_id = $1 and source = 'agent' and status = 'sent' and not dry_run and bounced_at is null and message_id is not null
+          and sent_at > $2::timestamptz - make_interval(days => $3)
+        order by sent_at desc limit 1`,
+      [leadId, now, THREAD_DAYS],
+    )
+  ).rows[0];
+  return row ? { messageId: row.message_id, subject: row.subject } : null;
+}
+
 // --- Writing the outcome back to the decision ----------------------------------------
 
 export type AgentSendOutcome =

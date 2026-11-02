@@ -7,6 +7,7 @@ import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricin
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
 import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
 import { polishDecision, type AutoFix } from "../agent/polish.js";
+import { threadSubject } from "../domain/emailSafety.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
 import { resolveAgentModels } from "../providers/openai.provider.js";
@@ -134,7 +135,10 @@ export async function draftDecision(
     add(deps.decisionModel, decided, tokens);
     // E3a rule 3: auto-fixes first, so a fixed problem never costs a regeneration.
     const { decision: polished, autoFixes } = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName });
-    let rules = validateDecision(polished, ctx.rules, ctx.settings, deps.now);
+    // E3a rule 7: a follow-up email keeps its thread's subject; the model's is ignored.
+    const thread = ctx.emailThread;
+    const final = thread && polished.action === "send_email" ? { ...polished, subject: threadSubject(thread.subject) } : polished;
+    let rules = validateDecision(final, ctx.rules, ctx.settings, deps.now);
     // E2b rule 1 + E2c (both modes): deterministic writing checks, before grounding; recorded as rule violations.
     const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx));
     if (messageViolations.length) rules = { ...rules, allowed: false, executable: false, violations: [...rules.violations, ...messageViolations] };

@@ -29,6 +29,9 @@ export interface OutgoingMail {
   messageId: string;
   date: Date;
   headers: Record<string, string>;
+  /** E3a: an AI follow-up continues its thread. */
+  inReplyTo?: string;
+  references?: string;
   attachments: { filename: string; content: Buffer; contentType?: string }[];
 }
 

@@ -4,6 +4,7 @@ import { EMAIL_NO_REPLY_READING } from "../../src/agent/liveMode.js";
 import { buildDecisionMessages, type GroundingResult } from "../../src/agent/prompt.js";
 import { checkMessage, messageFactsOf } from "../../src/agent/messageChecks.js";
 import { situationOf } from "../../src/agent/situation.js";
+import { threadSubject, unthreadedSubject } from "../../src/domain/emailSafety.js";
 import { draftDecision, type Usage } from "../../src/services/agentRunner.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { sampleContext, settings } from "../helpers/agentContextFixture.js";
@@ -354,5 +355,26 @@ describe("E3a: auto-fix instead of rejecting", () => {
     const { result, model } = await run([bad]);
     expect(model.calls.filter((c) => c.kind === "decide")).toHaveLength(3);
     expect(result.decision).toMatchObject({ action: "handoff", title: "AI couldn't write a message that meets the playbook" });
+  });
+});
+
+describe("E3a: follow-up emails keep their thread", () => {
+  const thread = { messageId: "<first@motm.tech>", subject: "Steel buyers in Pune" };
+  const followUp = (subject: string): AgentDecision => ({ action: "send_email", subject, body: "Hi Asha, one more thought. Shall we talk on Monday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+
+  it("the model's subject is ignored (even a bad one) and the prompt says none is needed", async () => {
+    const ctx = sampleContext({ emailThread: thread });
+    const model = createFakeDecisionModel({ decisions: [followUp("RE: QUICK QUESTION today")] });
+    const result = await draftDecision(ctx, { model, decisionModel: "m-decide", groundingModel: "m-ground", prices: {}, now: NOW }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    expect(result.regenerated).toBe(false);
+    expect(result.decision).toMatchObject({ subject: "Re: Steel buyers in Pune" });
+    expect(buildDecisionMessages(ctx, settings, NOW)[1]!.content).toContain('needs no subject: put "-" as the subject');
+    expect(buildDecisionMessages(sampleContext(), settings, NOW)[1]!.content).not.toContain("needs no subject");
+  });
+
+  it("threadSubject never stacks Re:", () => {
+    expect(threadSubject("Steel buyers")).toBe("Re: Steel buyers");
+    expect(threadSubject("Re: Steel buyers")).toBe("Re: Steel buyers");
+    expect(unthreadedSubject("Re: Steel buyers")).toBe("Steel buyers");
   });
 });

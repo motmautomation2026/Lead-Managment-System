@@ -10,6 +10,7 @@ import { buildDealContext, type AgentDealContext, type AgentDealRow } from "../a
 import { effectiveMode, liveChannels, type LiveScope } from "../agent/liveMode.js";
 import { countTokens } from "../knowledge/chunkText.js";
 import type { Embedder } from "../providers/openai.provider.js";
+import { latestAiEmail, type AiEmailThread } from "./agentSendState.service.js";
 import { searchKnowledge } from "./knowledge.service.js";
 import { assetFileSize } from "./knowledgeLibrary.service.js";
 
@@ -122,6 +123,8 @@ export interface AgentContext {
   playbook: { version: number; body: string } | null;
   /** E2c rule 2: a real AI send got a matched reply (WhatsApp or email) after it. */
   aiSendReplied: boolean;
+  /** E3a rule 7: the real AI email a follow-up email continues; null = a new email needs its own subject. */
+  emailThread: AiEmailThread | null;
   knowledge: { query: string; chunks: AgentKnowledgeChunk[] };
   assets: AgentAssetSummary[];
   meta: { tokenEstimate: number; trimmedTimelineEvents: number; trimmedDecisionSummaries: number };
@@ -219,7 +222,7 @@ export async function buildAgentContext(
   const mode = effectiveMode(settings, { agentLiveTest: leadRow.agent_live_test, createdAt: leadRow.created_at });
   const shadow = mode === "shadow";
 
-  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied, assetHistory] = await Promise.all([
+  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied, assetHistory, emailThread] = await Promise.all([
     db.query<{ message: string | null }>(
       `select t.metadata ->> 'rawMessage' as message
          from public.timeline_events t join public.leads l on l.id = t.lead_id
@@ -313,6 +316,7 @@ export async function buildAgentContext(
                          where d.lead_id = $1 and d.workspace_id = $2 and d.attachment_issues is not null), '{}') as failed_asset_ids`,
       [leadId, workspaceId],
     ),
+    latestAiEmail(db, leadId, now),
   ]);
 
   const lead: AgentContextLead = {
@@ -413,6 +417,7 @@ export async function buildAgentContext(
     })),
     playbook: playbookRow.rows[0] ?? null,
     aiSendReplied: replied.rows[0]?.replied ?? false,
+    emailThread,
     knowledge: { query: "", chunks: [] },
     assets,
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },

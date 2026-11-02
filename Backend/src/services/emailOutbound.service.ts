@@ -21,6 +21,8 @@ import {
   shouldAutoPauseEmail,
   smtpReason,
   spacingAfterSend,
+  threadSubject,
+  unthreadedSubject,
   warmupDayFor,
   type EmailSource,
 } from "../domain/emailSafety.js";
@@ -32,7 +34,7 @@ import { mentionsAttachment } from "../agent/messageChecks.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
-import { agentSendRecheck, recordAgentSendOutcome } from "./agentSendState.service.js";
+import { agentSendRecheck, latestAiEmail, recordAgentSendOutcome } from "./agentSendState.service.js";
 
 /**
  * E1b: every email goes through this queue and is sent only by the worker
@@ -347,6 +349,22 @@ async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "queu
   });
 }
 
+/**
+ * E3a rule 7, decided at send time: an AI follow-up continues the contact's latest real AI email (a
+ * new Message-ID, so D3 matching works); if that one bounced meanwhile it starts a new thread. Every
+ * other email is left alone. The subject actually sent is stored, for the next follow-up and the timeline.
+ */
+async function agentThread(row: EmailOutboundRow, now: Date): Promise<{ subject: string; headers: { inReplyTo?: string; references?: string } }> {
+  if (row.source !== "agent" || !row.lead_id) return { subject: row.subject, headers: {} };
+  const previous = await latestAiEmail(pool, row.lead_id, now);
+  const subject = previous ? threadSubject(previous.subject) : unthreadedSubject(row.subject);
+  if (subject !== row.subject) {
+    await pool.query(`update public.email_outbound_messages set subject = $2 where id = $1`, [row.id, subject]);
+    await pool.query(`update public.agent_decisions set message_subject = $2 where id = $1`, [row.source_id, subject]);
+  }
+  return { subject, headers: previous ? { inReplyTo: previous.messageId, references: previous.messageId } : {} };
+}
+
 async function cancelAgentEmail(db: Queryable, row: EmailOutboundRow, reason: string, attachmentIssues?: AttachmentIssue[]) {
   await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, reason]);
   await recordAgentSendOutcome(db, row.source_id, { kind: "cancelled", reason, ...(attachmentIssues ? { attachmentIssues } : {}) });
@@ -462,17 +480,19 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
         return "cancelled";
       }
     }
+    const thread = await agentThread(row, now);
     const transport = (deps.transports ?? defaultTransportCache).get(row.workspace_id, box.transportKey, box.smtp);
     const info = await transport.sendMail({
       from: { name: row.from_name || box.fromName, address: box.fromAddress },
       to: row.to_address,
       replyTo: box.replyTo,
-      subject: row.subject,
+      subject: thread.subject,
       html: row.html,
       text: row.text_body,
       messageId,
       date: now,
       headers: row.to_contact ? { "List-Unsubscribe": listUnsubscribeHeader(box.replyTo) } : {},
+      ...thread.headers,
       attachments: files,
     });
     await markSent(row, { messageId, response: info.response ?? null, dryRun: false, attachments: sent });

@@ -319,6 +319,19 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     expect(await tasks(c.id)).toEqual([]);
   });
 
+  it("E3a: a reply to a threaded AI follow-up matches that email, by In-Reply-To or only by References", async () => {
+    const { ws, box } = await workspace("reply-thread");
+    const c = await contact(ws);
+    const first = await sentEmail(ws, c.id, c.email);
+    const second = await sentEmail(ws, c.id, c.email);
+    box.add(plainReply({ messageId: "<t1@client.test>", from: `Ravi <${c.email}>`, inReplyTo: second.messageId, references: `${first.messageId} ${second.messageId}`, subject: "Re: Quick question", text: secret("Thursday works") }));
+    box.add(plainReply({ messageId: "<t2@client.test>", from: `Ravi <${c.email}>`, references: `${first.messageId} ${second.messageId}`, subject: "Re: Quick question", text: secret("Or Friday") }));
+    await poll(ws, box);
+    const rows = await events(ws);
+    expect(rows[0]).toMatchObject({ kind: "reply", match_status: "matched", match_method: "in_reply_to", lead_id: c.id, outbound_id: second.id });
+    expect(rows[1]).toMatchObject({ kind: "reply", match_status: "matched", match_method: "references", lead_id: c.id, outbound_id: second.id });
+  });
+
   it("reply via In-Reply-To: encrypted, 'Replied by email', automation stopped, one task, handed off, labelled by the AI step; never shown as text", async () => {
     const { ws, box } = await workspace("reply");
     const c = await contact(ws);
