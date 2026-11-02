@@ -6,7 +6,7 @@
  */
 import { pool, withTransaction } from "../db.js";
 import { env } from "../env.js";
-import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
+import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
 import { buildReplyClassificationMessages, finalLabel, REPLY_CLASSIFICATION_JSON_SCHEMA, type ReplyChannel, type ReplyLabel } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
 import { resolveAgentModels, type ReplyClassifierModel } from "../providers/openai.provider.js";
@@ -151,7 +151,7 @@ async function classifyOne(reply: ClaimedReply, deps: ReplyClassifierDeps): Prom
     await retryAt(reply, CONFIG_RETRY_MS, true);
     return { ...base, result: "deferred" };
   }
-  if (!prices[model]) {
+  if (!priceOf(prices, model)) {
     console.warn(`[replies] No price in OPENAI_PRICES_JSON for ${model}; reply classification deferred 10 min.`);
     await retryAt(reply, CONFIG_RETRY_MS, true);
     return { ...base, result: "deferred" };
@@ -175,7 +175,7 @@ async function classifyOne(reply: ClaimedReply, deps: ReplyClassifierDeps): Prom
     });
     text = null;
     const label = finalLabel(result.json);
-    const cost = { model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: costUsd(prices, model, result.inputTokens, result.outputTokens) };
+    const cost = { model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: costUsd(prices, model, result.inputTokens, result.outputTokens, result.cachedInputTokens) };
     const outcome = await done("classified", label, { source: "ai", status: "done", confidence: result.json.confidence, cost });
     console.log(`[replies] message ${reply.message_id}: ${label} (confidence ${result.json.confidence}), tokens ${cost.inputTokens}/${cost.outputTokens}, cost $${(cost.costUsd ?? 0).toFixed(6)}.`);
     return outcome;

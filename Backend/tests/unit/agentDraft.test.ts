@@ -163,8 +163,11 @@ describe("E2b rule 4: what the model sees", () => {
     const text = userText(sampleContext({ pastMessages: [], timeline: [] }));
     const tail = text.slice(text.indexOf("Before you answer, check:"));
     expect(text.endsWith(tail)).toBe(true);
-    expect(tail).toContain('- None of these phrases: "thanks for connecting", "just following up", "today", "free".');
-    expect(tail).toContain("- Word limits: email body 250 words, WhatsApp 80 words.");
+    expect(tail).toContain("- The message rules above.");
+    // E3a rule 2: the banned phrases and limits are the same for every contact, so they are in the cached part.
+    const system = buildDecisionMessages(sampleContext(), settings, NOW)[0]!.content;
+    expect(system).toContain('- None of these phrases: "thanks for connecting", "just following up", "today", "free".');
+    expect(system).toContain("- Word limits: email body 250 words, WhatsApp 80 words.");
     expect(tail).toContain("thank them for reaching out");
     expect(userText(sampleContext())).toContain("don't introduce us again");
     const fresh = sampleContext({ lead: { ...sampleContext().lead, source: "cold_call" }, timeline: [] });

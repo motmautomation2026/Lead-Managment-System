@@ -43,7 +43,7 @@ async function main(id: string) {
   const { buildDecisionMessages } = await import("../src/agent/prompt.js");
   const { draftDecision } = await import("../src/services/agentRunner.service.js");
   const { composeOutgoing } = await import("../src/agent/composeMessage.js");
-  const { parsePrices } = await import("../src/agent/pricing.js");
+  const { parsePrices, priceOf } = await import("../src/agent/pricing.js");
   const { countTokens } = await import("../src/knowledge/chunkText.js");
   const { checkMessage, messageFactsOf } = await import("../src/agent/messageChecks.js");
   const { STYLE_RULES } = await import("../src/agent/prompt.js");
@@ -103,9 +103,9 @@ async function main(id: string) {
     // The runner's own pipeline (decide, rules, grounding, one regeneration, handoff fallback), minus every write.
     const prices = parsePrices(env.OPENAI_PRICES_JSON);
     const models = resolveAgentModels(ctx.settings);
-    const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !prices[m]);
+    const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !priceOf(prices, m));
     if (unpriced.length) console.warn(`No price in OPENAI_PRICES_JSON for ${unpriced.join(", ")} (the runner would defer); cost below excludes it.`);
-    const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0 };
     const draft = await draftDecision(ctx, { model: createOpenAIDecisionModel(), ...models, prices, now }, usage);
 
     draft.attempts.forEach((attempt, i) => {
@@ -166,7 +166,7 @@ async function main(id: string) {
 
     section("Result (what the runner would record as a draft)");
     console.log(JSON.stringify({ outcome: draft.outcome, regenerated: draft.regenerated, decision: draft.decision }, null, 2));
-    console.log(`Models ${models.decisionModel} / ${models.groundingModel} · ${usage.inputTokens} in / ${usage.outputTokens} out · $${usage.costUsd.toFixed(6)}`);
+    console.log(`Models ${models.decisionModel} / ${models.groundingModel} · ${usage.inputTokens} in (${usage.cachedInputTokens} cached) / ${usage.outputTokens} out · $${usage.costUsd.toFixed(6)}`);
 
     const final = draft.decision;
     if (final.action === "send_email" || final.action === "send_whatsapp") {

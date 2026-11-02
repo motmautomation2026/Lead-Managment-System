@@ -8,6 +8,12 @@ const messages = (value: unknown) => {
 };
 
 describe("agent settings update schema", () => {
+  it("E3a: model fields accept name@effort", () => {
+    expect(parse({ decisionModel: "gpt-5.4-mini@low", groundingModel: "gpt-4.1" }).success).toBe(true);
+    expect(parse({ decisionModel: "gpt-4.1@low" }).success).toBe(false);
+    expect(parse({ decisionModel: "gpt-5.4-mini@fast" }).success).toBe(false);
+  });
+
   it("accepts a partial update and normalises times to HH:MM:SS", () => {
     const result = parse({ mode: "shadow", sendWindowStart: "08:00", sendWindowEnd: "18:30:00", sendDays: [1, 2, 3], repQuietHours: 0, decisionModel: null });
     expect(result.success && result.data).toEqual({ mode: "shadow", sendWindowStart: "08:00:00", sendWindowEnd: "18:30:00", sendDays: [1, 2, 3], repQuietHours: 0, decisionModel: null });

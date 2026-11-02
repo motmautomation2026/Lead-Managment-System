@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LIVE_SCOPES } from "./liveMode.js";
+import { modelSettingProblem } from "./modelSetting.js";
 
 /**
  * A partial agent_settings update (PUT /agent/settings), camelCase. Mirrors the
@@ -16,7 +17,17 @@ const timeOfDay = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, "Use HH:MM (24-hour).")
   .transform((value) => (value.length === 5 ? `${value}:00` : value));
-const modelName = z.string().trim().min(1).max(100).nullable();
+// E3a: a model name, optionally with a reasoning effort ("gpt-5.4-mini@low").
+const modelName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .superRefine((value, ctx) => {
+    const problem = modelSettingProblem(value);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  })
+  .nullable();
 
 export const settingsUpdateSchema = z
   .object({

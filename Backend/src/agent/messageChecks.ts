@@ -3,7 +3,7 @@ import type { AgentDecision } from "./decisionSchema.js";
 import { situationInboundFirst, situationOf } from "./situation.js";
 
 // URLs can carry "?" (query strings); they are not questions.
-const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
+export const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
 const withoutUrls = (text: string) => text.replace(URL_RE, " ");
 
 /** Questions in a message: runs of "?" (ASCII or full-width) outside URLs, so "Really?!" and "Why??" count once. */

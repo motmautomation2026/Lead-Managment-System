@@ -446,7 +446,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
       const [row] = await decisions(leadId);
       expect(row).toMatchObject({ outcome: "draft", action: "handoff", handoff_title: "Lead asked about price", regenerated: false });
       expect(row.rules_result.adjustments).toContainEqual({ rule: "signal", message: "Lead asked about price: handing off instead of sending." });
-      expect(row.quality_checks).toEqual([{ problems: [] }]);
+      expect(row.quality_checks).toMatchObject([{ problems: [] }]);
       expect(model.calls.map((c) => c.kind)).toEqual(["decide"]);
       expect(decideCalls(model)[0]!.input.messages[1]!.content).toContain("Signal: the contact asked about price — hand off.");
     });

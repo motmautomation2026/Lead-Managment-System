@@ -3,23 +3,15 @@
 exports[`E2b rule 4: what the model sees > E2d: inbound thanks only when no conversation exists > checklist snapshot for each combination 1`] = `
 {
   "conversation, first inbound message (Raj)": "Before you answer, check:
-- At most one question, about ONE thing (never two asks joined with "and"/"or").
-- None of these phrases: "thanks for connecting", "just following up", "today", "free".
-- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.
+- The message rules above.
 - A conversation already exists: don't introduce us again or ask for a first call.",
   "conversation, not the first message": "Before you answer, check:
-- At most one question, about ONE thing (never two asks joined with "and"/"or").
-- None of these phrases: "thanks for connecting", "just following up", "today", "free".
-- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.
+- The message rules above.
 - A conversation already exists: don't introduce us again or ask for a first call.",
   "no conversation, first inbound message": "Before you answer, check:
-- At most one question, about ONE thing (never two asks joined with "and"/"or").
-- None of these phrases: "thanks for connecting", "just following up", "today", "free".
-- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.
+- The message rules above.
 - This is the first message to an inbound lead: thank them for reaching out.",
   "no conversation, not the first message": "Before you answer, check:
-- At most one question, about ONE thing (never two asks joined with "and"/"or").
-- None of these phrases: "thanks for connecting", "just following up", "today", "free".
-- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.",
+- The message rules above.",
 }
 `;

@@ -3,7 +3,7 @@ import type { Queryable } from "../dto.js";
 import { env } from "../env.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
-import { costUsd, parsePrices, type ModelPrices } from "../agent/pricing.js";
+import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
 import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
@@ -73,11 +73,15 @@ export interface AgentRunnerDeps {
 
 export interface Usage {
   inputTokens: number;
+  /** The part of inputTokens served from OpenAI's prompt cache (E3a). */
+  cachedInputTokens?: number;
   outputTokens: number;
   costUsd: number;
 }
 
 export interface DraftAttempt {
+  /** E3a: input tokens of this attempt's model calls and the cached part (decide + grounding). */
+  tokens: { input: number; cached: number };
   decision: AgentDecision;
   rules: RulesResult;
   grounding: GroundingResult | null;
@@ -110,16 +114,21 @@ export async function draftDecision(
   deps: { model: DecisionModel; decisionModel: string; groundingModel: string; prices: ModelPrices; now: Date },
   usage: Usage,
 ): Promise<DraftResult> {
-  const add = (modelName: string, result: ModelCallResult<unknown>) => {
+  const add = (modelName: string, result: ModelCallResult<unknown>, tokens: DraftAttempt["tokens"]) => {
+    const cached = result.cachedInputTokens ?? 0;
     usage.inputTokens += result.inputTokens;
+    usage.cachedInputTokens = (usage.cachedInputTokens ?? 0) + cached;
     usage.outputTokens += result.outputTokens;
-    usage.costUsd += costUsd(deps.prices, modelName, result.inputTokens, result.outputTokens) ?? 0;
+    usage.costUsd += costUsd(deps.prices, modelName, result.inputTokens, result.outputTokens, cached) ?? 0;
+    tokens.input += result.inputTokens;
+    tokens.cached += cached;
   };
 
   const attempt = async (problems?: string[]): Promise<DraftAttempt> => {
+    const tokens = { input: 0, cached: 0 };
     const messages = buildDecisionMessages(ctx, ctx.settings, deps.now, problems ? { previousFailure: { problems } } : {});
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
-    add(deps.decisionModel, decided);
+    add(deps.decisionModel, decided, tokens);
     let rules = validateDecision(decided.json, ctx.rules, ctx.settings, deps.now);
     // E2b rule 1 + E2c (both modes): deterministic writing checks, before grounding; recorded as rule violations.
     const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx));
@@ -131,13 +140,14 @@ export async function draftDecision(
         messages: buildGroundingMessages(rules.finalDecision, ctx)!,
         jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
       });
-      add(deps.groundingModel, checked);
+      add(deps.groundingModel, checked, tokens);
       grounding = applyGroundingAllowList(checked.json, ctx);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
     // E2b rule 2: style problems from the same grounding call.
     const style = grounding?.styleViolations ?? [];
     return {
+      tokens,
       decision: decided.json,
       rules,
       grounding,
@@ -330,7 +340,7 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
     configNotes.add("No AI model configured; agent wakeups deferred 10 min.");
     return defer(CONFIG_RETRY_MS);
   }
-  const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !prices[m]);
+  const unpriced = [models.decisionModel, models.groundingModel].filter((m) => !priceOf(prices, m));
   if (unpriced.length) {
     configNotes.add(`No price in OPENAI_PRICES_JSON for ${[...new Set(unpriced)].join(", ")}; agent wakeups deferred 10 min.`);
     return defer(CONFIG_RETRY_MS);
@@ -372,7 +382,7 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   }
 
   // 4-7. Context and the model calls (no client held).
-  const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const usage: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0 };
   let ctx: AgentContext | null = null;
   try {
     ctx = await buildAgentContext(pool, wakeup.workspace_id, wakeup.lead_id, now, { embedder: deps.embedder });
@@ -420,9 +430,12 @@ const INSERT_DECISION = `
 /** One quality_checks entry; `attachmentsRemoved` only when the rules dropped an attachment (E2g). */
 function qualityCheck(a: DraftAttempt, ctx: AgentContext) {
   const removed = a.rules.attachmentsRemoved ?? [];
-  if (!removed.length) return { problems: a.problems };
+  // E3a rule 2: the attempt's input tokens and the part OpenAI served from its prompt cache.
+  const tokens = { inputTokens: a.tokens.input, cachedInputTokens: a.tokens.cached };
+  if (!removed.length) return { problems: a.problems, ...tokens };
   return {
     problems: a.problems,
+    ...tokens,
     attachmentsRemoved: removed.map((r) => ({ ...r, title: ctx.assets.find((asset) => asset.id === r.assetId)?.title ?? null })),
   };
 }

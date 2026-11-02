@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { env } from "../env.js";
 import { ModelOutputError, PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "./provider-errors.js";
 import { parseModelOutput, type AgentDecision } from "../agent/decisionSchema.js";
+import { modelParams } from "../agent/modelSetting.js";
 import { parseGroundingOutput, type ChatMessage, type GroundingResult } from "../agent/prompt.js";
 import { parseReplyClassification, type ReplyClassification } from "../agent/replyClassification.js";
 
@@ -141,6 +142,7 @@ export function embedTexts(texts: string[]): Promise<number[][]> {
 // --- AI agent decisions ------------------------------------------------------
 
 export interface ModelCallInput {
+  /** A model setting: a name, optionally with "@effort" (agent/modelSetting.ts). */
   model: string;
   messages: ChatMessage[];
   /** Strict structured output: DECISION_JSON_SCHEMA or GROUNDING_JSON_SCHEMA. */
@@ -151,6 +153,8 @@ export interface ModelCallResult<T> {
   /** The parsed, schema-validated output. */
   json: T;
   inputTokens: number;
+  /** The part of inputTokens served from OpenAI's prompt cache. */
+  cachedInputTokens?: number;
   outputTokens: number;
   /** The model that answered (as the API reports it). */
   model: string;
@@ -199,7 +203,7 @@ async function structuredCall<T>(client: ChatClient, input: ModelCallInput, pars
     let completion: OpenAI.Chat.Completions.ChatCompletion;
     try {
       completion = await client.chat.completions.create({
-        model: input.model,
+        ...modelParams(input.model),
         messages: input.messages,
         stream: false,
         response_format: { type: "json_schema", json_schema: { name: input.jsonSchema.name, schema: input.jsonSchema.schema, strict: true } },
@@ -224,8 +228,9 @@ async function structuredCall<T>(client: ChatClient, input: ModelCallInput, pars
     return {
       json,
       inputTokens: completion.usage?.prompt_tokens ?? 0,
+      cachedInputTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       outputTokens: completion.usage?.completion_tokens ?? 0,
-      model: completion.model || input.model,
+      model: completion.model || modelParams(input.model).model,
     };
   }
 }

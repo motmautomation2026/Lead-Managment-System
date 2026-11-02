@@ -99,9 +99,9 @@ const DAY_MS = 24 * HOUR_MS;
 /** Asia/Kolkata is a fixed UTC+05:30 (no DST). */
 const IST_OFFSET_MS = 330 * 60_000;
 
-const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+export const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 // Candidate numbers; only those with 10+ digits count, so dates ("2026-11-08") don't.
-const PHONE_RE = /\+?\d[\d\s().-]{8,}\d/g;
+export const PHONE_RE = /\+?\d[\d\s().-]{8,}\d/g;
 const OPT_OUT_RE = /\bunsubscribe\b|\bopt[\s-]?out\b/i;
 const SIGNATURE_RES = [
   /^\s*(best |kind |warm )?regards\b/im,

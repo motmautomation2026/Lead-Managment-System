@@ -5,7 +5,8 @@ vi.mock("../../src/env.js", () => ({ env: { OPENAI_API_KEY: undefined, OPENAI_DE
 
 import { DECISION_JSON_SCHEMA } from "../../src/agent/decisionSchema.js";
 import { GROUNDING_JSON_SCHEMA } from "../../src/agent/prompt.js";
-import { costUsd, parsePrices } from "../../src/agent/pricing.js";
+import { costUsd, parsePrices, priceOf } from "../../src/agent/pricing.js";
+import { MAX_COMPLETION_TOKENS, modelParams, modelSettingProblem, parseModelSetting } from "../../src/agent/modelSetting.js";
 import { createOpenAIDecisionModel, resolveAgentModels, type ModelCallInput } from "../../src/providers/openai.provider.js";
 import { ModelOutputError, PermanentProviderError, ProviderDeferredError, ProviderTimeoutError } from "../../src/providers/provider-errors.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
@@ -44,7 +45,7 @@ describe("OpenAI decision model", () => {
         response_format: { type: "json_schema", json_schema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA, strict: true } },
       }),
     );
-    expect(result).toEqual({ json: WAIT.decision, inputTokens: 1200, outputTokens: 80, model: "model-a-2026" });
+    expect(result).toEqual({ json: WAIT.decision, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 80, model: "model-a-2026" });
   });
 
   it("parses grounding output", async () => {
@@ -109,12 +110,58 @@ describe("resolveAgentModels", () => {
   });
 });
 
+describe("model settings (E3a)", () => {
+  it("parses an optional @effort; an unknown effort stays in the name", () => {
+    expect(parseModelSetting("gpt-5.4-mini")).toEqual({ model: "gpt-5.4-mini", effort: null });
+    expect(parseModelSetting("gpt-5.4-mini@low")).toEqual({ model: "gpt-5.4-mini", effort: "low" });
+    expect(parseModelSetting("gpt-5.4-mini@fast")).toEqual({ model: "gpt-5.4-mini@fast", effort: null });
+  });
+
+  it("request params per model family", () => {
+    expect(modelParams("gpt-4.1")).toEqual({ model: "gpt-4.1" });
+    expect(modelParams("gpt-4.1-mini")).toEqual({ model: "gpt-4.1-mini" });
+    expect(modelParams("gpt-5.4-mini")).toEqual({ model: "gpt-5.4-mini", reasoning_effort: "none", max_completion_tokens: MAX_COMPLETION_TOKENS });
+    expect(modelParams("gpt-5.4-mini@low")).toEqual({ model: "gpt-5.4-mini", reasoning_effort: "low", max_completion_tokens: MAX_COMPLETION_TOKENS });
+    expect(modelParams("gpt-5-mini").reasoning_effort).toBe("minimal");
+    expect(modelParams("o3-mini").reasoning_effort).toBe("low");
+  });
+
+  it("the provider sends them, never a temperature, and strips the effort from the model name", async () => {
+    const { create, client } = fakeClient(completion(JSON.stringify(WAIT)));
+    await createOpenAIDecisionModel({ client, sleep }).decide({ ...input(), model: "gpt-5.4-mini@low" });
+    const sent = (create.mock.calls as unknown as [Record<string, unknown>][])[0]![0];
+    expect(sent).toMatchObject({ model: "gpt-5.4-mini", reasoning_effort: "low", max_completion_tokens: MAX_COMPLETION_TOKENS, response_format: { type: "json_schema" } });
+    expect(sent).not.toHaveProperty("temperature");
+    expect(sent).not.toHaveProperty("max_tokens");
+  });
+
+  it("reports cached input tokens from the usage", async () => {
+    const { client } = fakeClient({ ...completion(JSON.stringify(WAIT)), usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 1024 } } });
+    expect((await createOpenAIDecisionModel({ client, sleep }).decide(input())).cachedInputTokens).toBe(1024);
+  });
+
+  it("the Settings field: names and efforts, not an effort on a model without reasoning", () => {
+    for (const ok of ["gpt-5.4-mini", "gpt-5.4-mini@low", "gpt-4.1", "ft:gpt-4.1:org:x:1"]) expect(modelSettingProblem(ok)).toBeNull();
+    expect(modelSettingProblem("gpt-4.1@low")).toContain("doesn't take a reasoning effort");
+    expect(modelSettingProblem("gpt-5.4-mini@fast")).toContain("Use a model name");
+  });
+});
+
 describe("pricing", () => {
   const prices = parsePrices('{"model-a":{"inputPer1M":2.5,"outputPer1M":10}}');
 
   it("costs a call per million tokens", () => {
     expect(costUsd(prices, "model-a", 1_000_000, 0)).toBe(2.5);
     expect(costUsd(prices, "model-a", 1200, 80)).toBe(0.0038);
+  });
+
+  it("E3a: cached input at cachedInputPer1M; without one at the input price; an effort doesn't change the price", () => {
+    const three = parsePrices('{"gpt-5.4-mini":{"inputPer1M":0.75,"cachedInputPer1M":0.075,"outputPer1M":4.5}}');
+    expect(costUsd(three, "gpt-5.4-mini", 1_000_000, 0, 800_000)).toBe(0.21);
+    expect(costUsd(three, "gpt-5.4-mini@low", 1_000_000, 0)).toBe(0.75);
+    expect(costUsd(prices, "model-a", 1_000_000, 0, 800_000)).toBe(2.5);
+    expect(priceOf(three, "gpt-5.4-mini@low")).toEqual(three["gpt-5.4-mini"]);
+    expect(priceOf(three, "gpt-5.4-mini@fast")).toBeUndefined();
   });
 
   it("an unknown model has no price", () => {

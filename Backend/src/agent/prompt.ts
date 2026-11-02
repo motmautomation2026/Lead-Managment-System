@@ -49,6 +49,11 @@ function istNow(now: Date) {
   }).format(now);
 }
 
+/**
+ * E3a rule 2: the system message is the same for every contact of a workspace (OpenAI caches
+ * identical prefixes): rules, playbook, message rules. Everything about the contact, the owner
+ * or the moment goes in the user message.
+ */
 export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettingsRow, now: Date, options: PromptOptions = {}): ChatMessage[] {
   const { lead, rules } = ctx;
   const sender = lead.ownerName ?? "a member of the sales team";
@@ -58,7 +63,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
   const internal = internalContextText(ctx);
 
   const system = [
-    `You are ${sender} at ${ctx.companyName}, writing to a B2B lead in India. Write as that person: plain, specific and brief.`,
+    `You write for the sales team of ${ctx.companyName}, to a B2B lead in India. Write as the person named under "Writing as": plain, specific and brief.`,
     "",
     "Pick EXACTLY ONE action and answer with JSON matching the schema:",
     "- send_email: an email (subject + body).",
@@ -71,28 +76,25 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "Rules:",
     "- Facts (numbers, client names, results, prices, timelines) may come ONLY from the knowledge excerpts, the playbook, or the lead's own data. If you lack a fact, don't invent it: pick wait or handoff.",
     "- Don't write a signature, a sign-off or an opt-out line; they are added automatically. End the body with your last real sentence (e.g. your question); never end with \"Regards\", \"Best regards\", \"Thanks\", your name or the company name. No HTML: plain text only.",
-    `- Word limits: email ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words.`,
-    `- Don't include email addresses or phone numbers other than these allowed contacts: ${[...rules.allowedContacts.emails, ...rules.allowedContacts.phones].join(", ") || "none"}.`,
     "- Don't repeat an earlier message (see the past_agent_messages block). Write in English unless the lead clearly prefers another language.",
     "- When unsure, pick handoff.",
     "",
     "Writing:",
-    `- Greet the lead by first name${ctx.lead.firstName ? ` (${ctx.lead.firstName})` : " when known"}.`,
+    "- Greet the lead by first name when known.",
     "- Refer specifically to the latest call, note or enquiry when it is relevant; don't send a generic message.",
     "- One clear next step per message.",
     "- Respect timing the lead or rep stated (\"interested later\", \"after Diwali\", \"call next month\"): prefer wait with a matching nextWakeInDays over messaging early.",
     "- The knowledge excerpts may contain INTERNAL material (client lists, internal tiers, strategy or process notes). Use only what is suitable to tell a prospect. Never name a client company unless the excerpt clearly presents it as a public reference, and never reveal internal strategy, tiers or process notes.",
-    ...(internal ? [INTERNAL_RULE] : []),
     // E2g rule 5: only with assets, so a workspace without any keeps today's prompt.
     ...(ctx.assets.length ? [ASSET_RULE] : []),
     "",
-    `Now: ${istNow(now)} IST.`,
-    `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
     `Send window: ${days}, ${settings.send_window_start.slice(0, 5)}–${settings.send_window_end.slice(0, 5)} IST. Sends outside it are scheduled for the next opening.`,
     "",
     DATA_NOTICE,
     "",
     ctx.playbook ? `=== PLAYBOOK (version ${ctx.playbook.version}) ===\n${ctx.playbook.body.trim()}\n=== END OF PLAYBOOK ===` : "=== PLAYBOOK ===\n(none yet)\n=== END OF PLAYBOOK ===",
+    "",
+    ...messageRules(settings),
   ].join("\n");
 
   const timeline = ctx.timeline.map((t) => `- ${t.at} [${t.kind}] ${t.title}${t.detail ? ` — ${t.detail}` : ""}`).join("\n");
@@ -111,6 +113,12 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
   const assets = ctx.assets.map((a) => `- ${a.id} · ${a.title} · ${a.channels.join("/")} · use when: ${a.useWhen}`).join("\n");
 
   const user = [
+    `Writing as: ${sender} at ${ctx.companyName}.`,
+    `Now: ${istNow(now)} IST.`,
+    `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
+    `Don't include email addresses or phone numbers other than these allowed contacts: ${[...rules.allowedContacts.emails, ...rules.allowedContacts.phones].join(", ") || "none"}.`,
+    ...(internal ? [INTERNAL_RULE] : []),
+    "",
     DATA_NOTICE,
     "",
     block("lead_data", neutralise(leadDataText(ctx))),
@@ -131,7 +139,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
       "Return a corrected decision that fixes every problem (or pick wait or handoff).",
     );
   }
-  user.push("", ...checklist(settings, situationOf(ctx), signalsOf(ctx)));
+  user.push("", ...checklist(situationOf(ctx), signalsOf(ctx)));
   return [
     { role: "system", content: system },
     { role: "user", content: user.join("\n") },
@@ -174,14 +182,22 @@ function howTheyCame(source: string): string {
   return `added by our team (source: ${words(source)})`;
 }
 
-/** E2b rule 4: the closing self-check, last in the user message. */
-function checklist(settings: AgentSettingsRow, situation: Situation, signals: AgentSignal[]): string[] {
+/** E2b rule 4 / E3a rule 2: the workspace's message rules, in the cached part. */
+function messageRules(settings: AgentSettingsRow): string[] {
   const banned = settings.banned_phrases.map((p) => `"${p}"`).join(", ");
   return [
-    "Before you answer, check:",
+    "Message rules:",
     '- At most one question, about ONE thing (never two asks joined with "and"/"or").',
     ...(banned ? [`- None of these phrases: ${banned}.`] : []),
     `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
+  ];
+}
+
+/** E2b rule 4: the closing self-check, last in the user message: what depends on this contact. */
+function checklist(situation: Situation, signals: AgentSignal[]): string[] {
+  return [
+    "Before you answer, check:",
+    "- The message rules above.",
     ...(situationInboundFirst(situation) ? ["- This is the first message to an inbound lead: thank them for reaching out."] : []),
     ...(situation.conversationExists ? ["- A conversation already exists: don't introduce us again or ask for a first call."] : []),
     ...signals.map((signal) => signal.check),
@@ -299,14 +315,12 @@ export function parseGroundingOutput(json: unknown): GroundingResult {
 const yesNo = (value: boolean) => (value ? "yes" : "no");
 
 /** E2b rule 2: the style rules, each with one example, and the CRM facts they depend on. */
-function styleCheckLines(situation: Situation): string[] {
+function styleCheckLines(): string[] {
   return [
     "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
     '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"',
-    '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (below). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."',
+    '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (in the user message). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."',
     '- unsupported_sector_claim: says we help, work with or have experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow."',
-    "Facts from the CRM (reliable):",
-    `- conversationExists: ${situation.conversationExists}`,
   ];
 }
 
@@ -329,7 +343,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     "Approved sources: the knowledge, playbook and lead_data blocks. A claim supported by ANY of them is supported.",
     "Check ONLY specific, checkable factual claims: numbers or percentages, client or partner company names, results or outcomes achieved, prices, timelines or deadlines, certifications, and specific capabilities stated as fact.",
     'NEVER flag: greetings; questions; offers or next-step suggestions (e.g. "shall we set up a call?"); vague statements of intent or possibility (e.g. "we can help", "this may be useful", "support your growth"); restating what the lead or rep said (the website enquiry, calls and notes in lead_data); ' +
-      `the sender's own company name (${ownNames}); the lead's own company name (${leadNames}).`,
+      `the sender's own company name (${ownNames}); the lead's own company name (given in the user message).`,
     'SUPPORTED: a faithful paraphrase or summary of an approved fact; it need not use the same words. Examples: the knowledge says we target the right decision-makers and qualify opportunities, so "We focus on targeting the right decision-makers and qualifying opportunities" is supported; a case study says a steel trader got new customers and repeat business, so "we helped a steel trader with repeat business" is supported.',
     "SUPPORTED: general statements of our approach that the playbook or knowledge describe (how we work, what we start with, what we focus on).",
     'UNSUPPORTED: a specific, checkable claim that is in no approved source: numbers, named clients, results beyond the case study\'s wording, claims about "many" or "most" clients, sector experience not listed, and promises (visits, timelines, outcomes).',
@@ -339,15 +353,19 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     "Exception to the vague-intent rule: saying we help, work with or have experience in the lead's sector or industry IS a claim; flag it unless an approved source says so.",
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     "",
-    ...styleCheckLines(situationOf(ctx)),
+    ...styleCheckLines(),
     "",
     DATA_NOTICE,
-  ].join("\n");
-  const user = [
-    block("message", neutralise(message)),
-    block("knowledge", knowledgeBlock(ctx.knowledge.chunks)),
+    "",
     block("playbook", neutralise(ctx.playbook?.body ?? "")),
+  ].join("\n");
+  // E3a rule 2: the system message (with the playbook) is the same for every contact; the message comes last.
+  const user = [
+    `The lead's own company name: ${neutralise(leadNames)}.`,
+    `Fact from the CRM (reliable): conversationExists: ${situationOf(ctx).conversationExists}`,
+    block("knowledge", knowledgeBlock(ctx.knowledge.chunks)),
     block("lead_data", neutralise(`${leadDataText(ctx)}${notes ? `\nCalls and notes:\n${notes}` : ""}`)),
+    block("message", neutralise(message)),
   ].join("\n\n");
   return [
     { role: "system", content: system },
