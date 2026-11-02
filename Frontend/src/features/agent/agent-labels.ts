@@ -5,6 +5,7 @@ import type {
   AgentEnrollSkipReason,
   AgentOutcome,
   AgentRatingReason,
+  AttachmentRemovalReason,
 } from "@/lib/backend-client";
 import { fmtDateTime } from "@/lib/format";
 import { label } from "@/lib/labels";
@@ -209,3 +210,12 @@ export const usd = (value: number | null | undefined) =>
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
 export const withIstTimes = (text: string, format: (iso: string) => string) =>
   text.replace(ISO_RE, (iso) => format(iso));
+
+/** E2g: why the rules removed an attachment (the message was kept). Mirrors agent/assetRules.ts. */
+export const ATTACHMENT_REMOVED_LABEL: Record<AttachmentRemovalReason, string> = {
+  first_message: "No attachments before a conversation exists",
+  whatsapp_no_reply: "WhatsApp attachments only after the contact has replied on WhatsApp",
+  already_sent: "Already sent to this contact",
+  count_limit: "Too many attachments for this channel",
+  size_limit: "Attachments over 10 MB in total",
+};

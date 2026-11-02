@@ -26,6 +26,8 @@ import {
 } from "../domain/emailSafety.js";
 import { PAUSED_RETRY_MS } from "../domain/whatsappSafety.js";
 import { defaultTransportCache, type TransportCache } from "../providers/email.provider.js";
+import { isMissingStorageObject, MissingStorageObjectError } from "../providers/storageErrors.js";
+import { ASSET_GONE_REASON, type AttachmentIssue } from "../agent/assetRules.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
@@ -44,6 +46,9 @@ export interface AttachmentRef {
   fileName: string;
   mimeType: string;
   size: number | null;
+  /** E2g: an AI email's asset (agent_assets.id) and its title; a deleted asset is left out at send time. */
+  assetId?: string;
+  title?: string;
 }
 
 export interface EmailOutboundRow {
@@ -169,9 +174,20 @@ export async function claimDueEmails(db: Queryable, limit: number, workspaceIds:
 // ---------------------------------------------------------------------------
 // Outcomes (each one short transaction) and their effect on the source row
 
-async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { messageId: string | null; dryRun: boolean }) {
+interface SentAttachments {
+  sentAssets: { id: string; title: string | null }[];
+  issues: AttachmentIssue[];
+}
+
+async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { messageId: string | null; dryRun: boolean; attachments?: SentAttachments }) {
   if (row.source === "agent") {
-    await recordAgentSendOutcome(db, row.source_id, { kind: "sent", providerMessageId: result.messageId, dryRun: result.dryRun });
+    await recordAgentSendOutcome(db, row.source_id, {
+      kind: "sent",
+      providerMessageId: result.messageId,
+      dryRun: result.dryRun,
+      sentAssets: result.attachments?.sentAssets ?? [],
+      attachmentIssues: result.attachments?.issues ?? [],
+    });
   } else if (row.source === "proposal") {
     await db.query(`update public.proposals set email_send_status = 'sent', email_sent_at = now(), email_send_error = null where id = $1`, [row.source_id]);
   } else if (row.source === "meeting") {
@@ -189,7 +205,7 @@ async function onSourceProblem(db: Queryable, row: EmailOutboundRow, status: "pe
   }
 }
 
-async function markSent(row: EmailOutboundRow, result: { messageId: string | null; response: string | null; dryRun: boolean }) {
+async function markSent(row: EmailOutboundRow, result: { messageId: string | null; response: string | null; dryRun: boolean; attachments?: SentAttachments }) {
   await withTransaction(async (db) => {
     await db.query(
       `update public.email_outbound_messages
@@ -266,8 +282,42 @@ async function staleMeetingReason(meetingId: string, now: Date): Promise<string 
 
 async function downloadAttachment(ref: AttachmentRef): Promise<Buffer> {
   const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
+  if (error && isMissingStorageObject(error)) throw new MissingStorageObjectError(ref.fileName);
   if (error || !data) throw new Error(`Couldn't download the attachment "${ref.fileName}": ${error?.message ?? "no data"}`);
   return Buffer.from(await data.arrayBuffer());
+}
+
+/**
+ * The files to attach. E2g rule 6: an AI email's asset that was deleted / turned off, or whose
+ * file is gone from Storage, is left out and recorded (the email still goes out); any other
+ * download problem is an error (retried).
+ */
+async function attachmentFiles(row: EmailOutboundRow, download: (ref: AttachmentRef) => Promise<Buffer>) {
+  const assetIds = row.attachments.map((a) => a.assetId).filter((id): id is string => Boolean(id));
+  const live =
+    row.source === "agent" && assetIds.length
+      ? new Set(
+          (await pool.query<{ id: string }>(`select id from public.agent_assets where id = any($1::uuid[]) and workspace_id = $2 and is_active`, [assetIds, row.workspace_id])).rows.map((r) => r.id),
+        )
+      : null;
+  const files: { filename: string; content: Buffer; contentType: string }[] = [];
+  const sent: SentAttachments = { sentAssets: [], issues: [] };
+  for (const a of row.attachments) {
+    const optional = row.source === "agent" && Boolean(a.assetId);
+    if (optional && !live?.has(a.assetId!)) {
+      sent.issues.push({ assetId: a.assetId!, title: a.title ?? null, reason: ASSET_GONE_REASON });
+      continue;
+    }
+    try {
+      files.push({ filename: a.fileName, content: await download(a), contentType: a.mimeType });
+    } catch (error) {
+      if (!optional || !(error instanceof MissingStorageObjectError)) throw error;
+      sent.issues.push({ assetId: a.assetId!, title: a.title ?? null, reason: error.message });
+      continue;
+    }
+    if (a.assetId) sent.sentAssets.push({ id: a.assetId, title: a.title ?? null });
+  }
+  return { files, sent };
 }
 
 const tooBig = (bytes: number) => `Attachments are ${(bytes / 1024 / 1024).toFixed(1)} MB; emails can carry at most 10 MB.`;
@@ -385,7 +435,7 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
 
   const messageId = messageIdFor(domainOf(box.fromAddress));
   try {
-    const files = await Promise.all(row.attachments.map(async (a) => ({ filename: a.fileName, content: await (deps.download ?? downloadAttachment)(a), contentType: a.mimeType })));
+    const { files, sent } = await attachmentFiles(row, deps.download ?? downloadAttachment);
     const bytes = files.reduce((sum, f) => sum + f.content.length, 0);
     if (bytes > MAX_ATTACHMENT_BYTES) {
       await withTransaction((db) => markFailed(db, row, tooBig(bytes)));
@@ -409,7 +459,7 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
       headers: row.to_contact ? { "List-Unsubscribe": listUnsubscribeHeader(box.replyTo) } : {},
       attachments: files,
     });
-    await markSent(row, { messageId, response: info.response ?? null, dryRun: false });
+    await markSent(row, { messageId, response: info.response ?? null, dryRun: false, attachments: sent });
     return "sent";
   } catch (err) {
     return withTransaction((db) => recordSendError(db, row, err, now));

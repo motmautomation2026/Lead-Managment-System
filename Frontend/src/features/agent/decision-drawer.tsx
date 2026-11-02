@@ -11,7 +11,9 @@ import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { RecordLink } from "@/features/crm/record-link";
 import { DealStagePill } from "@/features/deals/deal-stage-pill";
 import { SendStatusPill } from "./live-mode";
+import { Paperclip } from "lucide-react";
 import type {
+  AgentDecisionAttachments,
   AgentDecisionContext,
   AgentDecisionDetail,
   AgentDecisionReport,
@@ -30,6 +32,7 @@ import {
 } from "@/store";
 import {
   ACTION_LABEL,
+  ATTACHMENT_REMOVED_LABEL,
   OUTCOME_LABEL,
   OUTCOME_TONE,
   RATING_REASON_LABEL,
@@ -100,6 +103,11 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
 
       <Section title="Message">
         <DecisionMessage decision={d} />
+        {d.attachments && (
+          <div className="mt-2">
+            <AttachmentsUsed attachments={d.attachments} showNone />
+          </div>
+        )}
       </Section>
 
       {d.error && (
@@ -193,6 +201,49 @@ export function ContextUsed({ context }: { context: AgentDecisionContext | null 
         <span>no open deal</span>
       )}
     </p>
+  );
+}
+
+/**
+ * E2g rule 7: a send's attachments by title (and whether they went out), the ones the rules
+ * removed and the ones left out at send time. Renders nothing without any unless `showNone`.
+ */
+export function AttachmentsUsed({
+  attachments,
+  showNone = false,
+}: {
+  attachments: AgentDecisionAttachments | null | undefined;
+  showNone?: boolean;
+}) {
+  if (!attachments) return null;
+  const { assets, removed, issues } = attachments;
+  if (!assets.length && !removed.length && !issues.length && !showNone) return null;
+  const name = (title: string | null) => title ?? "A deleted asset";
+  return (
+    <div className="space-y-1 text-xs text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Paperclip className="size-3.5" aria-hidden="true" />
+        <span className="font-medium text-foreground">Attachments:</span>
+        {assets.length === 0
+          ? "none"
+          : assets.map((a) => (
+              <span key={a.id}>
+                {name(a.title)}
+                {a.sent && " (sent)"}
+              </span>
+            ))}
+      </p>
+      {removed.map((r) => (
+        <p key={`removed-${r.assetId}`}>
+          Removed {name(r.title)}: {ATTACHMENT_REMOVED_LABEL[r.reason] ?? r.reason}
+        </p>
+      ))}
+      {issues.map((i) => (
+        <p key={`issue-${i.assetId}`} className="text-destructive">
+          Not sent {name(i.title)}: {i.reason}
+        </p>
+      ))}
+    </div>
   );
 }
 

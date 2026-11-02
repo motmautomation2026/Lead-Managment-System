@@ -595,6 +595,17 @@ export interface AgentDecisionContext {
   company: { id: string; name: string } | null;
   deal: { id: string; name: string; stage: DealStage | null } | null;
 }
+export type AttachmentRemovalReason =
+  "first_message" | "whatsapp_no_reply" | "already_sent" | "count_limit" | "size_limit";
+/**
+ * E2g: a send decision's attachments by title (`sent` = really went out), the ones the rules
+ * removed, and the ones left out at send time; null for non-send actions.
+ */
+export interface AgentDecisionAttachments {
+  assets: { id: string; title: string | null; sent: boolean }[];
+  removed: { assetId: string; reason: AttachmentRemovalReason; title: string | null }[];
+  issues: { assetId: string; title: string | null; reason: string }[];
+}
 export interface AgentDecisionDetail extends AgentSendState {
   id: string;
   createdAt: string;
@@ -625,7 +636,13 @@ export interface AgentDecisionDetail extends AgentSendState {
   } | null;
   regenerated: boolean;
   /** E2b: what each drafting attempt failed (empty = passed); null before E2b. */
-  qualityChecks: { problems: string[] }[] | null;
+  qualityChecks:
+    | {
+        problems: string[];
+        /** E2g: attachments the rules removed on this attempt. */
+        attachmentsRemoved?: AgentDecisionAttachments["removed"];
+      }[]
+    | null;
   playbookVersion: number | null;
   decisionModel: string | null;
   groundingModel: string | null;
@@ -641,6 +658,7 @@ export interface AgentDecisionDetail extends AgentSendState {
   leadId: string;
   lead: { id: string; name: string; company: string; ownerId: string | null };
   context: AgentDecisionContext;
+  attachments: AgentDecisionAttachments | null;
   /** The message exactly as it would go out; null for non-send actions. */
   composed: AgentComposedMessage | null;
   chunks: { id: string; deleted: boolean; title: string; text: string }[];
@@ -716,6 +734,7 @@ export interface LeadAgentPanel {
     | "ratingReason"
     | "ratingNote"
     | "context"
+    | "attachments"
     | keyof AgentSendState
   > & {
     rules: AgentDecisionDetail["rulesResult"];

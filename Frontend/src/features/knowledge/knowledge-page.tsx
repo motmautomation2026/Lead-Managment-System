@@ -1,5 +1,15 @@
 import { useState, type ReactNode } from "react";
-import { BookOpen, Download, Eye, Paperclip, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  BookOpen,
+  Download,
+  Eye,
+  Paperclip,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/crm/page-header";
 import { DataTable, type DataTableColumn } from "@/components/crm/data-table";
@@ -22,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
+import { ChannelChoices, EditAssetDialog } from "./edit-asset-dialog";
 import { StatusBadge } from "@/components/common/status-badge";
 import type {
   KnowledgeAsset,
@@ -496,6 +507,7 @@ function assetColumns(
   knowledge: Knowledge,
   isAdmin: boolean,
   onDelete: (asset: KnowledgeAsset) => void,
+  onEdit: (asset: KnowledgeAsset) => void,
 ): DataTableColumn<KnowledgeAsset>[] {
   return [
     {
@@ -580,6 +592,16 @@ function assetColumns(
             <Button
               size="icon"
               variant="ghost"
+              aria-label={`Edit ${asset.title}`}
+              onClick={() => onEdit(asset)}
+            >
+              <Pencil />
+            </Button>
+          )}
+          {isAdmin && (
+            <Button
+              size="icon"
+              variant="ghost"
               aria-label={`Delete ${asset.title}`}
               onClick={() => onDelete(asset)}
             >
@@ -596,12 +618,14 @@ function AssetsTab({ knowledge }: { knowledge: Knowledge }) {
   const isAdmin = useIsAdmin();
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<KnowledgeAsset | null>(null);
+  const [editing, setEditing] = useState<KnowledgeAsset | null>(null);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <p className="type-small text-muted-foreground">
-          The agent may only attach files from this library. For WhatsApp, PDFs work best (max 10
-          MB).
+          The agent may only attach files from this library: never in a first message, on WhatsApp
+          only after the contact has replied, and never quoting numbers from the file. For WhatsApp,
+          PDFs work best (max 10 MB).
         </p>
         {isAdmin && (
           <Button className="ml-auto" onClick={() => setAdding(true)}>
@@ -612,11 +636,18 @@ function AssetsTab({ knowledge }: { knowledge: Knowledge }) {
       <DataTable<KnowledgeAsset>
         label="Assets"
         data={knowledge.assets}
-        columns={assetColumns(knowledge, isAdmin, setDeleting)}
+        columns={assetColumns(knowledge, isAdmin, setDeleting, setEditing)}
         getRowId={(asset) => asset.id}
         emptyState={<EmptyState icon={Paperclip} title="No assets yet." />}
       />
       {isAdmin && <AddAssetDialog open={adding} onOpenChange={setAdding} knowledge={knowledge} />}
+      {isAdmin && (
+        <EditAssetDialog
+          asset={editing}
+          onClose={() => setEditing(null)}
+          onSave={(id, values) => attempt(() => knowledge.updateAsset(id, values), "Asset saved.")}
+        />
+      )}
       <ConfirmDialog
         open={Boolean(deleting)}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -645,14 +676,11 @@ function AddAssetDialog({
   const [title, setTitle] = useState("");
   const [useWhen, setUseWhen] = useState("");
   const [tags, setTags] = useState("");
-  const [channels, setChannels] = useState<string[]>(["email", "whatsapp"]);
+  // E2g rule 1: email only unless the admin also picks WhatsApp.
+  const [channels, setChannels] = useState<string[]>(["email"]);
   const [saving, setSaving] = useState(false);
   const [showProblem, setShowProblem] = useState(false);
   const problem = assetFormProblem({ file, title, useWhen, channels });
-  const toggle = (channel: string) =>
-    setChannels((current) =>
-      current.includes(channel) ? current.filter((c) => c !== channel) : [...current, channel],
-    );
 
   const submit = async () => {
     setShowProblem(true);
@@ -672,6 +700,7 @@ function AddAssetDialog({
       setTitle("");
       setUseWhen("");
       setTags("");
+      setChannels(["email"]);
       setShowProblem(false);
     }
   };
@@ -707,21 +736,7 @@ function AddAssetDialog({
           <Field label="Tags (comma-separated)" htmlFor="asset-tags">
             <Input id="asset-tags" value={tags} onChange={(e) => setTags(e.target.value)} />
           </Field>
-          <fieldset className="space-y-1.5">
-            <legend className="text-xs font-medium">Channels</legend>
-            <div className="flex gap-4 text-sm">
-              {(["email", "whatsapp"] as const).map((channel) => (
-                <label key={channel} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={channels.includes(channel)}
-                    onChange={() => toggle(channel)}
-                  />
-                  {channel === "email" ? "Email" : "WhatsApp"}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <ChannelChoices value={channels} onChange={setChannels} />
           {showProblem && problem && (
             <p className="text-sm text-destructive" role="alert">
               {problem}

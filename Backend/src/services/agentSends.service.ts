@@ -5,7 +5,9 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { composeOutgoing } from "../agent/composeMessage.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "../providers/provider-errors.js";
-import type { WhatsAppSendSource } from "../providers/baileys.manager.js";
+import type { WhatsAppAttachment, WhatsAppSendSource } from "../providers/baileys.manager.js";
+import { ASSET_GONE_REASON, attachmentFileName, type AttachmentIssue } from "../agent/assetRules.js";
+import { AGENT_ASSETS_BUCKET } from "./knowledgeLibrary.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
 import { createTask } from "./tasks.service.js";
@@ -37,11 +39,16 @@ interface ClaimedSend {
   workspace_id: string;
   lead_id: string;
   message_body: string;
+  /** The rules-checked assets (at most 1 on WhatsApp). */
+  asset_ids: string[] | null;
   send_attempts: number;
   send_claimed_at: Date;
 }
 
-export type WhatsAppSender = (workspaceId: string, input: { source: WhatsAppSendSource; to: string; body: string }) => Promise<{ providerMessageId: string }>;
+export type WhatsAppSender = (
+  workspaceId: string,
+  input: { source: WhatsAppSendSource; to: string; body: string; attachment?: WhatsAppAttachment },
+) => Promise<{ providerMessageId: string; attachmentMissing?: boolean }>;
 
 export interface AgentSendDeps {
   dryRun?: boolean;
@@ -69,7 +76,7 @@ export async function runAgentSends(enabled: boolean, deps: AgentSendDeps = {}):
            order by send_next_at
            limit $2
            for update skip locked)
-        returning id, workspace_id, lead_id, message_body, send_attempts, send_claimed_at`,
+        returning id, workspace_id, lead_id, message_body, asset_ids, send_attempts, send_claimed_at`,
       [deps.workspaceIds ?? null, BATCH],
     )
   ).rows;
@@ -98,7 +105,16 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
   const source: WhatsAppSendSource = { type: "agent", id: row.id };
   // Crash recovery: the message went out but the decision wasn't marked.
   const already = await pool.query<{ message_id: string }>(`select message_id from public.whatsapp_outbound_messages where agent_decision_id = $1 and status = 'sent'`, [row.id]);
-  if (already.rows[0]) return settle(row, { kind: "sent", providerMessageId: already.rows[0].message_id, dryRun: false });
+  const asset = await loadAsset(row);
+  // The message carried its document (one message: document + caption), unless the file was missing then.
+  const sentWith = (missing = false): AgentSendOutcome & { kind: "sent" } => ({
+    kind: "sent",
+    providerMessageId: null,
+    dryRun: false,
+    sentAssets: asset.attachment && !missing ? [{ id: asset.attachment.assetId, title: asset.attachment.title }] : [],
+    attachmentIssues: [...asset.issues, ...(missing && asset.attachment ? [{ assetId: asset.attachment.assetId, title: asset.attachment.title, reason: MISSING_FILE }] : [])],
+  });
+  if (already.rows[0]) return settle(row, { ...sentWith(), providerMessageId: already.rows[0].message_id });
 
   if (deps.dryRun) {
     const check = await withTransaction((db) => agentSendRecheck(db, row.id, "whatsapp"));
@@ -110,19 +126,55 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
   const message = await composeWhatsApp(row);
   if (!message.phone) return settle(row, { kind: "cancelled", reason: "The contact has no WhatsApp number." });
   try {
-    const sent = await (deps.send ?? sendWhatsApp)(row.workspace_id, { source, to: message.phone, body: message.text });
-    return settle(row, { kind: "sent", providerMessageId: sent.providerMessageId, dryRun: false });
+    const sent = await (deps.send ?? sendWhatsApp)(row.workspace_id, {
+      source,
+      to: message.phone,
+      body: message.text,
+      ...(asset.attachment ? { attachment: asset.attachment.file } : {}),
+    });
+    return settle(row, { ...sentWith(sent.attachmentMissing), providerMessageId: sent.providerMessageId });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (error instanceof ProviderDeferredError) return settle(row, { kind: "deferred", until: new Date(Date.now() + error.retryAfterMs), reason });
     if (error instanceof SendCancelledError) return settle(row, { kind: "cancelled", reason });
     if (error instanceof PermanentProviderError) return settle(row, { kind: "failed", reason });
-    if (await wasSentForSource(pool, source)) return settle(row, { kind: "sent", providerMessageId: null, dryRun: false });
+    if (await wasSentForSource(pool, source)) return settle(row, sentWith());
     const attempts = row.send_attempts + 1;
     if (attempts >= MAX_SEND_ATTEMPTS) return settle(row, { kind: "failed", reason: `Gave up after ${attempts} attempts: ${reason}` });
     await pool.query(`update public.agent_decisions set send_attempts = $3 where id = $1 and send_claimed_at = $2`, [row.id, row.send_claimed_at, attempts]);
     return settle(row, { kind: "deferred", until: new Date(Date.now() + RETRY_MS), reason: `Temporary error, will retry: ${reason}` });
   }
+}
+
+const MISSING_FILE = "The file was missing from storage.";
+
+/**
+ * E2g rule 6: the decision's asset as a WhatsApp document (file name = title + extension). An asset
+ * deleted or turned off since the decision is left out and recorded; the text still goes.
+ */
+async function loadAsset(row: ClaimedSend): Promise<{ attachment: { assetId: string; title: string; file: WhatsAppAttachment } | null; issues: AttachmentIssue[] }> {
+  const id = row.asset_ids?.[0];
+  if (!id) return { attachment: null, issues: [] };
+  const asset = (
+    await pool.query<{ title: string; storage_path: string; file_name: string | null; mime_type: string | null; is_active: boolean }>(
+      `select title, storage_path, file_name, mime_type, is_active from public.agent_assets where id = $1 and workspace_id = $2`,
+      [id, row.workspace_id],
+    )
+  ).rows[0];
+  if (!asset?.is_active) return { attachment: null, issues: [{ assetId: id, title: asset?.title ?? null, reason: ASSET_GONE_REASON }] };
+  return {
+    attachment: {
+      assetId: id,
+      title: asset.title,
+      file: {
+        bucket: AGENT_ASSETS_BUCKET,
+        storagePath: asset.storage_path,
+        fileName: attachmentFileName(asset.title, asset.file_name),
+        mimeType: asset.mime_type || "application/octet-stream",
+      },
+    },
+    issues: [],
+  };
 }
 
 /** The AI's text with the owner's signature and (first AI WhatsApp only) the opt-out line; performSend's safety rules add nothing twice. */

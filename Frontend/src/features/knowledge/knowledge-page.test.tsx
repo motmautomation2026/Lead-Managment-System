@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   },
   upload: vi.fn(async () => ({})),
   createText: vi.fn(async () => ({})),
+  updateAsset: vi.fn(async () => ({})),
 }));
 
 const doc = (over: Partial<KnowledgeDocument>): KnowledgeDocument => ({
@@ -70,6 +71,7 @@ vi.mock("@/store", () => ({
       doc({ id: "d3", title: "Case study deck", docType: "asset", assetId: "a1" }),
     ],
     assets: [asset],
+    updateAsset: mocks.updateAsset,
     isLoading: false,
     error: null,
   }),
@@ -131,6 +133,43 @@ describe("Knowledge page", () => {
     const readOnly = screen.getByRole("table", { name: "Assets" });
     expect(within(readOnly).queryByRole("switch")).toBeNull();
     expect(within(readOnly).getAllByText("Active")).toHaveLength(2); // header + the read-only value
+  });
+});
+
+describe("E2g: asset channels", () => {
+  const openAssets = () => {
+    mocks.isAdmin = true;
+    render(<KnowledgePage />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Assets" }), { button: 0, ctrlKey: false });
+  };
+
+  it("a new asset is email only unless WhatsApp is also picked", () => {
+    openAssets();
+    fireEvent.click(screen.getByRole("button", { name: /Add asset/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("checkbox", { name: "Email" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "WhatsApp" })).not.toBeChecked();
+  });
+
+  it("admins edit title, use when and channels; at least one channel is required", async () => {
+    openAssets();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Case study deck" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("Title")).toHaveValue("Case study deck");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "WhatsApp" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Email" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText("Choose at least one channel.")).toBeInTheDocument();
+    expect(mocks.updateAsset).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Email" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(mocks.updateAsset).toHaveBeenCalledWith("a1", {
+        title: "Case study deck",
+        useWhen: "the lead asks for proof",
+        channels: ["email"],
+      }),
+    );
   });
 });
 

@@ -15,7 +15,9 @@ import { enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { composeOutgoing } from "../agent/composeMessage.js";
 import { executeHandoff, executeStageChange, executeStop } from "./agentSends.service.js";
-import { enqueueEmail } from "./emailOutbound.service.js";
+import { enqueueEmail, type AttachmentRef } from "./emailOutbound.service.js";
+import { attachmentFileName } from "../agent/assetRules.js";
+import { AGENT_ASSETS_BUCKET } from "./knowledgeLibrary.service.js";
 
 /**
  * The agent's decision loop (3C-2): turns due wakeups into agent_decisions. A shadow
@@ -526,7 +528,17 @@ async function executeLive(client: Queryable, wakeup: ClaimedWakeup, ctx: AgentC
     case "send_email": {
       const composed = composeOutgoing(d, { ownerName: ctx.lead.ownerName ?? "The team", companyName: ctx.companyName, settings: ctx.settings, isFirstWhatsApp: false });
       if (composed.channel !== "email") return;
-      await enqueueEmail(client, { workspaceId, source: "agent", sourceId: decisionId, leadId, to: ctx.rules.lead.email!, subject: composed.subject, html: composed.html, notBefore: sendAt });
+      await enqueueEmail(client, {
+        workspaceId,
+        source: "agent",
+        sourceId: decisionId,
+        leadId,
+        to: ctx.rules.lead.email!,
+        subject: composed.subject,
+        html: composed.html,
+        attachments: await assetAttachments(client, workspaceId, d.assetIds),
+        notBefore: sendAt,
+      });
       return;
     }
     case "handoff":
@@ -541,6 +553,29 @@ async function executeLive(client: Queryable, wakeup: ClaimedWakeup, ctx: AgentC
     default:
       return;
   }
+}
+
+/** E2g rule 6: the decision's (rules-checked) assets as email attachments: Storage refs, file name = title + extension. */
+async function assetAttachments(client: Queryable, workspaceId: string, assetIds: string[]): Promise<AttachmentRef[]> {
+  if (!assetIds.length) return [];
+  const rows = (
+    await client.query<{ id: string; title: string; storage_path: string; file_name: string | null; mime_type: string | null; size_bytes: string | null }>(
+      `select id, title, storage_path, file_name, mime_type, size_bytes from public.agent_assets where id = any($1::uuid[]) and workspace_id = $2 and is_active`,
+      [assetIds, workspaceId],
+    )
+  ).rows;
+  return assetIds
+    .map((id) => rows.find((r) => r.id === id))
+    .filter((r): r is (typeof rows)[number] => Boolean(r))
+    .map((r) => ({
+      bucket: AGENT_ASSETS_BUCKET,
+      path: r.storage_path,
+      fileName: attachmentFileName(r.title, r.file_name),
+      mimeType: r.mime_type || "application/octet-stream",
+      size: r.size_bytes === null ? null : Number(r.size_bytes),
+      assetId: r.id,
+      title: r.title,
+    }));
 }
 
 function timelineTitle(decision: AgentDecision): string | null {

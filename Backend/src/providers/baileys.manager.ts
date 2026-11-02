@@ -23,6 +23,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
 import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
 import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 import { agentSendRecheck } from "../services/agentSendState.service.js";
+import { isMissingStorageObject } from "./storageErrors.js";
 
 export interface WhatsAppAttachment {
   storagePath: string;
@@ -615,7 +616,7 @@ export class BaileysManager {
     phoneE164: string;
     body: string;
     attachment?: WhatsAppAttachment;
-  }): Promise<{ providerMessageId: string }> {
+  }): Promise<{ providerMessageId: string; attachmentMissing?: boolean }> {
     const task = this.sendTail.then(() => this.performSend(input));
     this.sendTail = task.catch(() => undefined);
     return task;
@@ -782,15 +783,20 @@ export class BaileysManager {
     }
 
     let messageContent: AnyMessageContent = { text: claim.text };
+    let attachmentMissing = false;
     if (input.attachment) {
       const { data, error } = await supabaseAdmin.storage
         .from(input.attachment.bucket)
         .download(input.attachment.storagePath);
-      if (error || !data) throw new Error(`Failed to download WhatsApp attachment: ${error?.message ?? "no data"}`);
-      const buffer = Buffer.from(await data.arrayBuffer());
-      messageContent = input.attachment.mimeType.startsWith("image/")
-        ? { image: buffer, caption: claim.text }
-        : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: claim.text };
+      // E2g rule 6: an AI message whose asset file is gone goes out as text only (the caller records it).
+      if (error && input.source.type === "agent" && isMissingStorageObject(error)) attachmentMissing = true;
+      else if (error || !data) throw new Error(`Failed to download WhatsApp attachment: ${error?.message ?? "no data"}`);
+      else {
+        const buffer = Buffer.from(await data.arrayBuffer());
+        messageContent = input.attachment.mimeType.startsWith("image/")
+          ? { image: buffer, caption: claim.text }
+          : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: claim.text };
+      }
     }
 
     // The socket can still go away after the recheck (e.g. the session lock
@@ -824,7 +830,7 @@ export class BaileysManager {
         randomSpacingMs(claim.minDelaySeconds, claim.maxDelaySeconds) / 1_000,
       ]);
     });
-    return { providerMessageId: claim.messageId };
+    return { providerMessageId: claim.messageId, ...(attachmentMissing ? { attachmentMissing } : {}) };
   }
 
   /**

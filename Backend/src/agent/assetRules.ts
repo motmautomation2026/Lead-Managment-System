@@ -96,3 +96,19 @@ export function applyAssetRules(
   }
   return { kept, removed };
 }
+
+/** E2g rule 6: the attachment's file name = the asset title + the file's extension (characters mail and phones reject removed). */
+export function attachmentFileName(title: string, fileName: string | null): string {
+  const ext = /\.([a-z0-9]{1,8})$/i.exec(fileName ?? "")?.[0]?.toLowerCase() ?? "";
+  const base = title.replace(/[\/:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 150) || "attachment";
+  return base.toLowerCase().endsWith(ext) ? base : `${base}${ext}`;
+}
+
+/** A send-time problem with one attachment; the message goes out without it. */
+export interface AttachmentIssue {
+  assetId: string;
+  title: string | null;
+  reason: string;
+}
+
+export const ASSET_GONE_REASON = "The asset was deleted or turned off before sending.";

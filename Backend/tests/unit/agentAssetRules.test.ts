@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAssetRules, assetViolations, MAX_ATTACHMENT_BYTES, type AgentAssetInfo, type AssetFacts } from "../../src/agent/assetRules.js";
+import { applyAssetRules, assetViolations, attachmentFileName, MAX_ATTACHMENT_BYTES, type AgentAssetInfo, type AssetFacts } from "../../src/agent/assetRules.js";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -71,5 +71,14 @@ describe("applyAssetRules (rules 2–4, limits)", () => {
 
   it("nothing chosen → nothing removed", () => {
     expect(applyAssetRules([], "email", assets, null)).toEqual({ kept: [], removed: [] });
+  });
+});
+
+describe("attachmentFileName", () => {
+  it("is the title plus the file's extension, without characters files can't have", () => {
+    expect(attachmentFileName("Steel trading case study", "steel_v3 FINAL.PDF")).toBe("Steel trading case study.pdf");
+    expect(attachmentFileName('EPC: ETP/STP "case"', "x.pdf")).toBe("EPC ETP STP case.pdf");
+    expect(attachmentFileName("Brochure.pdf", "b.pdf")).toBe("Brochure.pdf");
+    expect(attachmentFileName("Deck", null)).toBe("Deck");
   });
 });

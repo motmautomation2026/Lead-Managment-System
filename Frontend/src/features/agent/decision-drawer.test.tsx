@@ -29,7 +29,45 @@ vi.mock("@/features/crm/record-link", () => ({
   ),
 }));
 
-import { ContextUsed, RatingControls, ReportsSection } from "./decision-drawer";
+import { AttachmentsUsed, ContextUsed, RatingControls, ReportsSection } from "./decision-drawer";
+
+describe("AttachmentsUsed (E2g)", () => {
+  it("lists attachments by title, the removed ones with the reason and the ones left out at send time", () => {
+    render(
+      <AttachmentsUsed
+        attachments={{
+          assets: [{ id: "a1", title: "Steel trading case study", sent: true }],
+          removed: [{ assetId: "a2", title: "EPC case study", reason: "first_message" }],
+          issues: [
+            {
+              assetId: "a3",
+              title: null,
+              reason: "The asset was deleted or turned off before sending.",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Steel trading case study (sent)")).toBeTruthy();
+    expect(
+      screen.getByText("Removed EPC case study: No attachments before a conversation exists"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Not sent A deleted asset: The asset was deleted or turned off before sending.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("renders nothing without attachments unless asked to say none", () => {
+    const empty = { assets: [], removed: [], issues: [] };
+    const { container, unmount } = render(<AttachmentsUsed attachments={empty} />);
+    expect(container.textContent).toBe("");
+    unmount();
+    render(<AttachmentsUsed attachments={empty} showNone />);
+    expect(screen.getByText("none")).toBeTruthy();
+  });
+});
 
 describe("ContextUsed", () => {
   it("links the company and the deal, with the deal's stage at the time", () => {

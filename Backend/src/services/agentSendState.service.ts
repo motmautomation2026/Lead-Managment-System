@@ -3,6 +3,7 @@ import type { LifecycleState } from "../domain/enums.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { effectiveMode, sendRecheck, type LiveScope, type SendRecheck } from "../agent/liveMode.js";
 import type { AgentRuleSettings, AgentStatus } from "../agent/rules.js";
+import type { AttachmentIssue } from "../agent/assetRules.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { cancelRunsForLead } from "./runs.service.js";
 
@@ -104,7 +105,14 @@ export async function agentSendRecheck(
 // --- Writing the outcome back to the decision ----------------------------------------
 
 export type AgentSendOutcome =
-  | { kind: "sent"; providerMessageId: string | null; dryRun: boolean }
+  | {
+      kind: "sent";
+      providerMessageId: string | null;
+      dryRun: boolean;
+      /** E2g: the assets that really went out with the message, and any left out at send time. */
+      sentAssets?: { id: string; title: string | null }[];
+      attachmentIssues?: AttachmentIssue[];
+    }
   | { kind: "deferred"; until: Date; reason: string }
   | { kind: "cancelled"; reason: string }
   | { kind: "failed"; reason: string };
@@ -124,17 +132,23 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
     await db.query(`update public.agent_decisions set send_status = 'dry_run', send_error = null where id = $1`, [decisionId]);
     console.log(`[agent] decision ${decisionId}: DRY RUN, ${d.action} not sent.`);
   } else if (outcome.kind === "sent") {
+    const sentAssets = outcome.sentAssets ?? [];
+    const issues = outcome.attachmentIssues ?? [];
     await db.query(
-      `update public.agent_decisions set send_status = 'sent', outcome = 'sent', sent_at = now(), provider_message_id = $2, send_error = null where id = $1`,
-      [decisionId, outcome.providerMessageId],
+      `update public.agent_decisions
+          set send_status = 'sent', outcome = 'sent', sent_at = now(), provider_message_id = $2, send_error = null,
+              sent_asset_ids = $3, attachment_issues = $4
+        where id = $1`,
+      [decisionId, outcome.providerMessageId, sentAssets.length ? sentAssets.map((a) => a.id) : null, issues.length ? JSON.stringify(issues) : null],
     );
     await db.query(`update public.leads set agent_touch_count = agent_touch_count + 1, agent_last_touch_at = now(), last_activity_at = now() where id = $1`, [d.lead_id]);
     await addTimelineEvent(db, {
       leadId: d.lead_id,
       kind: "automation",
       title: d.action === "send_email" ? `AI sent email: ${d.message_subject ?? ""}`.slice(0, 300) : "AI sent WhatsApp",
+      detail: attachmentDetail(sentAssets, issues),
       ...AGENT_ACTOR,
-      metadata: { decisionId, providerMessageId: outcome.providerMessageId },
+      metadata: { decisionId, providerMessageId: outcome.providerMessageId, ...(sentAssets.length ? { assetIds: sentAssets.map((a) => a.id) } : {}) },
     });
   } else if (outcome.kind === "deferred") {
     await db.query(`update public.agent_decisions set send_status = 'queued', send_next_at = $2, send_error = $3, send_claimed_at = null where id = $1`, [
@@ -154,6 +168,15 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
       [d.lead_id, `AI message to ${await leadName(db, d.lead_id)} failed`.slice(0, 300), outcome.reason.slice(0, 300)],
     );
   }
+}
+
+/** E2g rule 7: "With attachment: <title>" and any attachment left out; null without attachments. */
+export function attachmentDetail(sent: { title: string | null }[], issues: AttachmentIssue[]): string | null {
+  const lines = [
+    ...(sent.length ? [`With attachment: ${sent.map((a) => a.title ?? "an asset").join(", ")}`] : []),
+    ...issues.map((i) => `Attachment not sent: ${i.title ?? "an asset"} (${i.reason})`),
+  ];
+  return lines.length ? lines.join("\n").slice(0, 1000) : null;
 }
 
 async function leadName(db: Queryable, leadId: string) {

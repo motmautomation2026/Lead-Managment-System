@@ -121,7 +121,8 @@ documents.delete(
 
 assets.get("/", asyncHandler(async (req, res) => res.json({ data: await library.listAssets(req.workspaceId!) })));
 
-const createAssetSchema = z.object({ title, useWhen, tags: tagsField, channels: channelsField });
+// E2g rule 1: a new asset goes by email only unless the admin also picks WhatsApp.
+const createAssetSchema = z.object({ title, useWhen, tags: tagsField, channels: channelsField.optional().transform((c) => c ?? ["email" as const]) });
 assets.post(
   "/",
   requireAdmin,

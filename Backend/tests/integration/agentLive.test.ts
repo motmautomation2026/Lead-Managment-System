@@ -77,7 +77,11 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
   async function tick(ws: string, decisions: AgentDecision[]) {
     const { runAgentTick } = await import("../../src/services/agentRunner.service.js");
-    return runAgentTick(true, { model: createFakeDecisionModel({ decisions }), embedder: fakeEmbedder, prices: PRICES, defaultModels: MODELS, workspaceIds: [ws] });
+    const outcomes = await runAgentTick(true, { model: createFakeDecisionModel({ decisions }), embedder: fakeEmbedder, prices: PRICES, defaultModels: MODELS, workspaceIds: [ws] });
+    // Send times come from the local clock, the claims compare with the database clock, which can lag by a second or two.
+    await pool.query(`update public.agent_decisions set send_next_at = now() where workspace_id = $1 and send_status = 'queued' and send_next_at < now() + interval '10 seconds'`, [ws]);
+    await pool.query(`update public.email_outbound_messages set next_attempt_at = now() where workspace_id = $1 and status = 'queued' and next_attempt_at < now() + interval '10 seconds'`, [ws]);
+    return outcomes;
   }
 
   function fakeSocket() {

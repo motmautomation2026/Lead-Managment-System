@@ -221,6 +221,11 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     expect(textFile).toMatchObject({ status: 400, body: { error: { message: "Unsupported file type. Upload a PDF, PPTX, DOCX, PNG or JPEG file." } } });
   });
 
+  it("E2g: a new asset without channels goes by email only", async () => {
+    const created = await api(admin, "POST", "/assets", form({ title: "Case study", useWhen: "after a call" }, { name: "sample.pdf", type: "application/pdf" }));
+    expect(created).toMatchObject({ status: 201, body: { channels: ["email"] } });
+  });
+
   it("salespeople can read and search but every write is 403", async () => {
     const doc = (await pool.query<{ id: string }>(`select id from public.kb_documents where workspace_id = $1 limit 1`, [WORKSPACE])).rows[0]!.id;
     const writes: [string, string, unknown?][] = [

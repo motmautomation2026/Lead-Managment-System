@@ -232,13 +232,14 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     const ws = await workspace("window", { send_window_days: [1, 2, 3, 4, 5, 6], send_window_start: "09:30", send_window_end: "19:00" });
     const contact = await lead(ws);
     const smtp = fakeSmtp();
-    const sunday = () => ist("2026-11-01T12:00");
+    // A future Sunday: a past one's "next window" is already due and would be claimed again.
+    const sunday = () => ist("2030-11-03T12:00");
 
     const step = await workflowEmail(ws, contact.id, contact.email);
     expect(await run(ws, smtp, { now: sunday })).toEqual(["queued"]);
     const deferred = await email(step.row.id);
     expect(deferred).toMatchObject({ status: "queued", attempts: 0, last_error: "Outside the email send window." });
-    expect(deferred.next_attempt_at.getTime()).toBeGreaterThanOrEqual(ist("2026-11-02T09:30").getTime());
+    expect(deferred.next_attempt_at.getTime()).toBeGreaterThanOrEqual(ist("2030-11-04T09:30").getTime());
 
     const rep = await proposalEmail(ws, contact.id, contact.email);
     expect(await run(ws, smtp, { now: sunday })).toEqual(["sent"]);

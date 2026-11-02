@@ -113,6 +113,18 @@ const DECISION_CONTEXT = `json_build_object(
 const DECISION_CONTEXT_JOINS = `left join public.companies dc on dc.id = d.context_company_id and dc.workspace_id = d.workspace_id
          left join public.deals dd on dd.id = d.context_deal_id and dd.workspace_id = d.workspace_id`;
 
+/**
+ * E2g rule 7: the decision's attachments by title (sent = really went out), the ones the rules
+ * dropped (the last attempt's quality_checks) and the ones left out at send time.
+ */
+const DECISION_ATTACHMENTS = `case when d.action not in ('send_email', 'send_whatsapp') then null else jsonb_build_object(
+    'assets', (select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'title', aa.title,
+                       'sent', coalesce(x.id = any(d.sent_asset_ids), false)) order by x.n), '[]'::jsonb)
+                 from unnest(coalesce(d.asset_ids, '{}'::uuid[])) with ordinality x(id, n)
+                 left join public.agent_assets aa on aa.id = x.id and aa.workspace_id = d.workspace_id),
+    'removed', coalesce(d.quality_checks -> -1 -> 'attachmentsRemoved', '[]'::jsonb),
+    'issues', coalesce(d.attachment_issues, '[]'::jsonb)) end`;
+
 interface DecisionDetailRow {
   id: string;
   leadId: string;
@@ -122,6 +134,8 @@ interface DecisionDetailRow {
   chunkIds: string[] | null;
   createdAt: Date;
   context: { company: { id: string; name: string } | null; deal: { id: string; name: string; stage: string | null } | null };
+  /** E2g: DECISION_ATTACHMENTS (null for non-send actions). */
+  attachments: { assets: { id: string; title: string | null; sent: boolean }[]; removed: unknown[]; issues: unknown[] } | null;
   [key: string]: unknown;
 }
 
@@ -142,7 +156,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               d.lead_id as "leadId", json_build_object('id', l.id, 'name', ${LEAD_NAME}, 'company', l.company, 'ownerId', l.owner_id) as lead,
               d.send_status as "sendStatus", d.sent_at as "sentAt", d.send_error as "sendError", d.cancel_reason as "cancelReason",
               case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel,
-              ${DECISION_CONTEXT} as context,
+              ${DECISION_CONTEXT} as context, ${DECISION_ATTACHMENTS} as attachments,
               o.full_name as "_ownerName", coalesce(s.company_display_name, w.name) as "_companyName",
               s.email_opt_out_text as "_emailOptOut", s.whatsapp_opt_out_text as "_whatsappOptOut",
               -- The opt-out line goes on the first WhatsApp only: was one sent (or, in shadow, drafted and allowed) earlier?
@@ -428,7 +442,7 @@ export async function getLeadAgentPanel(db: Queryable, workspaceId: string, lead
                 'supported', d.grounding_result -> 'supported', 'unsupportedClaims', d.grounding_result -> 'unsupportedClaims',
                 'styleViolations', d.grounding_result -> 'styleViolations') end as grounding,
               d.rating, d.rating_reason as "ratingReason", d.rating_note as "ratingNote", ${OPEN_REPORTS} as "openReports",
-              ${DECISION_CONTEXT} as context
+              ${DECISION_CONTEXT} as context, ${DECISION_ATTACHMENTS} as attachments
          from public.agent_decisions d
          ${DECISION_CONTEXT_JOINS}
         where d.lead_id = $1 and d.workspace_id = $2

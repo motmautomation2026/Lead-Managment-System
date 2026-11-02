@@ -42,6 +42,7 @@ import {
 } from "./agent-labels";
 import {
   ChecksSummary,
+  AttachmentsUsed,
   ContextUsed,
   DecisionDrawer,
   DecisionMessage,
@@ -179,6 +180,7 @@ function PanelDecision({
         <div className="mt-3 space-y-3 pl-6">
           <SendStatusPill state={d} showReason />
           <ContextUsed context={d.context} />
+          <AttachmentsUsed attachments={d.attachments} />
           <DecisionMessage decision={d} />
           {d.error && <p className="text-destructive">{d.error}</p>}
           <Section title="Why">
