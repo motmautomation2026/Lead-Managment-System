@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorBlock } from "@/components/common/server-state";
-import type { AgentDecisionRow } from "@/lib/backend-client";
+import type { AgentDecisionRow, AgentQualityStats } from "@/lib/backend-client";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
 import { RefLink } from "@/features/work/ref-link";
 import { useListUrlState } from "@/lib/use-list-url-state";
@@ -41,6 +41,34 @@ import { LiveBanner, SendStatusPill } from "./live-mode";
 
 // Display only: the server's go-live gate (agent/readiness.ts) decides readiness.
 const MIN_RATED = 50;
+
+/** E3a: how often the writer's message passes the checks on the first try, and what happens otherwise. */
+function QualityStats({ title, stats }: { title: string; stats: AgentQualityStats }) {
+  const reasons = Object.entries(stats.checkHandoffsByReason);
+  return (
+    <div className="space-y-1">
+      <span className="text-sm font-medium">{title}</span>
+      <div className="text-2xl font-semibold">
+        Passed first try: {stats.passedFirstTryPct == null ? "—" : `${stats.passedFirstTryPct} %`}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {stats.sendDecisions} {stats.sendDecisions === 1 ? "message" : "messages"} ·{" "}
+        {stats.regenerated} regenerated · {stats.checkHandoffs} handed off by the checks ·{" "}
+        {stats.autoFixes} fixed automatically · {usd(stats.avgCostUsd)} per decision
+        {stats.cachedInputPct != null && ` · ${stats.cachedInputPct} % of input cached`}
+      </p>
+      {reasons.length > 0 && (
+        <ul className="ml-4 list-disc text-xs text-muted-foreground">
+          {reasons.map(([reason, n]) => (
+            <li key={reason}>
+              {reason}: {n}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export function AiActivityPage() {
   const stats = useAgentStats();
@@ -153,6 +181,15 @@ export function AiActivityPage() {
                   </CardContent>
                 </Card>
               </button>
+              <Card className="md:col-span-2 xl:col-span-4">
+                <CardContent className="grid gap-4 p-4 md:grid-cols-2">
+                  <QualityStats
+                    title="Since the go-live count started"
+                    stats={s.quality.sinceReadiness}
+                  />
+                  <QualityStats title="Last 7 days" stats={s.quality.last7Days} />
+                </CardContent>
+              </Card>
             </div>
           )
         )}

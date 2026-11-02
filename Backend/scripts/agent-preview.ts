@@ -48,6 +48,7 @@ async function main(id: string) {
   const { checkMessage, messageFactsOf } = await import("../src/agent/messageChecks.js");
   const { STYLE_RULES } = await import("../src/agent/prompt.js");
   const { ATTACHMENT_REMOVAL_TEXT } = await import("../src/agent/assetRules.js");
+  const { evaluationContext } = await import("../src/services/agentModelTest.service.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
   try {
@@ -62,19 +63,9 @@ async function main(id: string) {
     let ctx = await buildAgentContext(pool, lead.workspace_id, id, now, { embedder });
     if (evaluate) {
       // Quality evaluation only: what the rules would block first (mode, AI status, touch limits) is ignored.
-      const { rules } = ctx;
-      const ignored = [
-        rules.mode === "off" && "workspace mode off (evaluated as shadow)",
-        rules.lead.agentStatus !== "active" && `AI status "${rules.lead.agentStatus}" (evaluated as active)`,
-        (rules.lead.agentTouchCount > 0 || rules.recentTouchTimes.length > 0) &&
-          `${rules.lead.agentTouchCount} touch(es) so far, ${rules.recentTouchTimes.length} in the last 7 days (evaluated as none)`,
-      ].filter(Boolean);
-      const mode = rules.mode === "off" ? ("shadow" as const) : rules.mode;
-      ctx = {
-        ...ctx,
-        settings: { ...ctx.settings, mode: ctx.settings.mode === "off" ? "shadow" : ctx.settings.mode },
-        rules: { ...rules, mode, recentTouchTimes: [], lead: { ...rules.lead, agentStatus: "active", agentTouchCount: 0, agentLastTouchAt: null } },
-      };
+      const evaluated = evaluationContext(ctx);
+      ctx = evaluated.ctx;
+      const { ignored } = evaluated;
       section("Evaluate mode");
       console.log(ignored.length ? `Ignored: ${ignored.join("; ")}.` : "Nothing ignored: mode, AI status and touch limits already allow a decision.");
     }

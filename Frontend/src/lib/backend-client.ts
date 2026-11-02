@@ -709,6 +709,22 @@ export interface AgentStats {
   } | null;
   /** E2b: the writing rules, readable by every CRM user. */
   messageRules: AgentMessageRules | null;
+  /** E3a: how the writer does against the checks, since the go-live count started and over 7 days. */
+  quality: { sinceReadiness: AgentQualityStats; last7Days: AgentQualityStats };
+}
+export interface AgentQualityStats {
+  /** Decisions that wrote a message (sent on, or turned into a handoff by the checks). */
+  sendDecisions: number;
+  passedFirstTry: number;
+  /** null = no message written yet. */
+  passedFirstTryPct: number | null;
+  regenerated: number;
+  checkHandoffs: number;
+  checkHandoffsByReason: Record<string, number>;
+  autoFixes: number;
+  avgCostUsd: number | null;
+  /** Share of input tokens served from the prompt cache; null = none recorded. */
+  cachedInputPct: number | null;
 }
 export type AgentMessageRules = Pick<
   AgentSettings,

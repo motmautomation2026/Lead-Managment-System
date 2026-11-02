@@ -90,6 +90,30 @@ vi.mock("@/store", () => ({
       spend: { month: "2026-10", spentUsd: 1, budgetUsd: 20 },
       replies: { byLabel: { positive: 1, asked_to_stop: 2 }, costUsd: 0.0012 },
       readiness: { ready: false, rated: 3, goodPct: 100, seriousBad: 0, reasons: [] },
+      quality: {
+        sinceReadiness: {
+          sendDecisions: 16,
+          passedFirstTry: 4,
+          passedFirstTryPct: 25,
+          regenerated: 6,
+          checkHandoffs: 6,
+          checkHandoffsByReason: { "AI couldn't write a safe message": 6 },
+          autoFixes: 9,
+          avgCostUsd: 0.0071,
+          cachedInputPct: 42,
+        },
+        last7Days: {
+          sendDecisions: 0,
+          passedFirstTry: 0,
+          passedFirstTryPct: null,
+          regenerated: 0,
+          checkHandoffs: 0,
+          checkHandoffsByReason: {},
+          autoFixes: 0,
+          avgCostUsd: null,
+          cachedInputPct: null,
+        },
+      },
     },
     error: null,
   }),
@@ -174,6 +198,18 @@ describe("AiActivityPage (C6b)", () => {
     expect(screen.getByText(/Shadow mode/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(mocks.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("E3a: shows passed first try and the breakdown for both periods", async () => {
+    await renderPage();
+    expect(await screen.findByText("Passed first try: 25 %")).toBeInTheDocument();
+    expect(screen.getByText("Passed first try: —")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /16 messages · 6 regenerated · 6 handed off by the checks · 9 fixed automatically · \$0\.0071 per decision · 42 % of input cached/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("AI couldn't write a safe message: 6")).toBeInTheDocument();
   });
 
   it("shows this month's reply labels, both channels (counts only) and their AI cost (D4a, D3)", async () => {

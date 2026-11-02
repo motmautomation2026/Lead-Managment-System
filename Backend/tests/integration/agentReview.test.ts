@@ -340,11 +340,42 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
       readiness: { ready: false, rated: 50, goodPct: 90, seriousBad: 1 },
     });
     expect(stats.body.spend.spentUsd).toBeCloseTo(5);
+    // E3a: 50 sends (none regenerated), the handoff had no message; the two failed ones don't count.
+    expect(stats.body.quality.sinceReadiness).toMatchObject({ sendDecisions: 50, passedFirstTry: 50, passedFirstTryPct: 100, regenerated: 0, checkHandoffs: 0, autoFixes: 0 });
     expect(stats.body.spend.month).toMatch(/^\d{4}-\d{2}$/);
     expect(stats.body.readiness.reasons).toHaveLength(1);
 
     await pool.query(`update public.agent_decisions set rating = 'good', rating_reason = null where workspace_id = $1 and rating_reason = 'made_up_fact'`, [ws]);
     expect((await api(owner, ws, "GET", "/agent/stats")).body.readiness).toMatchObject({ ready: true, goodPct: 92, seriousBad: 0, reasons: [] });
+  });
+
+  it("E3a: quality numbers: since the go-live count and over 7 days, by handoff reason, auto-fixes, cost, cached input", async () => {
+    const ws = await newWorkspace();
+    const leadId = await newLead(ws);
+    await decision(ws, leadId, { cost: 9, createdAt: new Date(Date.now() - 3_600_000).toISOString() }); // before the count, inside 7 days
+    await decision(ws, leadId, { cost: 9, createdAt: new Date(Date.now() - 10 * 86_400_000).toISOString() }); // before both
+    await pool.query(`update public.agent_settings set readiness_since = now() - interval '1 minute' where workspace_id = $1`, [ws]);
+    await decision(ws, leadId, { action: "handoff", body: "A draft the checks refused", cost: 0.02 });
+    await decision(ws, leadId, { action: "wait", cost: 0.02 }); // wrote nothing
+    await decision(ws, leadId, { action: "wait", outcome: "failed", cost: 5 });
+    const regenerated = await decision(ws, leadId, { cost: 0.04 });
+    await pool.query(`update public.agent_decisions set regenerated = true, quality_checks = $2 where id = $1`, [
+      regenerated,
+      JSON.stringify([{ problems: ["length: too long"], inputTokens: 1000, cachedInputTokens: 0 }, { problems: [], inputTokens: 1000, cachedInputTokens: 500, autoFixes: [{ rule: "dash", before: "a", after: "b" }, { rule: "spacing", before: "c", after: "d" }] }]),
+    ]);
+    const { quality } = (await api(owner, ws, "GET", "/agent/stats")).body;
+    expect(quality.sinceReadiness).toMatchObject({
+      sendDecisions: 2,
+      passedFirstTry: 0,
+      passedFirstTryPct: 0,
+      regenerated: 1,
+      checkHandoffs: 1,
+      checkHandoffsByReason: { "Call her back": 1 },
+      autoFixes: 2,
+      cachedInputPct: 25,
+    });
+    expect(quality.sinceReadiness.avgCostUsd).toBeCloseTo(0.0267, 3);
+    expect(quality.last7Days).toMatchObject({ sendDecisions: 3, passedFirstTry: 1, passedFirstTryPct: 33 });
   });
 
   it("E2f: Reset go-live count — admin only; only decisions created since then count; earlier ratings stay saved", async () => {

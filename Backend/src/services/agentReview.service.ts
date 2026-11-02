@@ -316,8 +316,46 @@ export async function loadReadiness(db: Queryable, workspaceId: string): Promise
   return goLiveReadiness(await loadRatings(db, workspaceId));
 }
 
+// E3a rule 8: a decision that wrote a message: it was sent on, or the checks turned it into a handoff (which keeps the failed text).
+const WROTE_MESSAGE = `(d.action in ('send_email', 'send_whatsapp') or (d.action = 'handoff' and d.message_body is not null))`;
+const IS_SEND = `d.action in ('send_email', 'send_whatsapp')`;
+const attemptSum = (field: string, value: string) => `coalesce(sum((select coalesce(sum(${value}), 0) from jsonb_array_elements(coalesce(d.quality_checks, '[]'::jsonb)) e where e ? '${field}')), 0)`;
+
+/** The writing-quality numbers for decisions created since `$2` (failed decisions excluded). */
+async function loadQuality(db: Queryable, workspaceId: string, since: Date | null) {
+  const params = [workspaceId, since];
+  const scope = `from public.agent_decisions d where d.workspace_id = $1 and d.outcome <> 'failed' and d.created_at >= coalesce($2::timestamptz, '-infinity')`;
+  const [totals, handoffs] = await Promise.all([
+    db.query<{ wrote: number; first: number; regenerated: number; auto_fixes: number; input: number; cached: number; avg_cost: number | null }>(
+      `select count(*) filter (where ${WROTE_MESSAGE})::int as wrote,
+              count(*) filter (where ${IS_SEND} and not d.regenerated)::int as first,
+              count(*) filter (where ${IS_SEND} and d.regenerated)::int as regenerated,
+              ${attemptSum("autoFixes", "jsonb_array_length(e -> 'autoFixes')")}::int as auto_fixes,
+              ${attemptSum("inputTokens", "(e ->> 'inputTokens')::bigint")}::float8 as input,
+              ${attemptSum("cachedInputTokens", "(e ->> 'cachedInputTokens')::bigint")}::float8 as cached,
+              avg(d.cost_usd)::float8 as avg_cost
+         ${scope}`,
+      params,
+    ),
+    db.query<{ title: string; n: number }>(`select d.handoff_title as title, count(*)::int as n ${scope} and d.action = 'handoff' and d.message_body is not null group by 1 order by 2 desc, 1`, params),
+  ]);
+  const t = totals.rows[0]!;
+  return {
+    sendDecisions: t.wrote,
+    passedFirstTry: t.first,
+    passedFirstTryPct: t.wrote ? Math.round((t.first / t.wrote) * 100) : null,
+    regenerated: t.regenerated,
+    checkHandoffs: handoffs.rows.reduce((sum, h) => sum + h.n, 0),
+    checkHandoffsByReason: Object.fromEntries(handoffs.rows.map((h) => [h.title, h.n])) as Record<string, number>,
+    autoFixes: t.auto_fixes,
+    avgCostUsd: t.avg_cost === null ? null : Math.round(t.avg_cost * 1e6) / 1e6,
+    cachedInputPct: t.input ? Math.round((t.cached / t.input) * 100) : null,
+  };
+}
+
 export async function getAgentStats(db: Queryable, workspaceId: string) {
-  const [counts, ratingCounts, openReports, spend, replies, live] = await Promise.all([
+  const readinessSince = (await db.query<{ readiness_since: Date | null }>(`select readiness_since from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0]?.readiness_since ?? null;
+  const [counts, ratingCounts, openReports, spend, replies, live, qualitySinceReadiness, qualityLast7Days] = await Promise.all([
     db.query<{ action: string; outcome: string; n: number }>(
       `select action, outcome, count(*)::int as n from public.agent_decisions where workspace_id = $1 group by action, outcome`,
       [workspaceId],
@@ -363,6 +401,8 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
          from public.agent_settings s where s.workspace_id = $1`,
       [workspaceId],
     ),
+    loadQuality(db, workspaceId, readinessSince),
+    loadQuality(db, workspaceId, new Date(Date.now() - 7 * 24 * 3_600_000)),
   ]);
 
   const byAction: Record<string, number> = {};
@@ -404,6 +444,8 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
           sentThisMonth: live.rows[0].sent_month,
         }
       : null,
+    // E3a rule 8: how the writer does against the checks.
+    quality: { sinceReadiness: qualitySinceReadiness, last7Days: qualityLast7Days },
     // E2b: the writing rules, read-only for every CRM user (settings are admin-only).
     messageRules: live.rows[0]
       ? { bannedPhrases: live.rows[0].banned_phrases, emailMaxWords: live.rows[0].email_max_words, whatsappMaxWords: live.rows[0].whatsapp_max_words, styleExamples: live.rows[0].style_examples }

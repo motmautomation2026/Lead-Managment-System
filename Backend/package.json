@@ -21,6 +21,7 @@
     "check": "npm run typecheck && npm run lint && npm run test:run",
     "test:integration:staging": "node scripts/test-integration-staging.mjs",
     "agent:preview": "tsx scripts/agent-preview.ts",
+    "agent:model-test": "tsx scripts/agent-model-test.ts",
     "db:connections": "tsx scripts/db-connections.ts",
     "staging:cleanup-test-workspaces": "tsx scripts/cleanup-test-workspaces.ts",
     "staging:cleanup-test-users": "tsx scripts/cleanup-test-users.ts",
