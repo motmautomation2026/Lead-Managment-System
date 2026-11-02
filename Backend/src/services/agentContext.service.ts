@@ -11,6 +11,7 @@ import { effectiveMode, liveChannels, type LiveScope } from "../agent/liveMode.j
 import { countTokens } from "../knowledge/chunkText.js";
 import type { Embedder } from "../providers/openai.provider.js";
 import { searchKnowledge } from "./knowledge.service.js";
+import { assetFileSize } from "./knowledgeLibrary.service.js";
 
 /**
  * Everything the agent needs to make ONE decision for ONE lead (3C). Reads
@@ -279,8 +280,8 @@ export async function buildAgentContext(
           `select version, body from public.agent_playbooks where workspace_id = $1 and version = $2`,
           [workspaceId, settings.current_playbook_version],
         ),
-    db.query<{ id: string; title: string; use_when: string; channels: string[]; size_bytes: string | null }>(
-      `select id, title, use_when, channels, size_bytes from public.agent_assets
+    db.query<{ id: string; title: string; use_when: string; channels: string[]; size_bytes: string | null; storage_path: string }>(
+      `select id, title, use_when, channels, size_bytes, storage_path from public.agent_assets
         where workspace_id = $1 and is_active order by title`,
       [workspaceId],
     ),
@@ -302,11 +303,13 @@ export async function buildAgentContext(
       [leadId, workspaceId],
     ),
     // E2g rules 3–4: a WhatsApp reply from this contact, and the assets really sent to them.
-    db.query<{ whatsapp_replied: boolean; sent_asset_ids: string[] }>(
+    db.query<{ whatsapp_replied: boolean; sent_asset_ids: string[]; failed_asset_ids: string[] }>(
       `select exists (select 1 from public.whatsapp_inbound_events
                        where lead_id = $1 and workspace_id = $2 and disposition = 'matched') as whatsapp_replied,
               coalesce((select array_agg(distinct a) from public.agent_decisions d, unnest(d.sent_asset_ids) a
-                         where d.lead_id = $1 and d.workspace_id = $2 and d.outcome = 'sent'), '{}') as sent_asset_ids`,
+                         where d.lead_id = $1 and d.workspace_id = $2 and d.outcome = 'sent'), '{}') as sent_asset_ids,
+              coalesce((select array_agg(distinct i ->> 'assetId') from public.agent_decisions d, jsonb_array_elements(d.attachment_issues) i
+                         where d.lead_id = $1 and d.workspace_id = $2 and d.attachment_issues is not null), '{}') as failed_asset_ids`,
       [leadId, workspaceId],
     ),
   ]);
@@ -336,13 +339,20 @@ export async function buildAgentContext(
   const weekAgo = now.getTime() - 7 * 24 * 3600 * 1000;
   const senderAddress = sender.rows[0]?.address || null;
   const { emailBlockedReason } = liveChannels(mode, imap.rows[0]?.last_success_at ?? null, now);
-  const assets: AgentAssetSummary[] = assetRows.rows.map((a) => ({
-    id: a.id,
-    title: a.title,
-    useWhen: a.use_when,
-    channels: a.channels,
-    sizeBytes: Number(a.size_bytes ?? 0),
-  }));
+  // E2h: an asset that couldn't be sent to this contact isn't offered again, or a cancelled message would wake, pick it and cancel for ever.
+  const failedAssetIds = assetHistory.rows[0]?.failed_asset_ids ?? [];
+  const assets: AgentAssetSummary[] = await Promise.all(
+    assetRows.rows
+      .filter((a) => !failedAssetIds.includes(a.id))
+      .map(async (a) => ({
+        id: a.id,
+        title: a.title,
+        useWhen: a.use_when,
+        channels: a.channels,
+        // E2h rule 3: no recorded size → Storage; still unknown → 0 (allowed), and the send handles an oversized file.
+        sizeBytes: Number(a.size_bytes ?? (await assetFileSize(a.storage_path)) ?? 0),
+      })),
+  );
 
   const rules: RulesContext = {
     lead: {

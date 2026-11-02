@@ -27,7 +27,8 @@ import {
 import { PAUSED_RETRY_MS } from "../domain/whatsappSafety.js";
 import { defaultTransportCache, type TransportCache } from "../providers/email.provider.js";
 import { isMissingStorageObject, MissingStorageObjectError } from "../providers/storageErrors.js";
-import { ASSET_GONE_REASON, type AttachmentIssue } from "../agent/assetRules.js";
+import { ASSET_GONE_REASON, ASSET_TOO_BIG_REASON, ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js";
+import { mentionsAttachment } from "../agent/messageChecks.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
@@ -289,8 +290,8 @@ async function downloadAttachment(ref: AttachmentRef): Promise<Buffer> {
 
 /**
  * The files to attach. E2g rule 6: an AI email's asset that was deleted / turned off, or whose
- * file is gone from Storage, is left out and recorded (the email still goes out); any other
- * download problem is an error (retried).
+ * file is gone from Storage, is left out and recorded; E2h rule 3: so are its largest files until
+ * the email fits 10 MB. Any other download problem is an error (retried).
  */
 async function attachmentFiles(row: EmailOutboundRow, download: (ref: AttachmentRef) => Promise<Buffer>) {
   const assetIds = row.attachments.map((a) => a.assetId).filter((id): id is string => Boolean(id));
@@ -300,7 +301,7 @@ async function attachmentFiles(row: EmailOutboundRow, download: (ref: Attachment
           (await pool.query<{ id: string }>(`select id from public.agent_assets where id = any($1::uuid[]) and workspace_id = $2 and is_active`, [assetIds, row.workspace_id])).rows.map((r) => r.id),
         )
       : null;
-  const files: { filename: string; content: Buffer; contentType: string }[] = [];
+  const carried: { ref: AttachmentRef; file: { filename: string; content: Buffer; contentType: string } }[] = [];
   const sent: SentAttachments = { sentAssets: [], issues: [] };
   for (const a of row.attachments) {
     const optional = row.source === "agent" && Boolean(a.assetId);
@@ -309,15 +310,20 @@ async function attachmentFiles(row: EmailOutboundRow, download: (ref: Attachment
       continue;
     }
     try {
-      files.push({ filename: a.fileName, content: await download(a), contentType: a.mimeType });
+      carried.push({ ref: a, file: { filename: a.fileName, content: await download(a), contentType: a.mimeType } });
     } catch (error) {
       if (!optional || !(error instanceof MissingStorageObjectError)) throw error;
       sent.issues.push({ assetId: a.assetId!, title: a.title ?? null, reason: error.message });
-      continue;
     }
-    if (a.assetId) sent.sentAssets.push({ id: a.assetId, title: a.title ?? null });
   }
-  return { files, sent };
+  const total = () => carried.reduce((sum, c) => sum + c.file.content.length, 0);
+  while (row.source === "agent" && total() > MAX_ATTACHMENT_BYTES) {
+    const largest = carried.reduce((x, y) => (y.file.content.length > x.file.content.length ? y : x));
+    carried.splice(carried.indexOf(largest), 1);
+    sent.issues.push({ assetId: largest.ref.assetId!, title: largest.ref.title ?? null, reason: ASSET_TOO_BIG_REASON });
+  }
+  for (const { ref } of carried) if (ref.assetId) sent.sentAssets.push({ id: ref.assetId, title: ref.title ?? null });
+  return { files: carried.map((c) => c.file), sent };
 }
 
 const tooBig = (bytes: number) => `Attachments are ${(bytes / 1024 / 1024).toFixed(1)} MB; emails can carry at most 10 MB.`;
@@ -334,12 +340,16 @@ async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "queu
       return "queued" as const;
     }
     if ("cancel" in check) {
-      await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, check.cancel]);
-      await recordAgentSendOutcome(db, row.source_id, { kind: "cancelled", reason: check.cancel });
+      await cancelAgentEmail(db, row, check.cancel);
       return "cancelled" as const;
     }
     return "ok" as const;
   });
+}
+
+async function cancelAgentEmail(db: Queryable, row: EmailOutboundRow, reason: string, attachmentIssues?: AttachmentIssue[]) {
+  await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, reason]);
+  await recordAgentSendOutcome(db, row.source_id, { kind: "cancelled", reason, ...(attachmentIssues ? { attachmentIssues } : {}) });
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +392,8 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
   }
 
   const problem = await recipientProblem(row);
-  const declaredBytes = row.attachments.reduce((sum, a) => sum + (a.size ?? 0), 0);
+  // E2h rule 3: an AI email never fails for size; attachmentFiles leaves files out instead.
+  const declaredBytes = row.source === "agent" ? 0 : row.attachments.reduce((sum, a) => sum + (a.size ?? 0), 0);
   const block = problem ?? (declaredBytes > MAX_ATTACHMENT_BYTES ? tooBig(declaredBytes) : null);
 
   if (deps.dryRun && !block) {
@@ -445,6 +456,11 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
     if (row.source === "agent") {
       const gate = await agentGate(row, deps.now?.() ?? new Date());
       if (gate !== "ok") return gate;
+      // E2h rule 2: never send a text that promises a file that isn't there.
+      if (sent.issues.length && mentionsAttachment(`${row.subject}\n${row.text_body}`)) {
+        await withTransaction((db) => cancelAgentEmail(db, row, ATTACHMENT_MISSING, sent.issues));
+        return "cancelled";
+      }
     }
     const transport = (deps.transports ?? defaultTransportCache).get(row.workspace_id, box.transportKey, box.smtp);
     const info = await transport.sendMail({

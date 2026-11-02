@@ -48,7 +48,8 @@ export function toProviderHttpError(error: unknown, action: string): unknown {
 
 /** A send the re-check refused at send time (E2 rule 5): nothing went out, and it won't be retried. */
 export class SendCancelledError extends PermanentProviderError {
-  constructor(message: string) {
+  /** `detail`: what was wrong with the attachment, when that is why it was cancelled. */
+  constructor(message: string, readonly detail?: string) {
     super(message);
     this.name = "SendCancelledError";
   }

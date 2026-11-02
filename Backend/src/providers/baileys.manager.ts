@@ -23,6 +23,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
 import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
 import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 import { agentSendRecheck } from "../services/agentSendState.service.js";
+import { ASSET_MISSING_REASON, ASSET_TOO_BIG_REASON, ATTACHMENT_MISSING, MAX_ATTACHMENT_BYTES } from "../agent/assetRules.js";
 import { isMissingStorageObject } from "./storageErrors.js";
 
 export interface WhatsAppAttachment {
@@ -616,13 +617,15 @@ export class BaileysManager {
     phoneE164: string;
     body: string;
     attachment?: WhatsAppAttachment;
-  }): Promise<{ providerMessageId: string; attachmentMissing?: boolean }> {
+    /** E2h rule 2: an AI text that promises the attachment is cancelled, not sent, when the file can't go. */
+    textMentionsAttachment?: boolean | undefined;
+  }): Promise<{ providerMessageId: string; attachmentProblem?: string }> {
     const task = this.sendTail.then(() => this.performSend(input));
     this.sendTail = task.catch(() => undefined);
     return task;
   }
 
-  private async performSend(input: { source: WhatsAppSendSource; phoneE164: string; body: string; attachment?: WhatsAppAttachment }) {
+  private async performSend(input: { source: WhatsAppSendSource; phoneE164: string; body: string; attachment?: WhatsAppAttachment; textMentionsAttachment?: boolean | undefined }) {
     if (!this.socket || !this.connected) throw new ProviderDeferredError("WhatsApp is disconnected or awaiting QR pairing.");
     const jid = phoneE164ToJid(input.phoneE164);
     const column = sourceColumn(input.source);
@@ -783,20 +786,25 @@ export class BaileysManager {
     }
 
     let messageContent: AnyMessageContent = { text: claim.text };
-    let attachmentMissing = false;
+    let attachmentProblem: string | undefined;
     if (input.attachment) {
+      const isAgent = input.source.type === "agent";
       const { data, error } = await supabaseAdmin.storage
         .from(input.attachment.bucket)
         .download(input.attachment.storagePath);
-      // E2g rule 6: an AI message whose asset file is gone goes out as text only (the caller records it).
-      if (error && input.source.type === "agent" && isMissingStorageObject(error)) attachmentMissing = true;
+      // E2g rule 6 + E2h rule 3: an AI message whose asset file is gone or too big goes out as text only (the caller records it).
+      if (error && isAgent && isMissingStorageObject(error)) attachmentProblem = ASSET_MISSING_REASON;
       else if (error || !data) throw new Error(`Failed to download WhatsApp attachment: ${error?.message ?? "no data"}`);
       else {
         const buffer = Buffer.from(await data.arrayBuffer());
-        messageContent = input.attachment.mimeType.startsWith("image/")
-          ? { image: buffer, caption: claim.text }
-          : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: claim.text };
+        if (isAgent && buffer.length > MAX_ATTACHMENT_BYTES) attachmentProblem = ASSET_TOO_BIG_REASON;
+        else {
+          messageContent = input.attachment.mimeType.startsWith("image/")
+            ? { image: buffer, caption: claim.text }
+            : { document: buffer, fileName: input.attachment.fileName, mimetype: input.attachment.mimeType, caption: claim.text };
+        }
       }
+      if (attachmentProblem && input.textMentionsAttachment) throw new SendCancelledError(ATTACHMENT_MISSING, attachmentProblem);
     }
 
     // The socket can still go away after the recheck (e.g. the session lock
@@ -830,7 +838,7 @@ export class BaileysManager {
         randomSpacingMs(claim.minDelaySeconds, claim.maxDelaySeconds) / 1_000,
       ]);
     });
-    return { providerMessageId: claim.messageId, ...(attachmentMissing ? { attachmentMissing } : {}) };
+    return { providerMessageId: claim.messageId, ...(attachmentProblem ? { attachmentProblem } : {}) };
   }
 
   /**

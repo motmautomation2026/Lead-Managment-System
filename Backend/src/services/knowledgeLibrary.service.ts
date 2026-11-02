@@ -290,6 +290,19 @@ async function getAsset(workspaceId: string, id: string) {
   return assetToDto(row, url ?? null);
 }
 
+/** E2h rule 3: a file's size from Storage metadata, for assets saved without one; null when unknown (never throws). */
+export async function assetFileSize(storagePath: string): Promise<number | null> {
+  const slash = storagePath.lastIndexOf("/");
+  const name = storagePath.slice(slash + 1);
+  try {
+    const { data } = await supabaseAdmin.storage.from(AGENT_ASSETS_BUCKET).list(storagePath.slice(0, Math.max(slash, 0)), { search: name, limit: 100 });
+    const size: unknown = data?.find((object) => object.name === name)?.metadata?.size;
+    return typeof size === "number" ? size : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface AssetFields {
   title: string;
   useWhen: string;

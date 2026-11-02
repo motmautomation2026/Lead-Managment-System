@@ -6,7 +6,8 @@ import { composeOutgoing } from "../agent/composeMessage.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "../providers/provider-errors.js";
 import type { WhatsAppAttachment, WhatsAppSendSource } from "../providers/baileys.manager.js";
-import { ASSET_GONE_REASON, attachmentFileName, type AttachmentIssue } from "../agent/assetRules.js";
+import { ASSET_GONE_REASON, attachmentFileName, ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js";
+import { mentionsAttachment } from "../agent/messageChecks.js";
 import { AGENT_ASSETS_BUCKET } from "./knowledgeLibrary.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
@@ -47,8 +48,8 @@ interface ClaimedSend {
 
 export type WhatsAppSender = (
   workspaceId: string,
-  input: { source: WhatsAppSendSource; to: string; body: string; attachment?: WhatsAppAttachment },
-) => Promise<{ providerMessageId: string; attachmentMissing?: boolean }>;
+  input: { source: WhatsAppSendSource; to: string; body: string; attachment?: WhatsAppAttachment; textMentionsAttachment?: boolean },
+) => Promise<{ providerMessageId: string; attachmentProblem?: string }>;
 
 export interface AgentSendDeps {
   dryRun?: boolean;
@@ -106,13 +107,14 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
   // Crash recovery: the message went out but the decision wasn't marked.
   const already = await pool.query<{ message_id: string }>(`select message_id from public.whatsapp_outbound_messages where agent_decision_id = $1 and status = 'sent'`, [row.id]);
   const asset = await loadAsset(row);
-  // The message carried its document (one message: document + caption), unless the file was missing then.
-  const sentWith = (missing = false): AgentSendOutcome & { kind: "sent" } => ({
+  const issuesWith = (problem?: string): AttachmentIssue[] => [...asset.issues, ...(problem && asset.attachment ? [{ assetId: asset.attachment.assetId, title: asset.attachment.title, reason: problem }] : [])];
+  // The message carried its document (one message: document + caption), unless the file couldn't go then.
+  const sentWith = (problem?: string): AgentSendOutcome & { kind: "sent" } => ({
     kind: "sent",
     providerMessageId: null,
     dryRun: false,
-    sentAssets: asset.attachment && !missing ? [{ id: asset.attachment.assetId, title: asset.attachment.title }] : [],
-    attachmentIssues: [...asset.issues, ...(missing && asset.attachment ? [{ assetId: asset.attachment.assetId, title: asset.attachment.title, reason: MISSING_FILE }] : [])],
+    sentAssets: asset.attachment && !problem ? [{ id: asset.attachment.assetId, title: asset.attachment.title }] : [],
+    attachmentIssues: issuesWith(problem),
   });
   if (already.rows[0]) return settle(row, { ...sentWith(), providerMessageId: already.rows[0].message_id });
 
@@ -123,6 +125,10 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
     return settle(row, { kind: "sent", providerMessageId: null, dryRun: true });
   }
 
+  // E2h rule 2: the text promises a file that is already known to be gone.
+  const textMentionsAttachment = mentionsAttachment(row.message_body);
+  if (asset.issues.length && textMentionsAttachment) return settle(row, { kind: "cancelled", reason: ATTACHMENT_MISSING, attachmentIssues: asset.issues });
+
   const message = await composeWhatsApp(row);
   if (!message.phone) return settle(row, { kind: "cancelled", reason: "The contact has no WhatsApp number." });
   try {
@@ -130,13 +136,13 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
       source,
       to: message.phone,
       body: message.text,
-      ...(asset.attachment ? { attachment: asset.attachment.file } : {}),
+      ...(asset.attachment ? { attachment: asset.attachment.file, textMentionsAttachment } : {}),
     });
-    return settle(row, { ...sentWith(sent.attachmentMissing), providerMessageId: sent.providerMessageId });
+    return settle(row, { ...sentWith(sent.attachmentProblem), providerMessageId: sent.providerMessageId });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (error instanceof ProviderDeferredError) return settle(row, { kind: "deferred", until: new Date(Date.now() + error.retryAfterMs), reason });
-    if (error instanceof SendCancelledError) return settle(row, { kind: "cancelled", reason });
+    if (error instanceof SendCancelledError) return settle(row, { kind: "cancelled", reason, ...(error.detail ? { attachmentIssues: issuesWith(error.detail) } : {}) });
     if (error instanceof PermanentProviderError) return settle(row, { kind: "failed", reason });
     if (await wasSentForSource(pool, source)) return settle(row, sentWith());
     const attempts = row.send_attempts + 1;
@@ -145,8 +151,6 @@ async function processAgentWhatsApp(row: ClaimedSend, deps: AgentSendDeps): Prom
     return settle(row, { kind: "deferred", until: new Date(Date.now() + RETRY_MS), reason: `Temporary error, will retry: ${reason}` });
   }
 }
-
-const MISSING_FILE = "The file was missing from storage.";
 
 /**
  * E2g rule 6: the decision's asset as a WhatsApp document (file name = title + extension). An asset

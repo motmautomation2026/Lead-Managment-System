@@ -104,7 +104,7 @@ export function attachmentFileName(title: string, fileName: string | null): stri
   return base.toLowerCase().endsWith(ext) ? base : `${base}${ext}`;
 }
 
-/** A send-time problem with one attachment; the message goes out without it. */
+/** A send-time problem with one attachment; the message goes out without it, unless its text mentions an attachment (E2h rule 2). */
 export interface AttachmentIssue {
   assetId: string;
   title: string | null;
@@ -112,3 +112,7 @@ export interface AttachmentIssue {
 }
 
 export const ASSET_GONE_REASON = "The asset was deleted or turned off before sending.";
+export const ASSET_MISSING_REASON = "The file was missing from storage.";
+export const ASSET_TOO_BIG_REASON = "The file is over the 10 MB limit.";
+/** agent_decisions.cancel_reason: the text promised a file that couldn't be sent; the AI writes a new message. */
+export const ATTACHMENT_MISSING = "attachment_missing";

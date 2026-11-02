@@ -3,7 +3,8 @@ import type { LifecycleState } from "../domain/enums.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { effectiveMode, sendRecheck, type LiveScope, type SendRecheck } from "../agent/liveMode.js";
 import type { AgentRuleSettings, AgentStatus } from "../agent/rules.js";
-import type { AttachmentIssue } from "../agent/assetRules.js";
+import { ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js";
+import { enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { cancelRunsForLead } from "./runs.service.js";
 
@@ -114,7 +115,7 @@ export type AgentSendOutcome =
       attachmentIssues?: AttachmentIssue[];
     }
   | { kind: "deferred"; until: Date; reason: string }
-  | { kind: "cancelled"; reason: string }
+  | { kind: "cancelled"; reason: string; attachmentIssues?: AttachmentIssue[] }
   | { kind: "failed"; reason: string };
 
 /** Records a send outcome on the decision (and on a real send: touches + timeline; on failure: the owner is told once). */
@@ -157,8 +158,17 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
       outcome.reason,
     ]);
   } else if (outcome.kind === "cancelled") {
-    await db.query(`update public.agent_decisions set send_status = 'cancelled', cancel_reason = $2 where id = $1`, [decisionId, outcome.reason]);
+    const issues = outcome.attachmentIssues ?? [];
+    await db.query(`update public.agent_decisions set send_status = 'cancelled', cancel_reason = $2, attachment_issues = coalesce($3, attachment_issues) where id = $1`, [
+      decisionId,
+      outcome.reason,
+      issues.length ? JSON.stringify(issues) : null,
+    ]);
     console.log(`[agent] decision ${decisionId}: send cancelled (${outcome.reason}).`);
+    // E2h rule 2: nothing went out, so no touch; a fresh decision writes a new message under the normal rules.
+    if (outcome.reason === ATTACHMENT_MISSING) {
+      await enqueueWakeup(db, { workspaceId: d.workspace_id, leadId: d.lead_id, reason: "timer", dueAt: new Date(), payload: { decisionId, attachmentMissing: true } });
+    }
   } else {
     await db.query(`update public.agent_decisions set send_status = 'failed', send_error = $2 where id = $1`, [decisionId, outcome.reason.slice(0, 1000)]);
     await db.query(

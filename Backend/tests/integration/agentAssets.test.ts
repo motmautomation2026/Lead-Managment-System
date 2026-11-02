@@ -25,6 +25,7 @@ const PDF = Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer 
 const ATTACH_LINE = "I've attached a short case study on a similar company.";
 
 const PLAIN_LINE = "We helped a similar company build outbound.";
+const OVER_LIMIT = 10 * 1024 * 1024 + 1024;
 
 const emailWith = (assetIds: string[], line = ATTACH_LINE): AgentDecision => ({
   action: "send_email",
@@ -135,7 +136,8 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     };
     const m = new Manager(ws, async () => undefined);
     Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
-    const send: WhatsAppSender = (_ws, input) => m.sendAction({ source: input.source, phoneE164: input.to, body: input.body, attachment: input.attachment });
+    const send: WhatsAppSender = (_ws, input) =>
+      m.sendAction({ source: input.source, phoneE164: input.to, body: input.body, attachment: input.attachment, textMentionsAttachment: input.textMentionsAttachment });
     return { socket, send };
   }
 
@@ -298,6 +300,163 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const waDecision = await decisionOf(w.id);
     expect(waDecision).toMatchObject({ send_status: "sent", sent_asset_ids: null });
     expect(waDecision.attachment_issues).toEqual([{ assetId: waAsset.id, title: null, reason: "The asset was deleted or turned off before sending." }]);
+  });
+
+  const removeFile = async (path: string) => {
+    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
+    await supabaseAdmin.storage.from("agent-assets").remove([path]);
+  };
+  const touches = async (leadId: string) => (await pool.query(`select agent_touch_count from public.leads where id = $1`, [leadId])).rows[0].agent_touch_count;
+  const wakeNow = async (leadId: string) =>
+    (await pool.query(`select count(*)::int as n from public.agent_wakeups where lead_id = $1 and status = 'pending' and due_at <= now() + interval '1 minute'`, [leadId])).rows[0].n;
+
+  it("E2h email: file deleted, text mentions it → cancelled attachment_missing, no touch, a new wake-up; the asset isn't offered again", async () => {
+    const ws = await workspace("mention-email");
+    const a = await asset(ws, "Steel trading case study", ["email"]);
+    const l = await lead(ws);
+    await tick(ws, [emailWith([a.id])]);
+    await removeFile(a.path);
+    const smtp = fakeSmtp();
+    await emailTick(ws, smtp);
+    expect(smtp.sent).toHaveLength(0);
+    const d = await decisionOf(l.id);
+    expect(d).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing", sent_at: null, sent_asset_ids: null });
+    expect(d.attachment_issues).toEqual([{ assetId: a.id, title: "Steel trading case study", reason: 'The file "Steel trading case study.pdf" is missing from storage.' }]);
+    expect(d.outcome).not.toBe("sent");
+    expect(await touches(l.id)).toBe(0);
+    expect(await sentRow(l.id, "AI sent email")).toBeUndefined();
+    expect(await wakeNow(l.id)).toBe(1);
+    expect((await pool.query(`select status from public.email_outbound_messages where source_id = $1`, [d.id])).rows[0].status).toBe("cancelled");
+
+    // The fresh decision can't pick the broken asset again: unknown asset → regenerated, the clean text is queued.
+    await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 minute' where lead_id = $1 and status = 'pending'`, [l.id]);
+    await tick(ws, [emailWith([a.id]), emailWith([], PLAIN_LINE)]);
+    const fresh = await decisionOf(l.id);
+    expect(fresh.id).not.toBe(d.id);
+    expect(fresh).toMatchObject({ send_status: "queued", asset_ids: [], regenerated: true });
+  });
+
+  it("E2h WhatsApp after a reply, file missing: text mentions it → cancelled + wake-up; text doesn't → sent without it, recorded", async () => {
+    const ws = await workspace("mention-wa");
+    const a = await asset(ws, "Steel trading case study", ["whatsapp"]);
+    const mention = await lead(ws, { replied: true });
+    await tick(ws, [whatsappWith([a.id])]);
+    await removeFile(a.path);
+    const first = whatsapp(ws);
+    await sendTick(ws, first.send);
+    expect(first.socket.sendMessage).not.toHaveBeenCalled();
+    const d = await decisionOf(mention.id);
+    expect(d).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing", sent_at: null });
+    expect(d.attachment_issues).toEqual([{ assetId: a.id, title: "Steel trading case study", reason: "The file was missing from storage." }]);
+    expect(await touches(mention.id)).toBe(0);
+    expect(await wakeNow(mention.id)).toBe(1);
+
+    const b = await asset(ws, "EPC case study", ["whatsapp"]);
+    const plain = await lead(ws, { replied: true });
+    await pool.query(`update public.agent_wakeups set status = 'cancelled' where lead_id = $1`, [mention.id]);
+    await tick(ws, [whatsappWith([b.id], PLAIN_LINE)]);
+    await removeFile(b.path);
+    await pool.query(`update public.whatsapp_connection set next_send_at = null where workspace_id = $1`, [ws]);
+    const second = whatsapp(ws);
+    await sendTick(ws, second.send);
+    const content = second.socket.sendMessage.mock.calls[0]![1] as { text?: string; document?: Buffer };
+    expect(content.document).toBeUndefined();
+    expect(content.text).toContain("Hi Asha");
+    const sent = await decisionOf(plain.id);
+    expect(sent).toMatchObject({ send_status: "sent", sent_asset_ids: null });
+    expect(sent.attachment_issues).toEqual([{ assetId: b.id, title: "EPC case study", reason: "The file was missing from storage." }]);
+  });
+
+  it("E2h: asset turned off, text mentions it: both channels cancel", async () => {
+    const ws = await workspace("mention-off");
+    const a = await asset(ws, "Steel trading case study", ["email", "whatsapp"]);
+    const e = await lead(ws);
+    const w = await lead(ws, { replied: true });
+    await pool.query(`update public.agent_wakeups set status = 'cancelled' where lead_id = $1`, [w.id]);
+    await tick(ws, [emailWith([a.id])]);
+    await pool.query(`update public.agent_wakeups set due_at = now() + interval '30 days' where lead_id = $1 and status = 'pending'`, [e.id]);
+    await pool.query(`insert into public.agent_wakeups (workspace_id, lead_id, due_at, reason) values ($1, $2, now() - interval '1 minute', 'enrolled')`, [ws, w.id]);
+    await tick(ws, [whatsappWith([a.id])]);
+    await pool.query(`update public.agent_assets set is_active = false where id = $1`, [a.id]);
+    const smtp = fakeSmtp();
+    await emailTick(ws, smtp);
+    await sendTick(ws, whatsapp(ws).send);
+    expect(smtp.sent).toHaveLength(0);
+    expect(await decisionOf(e.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
+    expect(await decisionOf(w.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
+  });
+
+  it("E2h rule 3: an unknown size is read from Storage at decision time; a file over 10 MB is dropped", async () => {
+    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
+    const ws = await workspace("size-decide");
+    const a = await asset(ws, "Steel trading case study", ["email"]);
+    await supabaseAdmin.storage.from("agent-assets").upload(a.path, Buffer.alloc(OVER_LIMIT), { upsert: true, contentType: "application/pdf" });
+    await pool.query(`update public.agent_assets set size_bytes = null where id = $1`, [a.id]);
+    const { assetFileSize } = await import("../../src/services/knowledgeLibrary.service.js");
+    expect(await assetFileSize(a.path)).toBe(OVER_LIMIT);
+    expect(await assetFileSize(`${ws}/no-such-file.pdf`)).toBeNull();
+    const l = await lead(ws);
+    await tick(ws, [emailWith([a.id], PLAIN_LINE)]);
+    const d = await decisionOf(l.id);
+    expect(d.asset_ids).toEqual([]);
+    expect(d.quality_checks.at(-1).attachmentsRemoved).toEqual([{ assetId: a.id, reason: "size_limit", title: "Steel trading case study" }]);
+  });
+
+  it("E2h rule 3: a file that grew past 10 MB after the decision follows rule 2 on both channels, and the email never fails", async () => {
+    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
+    const ws = await workspace("size-send");
+    const grow = (path: string) => supabaseAdmin.storage.from("agent-assets").upload(path, Buffer.alloc(OVER_LIMIT), { upsert: true, contentType: "application/pdf" });
+
+    // Email, text mentions it → cancelled.
+    const a = await asset(ws, "Steel trading case study", ["email"]);
+    const e = await lead(ws);
+    await tick(ws, [emailWith([a.id])]);
+    await pool.query(`update public.email_outbound_messages set attachments = jsonb_set(attachments, '{0,size}', 'null') where lead_id = $1`, [e.id]);
+    await grow(a.path);
+    const smtp = fakeSmtp();
+    await emailTick(ws, smtp);
+    expect(smtp.sent).toHaveLength(0);
+    const cancelled = await decisionOf(e.id);
+    expect(cancelled).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
+    expect(cancelled.attachment_issues[0].reason).toBe("The file is over the 10 MB limit.");
+
+    // Email, text doesn't mention it → sent without it, recorded.
+    const b = await asset(ws, "EPC case study", ["email"]);
+    const quiet = await lead(ws);
+    await tick(ws, [emailWith([b.id], PLAIN_LINE)]);
+    await grow(b.path);
+    await pool.query(`update public.integration_connections set next_send_at = null where workspace_id = $1 and id = 'email'`, [ws]);
+    await emailTick(ws, smtp);
+    expect(smtp.sent).toHaveLength(1);
+    expect(smtp.sent[0]!.attachments).toEqual([]);
+    const sent = await decisionOf(quiet.id);
+    expect(sent).toMatchObject({ send_status: "sent", sent_asset_ids: null });
+    expect(sent.attachment_issues[0].reason).toBe("The file is over the 10 MB limit.");
+
+    // WhatsApp, text mentions it → cancelled.
+    const c = await asset(ws, "Trading case study", ["whatsapp"]);
+    const w = await lead(ws, { replied: true });
+    await tick(ws, [whatsappWith([c.id])]);
+    await grow(c.path);
+    const { socket, send } = whatsapp(ws);
+    await sendTick(ws, send);
+    expect(socket.sendMessage).not.toHaveBeenCalled();
+    expect(await decisionOf(w.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
+  });
+
+  it("createAsset stores the real file size", async () => {
+    const ws = await workspace("upload");
+    const { createAsset, deleteAsset } = await import("../../src/services/knowledgeLibrary.service.js");
+    const actor = { id: adminId, fullName: "Govinda Rep", email: "assets-admin@example.com" } as Parameters<typeof createAsset>[0];
+    const created = await createAsset(actor, ws, {
+      title: "Upload size",
+      useWhen: "Test",
+      tags: [],
+      channels: ["email"],
+      file: { buffer: PDF, originalName: "case.pdf", mimeType: "application/pdf", size: PDF.length },
+    });
+    expect(created.sizeBytes).toBe(PDF.length);
+    await deleteAsset(actor, ws, created.id);
   });
 
   it("WORKER_DRY_RUN: recorded as a dry run with its asset, nothing sent", async () => {
