@@ -396,6 +396,25 @@ Migration 046.
 - Company linking (B2-design §2.1 step 4): a contact whose company name differs from the domain company's (similarity
   < 0.6) gets its own company and a pair candidate `same_domain_different_name` (`/company-duplicates` `kind: "pair"`).
 
+## 7n. AI attachments (asset library) — E2g
+
+Migration 047.
+
+- `POST /knowledge/assets` (admin, multipart): `channels` is optional; omitted = `["email"]` (the column default is also
+  email only). `PATCH /knowledge/assets/:id` unchanged (`title`, `useWhen`, `tags`, `channels`, `isActive`).
+- `GET /agent/decisions/:decisionId` and each `GET /agent/leads/:id` `decisions[]` row add `attachments` (null for non-send
+  actions):
+  `{ assets: [{ id, title | null (asset deleted), sent: boolean }], removed: [{ assetId, reason, title | null }],
+  issues: [{ assetId, title | null, reason }] }`. `assets` = the decision's (rules-checked) `assetIds` in order, `sent` =
+  really went out with the message; `removed` = dropped by the rules (the last attempt's `qualityChecks[].attachmentsRemoved`;
+  `reason` `first_message | whatsapp_no_reply | already_sent | count_limit | size_limit`; the message was kept); `issues` =
+  left out at send time (asset deleted/turned off, file missing from Storage; the message went out without it).
+- `qualityChecks[]` entries may carry `attachmentsRemoved: [{ assetId, reason, title }]`; `rulesResult.attachmentsRemoved`
+  (same items without `title`) when the rules dropped any.
+- Timeline: "AI sent email: <subject>" / "AI sent WhatsApp" rows get `detail` "With attachment: <title>[, <title>]" and/or
+  "Attachment not sent: <title> (<reason>)"; `metadata.assetIds` lists the assets sent.
+- `GET /knowledge/search` (Test retrieval) still includes asset documents; the agent's own retrieval never does.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

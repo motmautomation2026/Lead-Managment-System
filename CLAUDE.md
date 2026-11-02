@@ -73,7 +73,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `046`).
+  (currently `047`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `046`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `047`).
 
 ## Way of working
 
@@ -625,6 +625,33 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   entries; AI Activity lists every failed attempt. Readiness: `loadRatings` counts decisions created since
   `readiness_since`; `POST /agent/settings/reset-readiness` (admin); settings + stats `readinessSince`; Settings → AI agent gate
   panel "Counting since <IST>" + "Reset go-live count" (confirm). Staging MOTM reset at 2026-10-29 15:59:32 IST.
+- **E2g (AI attachments made safe and delivered; nothing new sent to real leads):** migration 047: `agent_assets.channels`
+  default `{email}` (POST `/knowledge/assets` without `channels` → email only; existing rows unchanged),
+  `agent_decisions.sent_asset_ids` (assets really sent; null = none/draft/dry run) + `attachment_issues` (send-time drops
+  `[{assetId, title, reason}]`). Pure `agent/assetRules.ts`: `assetViolations` (rule 1: unknown / inactive / channel not
+  allowed → violation, regenerate) and `applyAssetRules` (DROP the attachment, keep the message, no regeneration):
+  `first_message` (no conversation (`conversationExists`) and no real message from us: real AI send or email/WhatsApp on
+  the timeline; drafts never count), `whatsapp_no_reply` (no matched inbound WhatsApp from the contact), `already_sent`
+  (`sent_asset_ids`), `count_limit` (≤ 2 email, ≤ 1 WhatsApp; Zod still allows 3/1), `size_limit` (≤ 10 MB total, largest
+  dropped); `attachmentFileName` (title + the file's extension). `validateDecision` rule 7 applies both;
+  `rulesResult.attachmentsRemoved`; `quality_checks` entries get `attachmentsRemoved` (with titles). `buildAgentContext`
+  sets `rules.assetFacts` and searches knowledge with `excludeDocTypes: ['asset']` (asset files are still chunked for the
+  Knowledge page's Test retrieval, but never reach the decision or grounding). Prompt (only when the workspace has assets,
+  so other prompts are unchanged): rule "Attach an asset only if its 'use when' fits; mention it in one short sentence …;
+  never quote numbers or results from it", an "Attachments now: …" line after the assets block (none before a conversation;
+  WhatsApp only after a reply) and "already sent to this contact" marks; grounding (always) flags any number/result
+  attributed to an attachment. Delivery: `executeLive` queues the email with Storage refs (`AttachmentRef.assetId/title`,
+  bucket `agent-assets`, asset MIME); `processEmail` (`attachmentFiles`) leaves out an AI email's asset that was deleted /
+  turned off or whose object is missing (`MissingStorageObjectError`, `providers/storageErrors.ts`) and records it; other
+  download errors stay temporary. WhatsApp: `runAgentSends` claims `asset_ids`, `loadAsset` → `performSend` attachment =
+  ONE message, the document with the text as caption (as proposals); an AI asset whose file is missing → text only
+  (`attachmentMissing`). `recordAgentSendOutcome` sent → `sent_asset_ids`, `attachment_issues`, timeline detail
+  "With attachment: <title>" / "Attachment not sent: <title> (<reason>)". Dry run: `dry_run`, nothing downloaded or sent.
+  API (`B4-api.md` §7n): decision detail + lead panel rows `attachments {assets, removed, issues}`. Frontend: Knowledge →
+  Assets Add dialog defaults to Email only, admin Edit dialog (`features/knowledge/edit-asset-dialog.tsx`, RHF + Zod: title,
+  use when, channels; `ChannelChoices` shared), `AttachmentsUsed` (decision Sheet under Message, contact AI panel rows).
+  `agent:preview --evaluate` prints the attachments and each `attachment_removed: <reason>`. Integration
+  `tests/integration/agentAssets.test.ts` (real Storage objects in `[test]` workspaces).
 
 ## WhatsApp safety (E1)
 
@@ -753,6 +780,13 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `updateLead`.
 - A contact is never AI-live and in a workflow: becoming live cancels its runs ("Managed by AI agent"), `autoEnroll`
   skips it, manual enrolment → 409.
+- Attachments (E2g, both modes, in code): only assets from the library on their allowed channels (rule 1 = violation);
+  never before a conversation or a real message from us, WhatsApp only after the contact replied on WhatsApp, never the
+  same asset twice, ≤ 2 email / ≤ 1 WhatsApp, ≤ 10 MB in total — these DROP the attachment and keep the message (no
+  regeneration, recorded in `quality_checks`). The AI sees only an asset's title and "use when"; asset chunks are never a
+  fact source (decide or grounding) and grounding flags numbers/results attributed to an attachment. Live sends attach the
+  file (email attachment / one WhatsApp document with the text as caption); a file gone at send time → sent without it,
+  recorded.
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
   facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
