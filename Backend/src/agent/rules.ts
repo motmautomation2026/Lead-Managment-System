@@ -1,5 +1,8 @@
 import type { LifecycleState, PipelineStage } from "../domain/enums.js";
 import type { AgentDecision, SendDecision } from "./decisionSchema.js";
+import { applyAssetRules, assetViolations, type AgentAssetInfo, type AssetFacts, type AttachmentRemoval } from "./assetRules.js";
+
+export type { AgentAssetInfo };
 
 export type AgentMode = "off" | "shadow" | "live";
 export type AgentStatus = "none" | "active" | "paused" | "handed_off" | "stopped";
@@ -18,13 +21,6 @@ export interface AgentRuleSettings {
   wake_max_days: number;
   nurture_long_term: boolean;
   rep_quiet_hours: number;
-}
-
-export interface AgentAssetInfo {
-  id: string;
-  active: boolean;
-  channels: string[];
-  sizeBytes: number;
 }
 
 export interface RulesContext {
@@ -47,6 +43,8 @@ export interface RulesContext {
   lastRepActivityAt: Date | null;
   hasSentWhatsApp: boolean;
   assets: AgentAssetInfo[];
+  /** E2g rules 2–4: what the attachment rules read (buildAgentContext); absent = unknown → treated as a first message. */
+  assetFacts?: AssetFacts;
   /** Contacts the message may mention: the lead's own plus the workspace's / owner's. */
   allowedContacts: { emails: string[]; phones: string[] };
   /** The contact's effective mode (E2: in a live workspace, a contact outside the live scope runs as shadow). */
@@ -79,6 +77,8 @@ export interface RulesResult {
   nextWakeAt: Date | null;
   violations: RuleNote[];
   adjustments: RuleNote[];
+  /** E2g: attachments the rules dropped (the message is kept, no regeneration); absent = none. */
+  attachmentsRemoved?: AttachmentRemoval[];
 }
 
 export const AGENT_STAGE_ALLOW_LIST: readonly PipelineStage[] = [
@@ -94,7 +94,6 @@ const EMAIL_BLOCKED_STATUSES = ["permanent_bounce", "unsubscribed", "invalid"];
 const WHATSAPP_BLOCKED_STATUSES = ["invalid", "opted_out", "do_not_contact"];
 // WhatsApp goes to phone_e164, so a bad phone also means a bad WhatsApp.
 const PHONE_BLOCKED_STATUSES = ["invalid", "wrong_number", "do_not_contact"];
-const WHATSAPP_MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 /** Asia/Kolkata is a fixed UTC+05:30 (no DST). */
@@ -149,21 +148,6 @@ function contentViolations(decision: SendDecision, ctx: RulesContext): RuleNote[
   return notes;
 }
 
-function assetViolations(decision: SendDecision, ctx: RulesContext): RuleNote[] {
-  const notes: RuleNote[] = [];
-  const channel = decision.action === "send_email" ? "email" : "whatsapp";
-  const max = channel === "email" ? 3 : 1;
-  if (decision.assetIds.length > max) notes.push({ rule: "assets", message: `At most ${max} asset(s) per ${channel} message.` });
-  for (const id of decision.assetIds) {
-    const asset = ctx.assets.find((a) => a.id === id);
-    if (!asset) notes.push({ rule: "assets", message: `Asset ${id} does not exist.` });
-    else if (!asset.active) notes.push({ rule: "assets", message: `Asset ${id} is not active.` });
-    else if (!asset.channels.includes(channel)) notes.push({ rule: "assets", message: `Asset ${id} is not allowed on ${channel}.` });
-    else if (channel === "whatsapp" && asset.sizeBytes > WHATSAPP_MAX_ASSET_BYTES) notes.push({ rule: "assets", message: `Asset ${id} is over 10 MB (WhatsApp limit).` });
-  }
-  return notes;
-}
-
 /**
  * Rules 1-3 of validateDecision, usable before any AI call: mode off, lifecycle
  * not eligible, or agent_status not active → the block; else null.
@@ -189,7 +173,9 @@ export function precheck(
  *  4. total touches ≥ max_touches_total on a send → convert to stop (no_response)
  *  5. channel usable (sends) → else convert to wait 1 day (other channel usable) or handoff (none) + violation
  *  6. (E2b: word limits moved to messageChecks.checkMessage)
- *  7. assets exist / active / allow the channel / count + size limits (sends) → else violation
+ *  7. assets exist / active / allow the channel (sends) → else violation; then (E2g, agent/assetRules.ts)
+ *     attachments are DROPPED, not violations: before a conversation, WhatsApp before a WhatsApp reply,
+ *     already sent, > 2 email / 1 WhatsApp, > 10 MB in total
  *  8. content safety (sends): foreign contacts, opt-out text, signature, HTML → violations
  *  9. update_stage only on an active lead and to the allow-list → else violation
  * 10. timing (sends): sendAt = nextAllowedSendTime(...) incl. rep quiet hours; deferrals are adjustments
@@ -250,9 +236,17 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
     }
   }
 
+  let attachmentsRemoved: AttachmentRemoval[] = [];
   if (isSend(final)) {
     // 7: assets
-    violations.push(...assetViolations(final, ctx));
+    const channel = final.action === "send_email" ? "email" : "whatsapp";
+    const assetNotes = assetViolations(final.assetIds, channel, ctx.assets);
+    violations.push(...assetNotes);
+    if (!assetNotes.length && final.assetIds.length) {
+      const { kept, removed } = applyAssetRules(final.assetIds, channel, ctx.assets, ctx.assetFacts ?? null);
+      attachmentsRemoved = removed;
+      if (kept.length !== final.assetIds.length) final = { ...final, assetIds: kept };
+    }
     // 8: content safety
     violations.push(...contentViolations(final, ctx));
   }
@@ -295,6 +289,7 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
     nextWakeAt,
     violations,
     adjustments,
+    ...(attachmentsRemoved.length ? { attachmentsRemoved } : {}),
   };
 }
 

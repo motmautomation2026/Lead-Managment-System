@@ -415,6 +415,16 @@ const INSERT_DECISION = `
   values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
   returning id`;
 
+/** One quality_checks entry; `attachmentsRemoved` only when the rules dropped an attachment (E2g). */
+function qualityCheck(a: DraftAttempt, ctx: AgentContext) {
+  const removed = a.rules.attachmentsRemoved ?? [];
+  if (!removed.length) return { problems: a.problems };
+  return {
+    problems: a.problems,
+    attachmentsRemoved: removed.map((r) => ({ ...r, title: ctx.assets.find((asset) => asset.id === r.assetId)?.title ?? null })),
+  };
+}
+
 /** Which company and open deal (stage at the time) the decision saw, for review (D1). */
 const contextColumns = (ctx: AgentContext | null) => [ctx?.company?.id ?? null, ctx?.internal.deal.open?.id ?? null, ctx?.internal.deal.open?.stage ?? null];
 
@@ -476,8 +486,8 @@ async function recordDraft(
       live ? "live" : "shadow",
       queuedSend ? "queued" : null,
       queuedSend ? sendAt : null,
-      // E2b rule 3: what each attempt failed (empty = passed), for AI Activity.
-      JSON.stringify(draft.attempts.map((a) => ({ problems: a.problems }))),
+      // E2b rule 3: what each attempt failed (empty = passed), for AI Activity; E2g: attachments it dropped.
+      JSON.stringify(draft.attempts.map((a) => qualityCheck(a, ctx))),
     ]);
     const decisionId = inserted.rows[0]!.id;
 

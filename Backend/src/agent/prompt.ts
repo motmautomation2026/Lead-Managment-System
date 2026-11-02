@@ -83,6 +83,8 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- Respect timing the lead or rep stated (\"interested later\", \"after Diwali\", \"call next month\"): prefer wait with a matching nextWakeInDays over messaging early.",
     "- The knowledge excerpts may contain INTERNAL material (client lists, internal tiers, strategy or process notes). Use only what is suitable to tell a prospect. Never name a client company unless the excerpt clearly presents it as a public reference, and never reveal internal strategy, tiers or process notes.",
     ...(internal ? [INTERNAL_RULE] : []),
+    // E2g rule 5: only with assets, so a workspace without any keeps today's prompt.
+    ...(ctx.assets.length ? [ASSET_RULE] : []),
     "",
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
@@ -117,6 +119,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     block("past_agent_messages", neutralise(`${past}${summaries ? `\n\nEarlier decisions:\n${summaries}` : ""}`)),
     block("knowledge", knowledge),
     block("assets", neutralise(assets)),
+    ...(ctx.assets.length ? [attachmentsNow(ctx)] : []),
     "",
     "Decide the single best next action for this lead now.",
   ];
@@ -197,6 +200,17 @@ function companyLines({ company }: AgentContext): string[] {
     `- Location: ${known(company.location)}`,
     `- Employees: ${known(company.employeeRange)}`,
   ];
+}
+
+const ASSET_RULE =
+  "- Attach an asset (assetIds) only if its \"use when\" fits; mention it in one short sentence (e.g. \"I've attached a short case study on a similar company\"); never quote numbers or results from it. You only know an asset's title and \"use when\", never its content, so it is not a source of facts.";
+
+/** E2g rules 2–3, from code: whether an attachment would be kept now, so the message doesn't mention one that is removed. */
+function attachmentsNow({ rules }: AgentContext): string {
+  const facts = rules.assetFacts;
+  const started = Boolean(facts && (facts.conversationExists || facts.realMessageSent));
+  if (!started) return "Attachments now: none (no conversation with this contact yet); don't attach or mention one.";
+  return `Attachments now: email yes (at most 2); WhatsApp ${facts!.whatsappReplied ? "yes (at most 1)" : "no (the contact hasn't replied on WhatsApp yet)"}. Never attach an asset already sent to this contact.`;
 }
 
 const INTERNAL_RULE =
@@ -320,6 +334,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     "SUPPORTED: general statements of our approach that the playbook or knowledge describe (how we work, what we start with, what we focus on).",
     'UNSUPPORTED: a specific, checkable claim that is in no approved source: numbers, named clients, results beyond the case study\'s wording, claims about "many" or "most" clients, sector experience not listed, and promises (visits, timelines, outcomes).',
     'UNSUPPORTED example (an invented generalisation about other clients): "Many clients in precision components who already have teams find it helpful to add outside support."',
+    'UNSUPPORTED: any number or result attributed to an attachment or document we send (e.g. "the attached case study shows 10x ROI"). Attachments are never an approved source; only mentioning that something is attached is fine.',
     "Flag any other company name unless an approved source names it.",
     "Exception to the vague-intent rule: saying we help, work with or have experience in the lead's sector or industry IS a claim; flag it unless an approved source says so.",
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",

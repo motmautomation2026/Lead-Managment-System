@@ -210,19 +210,32 @@ describe("validateDecision", () => {
     expect(validateDecision(whatsapp({ body: "word ".repeat(81) }), ctx(), settings, NOW).allowed).toBe(true);
   });
 
-  it("7. assets: unknown, inactive, wrong channel, too big for WhatsApp, too many", () => {
+  it("7. assets: unknown, inactive or wrong channel are violations", () => {
     const other = "11111111-1111-4111-8111-111111111111";
     const assets = [
       { id: ASSET, active: false, channels: ["email"], sizeBytes: 1 },
-      { id: other, active: true, channels: ["email"], sizeBytes: 11 * 1024 * 1024 },
+      { id: other, active: true, channels: ["email"], sizeBytes: 1 },
     ];
     expect(validateDecision(email({ assetIds: [ASSET] }), ctx({ assets }), settings, NOW).violations[0]!.message).toMatch(/not active/);
     expect(validateDecision(whatsapp({ assetIds: [other] }), ctx({ assets }), settings, NOW).violations[0]!.message).toMatch(/not allowed on whatsapp/);
-    const big = [{ ...assets[1]!, channels: ["whatsapp"] }];
-    expect(validateDecision(whatsapp({ assetIds: [other] }), ctx({ assets: big }), settings, NOW).violations[0]!.message).toMatch(/10 MB/);
     expect(validateDecision(email({ assetIds: ["22222222-2222-4222-8222-222222222222"] }), ctx(), settings, NOW).violations[0]!.message).toMatch(/does not exist/);
-    expect(rules(validateDecision(whatsapp({ assetIds: [ASSET, ASSET] }), ctx(), settings, NOW))).toContain("assets");
-    expect(validateDecision(email({ assetIds: [ASSET, ASSET, ASSET] }), ctx(), settings, NOW).allowed).toBe(true);
+  });
+
+  it("7. E2g: situational asset problems drop the attachment and keep the message (no violation)", () => {
+    const facts = { conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] };
+    const first = validateDecision(email({ assetIds: [ASSET] }), ctx(), settings, NOW);
+    expect(first.allowed).toBe(true);
+    expect(first.finalDecision).toMatchObject({ action: "send_email", assetIds: [] });
+    expect(first.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "first_message" }]);
+    const noReply = validateDecision(whatsapp({ assetIds: [ASSET] }), ctx({ assetFacts: facts }), settings, NOW);
+    expect(noReply.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "whatsapp_no_reply" }]);
+    const ok = validateDecision(email({ assetIds: [ASSET] }), ctx({ assetFacts: facts }), settings, NOW);
+    expect(ok.finalDecision).toMatchObject({ assetIds: [ASSET] });
+    expect(ok.attachmentsRemoved).toBeUndefined();
+    const big = [{ id: ASSET, active: true, channels: ["whatsapp"], sizeBytes: 11 * 1024 * 1024 }];
+    const tooBig = validateDecision(whatsapp({ assetIds: [ASSET] }), ctx({ assets: big, assetFacts: { ...facts, whatsappReplied: true } }), settings, NOW);
+    expect(tooBig.allowed).toBe(true);
+    expect(tooBig.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "size_limit" }]);
   });
 
   it.each([

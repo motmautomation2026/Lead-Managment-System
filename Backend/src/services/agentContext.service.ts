@@ -217,7 +217,7 @@ export async function buildAgentContext(
   const mode = effectiveMode(settings, { agentLiveTest: leadRow.agent_live_test, createdAt: leadRow.created_at });
   const shadow = mode === "shadow";
 
-  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied] = await Promise.all([
+  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied, assetHistory] = await Promise.all([
     db.query<{ message: string | null }>(
       `select t.metadata ->> 'rawMessage' as message
          from public.timeline_events t join public.leads l on l.id = t.lead_id
@@ -299,6 +299,14 @@ export async function buildAgentContext(
               or exists (select 1 from public.email_inbound_events e
                           where e.lead_id = $1 and e.workspace_id = $2 and e.kind = 'reply' and e.match_status = 'matched' and e.received_at > d.sent_at))
        ) as replied`,
+      [leadId, workspaceId],
+    ),
+    // E2g rules 3–4: a WhatsApp reply from this contact, and the assets really sent to them.
+    db.query<{ whatsapp_replied: boolean; sent_asset_ids: string[] }>(
+      `select exists (select 1 from public.whatsapp_inbound_events
+                       where lead_id = $1 and workspace_id = $2 and disposition = 'matched') as whatsapp_replied,
+              coalesce((select array_agg(distinct a) from public.agent_decisions d, unnest(d.sent_asset_ids) a
+                         where d.lead_id = $1 and d.workspace_id = $2 and d.outcome = 'sent'), '{}') as sent_asset_ids`,
       [leadId, workspaceId],
     ),
   ]);
@@ -401,9 +409,18 @@ export async function buildAgentContext(
   // E2f rule 6: only when present, so a contact without a signal keeps today's rules context.
   const signal = signalsOf(context)[0];
   if (signal) context.rules.signal = { action: signal.action, title: signal.title };
+  const situation = situationOf(context);
+  // E2g rules 2–4. Drafts never count: pastMessages' "sent" rows are real sends.
+  context.rules.assetFacts = {
+    conversationExists: situation.conversationExists,
+    realMessageSent: context.pastMessages.some((m) => m.outcome === "sent") || context.timeline.some((t) => t.kind === "email" || t.kind === "whatsapp"),
+    whatsappReplied: assetHistory.rows[0]?.whatsapp_replied ?? false,
+    sentAssetIds: assetHistory.rows[0]?.sent_asset_ids ?? [],
+  };
   // E2b rule 5: the query adds topics for where the conversation stands.
-  const query = buildKbQuery(lead, lastCall.rows[0] ?? null, situationOf(context));
-  const hits = await searchKnowledge(db, deps.embedder, workspaceId, query, { limit: KB_LIMIT });
+  const query = buildKbQuery(lead, lastCall.rows[0] ?? null, situation);
+  // E2g rule 5: an asset's file is never a fact source: its chunks reach neither the decision nor grounding.
+  const hits = await searchKnowledge(db, deps.embedder, workspaceId, query, { limit: KB_LIMIT, excludeDocTypes: ["asset"] });
   context.knowledge = { query, chunks: hits.map((h) => ({ id: h.chunkId, title: h.documentTitle, text: h.content })) };
   return trimToCap(context, CONTEXT_TOKEN_CAP);
 }

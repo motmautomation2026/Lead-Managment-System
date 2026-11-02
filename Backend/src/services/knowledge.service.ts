@@ -6,6 +6,8 @@ import type { Embedder } from "../providers/openai.provider.js";
 export interface KnowledgeSearchOptions {
   /** Only documents of these kb_documents.doc_type values. */
   docTypes?: string[];
+  /** Never documents of these doc types (the agent excludes 'asset': E2g rule 5). */
+  excludeDocTypes?: string[];
   /** Only documents sharing at least one of these tags. */
   tags?: string[];
   limit?: number;
@@ -52,7 +54,7 @@ export async function searchKnowledge(
   embedder: Embedder,
   workspaceId: string,
   queryText: string,
-  { docTypes, tags, limit = 8 }: KnowledgeSearchOptions = {},
+  { docTypes, excludeDocTypes, tags, limit = 8 }: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeHit[]> {
   const [vector] = await embedder.embed([queryText]);
   if (!vector) return [];
@@ -79,9 +81,17 @@ export async function searchKnowledge(
           and c.embedding is not null
           and ($3::text[] is null or d.doc_type = any($3::text[]))
           and ($4::text[] is null or d.tags && $4::text[])
+          and ($6::text[] is null or d.doc_type <> all($6::text[]))
         order by c.embedding operator(extensions.<=>) $2::extensions.vector
         limit $5`,
-      [workspaceId, toVectorLiteral(vector), docTypes?.length ? docTypes : null, tags?.length ? tags : null, Math.max(1, Math.min(limit, 50))],
+      [
+        workspaceId,
+        toVectorLiteral(vector),
+        docTypes?.length ? docTypes : null,
+        tags?.length ? tags : null,
+        Math.max(1, Math.min(limit, 50)),
+        excludeDocTypes?.length ? excludeDocTypes : null,
+      ],
     );
     return result.rows;
   });

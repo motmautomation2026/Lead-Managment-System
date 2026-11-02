@@ -47,6 +47,7 @@ async function main(id: string) {
   const { countTokens } = await import("../src/knowledge/chunkText.js");
   const { checkMessage, messageFactsOf } = await import("../src/agent/messageChecks.js");
   const { STYLE_RULES } = await import("../src/agent/prompt.js");
+  const { ATTACHMENT_REMOVAL_TEXT } = await import("../src/agent/assetRules.js");
   const { createOpenAIDecisionModel, getDefaultEmbedder, resolveAgentModels } = await import("../src/providers/openai.provider.js");
 
   try {
@@ -145,6 +146,11 @@ async function main(id: string) {
         }
         const other = attempt.rules.violations.filter((v) => !failed.some((f) => f.rule === v.rule));
         line(other.length === 0, "other rules (contacts, signature, opt-out, HTML, assets, channel)", other.map((v) => v.message).join(" "));
+        // E2g: dropped attachments are notes, not failures (the message is kept).
+        const title = (id: string) => ctx.assets.find((a) => a.id === id)?.title ?? id;
+        const kept = d.assetIds.map(title);
+        console.log(`  note  attachments: ${kept.length ? kept.join(", ") : "none"}`);
+        for (const r of attempt.rules.attachmentsRemoved ?? []) console.log(`  note  attachment_removed: ${r.reason} — ${title(r.assetId)} (${ATTACHMENT_REMOVAL_TEXT[r.reason]})`);
         if (!attempt.grounding) {
           console.log("  n/a   facts + style (not grounded: a check above failed first)");
           return;

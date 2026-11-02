@@ -229,3 +229,65 @@ describe("E2b rule 4: what the model sees", () => {
     expect(user.indexOf("length: 90 words")).toBeLessThan(user.indexOf("Before you answer, check:"));
   });
 });
+
+describe("E2g: attachments", () => {
+  const ASSET = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+  const email = (body: string): AgentDecision => ({ action: "send_email", subject: "Steel exports", body, assetIds: [ASSET], nextWakeInDays: 3, reasoning: "Share proof." });
+  const deps = (decisions: AgentDecision[], grounding?: GroundingResult[]) => ({
+    model: createFakeDecisionModel({ decisions, ...(grounding ? { grounding } : {}) }),
+    decisionModel: "m-decide",
+    groundingModel: "m-ground",
+    prices: { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } },
+    now: NOW,
+  });
+  const usage = (): Usage => ({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
+  const assetInfo = { id: ASSET, active: true, channels: ["email"], sizeBytes: 900_000 };
+  const ctx = (assetFacts: NonNullable<ReturnType<typeof sampleContext>["rules"]["assetFacts"]>) =>
+    sampleContext({
+      assets: [{ id: ASSET, title: "Steel trading case study", useWhen: "After a call with a trader", channels: ["email"], sizeBytes: 900_000 }],
+      rules: { ...sampleContext().rules, assets: [assetInfo], assetFacts },
+    });
+  const firstMessage = { conversationExists: false, realMessageSent: false, whatsappReplied: false, sentAssetIds: [] };
+  const talking = { conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] };
+  const body = "Hi Asha,\n\nI've attached a short case study on a steel trader we worked with. Would a short call next week suit you?";
+
+  it("an attachment on a first message is dropped, the message is kept and nothing is regenerated", async () => {
+    const d = deps([email(body)]);
+    const result = await draftDecision(ctx(firstMessage), d, usage());
+    expect(result.regenerated).toBe(false);
+    expect(result.decision).toMatchObject({ action: "send_email", body, assetIds: [] });
+    expect(result.rules.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "first_message" }]);
+    expect(result.attempts[0]!.problems).toEqual([]);
+    expect(d.model.calls.filter((c) => c.kind === "decide")).toHaveLength(1);
+  });
+
+  it("after a conversation the attachment is kept; the prompt says attachments are possible and how to mention them", async () => {
+    const d = deps([email(body)]);
+    const result = await draftDecision(ctx(talking), d, usage());
+    expect(result.decision).toMatchObject({ assetIds: [ASSET] });
+    expect(result.rules.attachmentsRemoved).toBeUndefined();
+    const [system, user] = d.model.calls[0]!.input.messages;
+    expect(system!.content).toContain("never quote numbers or results from it");
+    expect(user!.content).toContain("Attachments now: email yes (at most 2); WhatsApp no");
+  });
+
+  it("an asset already sent is marked in the prompt and dropped if chosen again", async () => {
+    const c = ctx({ ...talking, sentAssetIds: [ASSET] });
+    expect(buildDecisionMessages(c, settings, NOW)[1]!.content).toContain("already sent to this contact");
+    const result = await draftDecision(c, deps([email(body)]), usage());
+    expect(result.rules.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "already_sent" }]);
+  });
+
+  it("quoting a number from the attachment fails grounding and is regenerated", async () => {
+    const quoting = email("Hi Asha,\n\nThe attached case study shows how a steel trader got 10x ROI. Would a short call next week suit you?");
+    const d = deps([quoting, email(body)], [{ supported: false, unsupportedClaims: ["10x ROI"], styleViolations: [] }, { supported: true, unsupportedClaims: [], styleViolations: [] }]);
+    const result = await draftDecision(ctx(talking), d, usage());
+    expect(result.regenerated).toBe(true);
+    expect(result.attempts[0]!.problems).toEqual(["Unsupported claim: 10x ROI"]);
+    expect(result.decision).toMatchObject({ action: "send_email", body, assetIds: [ASSET] });
+    const grounding = d.model.calls.find((c) => c.kind === "grounding")!.input.messages;
+    expect(grounding[0]!.content).toContain("any number or result attributed to an attachment");
+    // Only the title and "use when" are known; the asset's content is never a grounding source.
+    expect(grounding[1]!.content).not.toContain("Steel trading case study");
+  });
+});

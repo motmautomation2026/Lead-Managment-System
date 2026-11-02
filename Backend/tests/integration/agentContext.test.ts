@@ -38,11 +38,11 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     return result.rows[0].id as string;
   }
 
-  async function kbDoc(ws: string, title: string, content: string) {
+  async function kbDoc(ws: string, title: string, content: string, docType = "service") {
     const doc = await pool.query(
       `insert into public.kb_documents (workspace_id, title, doc_type, source, raw_text, status, chunk_count, embedding_model)
-       values ($1, $2, 'service', 'text', $3, 'ready', 1, 'fake-embedding') returning id`,
-      [ws, title, content],
+       values ($1, $2, $4, 'text', $3, 'ready', 1, 'fake-embedding') returning id`,
+      [ws, title, content, docType],
     );
     await pool.query(
       `insert into public.kb_chunks (workspace_id, document_id, chunk_index, content, token_count, embedding, metadata)
@@ -104,6 +104,8 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
 
     await kbDoc(WS, "Cold calling for steel", "We run cold calling for steel exporters interested later in outbound");
     await kbDoc(OTHER, "Other secret", "We run cold calling for steel exporters interested later in outbound");
+    // E2g rule 5: an asset's searchable copy (the same words, so it would rank first) never reaches the agent.
+    await kbDoc(WS, "Steel case study", "We run cold calling for steel exporters interested later in outbound: 10x ROI", "asset");
     await pool.query(
       `insert into public.agent_assets (workspace_id, title, use_when, channels, storage_path, size_bytes, is_active)
        values ($1, 'Steel case study', 'Lead asks for proof', '{email,whatsapp}', $2, 1000, true),
@@ -167,6 +169,9 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect(ctx.knowledge.query).toContain("Industry: Steel");
     expect(ctx.knowledge.chunks.map((c) => c.title)).toEqual(["Cold calling for steel"]);
     expect(ctx.assets.map((a) => a.title)).toEqual(["Steel case study"]);
+    expect(JSON.stringify(ctx.knowledge)).not.toContain("10x ROI");
+    // E2g: a call/meeting/proposal exists and two real WhatsApp sends; no reply, nothing attached yet.
+    expect(ctx.rules.assetFacts).toEqual({ conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] });
     expect(ctx.meta).toMatchObject({ trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 });
     expect(ctx.meta.tokenEstimate).toBeGreaterThan(0);
   });
