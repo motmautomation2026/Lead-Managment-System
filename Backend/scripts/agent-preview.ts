@@ -140,6 +140,7 @@ async function main(id: string) {
           ["not_thanking_inbound", "inbound first message thanks them"],
           ["introduction_mid_conversation", "no introduction mid-conversation"],
           ["internal_info_leak", "no internal information"],
+          ["attachment_mention", "no mention of an attachment that isn't there"],
         ] as const) {
           const hit = failed.find((v) => v.rule === rule);
           line(!hit, name, hit?.message);

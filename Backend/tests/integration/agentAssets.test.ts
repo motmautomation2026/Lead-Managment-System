@@ -24,17 +24,19 @@ const MODELS = { decision: "m-decide", grounding: "m-ground" };
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n");
 const ATTACH_LINE = "I've attached a short case study on a similar company.";
 
-const emailWith = (assetIds: string[]): AgentDecision => ({
+const PLAIN_LINE = "We helped a similar company build outbound.";
+
+const emailWith = (assetIds: string[], line = ATTACH_LINE): AgentDecision => ({
   action: "send_email",
   subject: "Outbound for Acme Steel",
-  body: `Hi Asha,\n\nFollowing up on my last message. ${ATTACH_LINE} Would a short call on Tuesday work?`,
+  body: `Hi Asha,\n\nFollowing up on my last message. ${line} Would a short call on Tuesday work?`,
   assetIds,
   nextWakeInDays: 3,
   reasoning: "Share proof.",
 });
-const whatsappWith = (assetIds: string[]): AgentDecision => ({
+const whatsappWith = (assetIds: string[], line = ATTACH_LINE): AgentDecision => ({
   action: "send_whatsapp",
-  body: `Hi Asha, thanks for your reply. ${ATTACH_LINE} Would a short call on Tuesday work?`,
+  body: `Hi Asha, thanks for your reply. ${line} Would a short call on Tuesday work?`,
   assetIds,
   nextWakeInDays: 3,
   reasoning: "Share proof.",
@@ -221,7 +223,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await pool.query(`insert into public.agent_wakeups (workspace_id, lead_id, due_at, reason) values ($1, $2, now() - interval '1 minute', 'enrolled')`, [ws, l.id]);
     await pool.query(`update public.leads set agent_last_touch_at = now() - interval '3 days' where id = $1`, [l.id]);
     await pool.query(`update public.agent_decisions set sent_at = now() - interval '3 days' where id = $1`, [d.id]);
-    await tick(ws, [emailWith([a.id])]);
+    await tick(ws, [emailWith([a.id], PLAIN_LINE)]);
     const again = await decisionOf(l.id);
     expect(again.asset_ids).toEqual([]);
     expect(again.quality_checks.at(-1).attachmentsRemoved).toEqual([{ assetId: a.id, reason: "already_sent", title: "Steel trading case study" }]);
@@ -251,7 +253,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const ws = await workspace("wa-noreply");
     const a = await asset(ws, "Steel trading case study", ["email", "whatsapp"]);
     const l = await lead(ws);
-    await tick(ws, [whatsappWith([a.id])]);
+    await tick(ws, [whatsappWith([a.id], PLAIN_LINE)]);
     const d = await decisionOf(l.id);
     expect(d).toMatchObject({ action: "send_whatsapp", asset_ids: [], send_status: "queued" });
     expect(d.quality_checks.at(-1).attachmentsRemoved).toEqual([{ assetId: a.id, reason: "whatsapp_no_reply", title: "Steel trading case study" }]);
@@ -264,14 +266,14 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     expect(await decisionOf(l.id)).toMatchObject({ send_status: "sent", sent_asset_ids: null });
   });
 
-  it("a file deleted at send time: the email and the WhatsApp go without it, and it is recorded", async () => {
+  it("a file deleted at send time, text not mentioning it: the email and the WhatsApp go without it, and it is recorded", async () => {
     const ws = await workspace("deleted");
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
 
     // Email: the Storage object is gone (the asset row is still there).
     const emailAsset = await asset(ws, "Steel trading case study", ["email"]);
     const e = await lead(ws);
-    await tick(ws, [emailWith([emailAsset.id])]);
+    await tick(ws, [emailWith([emailAsset.id], PLAIN_LINE)]);
     await supabaseAdmin.storage.from("agent-assets").remove([emailAsset.path]);
     const smtp = fakeSmtp();
     await emailTick(ws, smtp);
@@ -287,7 +289,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     // WhatsApp: the admin deleted the asset (row and file) after the decision.
     const waAsset = await asset(ws, "EPC case study", ["whatsapp"]);
     const w = await lead(ws, { replied: true });
-    await tick(ws, [whatsappWith([waAsset.id])]);
+    await tick(ws, [whatsappWith([waAsset.id], PLAIN_LINE)]);
     await pool.query(`delete from public.agent_assets where id = $1`, [waAsset.id]);
     await supabaseAdmin.storage.from("agent-assets").remove([waAsset.path]);
     const { socket, send } = whatsapp(ws);
@@ -313,7 +315,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const ws = await workspace("visible");
     const a = await asset(ws, "Steel trading case study", ["email", "whatsapp"]);
     const l = await lead(ws);
-    await tick(ws, [whatsappWith([a.id])]);
+    await tick(ws, [whatsappWith([a.id], PLAIN_LINE)]);
     const { getDecision, getLeadAgentPanel } = await import("../../src/services/agentReview.service.js");
     const d = await decisionOf(l.id);
     const detail = await getDecision(pool, ws, d.id);

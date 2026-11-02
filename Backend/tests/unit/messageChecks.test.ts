@@ -7,6 +7,7 @@ import {
   hasInboundThanks,
   internalLeaks,
   introductionPhrases,
+  mentionsAttachment,
   messageFactsOf,
   wordCount,
   type MessageCheckSettings,
@@ -103,6 +104,47 @@ describe("compoundQuestion", () => {
 
   it("returns the offending sentence", () => {
     expect(compoundQuestion("Hi Raj. Which markets matter, and how do you sell?")).toBe("Which markets matter, and how do you sell?");
+  });
+});
+
+describe("E2h rule 1: mentionsAttachment", () => {
+  it.each([
+    "I've attached a short case study",
+    "I’ve attached a short case study",
+    "Please find attached our profile.",
+    "Please find our company profile.",
+    "I'm sharing a case study on a similar company.",
+    "I'm sharing a short case study.",
+    "Sending you a case study from the steel sector.",
+    "Case study attached",
+    "See the attachment for details.",
+    "The brochure is enclosed.",
+    "Enclosed is our company profile.",
+    "I am attaching the details.",
+    "See the file attached to this email.",
+    "Here is a short PDF on our approach.",
+    "We've sent you a one-pager.",
+  ])("true: %s", (text) => expect(mentionsAttachment(text)).toBe(true));
+
+  it.each([
+    "Our published client experiences describe how a steel trader built outbound.",
+    "The plant has an attached garage and an attached warehouse.",
+    "The sales team attached to the plant handles this.",
+    "An enclosed gearbox is standard on this line.",
+    "Thank you for sharing your requirements document.",
+    "Thank you for sharing the document.",
+    "Please find a time that works for you.",
+    "Would you like me to send a case study?",
+    "A semi-attached unit.",
+    "Hi Asha, would a short call on Tuesday work?",
+    "Details at https://motm.example/attached-file.pdf",
+  ])("false: %s", (text) => expect(mentionsAttachment(text)).toBe(false));
+
+  it("checkMessage flags a mention only when nothing will be attached, in the body or the subject", () => {
+    expect(rulesOf(email("I've attached a short case study."))).toEqual(["attachment_mention"]);
+    expect(rulesOf(email("Details below.", "Case study attached"))).toEqual(["attachment_mention"]);
+    expect(rulesOf({ ...email("I've attached a short case study."), assetIds: ["a"] } as AgentDecision)).toEqual([]);
+    expect(rulesOf(whatsapp("I'm sharing a case study on a similar company."))).toEqual(["attachment_mention"]);
   });
 });
 

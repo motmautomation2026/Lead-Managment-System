@@ -251,14 +251,41 @@ describe("E2g: attachments", () => {
   const talking = { conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] };
   const body = "Hi Asha,\n\nI've attached a short case study on a steel trader we worked with. Would a short call next week suit you?";
 
-  it("an attachment on a first message is dropped, the message is kept and nothing is regenerated", async () => {
-    const d = deps([email(body)]);
+  const plain = "Hi Asha,\n\nWe helped a steel trader build outbound. Would a short call next week suit you?";
+
+  it("an attachment on a first message is dropped; a text that doesn't mention it is kept and nothing is regenerated", async () => {
+    const d = deps([email(plain)]);
     const result = await draftDecision(ctx(firstMessage), d, usage());
     expect(result.regenerated).toBe(false);
-    expect(result.decision).toMatchObject({ action: "send_email", body, assetIds: [] });
+    expect(result.decision).toMatchObject({ action: "send_email", body: plain, assetIds: [] });
     expect(result.rules.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "first_message" }]);
     expect(result.attempts[0]!.problems).toEqual([]);
     expect(d.model.calls.filter((c) => c.kind === "decide")).toHaveLength(1);
+  });
+
+  it("E2h: dropped attachment + a text that mentions it → regenerated, the clean draft goes with no attachment", async () => {
+    const d = deps([email(body), email(plain)]);
+    const result = await draftDecision(ctx(firstMessage), d, usage());
+    expect(result.regenerated).toBe(true);
+    expect(result.attempts[0]!.problems).toEqual(["attachment_mention: No file will be attached to this message. Do not mention an attachment, a case study being shared, or a PDF."]);
+    expect(result.outcome).toBe("draft");
+    expect(result.decision).toMatchObject({ action: "send_email", body: plain, assetIds: [] });
+    // The first attempt's drop stays recorded; the feedback reaches the model.
+    expect(result.attempts[0]!.rules.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "first_message" }]);
+    expect(d.model.calls.filter((c) => c.kind === "decide")[1]!.input.messages[1]!.content).toContain("No file will be attached");
+  });
+
+  it("E2h: still mentioning it after two regenerations → handoff, as a playbook problem", async () => {
+    const d = deps([email(body), email(body), email(body)]);
+    const result = await draftDecision(ctx(firstMessage), d, usage());
+    expect(result.attempts).toHaveLength(3);
+    expect(result.decision).toMatchObject({ action: "handoff", title: "AI couldn't write a message that meets the playbook" });
+  });
+
+  it("E2h: a chosen attachment that stays may be mentioned", async () => {
+    const result = await draftDecision(ctx(talking), deps([email(body)]), usage());
+    expect(result.regenerated).toBe(false);
+    expect(result.decision).toMatchObject({ action: "send_email", body, assetIds: [ASSET] });
   });
 
   it("after a conversation the attachment is kept; the prompt says attachments are possible and how to mention them", async () => {
@@ -274,7 +301,7 @@ describe("E2g: attachments", () => {
   it("an asset already sent is marked in the prompt and dropped if chosen again", async () => {
     const c = ctx({ ...talking, sentAssetIds: [ASSET] });
     expect(buildDecisionMessages(c, settings, NOW)[1]!.content).toContain("already sent to this contact");
-    const result = await draftDecision(c, deps([email(body)]), usage());
+    const result = await draftDecision(c, deps([email(plain)]), usage());
     expect(result.rules.attachmentsRemoved).toEqual([{ assetId: ASSET, reason: "already_sent" }]);
   });
 

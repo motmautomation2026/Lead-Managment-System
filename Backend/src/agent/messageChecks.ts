@@ -42,6 +42,27 @@ export function compoundQuestion(text: string): string | null {
   return sentences.map((s) => s.trim()).find((s) => (SECOND_ASK.exec(s)?.index ?? 0) > 0) ?? null;
 }
 
+// Things a file or building part can be, so "an attached garage" or "the attached plant" isn't a file.
+const NOT_A_FILE = String.raw`(?:garage|bathroom|bath|building|house|room|office|plant|factory|warehouse|shed|workshop|space|area|motor|gearbox|cabin)\b`;
+const FILE_WORD = String.raw`(?:case stud(?:y|ies)|documents?|pdfs?|brochures?|one[- ]pagers?|white ?papers?|presentations?|decks?|files?)\b`;
+const ATTACHMENT_MENTIONS = [
+  /\battach(?:ing|ments?)?\b/,
+  // "attached to" is a file only with this email/message ("the team attached to the plant" isn't).
+  new RegExp(String.raw`(?<!-)\battached\b(?!\s+(?:\w+\s+)?${NOT_A_FILE})(?!\s+to\b(?!\s+(?:this|the|my|our)\s+(?:e-?mail|mail|message)\b))`),
+  new RegExp(String.raw`\benclos(?:ed|ing)\b(?!\s+(?:\w+\s+)?${NOT_A_FILE})`),
+  /\bplease find\b(?!\s+(?:a|an|some)?\s*(?:good\s+|convenient\s+|suitable\s+)?(?:time|slot|date|moment)\b)/,
+  // "I'm sharing a case study", "sending you a short PDF"; never across "your" ("thanks for sharing your document").
+  new RegExp(String.raw`(?<!\bfor\s)\b(?:sharing|sending|forwarding)\b\s+(?:(?!your\b)[\w'-]+\s+){0,5}${FILE_WORD}`),
+  new RegExp(String.raw`\b(?:i've|we've|i have|we have)\s+(?:shared|sent|included)\s+(?:(?!your\b)[\w'-]+\s+){0,5}${FILE_WORD}`),
+  new RegExp(String.raw`\bhere(?:'s| is| are)\s+(?:[\w'-]+\s+){0,4}${FILE_WORD}`),
+];
+
+/** E2h rule 1: the text says a file is attached or being shared. Talking about client experience in words is not a mention. */
+export function mentionsAttachment(text: string): boolean {
+  const clean = withoutUrls(text).toLowerCase().replace(/[’‘]/g, "'");
+  return ATTACHMENT_MENTIONS.some((re) => re.test(clean));
+}
+
 export interface MessageCheckSettings {
   banned_phrases: string[];
   email_max_words: number;
@@ -57,7 +78,8 @@ export interface MessageViolation {
     | "exclamation"
     | "not_thanking_inbound"
     | "introduction_mid_conversation"
-    | "internal_info_leak";
+    | "internal_info_leak"
+    | "attachment_mention";
   message: string;
 }
 
@@ -166,6 +188,11 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
   if (compound) violations.push({ rule: "compound_question", message: `The question asks two things at once: "${compound}". Ask about one thing only.` });
 
   if (/[!！]/.test(withoutUrls(all))) violations.push({ rule: "exclamation", message: "Contains an exclamation mark; keep the tone calm." });
+
+  // E2h rule 1: `decision` is the rules' final decision, so assetIds is what will really be attached.
+  if (!decision.assetIds.length && mentionsAttachment(all)) {
+    violations.push({ rule: "attachment_mention", message: "No file will be attached to this message. Do not mention an attachment, a case study being shared, or a PDF." });
+  }
 
   if (!facts) return violations;
   if (facts.inboundFirst && !hasInboundThanks(decision.body)) {
