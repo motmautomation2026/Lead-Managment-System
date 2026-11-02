@@ -20,7 +20,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   dims) are optional, backend + worker only, never the frontend. Tests never call OpenAI:
   inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`) or a `DecisionModel`
   (`tests/helpers/fakeDecisionModel.ts`). The agent also reads `OPENAI_DECISION_MODEL`,
-  `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none) and `OPENAI_PRICES_JSON`.
+  `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none; `name` or `name@effort`) and `OPENAI_PRICES_JSON`
+  (optional `cachedInputPer1M` per model).
 - `CRM_COMPANY_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the company sweeper.
 - `CRM_DEAL_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the deal backfill sweeper.
 - Email has no env vars (E1b): no `RESEND_API_KEY` / `SMTP_FROM_*`; the SMTP + IMAP mailbox is saved per workspace by an
@@ -73,7 +74,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `047`).
+  (currently `048`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -97,7 +98,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `047`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `048`).
 
 ## Way of working
 
@@ -663,6 +664,22 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   `buildAgentContext` when `size_bytes` is null (read each decision, not saved; no backfill needed; unknown = allowed).
   `buildAgentContext` hides assets with an `attachment_issues` entry on this contact's decisions (stops a cancel → wake →
   same asset loop). Frontend: `CHECK_LABEL.attachment_mention`, `cancelReasonText` (`SendStatusPill`). `B4-api.md` §7n.
+- **E3a (AI writing quality; nothing new sent to real leads):** migration 048: `agent_settings.style_examples` (≤ 6,000 chars), 24 banned
+  phrases added to every workspace (only missing ones, ≤ 100), `email_max_words` / `whatsapp_max_words` defaults 120/50 (rows on
+  160/75 moved), index `email_outbound_agent_thread_idx`. Pure `agent/modelSetting.ts` (`parseModelSetting`, `modelParams`,
+  `modelSettingProblem`): a model setting is `name` or `name@effort` (none|minimal|low|medium|high|xhigh), GPT-5.x / o-series get
+  `reasoning_effort` (default `none` on GPT-5.1+) and `max_completion_tokens` 6000; GPT-4.x requests are unchanged, an effort on them
+  is refused. `pricing.ts` `priceOf`, `costUsd(..., cachedInputTokens)`. Prompt order (OpenAI caches identical prefixes): the system
+  message is the same for every contact of a workspace (rules, "How you write", email structure, playbook, style examples, message
+  rules; grounding: rules + playbook), the contact's data is in the user message (grounding: `<message>` last). `quality_checks[]`
+  gains `inputTokens`, `cachedInputTokens`, `autoFixes`. Pure `agent/polish.ts` `polishDecision` (before `validateDecision`): dashes,
+  "!", "…", sign-offs, links/emails/phones, spacing; a range ("9–5") and hyphenated words are left alone; a fix that would break the
+  sentence isn't made. `messageChecks.ts`: fixable `subject_style` (`subjectProblem`: > 60 chars, > 8 words, an all-caps word of 4+
+  letters that isn't a company's, Re:/Fwd:) and `contact_details` (what polish couldn't remove); straight/curly apostrophes match.
+  Threading: `latestAiEmail` (`agentSendState.service.ts`), `ctx.emailThread`, `threadSubject`/`unthreadedSubject`
+  (`domain/emailSafety.ts`), `agentThread` in `processEmail` decides again at send time. `GET /agent/stats.quality`
+  (`loadQuality`), `messageRules.styleExamples`. `services/agentModelTest.service.ts` + `npm run agent:model-test`. Frontend:
+  `StyleExamplesCard`, "Fixed automatically" in the decision Checks, `QualityStats` on AI Activity. `B4-api.md` §7o.
 
 ## WhatsApp safety (E1)
 
@@ -799,6 +816,19 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   file (email attachment / one WhatsApp document with the text as caption); a file gone, turned off or over 10 MB at send
   time → sent without it, recorded, unless the text mentions an attachment (E2h): then cancelled `attachment_missing`, no
   touch, a new wake-up. A message never mentions an attachment it won't carry (`attachment_mention`, fixable, then handoff).
+- Models (E3a): writer and checker are settings (`name` or `name@effort`, e.g. `gpt-5.4-mini@low`), never code; a price must exist or the
+  wake-up defers. Keep the system message free of anything about the contact, owner or moment: it is what OpenAI caches.
+- Auto-fixes (E3a, both modes, in code): `polishDecision` runs before every check, on subject + body; a fixed problem never causes a
+  regeneration; every fix is in `quality_checks[].autoFixes`. It never changes meaning: if a fix would break a sentence the text stays
+  and the normal check fails. The model never writes links, emails or phones (`contact_details`, fixable).
+- Message shape (E3a): limits 120 / 50 words by default, admin style examples in the prompt (never a fact source), subject 2–7 plain
+  words (`subject_style`, fixable).
+- Threading (E3a): a follow-up AI email to a contact with a real AI email (sent, not bounced, not dry run) in the last 45 days uses
+  `In-Reply-To` + `References` = that email's Message-ID and "Re: <first subject>"; the model's subject is ignored (it writes "-").
+  Decided again at send time. A new Message-ID every time. Rep proposal/meeting emails are never threaded.
+- Measuring (E3a): `GET /agent/stats.quality` (since `readiness_since` and last 7 days); `npm run agent:model-test -- --combos
+  "writer/checker,..."` (`>` also works, but not through `npm.cmd`: cmd.exe redirects it) prints the plan; `--confirm` spends (stops past $3), saves
+  nothing, writes `scripts/output/model-test-<timestamp>.md`.
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
   facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.

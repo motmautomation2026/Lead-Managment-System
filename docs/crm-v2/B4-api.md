@@ -420,6 +420,21 @@ Migration 047.
   "Attachment not sent: <title> (<reason>)"; `metadata.assetIds` lists the assets sent.
 - `GET /knowledge/search` (Test retrieval) still includes asset documents; the agent's own retrieval never does.
 
+## 7o. AI writing quality — E3a
+
+- `GET|PUT /agent/settings` (PUT admin-only): `styleExamples: string` (trimmed, ≤ 6,000 characters, else **400**; empty = none).
+  `decisionModel` / `groundingModel` take `name` or `name@effort` (`none|minimal|low|medium|high|xhigh`); an unknown effort, or an
+  effort on a model without reasoning (GPT-4.x), is **400**. Word-limit defaults are 120 / 50.
+- `GET /agent/stats` (every CRM user): `messageRules.styleExamples`, and `quality: { sinceReadiness, last7Days }`, each
+  `{ sendDecisions, passedFirstTry, passedFirstTryPct, regenerated, checkHandoffs, checkHandoffsByReason, autoFixes, avgCostUsd,
+  cachedInputPct }`. Failed decisions don't count. `sendDecisions` = decisions that wrote a message (a send, or a handoff that keeps
+  the text the checks refused); `passedFirstTryPct` is null without any; `sinceReadiness` is all time when `readinessSince` is null;
+  `cachedInputPct` is null without recorded tokens (decisions before E3a).
+- Decision detail: `qualityChecks[]` entries gain `inputTokens`, `cachedInputTokens` and, when code fixed something,
+  `autoFixes: [{ rule: dash|exclamation|ellipsis|sign_off|contact_details|spacing, before, after }]`. New problem rules
+  `subject_style`, `contact_details`.
+- `messageSubject` of an AI follow-up is the subject really used ("Re: <first subject>").
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
