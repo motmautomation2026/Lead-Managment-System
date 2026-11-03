@@ -238,3 +238,27 @@ export const ATTACHMENT_REMOVED_LABEL: Record<AttachmentRemovalReason, string> =
   count_limit: "Too many attachments for this channel",
   size_limit: "Attachments over 10 MB in total",
 };
+
+/** E3b-1: stage plan keys and message angles in plain words (display only; mirrors agent/stagePlan.ts). */
+export const STAGE_LABEL: Record<string, string> = {
+  new_no_contact: "New, no contact yet",
+  after_call: "After a call",
+  meeting_scheduled: "Meeting scheduled",
+  meeting_held_no_proposal: "Meeting held, no proposal",
+  meeting_no_show: "Missed meeting",
+  proposal_sent: "Proposal sent",
+  rep_owned: "Rep owns this stage",
+  long_term: "Long-term nurture",
+};
+export const ANGLE_LABEL: Record<string, string> = {
+  welcome: "welcome",
+  insight: "insight",
+  client_experience: "client experience",
+  check_in: "check-in",
+  final_check: "final check",
+  call_followup: "call follow-up",
+  meeting_recap: "meeting recap",
+  reschedule: "reschedule",
+  proposal_questions: "proposal questions",
+  proposal_timing: "decision timing",
+};

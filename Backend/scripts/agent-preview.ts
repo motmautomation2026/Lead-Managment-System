@@ -6,6 +6,7 @@
 // Reads only: saves nothing to the database and never sends anything.
 // Refuses to run against the production project.
 import "dotenv/config";
+import { ANGLE_LABELS, STAGE_LABELS } from "../src/agent/stagePlan.js";
 
 const PRODUCTION_REF = "jorxltfwboabyjiydyhu";
 
@@ -74,6 +75,13 @@ async function main(id: string) {
     section("Context");
     console.log(`Lead: ${ctx.lead.firstName} ${ctx.lead.lastName} (${ctx.lead.company}) · workspace ${ctx.companyName} · mode ${ctx.settings.mode}`);
     console.log(`Token estimate: ${ctx.meta.tokenEstimate}`);
+    // E3b-1 rule 2: the stage plan the decision is made under.
+    const plan = ctx.stagePlan;
+    console.log(
+      plan
+        ? `Stage: ${STAGE_LABELS[plan.stageKey]} · Angle: ${plan.angle ? ANGLE_LABELS[plan.angle] : "none (no message now)"} · channel ${plan.preferredChannel ?? "none usable"} (${plan.reason})`
+        : "Stage: none (the lifecycle isn't one the agent acts on)",
+    );
     console.log(`Trimmed: ${ctx.meta.trimmedTimelineEvents} timeline event(s), ${ctx.meta.trimmedDecisionSummaries} decision summary(ies)`);
     console.log(`KB query:\n  ${ctx.knowledge.query.replace(/\n/g, "\n  ")}`);
     console.log(`KB chunks: ${ctx.knowledge.chunks.map((c, i) => `[K${i + 1}] ${c.title}`).join(", ") || "none"}`);

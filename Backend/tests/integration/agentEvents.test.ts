@@ -316,9 +316,10 @@ describeIfDb("agent events and automatic status changes (requires TEST_DATABASE_
 
     const on = await newWorkspace({ auto_enroll_new_leads: true });
     const before = Date.now();
-    for (const leadId of await createThree(on)) {
+    // E3b-1 rule 4: the website lead (fresh inbound) is woken at once; the others after 5 minutes.
+    for (const [i, leadId] of (await createThree(on)).entries()) {
       expect(await agent(leadId)).toEqual({ status: "active", reason: "auto_enroll" });
-      await expectOneWakeup(leadId, "lead_created", 5 * MIN, before);
+      await expectOneWakeup(leadId, "lead_created", i === 2 ? 0 : 5 * MIN, before);
       expect((await agentTimeline(leadId))[0]).toMatchObject({ title: "AI Agent Enrolled", actor_name: "AI Agent" });
     }
 

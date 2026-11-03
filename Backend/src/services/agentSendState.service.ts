@@ -2,7 +2,7 @@ import type { Queryable } from "../dto.js";
 import type { LifecycleState } from "../domain/enums.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { effectiveMode, sendRecheck, type LiveScope, type SendRecheck } from "../agent/liveMode.js";
-import type { AgentRuleSettings, AgentStatus } from "../agent/rules.js";
+import { isFreshInbound, type AgentRuleSettings, type AgentStatus } from "../agent/rules.js";
 import { ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js";
 import { enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
@@ -26,6 +26,7 @@ interface RecheckRow extends AgentRuleSettings {
   phone_e164: string | null;
   agent_live_test: boolean;
   lead_created_at: Date;
+  lead_source: string;
   mode: "off" | "shadow" | "live";
   live_scope: LiveScope;
   live_since: Date | null;
@@ -55,7 +56,7 @@ export async function agentSendRecheck(
     await db.query<RecheckRow>(
       // s.* first: its created_at must not shadow the decision's.
       `select s.*, d.created_at as decision_created_at, d.lead_id, l.agent_status, l.lifecycle_state, l.email, l.phone_e164, l.agent_live_test,
-              l.created_at as lead_created_at,
+              l.created_at as lead_created_at, l.source::text as lead_source,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'email') as email_status,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'whatsapp') as whatsapp_status,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'phone') as phone_status,
@@ -99,6 +100,7 @@ export async function agentSendRecheck(
     lastRealTouchAt: row.last_touch_at,
     recentRealTouchTimes: row.recent_touches,
     lastRepActivityAt: row.last_rep_activity_at,
+    freshInbound: isFreshInbound({ source: row.lead_source, createdAt: row.lead_created_at, touchCount: row.touch_count }, now),
   });
   return { ...result, phoneE164: row.phone_e164, email: row.email };
 }

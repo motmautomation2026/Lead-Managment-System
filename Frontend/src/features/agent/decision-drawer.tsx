@@ -32,6 +32,8 @@ import {
 } from "@/store";
 import {
   ACTION_LABEL,
+  ANGLE_LABEL,
+  STAGE_LABEL,
   ATTACHMENT_REMOVED_LABEL,
   OUTCOME_LABEL,
   OUTCOME_TONE,
@@ -101,6 +103,7 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       <SendStatusPill state={d} showReason />
       {d.sentAt && <p className="text-xs text-muted-foreground">Sent {istDateTime(d.sentAt)}</p>}
       <ContextUsed context={d.context} />
+      <StageUsed state={d} />
 
       <Section title="Message">
         <DecisionMessage decision={d} />
@@ -173,6 +176,28 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       />
       <ReportsSection key={d.id} decisionId={d.id} reports={d.reports} />
     </div>
+  );
+}
+
+/** E3b-1: "Stage: Proposal sent · Angle: decision timing"; nothing before E3b-1. */
+export function StageUsed({
+  state,
+}: {
+  state: { stageKey?: string | null; angle?: string | null };
+}) {
+  if (!state.stageKey) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Stage:</span>{" "}
+      {STAGE_LABEL[state.stageKey] ?? state.stageKey}
+      {state.angle && (
+        <>
+          {" · "}
+          <span className="font-medium text-foreground">Angle:</span>{" "}
+          {ANGLE_LABEL[state.angle] ?? state.angle}
+        </>
+      )}
+    </p>
   );
 }
 

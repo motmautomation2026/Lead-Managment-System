@@ -110,7 +110,7 @@ describe("stagePlan", () => {
     for (const overrides of [{ latestProposal: { status: "revision_requested", sentAt: null } }, { openDealStage: "negotiation" }, { pipelineStage: "negotiation" as const }]) {
       const first = stagePlan(input(overrides))!;
       expect(first).toMatchObject({ stageKey: "rep_owned", angle: null, fallback: { action: "handoff" } });
-      expect(first.allowedActions).toEqual(["wait", "handoff", "stop"]);
+      expect(first.allowedActions).toEqual(["handoff", "stop"]);
       const later = stagePlan(input({ ...overrides, repOwnedBefore: true }))!;
       expect(later).toMatchObject({ fallback: { action: "wait", days: 7 } });
       expect(later.allowedActions).toEqual(["wait", "stop"]);

@@ -44,6 +44,7 @@ import {
   ChecksSummary,
   AttachmentsUsed,
   ContextUsed,
+  StageUsed,
   DecisionDrawer,
   DecisionMessage,
   Section,
@@ -180,6 +181,7 @@ function PanelDecision({
         <div className="mt-3 space-y-3 pl-6">
           <SendStatusPill state={d} showReason />
           <ContextUsed context={d.context} />
+          <StageUsed state={d} />
           <AttachmentsUsed attachments={d.attachments} />
           <DecisionMessage decision={d} />
           {d.error && <p className="text-destructive">{d.error}</p>}

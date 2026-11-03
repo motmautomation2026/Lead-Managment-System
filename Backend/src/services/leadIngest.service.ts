@@ -1,7 +1,6 @@
 import type { Queryable } from "../dto.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { linkCompanySafely } from "./companies.service.js";
-import { addDaysIso } from "../dto.js";
 import { ValidationError } from "../errors.js";
 import { formatSubmissionDetail, normalizeWebsiteForm, type NormalizedWebsiteForm, type RawWebsiteForm } from "../domain/websiteForm.js";
 import { insertLead, validateLeadFields } from "./leads.service.js";
@@ -204,11 +203,12 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
     ownerName: owner.ownerName,
     type: "call",
     title: "First call",
-    dueAt: addDaysIso(0),
+    // E3b-1 rule 4 (speed to lead): call a website lead within the hour.
+    dueAt: new Date(Date.now() + 3_600_000).toISOString(),
     origin: "manual",
   });
 
-  await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead", `${displayName(form)} (${form.company}) submitted the website form.`);
+  await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead — call within 1 hour", `${displayName(form)} (${form.company}) submitted the website form.`);
   await onAgentEvent(db, { workspaceId, leadId, event: "lead_created" });
   await linkCompanySafely(db, workspaceId, leadId);
   return { status: "created", leadId };

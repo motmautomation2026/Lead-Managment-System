@@ -194,8 +194,8 @@ export function stagePlan(input: StagePlanInput): StagePlan | null {
     return {
       stageKey: "rep_owned",
       angle: null,
-      // One handoff task the first time; after that only wait (or stop).
-      allowedActions: input.repOwnedBefore ? ["wait", "stop"] : ["wait", "handoff", "stop"],
+      // One handoff task the first time (anything else becomes it); after that only wait (or stop).
+      allowedActions: input.repOwnedBefore ? ["wait", "stop"] : ["handoff", "stop"],
       preferredChannel: channel,
       reason: `${reason}: the rep owns this stage`,
       fallback: input.repOwnedBefore ? { action: "wait", days: REP_OWNED_WAIT_DAYS } : { action: "handoff", title: `Rep owns this stage: ${reason}` },

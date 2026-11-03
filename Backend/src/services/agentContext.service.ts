@@ -1,7 +1,8 @@
 import type { Queryable } from "../dto.js";
 import { NotFoundError } from "../errors.js";
 import type { LeadLossReason, LifecycleState, ObjectionType, PipelineStage } from "../domain/enums.js";
-import type { AgentMode, AgentRuleSettings, AgentStatus, RulesContext } from "../agent/rules.js";
+import { emailUsable, isFreshInbound, whatsappUsable, type AgentMode, type AgentRuleSettings, type AgentStatus, type RulesContext } from "../agent/rules.js";
+import { stagePlan, type StagePlan, type StagePlanInput } from "../agent/stagePlan.js";
 import { buildKbQuery } from "../agent/kbQuery.js";
 import { situationOf } from "../agent/situation.js";
 import { signalsOf } from "../agent/signals.js";
@@ -43,6 +44,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   live_since: Date | null;
   banned_phrases: string[];
   style_examples: string;
+  first_channel: "whatsapp" | "email";
 }
 
 export interface AgentContextLead {
@@ -125,6 +127,12 @@ export interface AgentContext {
   aiSendReplied: boolean;
   /** E3a rule 7: the real AI email a follow-up email continues; null = a new email needs its own subject. */
   emailThread: AiEmailThread | null;
+  /** E3b-1 rule 1: the stage plan; null = the lifecycle isn't one the agent acts on. */
+  stagePlan: StagePlan | null;
+  /** What the stage plan was computed from (agent:model-test / --evaluate recompute it without touches). */
+  stagePlanInput: StagePlanInput | null;
+  /** E3b-1: the latest held meeting's outcome and notes (lead data for meeting_recap; null = none). */
+  latestMeeting: { outcome: string | null; notes: string | null } | null;
   knowledge: { query: string; chunks: AgentKnowledgeChunk[] };
   assets: AgentAssetSummary[];
   meta: { tokenEstimate: number; trimmedTimelineEvents: number; trimmedDecisionSummaries: number };
@@ -148,6 +156,7 @@ const truncate = (text: string | null, max: number) => (text && text.length > ma
 const TIMELINE_KINDS = ["call", "note", "meeting", "proposal", "stage", "email", "whatsapp"];
 const LIFECYCLE_TITLES = ["Won", "Lost", "Discarded", "Do Not Contact", "Moved to Long-Term Nurture", "Reactivated", "Merged"];
 const WEBSITE_TITLES = ["Website form submission", "Website form submitted again"];
+const UPCOMING_MEETING_STATUSES = ["tentative", "scheduled", "confirmed", "rescheduled"];
 
 export async function buildAgentContext(
   db: Queryable,
@@ -222,7 +231,7 @@ export async function buildAgentContext(
   const mode = effectiveMode(settings, { agentLiveTest: leadRow.agent_live_test, createdAt: leadRow.created_at });
   const shadow = mode === "shadow";
 
-  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied, assetHistory, emailThread] = await Promise.all([
+  const [website, channels, sends, repActivity, lastCall, timelineRows, pastRows, summaryRows, playbookRow, assetRows, sender, imap, replied, assetHistory, emailThread, stageRows] = await Promise.all([
     db.query<{ message: string | null }>(
       `select t.metadata ->> 'rawMessage' as message
          from public.timeline_events t join public.leads l on l.id = t.lead_id
@@ -317,6 +326,22 @@ export async function buildAgentContext(
       [leadId, workspaceId],
     ),
     latestAiEmail(db, leadId, now),
+    // E3b-1 rule 1: the stage plan's meeting / proposal facts.
+    db.query<{
+      meeting: { status: string; outcome: string | null; scheduledAt: string; notes: string | null } | null;
+      has_upcoming: boolean;
+      proposal: { status: string; sentAt: string | null } | null;
+      rep_owned_before: boolean;
+    }>(
+      `select (select json_build_object('status', m.status, 'outcome', m.outcome, 'scheduledAt', m.scheduled_at, 'notes', m.notes)
+                 from public.meetings m where m.lead_id = $1 and m.workspace_id = $2 order by m.scheduled_at desc limit 1) as meeting,
+              exists (select 1 from public.meetings m where m.lead_id = $1 and m.workspace_id = $2
+                       and m.status = any($3::meeting_status[]) and m.scheduled_at > $4) as has_upcoming,
+              (select json_build_object('status', p.status, 'sentAt', p.sent_at)
+                 from public.proposals p where p.lead_id = $1 and p.workspace_id = $2 order by p.updated_at desc, p.id desc limit 1) as proposal,
+              exists (select 1 from public.agent_decisions d where d.lead_id = $1 and d.workspace_id = $2 and d.stage_key = 'rep_owned') as rep_owned_before`,
+      [leadId, workspaceId, UPCOMING_MEETING_STATUSES, now],
+    ),
   ]);
 
   const lead: AgentContextLead = {
@@ -418,6 +443,9 @@ export async function buildAgentContext(
     playbook: playbookRow.rows[0] ?? null,
     aiSendReplied: replied.rows[0]?.replied ?? false,
     emailThread,
+    stagePlan: null,
+    stagePlanInput: null,
+    latestMeeting: null,
     knowledge: { query: "", chunks: [] },
     assets,
     meta: { tokenEstimate: 0, trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 },
@@ -426,6 +454,35 @@ export async function buildAgentContext(
   const signal = signalsOf(context)[0];
   if (signal) context.rules.signal = { action: signal.action, title: signal.title };
   const situation = situationOf(context);
+  // E3b-1 rules 1–4: the stage plan and the speed-to-lead window.
+  const stage = stageRows.rows[0]!;
+  const meeting = stage.meeting;
+  context.latestMeeting = meeting?.status === "completed" ? { outcome: meeting.outcome, notes: truncate(meeting.notes?.trim() || null, TEXT_LIMIT) } : null;
+  context.stagePlanInput = {
+    now,
+    lifecycleState: leadRow.lifecycle_state,
+    nurtureLongTerm: settings.nurture_long_term,
+    pipelineStage: leadRow.pipeline_stage,
+    openDealStage: context.internal.deal.open?.stage ?? null,
+    lastCallOrNoteAt: rules.lastRepActivityAt,
+    latestMeeting: meeting
+      ? { status: meeting.status, outcome: meeting.outcome, scheduledAt: new Date(meeting.scheduledAt), hasNotes: Boolean(meeting.notes?.trim()) }
+      : null,
+    hasUpcomingMeeting: stage.has_upcoming,
+    latestProposal: stage.proposal ? { status: stage.proposal.status, sentAt: stage.proposal.sentAt ? new Date(stage.proposal.sentAt) : null } : null,
+    touches: sends.rows
+      .map((s) => ({ at: s.at, channel: s.action === "send_email" ? ("email" as const) : ("whatsapp" as const) }))
+      .sort((a, b) => a.at.getTime() - b.at.getTime()),
+    conversationExists: situation.conversationExists,
+    emailUsable: emailUsable(rules),
+    whatsappUsable: whatsappUsable(rules),
+    firstChannel: settings.first_channel,
+    maxTouchesTotal: settings.max_touches_total,
+    repOwnedBefore: stage.rep_owned_before,
+  };
+  context.stagePlan = stagePlan(context.stagePlanInput);
+  context.rules.stagePlan = context.stagePlan;
+  if (isFreshInbound({ source: leadRow.source, createdAt: leadRow.created_at, touchCount: rules.lead.agentTouchCount }, now)) context.rules.freshInbound = true;
   // E2g rules 2–4. Drafts never count: pastMessages' "sent" rows are real sends.
   context.rules.assetFacts = {
     conversationExists: situation.conversationExists,

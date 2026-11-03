@@ -1,6 +1,6 @@
 import type { Queryable } from "../dto.js";
 import type { LifecycleState } from "../domain/enums.js";
-import type { AgentMode, AgentStatus } from "../agent/rules.js";
+import { isFreshInbound, type AgentMode, type AgentStatus } from "../agent/rules.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { canTransition } from "../agent/status.js";
 import { AGENT_WAKE_EVENTS, wakeFor, type AgentWakeEvent } from "../agent/wakePolicy.js";
@@ -65,8 +65,17 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
   if (!settings) return;
 
   const lead = (
-    await client.query<{ agent_status: AgentStatus; agent_status_reason: string | null; lifecycle_state: LifecycleState; has_contact: boolean }>(
-      `select agent_status, agent_status_reason, lifecycle_state, (email is not null or phone_e164 is not null) as has_contact
+    await client.query<{
+      agent_status: AgentStatus;
+      agent_status_reason: string | null;
+      lifecycle_state: LifecycleState;
+      has_contact: boolean;
+      source: string;
+      created_at: Date;
+      agent_touch_count: number;
+    }>(
+      `select agent_status, agent_status_reason, lifecycle_state, (email is not null or phone_e164 is not null) as has_contact,
+              source::text as source, created_at, agent_touch_count
          from public.leads where id = $1 and workspace_id = $2 for update`,
       [leadId, workspaceId],
     )
@@ -118,7 +127,12 @@ async function handleEvent(client: Queryable, { workspaceId, leadId, event, payl
   }
 
   if ((AGENT_WAKE_EVENTS as readonly string[]).includes(event)) {
-    const { reason, dueAt } = wakeFor(event as AgentWakeEvent, new Date(), settings);
+    const now = new Date();
+    const wake = wakeFor(event as AgentWakeEvent, now, settings);
+    const { reason } = wake;
+    // E3b-1 rule 4 (speed to lead): a new website / inbound-form contact is woken at once.
+    const fresh = event === "lead_created" && isFreshInbound({ source: lead.source, createdAt: lead.created_at, touchCount: lead.agent_touch_count }, now);
+    const dueAt = fresh ? now : wake.dueAt;
     // A no-op unless the lead is (now) active.
     await enqueueWakeup(client, { workspaceId, leadId, reason, dueAt, payload });
   }

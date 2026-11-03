@@ -433,8 +433,10 @@ const INSERT_DECISION = `
     (workspace_id, lead_id, wakeup_id, action, reasoning, message_subject, message_body, asset_ids,
      send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
      regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
-     outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at, quality_checks)
-  values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+     outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at, quality_checks,
+     stage_key, angle)
+  values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33,
+          $34, $35)
   returning id`;
 
 /** One quality_checks entry; `attachmentsRemoved` only when the rules dropped an attachment (E2g). */
@@ -513,6 +515,9 @@ async function recordDraft(
       queuedSend ? sendAt : null,
       // E2b rule 3: what each attempt failed (empty = passed), for AI Activity; E2g: attachments it dropped.
       JSON.stringify(draft.attempts.map((a) => qualityCheck(a, ctx))),
+      // E3b-1 rule 2: the stage plan the decision was made under (the angle only for a message).
+      ctx.stagePlan?.stageKey ?? null,
+      isSend(draft.decision) ? (ctx.stagePlan?.angle ?? null) : null,
     ]);
     const decisionId = inserted.rows[0]!.id;
 

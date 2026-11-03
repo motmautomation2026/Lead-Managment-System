@@ -1,6 +1,7 @@
 import { modelSettingProblem } from "../agent/modelSetting.js";
 import { costUsd, priceOf, type ModelPrices } from "../agent/pricing.js";
 import type { DecisionModel } from "../providers/openai.provider.js";
+import { ANGLE_LABELS, STAGE_LABELS, stagePlan } from "../agent/stagePlan.js";
 import type { AgentContext } from "./agentContext.service.js";
 import { draftDecision, type Usage } from "./agentRunner.service.js";
 
@@ -57,12 +58,15 @@ export function evaluationContext(ctx: AgentContext): { ctx: AgentContext; ignor
     (rules.lead.agentTouchCount > 0 || rules.recentTouchTimes.length > 0) && `${rules.lead.agentTouchCount} touch(es) so far, ${rules.recentTouchTimes.length} in the last 7 days (evaluated as none)`,
   ].filter((note): note is string => Boolean(note));
   const mode = rules.mode === "off" ? ("shadow" as const) : rules.mode;
+  // E3b-1: the stage plan as if no message had been sent yet (touches are ignored too).
+  const plan = ctx.stagePlanInput ? stagePlan({ ...ctx.stagePlanInput, touches: [] }) : ctx.stagePlan;
   return {
     ignored,
     ctx: {
       ...ctx,
+      stagePlan: plan,
       settings: { ...ctx.settings, mode: ctx.settings.mode === "off" ? "shadow" : ctx.settings.mode },
-      rules: { ...rules, mode, recentTouchTimes: [], lead: { ...rules.lead, agentStatus: "active", agentTouchCount: 0, agentLastTouchAt: null } },
+      rules: { ...rules, mode, stagePlan: plan, recentTouchTimes: [], lead: { ...rules.lead, agentStatus: "active", agentTouchCount: 0, agentLastTouchAt: null } },
     },
   };
 }
@@ -71,6 +75,8 @@ export interface ContactRun {
   combo: string;
   leadId: string;
   name: string;
+  /** E3b-1: "Stage: … · Angle: …" (the stage plan the decision was made under); null = none. */
+  stage: string | null;
   /** send / wait / stop / "handoff: <title>" / "error: <text>". */
   outcome: string;
   /** A message was written (it went through the checks). */
@@ -109,7 +115,9 @@ export async function runModelTest(input: { contexts: AgentContext[]; combos: Co
 
 async function runContact(ctx: AgentContext, combo: Combo, deps: { model: DecisionModel; prices: ModelPrices; now: Date }): Promise<ContactRun> {
   const usage: Required<Usage> = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0 };
-  const base = { combo: combo.label, leadId: ctx.lead.id, name: `${ctx.lead.firstName} ${ctx.lead.lastName}`.trim() };
+  const plan = ctx.stagePlan;
+  const stage = plan ? `Stage: ${STAGE_LABELS[plan.stageKey]} · Angle: ${plan.angle ? ANGLE_LABELS[plan.angle] : "none (no message now)"}` : null;
+  const base = { combo: combo.label, leadId: ctx.lead.id, name: `${ctx.lead.firstName} ${ctx.lead.lastName}`.trim(), stage };
   const started = Date.now();
   try {
     const draft = await draftDecision(ctx, { model: deps.model, decisionModel: combo.decisionModel, groundingModel: combo.groundingModel, prices: deps.prices, now: deps.now }, usage);
@@ -175,6 +183,7 @@ function contactSection(leadId: string, combos: Combo[], runs: ContactRun[]): st
       return [
         `**${combo.label}**: ${r.outcome}`,
         "",
+        ...(r.stage ? [r.stage, ""] : []),
         ...(r.subject ? [`Subject: ${r.subject}`, ""] : []),
         ...(r.body ? [quoted(r.body), ""] : []),
         ...r.failedAttempts.flatMap((a) => [`Failed attempt ${a.attempt}:`, ...a.problems.map((p) => `- ${p}`), "", quoted(a.message), ""]),

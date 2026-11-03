@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { nextDayWindowTime, nextWindowTime, PAUSED_RETRY_MS, warmupDayFor, type SendWindow } from "./whatsappSafety.js";
+import { automatedWindow, nextDayWindowTime, nextWindowTime, PAUSED_RETRY_MS, warmupDayFor, type SendWindow } from "./whatsappSafety.js";
 
 /**
  * E1b email safety: the one pure "send now / defer until / block" decision for every
@@ -29,6 +29,8 @@ export interface EmailSafetyInput {
   nextSendAt: Date | null;
   /** A recipient check failed (bad address, DNC, bounced, unsubscribed): the email fails with this. */
   recipientProblem?: string | null;
+  /** E3b-1 rule 4: an AI first message to a fresh inbound lead may go out in the first-inbound window (08:00–21:00 IST, any day). */
+  firstInboundWindow?: boolean;
   random?: () => number;
 }
 
@@ -72,7 +74,7 @@ export function decideEmailSend(input: EmailSafetyInput): EmailSafetyDecision {
   if (input.paused) return { defer: new Date(now.getTime() + PAUSED_RETRY_MS), reason: "Email sending is paused." };
 
   if (automated) {
-    const inWindow = nextWindowTime(now, input.window, random);
+    const inWindow = nextWindowTime(now, automatedWindow(input.source, input.window, input.firstInboundWindow), random);
     if (inWindow.getTime() > now.getTime()) return { defer: inWindow, reason: "Outside the email send window." };
   }
 

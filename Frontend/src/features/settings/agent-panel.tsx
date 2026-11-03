@@ -314,6 +314,7 @@ type LimitsForm = Record<NumberField, string> & {
   sendWindowEnd: string;
   nurtureLongTerm: boolean;
   autoEnrollNewLeads: boolean;
+  firstChannel: AgentSettings["firstChannel"];
   companyDisplayName: string;
   decisionModel: string;
   groundingModel: string;
@@ -332,6 +333,7 @@ function formFrom(settings: AgentSettings): LimitsForm {
     sendWindowEnd: settings.sendWindowEnd,
     nurtureLongTerm: settings.nurtureLongTerm,
     autoEnrollNewLeads: settings.autoEnrollNewLeads,
+    firstChannel: settings.firstChannel,
     companyDisplayName: settings.companyDisplayName ?? "",
     decisionModel: settings.decisionModel ?? "",
     groundingModel: settings.groundingModel ?? "",
@@ -352,6 +354,7 @@ function toUpdate(form: LimitsForm): AgentSettingsUpdate {
     sendWindowEnd: form.sendWindowEnd,
     nurtureLongTerm: form.nurtureLongTerm,
     autoEnrollNewLeads: form.autoEnrollNewLeads,
+    firstChannel: form.firstChannel,
     companyDisplayName: form.companyDisplayName.trim() || null,
     decisionModel: form.decisionModel.trim() || null,
     groundingModel: form.groundingModel.trim() || null,
@@ -474,6 +477,28 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
             />
           </label>
         </div>
+
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">First message channel</legend>
+          <p className="text-xs text-muted-foreground">
+            When a contact has both email and WhatsApp, the first AI message uses this channel;
+            later messages alternate.
+          </p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="First message channel">
+            {(["whatsapp", "email"] as const).map((channel) => (
+              <Button
+                key={channel}
+                type="button"
+                size="sm"
+                variant={form.firstChannel === channel ? "default" : "outline"}
+                aria-pressed={form.firstChannel === channel}
+                onClick={() => set("firstChannel", channel)}
+              >
+                {channel === "whatsapp" ? "WhatsApp" : "Email"}
+              </Button>
+            ))}
+          </div>
+        </fieldset>
 
         <div className="space-y-1">
           <Label htmlFor="agent-company-name">Company name used in AI messages</Label>

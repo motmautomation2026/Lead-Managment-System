@@ -108,10 +108,14 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     expect(submission.detail).toContain("Revenue range: Rs.10–50Cr");
     expect(submission.detail).toContain("Message: Testing the form");
 
-    const tasks = (await pool.query(`select title, owner_id, status, task_type from public.tasks where lead_id = $1`, [leadId])).rows;
-    expect(tasks).toEqual([{ title: "First call", owner_id: null, status: "open", task_type: "call" }]);
+    const tasks = (await pool.query(`select title, owner_id, status, task_type, due_at from public.tasks where lead_id = $1`, [leadId])).rows;
+    expect(tasks).toEqual([{ title: "First call", owner_id: null, status: "open", task_type: "call", due_at: expect.any(Date) }]);
+    // E3b-1 rule 4: call a website lead within the hour.
+    const dueIn = tasks[0].due_at.getTime() - Date.now();
+    expect(dueIn).toBeGreaterThan(55 * 60_000);
+    expect(dueIn).toBeLessThanOrEqual(60 * 60_000);
 
-    const notifications = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2`, [leadId, actor.id]);
+    const notifications = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2 and title = 'New website lead — call within 1 hour'`, [leadId, actor.id]);
     expect(notifications.rowCount).toBe(1);
 
     const runs = await pool.query(`select 1 from public.workflow_runs where lead_id = $1`, [leadId]);

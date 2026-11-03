@@ -29,7 +29,13 @@ vi.mock("@/features/crm/record-link", () => ({
   ),
 }));
 
-import { AttachmentsUsed, ContextUsed, RatingControls, ReportsSection } from "./decision-drawer";
+import {
+  AttachmentsUsed,
+  ContextUsed,
+  RatingControls,
+  ReportsSection,
+  StageUsed,
+} from "./decision-drawer";
 
 describe("AttachmentsUsed (E2g)", () => {
   it("lists attachments by title, the removed ones with the reason and the ones left out at send time", () => {
@@ -66,6 +72,25 @@ describe("AttachmentsUsed (E2g)", () => {
     unmount();
     render(<AttachmentsUsed attachments={empty} showNone />);
     expect(screen.getByText("none")).toBeTruthy();
+  });
+});
+
+describe("StageUsed (E3b-1)", () => {
+  it("shows the stage and the angle in plain words", () => {
+    const { container } = render(
+      <StageUsed state={{ stageKey: "proposal_sent", angle: "proposal_timing" }} />,
+    );
+    expect(container.textContent).toBe("Stage: Proposal sent · Angle: decision timing");
+  });
+
+  it("shows only the stage without a message, and nothing before E3b-1", () => {
+    const { container, unmount } = render(
+      <StageUsed state={{ stageKey: "rep_owned", angle: null }} />,
+    );
+    expect(container.textContent).toBe("Stage: Rep owns this stage");
+    unmount();
+    const empty = render(<StageUsed state={{ stageKey: null }} />);
+    expect(empty.container.textContent).toBe("");
   });
 });
 

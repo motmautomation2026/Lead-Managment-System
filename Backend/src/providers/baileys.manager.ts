@@ -691,12 +691,14 @@ export class BaileysManager {
         }
       }
       let eligiblePhone: string | null;
+      let firstInboundWindow = false;
       if (input.source.type === "agent") {
         // E2 rule 5: the AI send's re-check, under the decision + lead row locks, right before the send.
         const check = await agentSendRecheck(db, input.source.id, "whatsapp");
         if ("cancel" in check) return { kind: "cancel", reason: check.cancel };
         if ("defer" in check) return { kind: "defer", reason: check.reason, retryAfterMs: Math.max(check.defer.getTime() - Date.now(), 1_000) };
         eligiblePhone = check.phoneE164 ?? null;
+        firstInboundWindow = check.freshInbound === true;
         if (eligiblePhone !== input.phoneE164) return { kind: "cancel", reason: "The contact's phone number changed after this message was written." };
       } else {
         eligiblePhone = await loadSourceEligibility(db, this.workspaceId, input.source);
@@ -726,6 +728,7 @@ export class BaileysManager {
         text: input.body,
         paused,
         nextSendAt: control.next_send_at,
+        firstInboundWindow,
       });
       if ("defer" in decision) {
         const pausedReason = signal ?? control.paused_reason;

@@ -239,10 +239,12 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
     ...actorEvent(actor),
   });
   await recordAssignment(db, id, assignment, actorEvent(actor));
+  // E3b-1 rule 4 (speed to lead): an inbound enquiry gets its first call within the hour.
+  const inbound = fields.source === "website" || fields.source === "inbound_form";
   if (ownerId && ownerId !== actor.id) {
     const who = `${fields.firstName} ${fields.lastName}`.trim();
     const detail = `${actor.fullName} added ${who} (${fields.company})${assignment.reason ? ` - ${assignment.reason}` : ""}.`;
-    await notifyOwner(db, workspaceId, ownerId, "New lead assigned to you", detail, id, `/leads/${id}`);
+    await notifyOwner(db, workspaceId, ownerId, inbound ? "New website lead — call within 1 hour" : "New lead assigned to you", detail, id, `/leads/${id}`);
   }
 
   // Every new lead needs a next action from the moment it exists (Rule: an
@@ -255,7 +257,7 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
     ownerName: assignment.ownerName,
     type: "call",
     title: "First call",
-    dueAt: addDaysIso(0),
+    dueAt: inbound ? new Date(Date.now() + 3_600_000).toISOString() : addDaysIso(0),
     origin: "manual",
   });
 

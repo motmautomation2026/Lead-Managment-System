@@ -1,4 +1,4 @@
-import { nextAllowedSendTime } from "../agent/rules.js";
+import { FIRST_INBOUND_WINDOW, nextAllowedSendTime } from "../agent/rules.js";
 
 /**
  * E1 WhatsApp safety: the one pure "send now / defer until / block" decision for
@@ -19,6 +19,11 @@ export interface SendWindow {
 
 export const DEFAULT_SEND_WINDOW: SendWindow = { days: [1, 2, 3, 4, 5, 6], start: "09:30", end: "19:00" };
 
+/** The window an automated send must fit: the first-inbound window for an AI first message to a fresh inbound lead (E3b-1 rule 4). */
+export function automatedWindow(source: string, window: SendWindow, firstInboundWindow: boolean | undefined): SendWindow {
+  return source === "agent" && firstInboundWindow ? { ...FIRST_INBOUND_WINDOW, days: [...FIRST_INBOUND_WINDOW.days] } : window;
+}
+
 export interface SafetyInput {
   source: SafetySource;
   now: Date;
@@ -35,6 +40,8 @@ export interface SafetyInput {
   paused: boolean;
   /** Spacing: the earliest time the next send may go out. */
   nextSendAt: Date | null;
+  /** E3b-1 rule 4: an AI first message to a fresh inbound lead may go out in the first-inbound window (08:00–21:00 IST, any day). */
+  firstInboundWindow?: boolean;
   random?: () => number;
 }
 
@@ -131,7 +138,7 @@ export function decideSend(input: SafetyInput): SafetyDecision {
   if (input.paused) return { defer: new Date(now.getTime() + PAUSED_RETRY_MS), reason: "WhatsApp sending is paused." };
 
   if (automated) {
-    const inWindow = nextWindowTime(now, input.window, random);
+    const inWindow = nextWindowTime(now, automatedWindow(input.source, input.window, input.firstInboundWindow), random);
     if (inWindow.getTime() > now.getTime()) return { defer: inWindow, reason: "Outside the WhatsApp send window." };
   }
 

@@ -1,6 +1,7 @@
 import type { LifecycleState, PipelineStage } from "../domain/enums.js";
 import type { AgentDecision, SendDecision } from "./decisionSchema.js";
 import { applyAssetRules, assetViolations, type AgentAssetInfo, type AssetFacts, type AttachmentRemoval } from "./assetRules.js";
+import type { StagePlan } from "./stagePlan.js";
 
 export type { AgentAssetInfo };
 
@@ -53,6 +54,10 @@ export interface RulesContext {
   emailBlockedReason?: string | null;
   /** E2f rule 6: the most decisive handoff/stop signal (agent/signals.ts); absent = none. */
   signal?: { action: "handoff" | "stop"; title: string } | null;
+  /** E3b-1 rules 1–3: the stage plan (agent/stagePlan.ts); absent = no stage limits. */
+  stagePlan?: StagePlan | null;
+  /** E3b-1 rule 4: a website/inbound-form contact created < 2 h ago with no touch yet (isFreshInbound). */
+  freshInbound?: boolean;
 }
 
 /** What the channel checks read. */
@@ -96,6 +101,23 @@ const WHATSAPP_BLOCKED_STATUSES = ["invalid", "opted_out", "do_not_contact"];
 const PHONE_BLOCKED_STATUSES = ["invalid", "wrong_number", "do_not_contact"];
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
+
+/** E3b-1 rule 4: a fresh inbound lead's FIRST AI message may go out 08:00–21:00 IST on any day. */
+export const FIRST_INBOUND_WINDOW = { days: [1, 2, 3, 4, 5, 6, 7], start: "08:00", end: "21:00" } as const;
+export const FRESH_INBOUND_MS = 2 * HOUR_MS;
+const INBOUND_LEAD_SOURCES = ["website", "inbound_form"];
+
+/** Rule 4: created from the website / an inbound form less than 2 hours ago and not touched yet. */
+export function isFreshInbound(lead: { source: string; createdAt: Date; touchCount: number }, now: Date): boolean {
+  return INBOUND_LEAD_SOURCES.includes(lead.source) && lead.touchCount === 0 && now.getTime() - lead.createdAt.getTime() < FRESH_INBOUND_MS;
+}
+
+/** The send-window settings for a send: the first-inbound window replaces the workspace's for a fresh inbound lead. */
+export function sendWindowSettings<T extends Pick<AgentRuleSettings, "send_days" | "send_window_start" | "send_window_end">>(settings: T, freshInbound: boolean | undefined): T {
+  return freshInbound
+    ? { ...settings, send_days: [...FIRST_INBOUND_WINDOW.days], send_window_start: FIRST_INBOUND_WINDOW.start, send_window_end: FIRST_INBOUND_WINDOW.end }
+    : settings;
+}
 /** Asia/Kolkata is a fixed UTC+05:30 (no DST). */
 const IST_OFFSET_MS = 330 * 60_000;
 
@@ -172,13 +194,17 @@ export function precheck(
  *  3. agent_status active → else BLOCK
  *  4. total touches ≥ max_touches_total on a send → convert to stop (no_response)
  *  5. channel usable (sends) → else convert to wait 1 day (other channel usable) or handoff (none) + violation
+ *  5b. (E3b-1) stage plan: an action the stage doesn't allow → its fallback (wait / the one rep-owned handoff),
+ *     adjustment stage_plan; a send on the channel that isn't due while the other is → switched + violation
+ *     channel_switch (fixable: the regeneration rewrites it for that channel), adjustment channel_balance
  *  6. (E2b: word limits moved to messageChecks.checkMessage)
  *  7. assets exist / active / allow the channel (sends) → else violation; then (E2g, agent/assetRules.ts)
  *     attachments are DROPPED, not violations: before a conversation, WhatsApp before a WhatsApp reply,
  *     already sent, > 2 email / 1 WhatsApp, > 10 MB in total
  *  8. content safety (sends): foreign contacts, opt-out text, signature, HTML → violations
  *  9. update_stage only on an active lead and to the allow-list → else violation
- * 10. timing (sends): sendAt = nextAllowedSendTime(...) incl. rep quiet hours; deferrals are adjustments
+ * 10. timing (sends): sendAt = nextAllowedSendTime(...) incl. rep quiet hours (E3b-1: a fresh inbound lead's first
+ *     message uses FIRST_INBOUND_WINDOW); deferrals are adjustments
  * 11. nextWakeInDays clamped to [wake_min_days, wake_max_days]; next wake = (sendAt or now) + days
  * 12. mode result: allowed = no block and no violations; executable = allowed && live;
  *     outcome: shadow → draft (violations recorded), block → blocked, live → null
@@ -236,6 +262,28 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
     }
   }
 
+  // E3b-1 rules 1–3: the stage allows no message now (→ its fallback), or the other channel is due.
+  const plan = ctx.stagePlan;
+  if (plan && !plan.allowedActions.includes(final.action)) {
+    const otherSend = isSend(final) && plan.allowedActions.some((a) => a === "send_email" || a === "send_whatsapp");
+    if (otherSend && isSend(final) && plan.preferredChannel) {
+      const to = plan.preferredChannel === "email" ? "email" : "WhatsApp";
+      adjustments.push({ rule: "channel_balance", message: `Channels alternate: this message goes by ${to}.` });
+      violations.push({ rule: "channel_switch", message: `Write this message for ${to} instead (channels alternate), within the ${to} word limit and format.` });
+      final =
+        plan.preferredChannel === "email"
+          ? { action: "send_email", subject: "-", body: final.body, assetIds: final.assetIds, nextWakeInDays: final.nextWakeInDays, reasoning: final.reasoning }
+          : { action: "send_whatsapp", body: final.body, assetIds: final.assetIds.slice(0, 1), nextWakeInDays: final.nextWakeInDays, reasoning: final.reasoning };
+    } else {
+      const fb = plan.fallback;
+      adjustments.push({ rule: "stage_plan", message: `No ${final.action.replace("_", " ")} now: ${plan.reason}.` });
+      final =
+        fb.action === "handoff"
+          ? { action: "handoff", title: fb.title, urgency: "normal", reasoning: final.reasoning }
+          : { action: "wait", nextWakeInDays: fb.days, reasoning: final.reasoning };
+    }
+  }
+
   let attachmentsRemoved: AttachmentRemoval[] = [];
   if (isSend(final)) {
     // 7: assets
@@ -260,7 +308,7 @@ export function validateDecision(decision: AgentDecision, ctx: RulesContext, set
   // 10: timing
   let sendAt: Date | null = null;
   if (isSend(final)) {
-    sendAt = nextAllowedSendTime(now, settings, ctx.lead.agentLastTouchAt, ctx.recentTouchTimes, ctx.lastRepActivityAt);
+    sendAt = nextAllowedSendTime(now, sendWindowSettings(settings, ctx.freshInbound), ctx.lead.agentLastTouchAt, ctx.recentTouchTimes, ctx.lastRepActivityAt);
     if (ctx.lastRepActivityAt && now.getTime() < ctx.lastRepActivityAt.getTime() + settings.rep_quiet_hours * HOUR_MS) {
       adjustments.push({ rule: "rep_quiet", message: `A rep was active ${settings.rep_quiet_hours}h ago or less; waiting before contacting the lead.` });
     }

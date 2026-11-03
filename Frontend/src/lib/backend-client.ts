@@ -461,6 +461,9 @@ export interface AgentSendState {
   sendError: string | null;
   cancelReason: string | null;
   channel: "email" | "whatsapp" | null;
+  /** E3b-1: the stage plan the decision was made under (null before E3b-1); the angle only for a message. */
+  stageKey?: string | null;
+  angle?: string | null;
 }
 export interface AgentReadiness {
   ready: boolean;
@@ -493,6 +496,8 @@ export interface AgentSettings {
   bannedPhrases: string[];
   /** E3a: admin-written examples of the style; empty = none. */
   styleExamples: string;
+  /** E3b-1: the channel of a contact's first AI message when both work; then channels alternate. */
+  firstChannel: "whatsapp" | "email";
   wakeMinDays: number;
   wakeMaxDays: number;
   nurtureLongTerm: boolean;

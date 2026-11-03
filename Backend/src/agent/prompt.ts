@@ -4,6 +4,7 @@ import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 import { signalsOf, type AgentSignal } from "./signals.js";
+import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, suggestedDays } from "./stagePlan.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -86,7 +87,11 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- No long dashes, no exclamation marks, no emojis.",
     "- The first line is about the lead, not about us: use their latest call, note or enquiry. Never send a generic message.",
     "- Never start two messages to the same contact the same way.",
-    "- End with one easy question.",
+    "- End with one easy question. When you propose a call, offer the two days under \"Suggested days\" (e.g. \"Would Thursday or Friday suit you?\") or ask a simple yes/no; never an exact clock time (the rep confirms the time).",
+    "",
+    "Each message has a purpose, given in lead_data as \"This message\" (from the CRM, reliable). Write for that purpose:",
+    ...ANGLES.map((angle) => `- ${ANGLE_RULES[angle]}`),
+    "If \"This message\" says no message now, pick wait (or handoff/stop if the data calls for it).",
     "",
     "Emails:",
     "- Greeting \"Hi <first name>,\", then 2–4 short paragraphs of 1–2 sentences: line 1 is what they told us or the reason for writing, then how we would help or one relevant client experience, then the question. No lists, bold or headings.",
@@ -127,7 +132,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     // E3a rule 7: code sets a follow-up's subject.
     ...(ctx.emailThread ? ['A follow-up email to this contact stays in the same thread and needs no subject: put "-" as the subject.'] : []),
     "",
-    block("lead_data", neutralise(leadDataText(ctx))),
+    block("lead_data", neutralise(leadDataText(ctx, now))),
     ...(internal ? [block("internal_context", neutralise(internal))] : []),
     block("timeline", neutralise(timeline)),
     block("past_agent_messages", neutralise(`${past}${summaries ? `\n\nEarlier decisions:\n${summaries}` : ""}`)),
@@ -153,7 +158,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
 }
 
 /** The lead's own fields and website enquiry, as the agent and the grounding check see them. */
-function leadDataText(ctx: AgentContext): string {
+function leadDataText(ctx: AgentContext, now: Date | null = null): string {
   const { lead, rules } = ctx;
   return [
     `Name: ${lead.firstName} ${lead.lastName}`.trim(),
@@ -177,8 +182,22 @@ function leadDataText(ctx: AgentContext): string {
       : "Conversation so far: none yet.",
     // E2f rule 6: one neutral line per signal (only when present).
     ...signalsOf(ctx).map((signal) => signal.line),
+    ...stageLines(ctx, now),
     ...companyLines(ctx),
   ].join("\n");
+}
+
+/** E3b-1 rules 1–3, 6: what this message is for, its channel and the days to offer (only with a stage plan). */
+function stageLines({ stagePlan: plan, latestMeeting }: AgentContext, now: Date | null): string[] {
+  if (!plan) return [];
+  const lines = [plan.angle ? `This message: ${ANGLE_LABELS[plan.angle]} (${plan.reason})` : `This message: none now (${plan.reason})`];
+  const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
+  if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
+  if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`);
+  if (plan.angle === "meeting_recap" && latestMeeting) {
+    lines.push(`Meeting outcome: ${words(latestMeeting.outcome)}`, `Meeting notes: ${latestMeeting.notes ?? "none"}`);
+  }
+  return lines;
 }
 
 function howTheyCame(source: string): string {

@@ -67,6 +67,8 @@ export const settingsUpdateSchema = z
     autoEnrollNewLeads: z.boolean(),
     // null = use the workspace name.
     companyDisplayName: z.string().trim().min(1, "Can't be blank.").max(120).nullable(),
+    // E3b-1 rule 3: the channel of a contact's first AI message when both are usable.
+    firstChannel: z.enum(["whatsapp", "email"]),
   })
   .partial()
   .superRefine((value, ctx) => {

@@ -1,6 +1,6 @@
 import type { LifecycleState } from "../domain/enums.js";
 import type { GoLiveReadiness } from "./readiness.js";
-import { emailUsable, nextAllowedSendTime, whatsappUsable, type AgentMode, type AgentRuleSettings, type AgentStatus, type RulesContext } from "./rules.js";
+import { emailUsable, nextAllowedSendTime, sendWindowSettings, whatsappUsable, type AgentMode, type AgentRuleSettings, type AgentStatus, type RulesContext } from "./rules.js";
 import { lifecycleEligible } from "./status.js";
 
 /**
@@ -74,9 +74,11 @@ export interface SendRecheckInput {
   lastRealTouchAt: Date | null;
   recentRealTouchTimes: Date[];
   lastRepActivityAt: Date | null;
+  /** E3b-1 rule 4: a fresh inbound lead's first message (rules.ts isFreshInbound) uses the first-inbound window. */
+  freshInbound?: boolean;
 }
 
-export type SendRecheck = { ok: true } | { defer: Date; reason: string } | { cancel: string };
+export type SendRecheck = { ok: true; freshInbound?: boolean } | { defer: Date; reason: string } | { cancel: string };
 
 /**
  * Rule 5, immediately before the provider call. Anything time-based (send window,
@@ -102,7 +104,7 @@ export function sendRecheck(input: SendRecheckInput): SendRecheck {
   if (input.hasActiveWorkflowRun) return { cancel: "The contact is in an active workflow." };
   if (input.realTouchCount >= input.settings.max_touches_total) return { cancel: `The contact already got ${input.settings.max_touches_total} AI messages.` };
 
-  const allowed = nextAllowedSendTime(now, input.settings, input.lastRealTouchAt, input.recentRealTouchTimes, input.lastRepActivityAt);
+  const allowed = nextAllowedSendTime(now, sendWindowSettings(input.settings, input.freshInbound), input.lastRealTouchAt, input.recentRealTouchTimes, input.lastRepActivityAt);
   if (allowed.getTime() > now.getTime()) return { defer: allowed, reason: "Waiting for the AI send window, message gap or rep quiet hours." };
-  return { ok: true };
+  return input.freshInbound ? { ok: true, freshInbound: true } : { ok: true };
 }

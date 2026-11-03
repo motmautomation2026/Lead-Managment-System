@@ -334,7 +334,7 @@ const tooBig = (bytes: number) => `Attachments are ${(bytes / 1024 / 1024).toFix
  * E2: re-checks an AI email (short transaction, locks released before SMTP). A time-based
  * problem re-queues it (no attempt), anything else cancels it and the decision.
  */
-async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "queued" | "cancelled"> {
+async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "fresh" | "queued" | "cancelled"> {
   return withTransaction(async (db) => {
     const check = await agentSendRecheck(db, row.source_id, "email", now);
     if ("defer" in check) {
@@ -345,7 +345,8 @@ async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "queu
       await cancelAgentEmail(db, row, check.cancel);
       return "cancelled" as const;
     }
-    return "ok" as const;
+    // E3b-1 rule 4: a fresh inbound lead's first AI email may use the first-inbound window.
+    return check.freshInbound ? ("fresh" as const) : ("ok" as const);
   });
 }
 
@@ -389,9 +390,11 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
   const random = deps.random ?? Math.random;
 
   // E2: an AI email is re-checked first (a contact that bounced/unsubscribed/replied cancels it, rule 5) and again right before SMTP.
+  let firstInboundWindow = false;
   if (row.source === "agent") {
     const gate = await agentGate(row, now);
-    if (gate !== "ok") return gate;
+    if (gate !== "ok" && gate !== "fresh") return gate;
+    firstInboundWindow = gate === "fresh";
   }
 
   if (row.source === "scheduled_action" && !(await workflowStepActive(row))) {
@@ -442,6 +445,7 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
         paused: !mailbox.enabled,
         nextSendAt: mailbox.nextSendAt,
         recipientProblem: block,
+        firstInboundWindow,
         random,
       })
     : { block: block! };
@@ -473,7 +477,7 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
     // E2 rule 5: the AI email's re-check, immediately before the SMTP call.
     if (row.source === "agent") {
       const gate = await agentGate(row, deps.now?.() ?? new Date());
-      if (gate !== "ok") return gate;
+      if (gate !== "ok" && gate !== "fresh") return gate;
       // E2h rule 2: never send a text that promises a file that isn't there.
       if (sent.issues.length && mentionsAttachment(`${row.subject}\n${row.text_body}`)) {
         await withTransaction((db) => cancelAgentEmail(db, row, ATTACHMENT_MISSING, sent.issues));
