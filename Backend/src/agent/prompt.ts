@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
+import { whatsappTargetWords } from "./messageChecks.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 import { signalsOf, type AgentSignal } from "./signals.js";
 import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, suggestedDays } from "./stagePlan.js";
@@ -221,6 +222,7 @@ function messageRules(settings: AgentSettingsRow): string[] {
     '- At most one question, about ONE thing (never two asks joined with "and"/"or").',
     ...(banned ? [`- None of these phrases: ${banned}.`] : []),
     `- Word limits: email body ${settings.email_max_words} words, WhatsApp ${settings.whatsapp_max_words} words. No exclamation marks.`,
+    `- WhatsApp: aim for about ${whatsappTargetWords(settings.whatsapp_max_words)} words; ${settings.whatsapp_max_words} is a hard limit, not a target.`,
   ];
 }
 

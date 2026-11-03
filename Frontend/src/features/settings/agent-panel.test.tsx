@@ -106,7 +106,9 @@ describe("AgentPanel", () => {
     render(<AgentPanel />);
     expect(mocks.settingsQuery).not.toHaveBeenCalled();
     expect(screen.getByText("Message rules")).toBeInTheDocument();
-    expect(screen.getByText("WhatsApp 75 words · email 160 words")).toBeInTheDocument();
+    expect(
+      screen.getByText("WhatsApp 75 words (the AI aims for about 50) · email 160 words"),
+    ).toBeInTheDocument();
     expect(screen.getByText("thanks for connecting, today")).toBeInTheDocument();
     expect(screen.getByText("Only admins can change these.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();

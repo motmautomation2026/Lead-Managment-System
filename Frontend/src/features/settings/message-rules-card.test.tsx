@@ -13,7 +13,7 @@ afterEach(cleanup);
 const rules = {
   bannedPhrases: ["touch base"],
   emailMaxWords: 120,
-  whatsappMaxWords: 50,
+  whatsappMaxWords: 60,
   styleExamples: "",
 };
 
@@ -27,6 +27,15 @@ describe("MessageRulesCard (E3b-1)", () => {
         ),
       ).toBeTruthy();
       expect(screen.queryByText(/rewritten once/)).toBeNull();
+      unmount();
+    }
+  });
+
+  it("E3b-1b: shows the WhatsApp target and what the word count includes", () => {
+    for (const editable of [false, true]) {
+      const { unmount } = render(<MessageRulesCard rules={rules} editable={editable} />);
+      expect(screen.getByText(/aims for about 40/)).toBeTruthy();
+      expect(screen.getByText(/not the signature, opt-out or booking line/)).toBeTruthy();
       unmount();
     }
   });

@@ -169,6 +169,7 @@ describe("E2b rule 4: what the model sees", () => {
     const system = buildDecisionMessages(sampleContext(), settings, NOW)[0]!.content;
     expect(system).toContain('- None of these phrases: "thanks for connecting", "just following up", "today", "free".');
     expect(system).toContain("- Word limits: email body 250 words, WhatsApp 80 words.");
+    expect(system).toContain("- WhatsApp: aim for about 53 words; 80 is a hard limit, not a target.");
     expect(tail).toContain("thank them for reaching out");
     expect(userText(sampleContext())).toContain("don't introduce us again");
     const fresh = sampleContext({ lead: { ...sampleContext().lead, source: "cold_call" }, timeline: [] });

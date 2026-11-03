@@ -58,7 +58,8 @@ Tone: warm and direct.
 Message rules:
 - At most one question, about ONE thing (never two asks joined with "and"/"or").
 - None of these phrases: "thanks for connecting", "just following up", "today", "free".
-- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.",
+- Word limits: email body 250 words, WhatsApp 80 words. No exclamation marks.
+- WhatsApp: aim for about 53 words; 80 is a hard limit, not a target.",
     "role": "system",
   },
   {

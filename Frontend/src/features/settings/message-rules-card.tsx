@@ -49,6 +49,10 @@ const formValues = (rules: AgentMessageRules): FormInput => ({
   emailMaxWords: rules.emailMaxWords,
 });
 
+// E3b-1b: same as the backend's whatsappTargetWords (two thirds of the hard limit); display only.
+const whatsappTarget = (limit: number) => Math.round((limit * 2) / 3);
+const WORDS_COUNTED = "Only the AI's own text counts, not the signature, opt-out or booking line.";
+
 /**
  * Settings → AI agent → Message rules (E2b): banned phrases and word limits every AI message is
  * checked against. Admins edit; everyone else reads.
@@ -84,8 +88,10 @@ function RulesView({ rules }: { rules: AgentMessageRules }) {
       <div>
         <dt className="font-medium">Word limits</dt>
         <dd className="text-muted-foreground">
-          WhatsApp {rules.whatsappMaxWords} words · email {rules.emailMaxWords} words
+          WhatsApp {rules.whatsappMaxWords} words (the AI aims for about{" "}
+          {whatsappTarget(rules.whatsappMaxWords)}) · email {rules.emailMaxWords} words
         </dd>
+        <dd className="text-xs text-muted-foreground">{WORDS_COUNTED}</dd>
       </div>
       <div>
         <dt className="font-medium">Banned phrases</dt>
@@ -144,6 +150,10 @@ function RulesForm({ rules }: { rules: AgentMessageRules }) {
             <p className="text-xs text-destructive">{errors.emailMaxWords.message}</p>
           )}
         </div>
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          The AI aims for about {whatsappTarget(rules.whatsappMaxWords)} words on WhatsApp.{" "}
+          {WORDS_COUNTED}
+        </p>
       </div>
       <div className="space-y-1">
         <Label htmlFor="rules-banned">Banned phrases (one per line)</Label>

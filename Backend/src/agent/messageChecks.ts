@@ -16,6 +16,9 @@ export function wordCount(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+/** E3b-1b rule 2: what the writer aims for on WhatsApp, two thirds of the hard limit (60 → 40), so a draft rarely fails it. */
+export const whatsappTargetWords = (limit: number) => Math.round((limit * 2) / 3);
+
 const straightQuotes = (text: string) => text.replace(/[’‘]/g, "'");
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -206,8 +209,15 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
   if (banned.length) violations.push({ rule: "banned_phrase", message: `Uses banned phrase(s): ${banned.map((p) => `"${p}"`).join(", ")}.` });
 
   const limit = decision.action === "send_email" ? settings.email_max_words : settings.whatsapp_max_words;
+  // E3b-1b rule 1: only the model's body; the signature, opt-out and booking lines are added later.
   const words = wordCount(decision.body);
-  if (words > limit) violations.push({ rule: "length", message: `${words} words; the limit is ${limit}.` });
+  if (words > limit) {
+    const opener = `"thank you for reaching out to ${facts?.companyName ?? "us"}"`;
+    violations.push({
+      rule: "length",
+      message: `${words} words; the limit is ${limit}. Cut at least ${words - limit} words: drop the ${opener} opener first (a first message to an inbound lead needs only "Thanks for your enquiry."), then any sentence that doesn't serve the question.`,
+    });
+  }
 
   const questions = countQuestions(decision.body);
   if (questions > 1) violations.push({ rule: "one_question", message: `The message asks ${questions} questions; ask at most one.` });

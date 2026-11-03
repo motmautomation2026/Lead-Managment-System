@@ -95,7 +95,7 @@ describeIfDb("E2 live mode API (requires TEST_DATABASE_URL)", () => {
   it("E2b: admins edit banned phrases and word limits (defaults 160/75); every CRM user reads them in stats", async () => {
     const ws = await createTestWorkspace(pool, "e2b-message-rules");
     const before = (await api.call(rep, ws, "GET", "/agent/stats")).body.messageRules;
-    expect(before).toMatchObject({ emailMaxWords: 120, whatsappMaxWords: 50, styleExamples: "" });
+    expect(before).toMatchObject({ emailMaxWords: 120, whatsappMaxWords: 60, styleExamples: "" });
     expect(before.bannedPhrases).toContain("hope you're doing well");
     expect(before.bannedPhrases).toContain("thanks for connecting");
     expect((await api.call(rep, ws, "PUT", "/agent/settings", { bannedPhrases: ["x"] })).status).toBe(403);

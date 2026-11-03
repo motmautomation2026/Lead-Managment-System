@@ -9,6 +9,7 @@ import {
   introductionPhrases,
   mentionsAttachment,
   messageFactsOf,
+  whatsappTargetWords,
   wordCount,
   type MessageCheckSettings,
   type MessageFacts,
@@ -169,6 +170,19 @@ describe("checkMessage", () => {
     expect(rulesOf(whatsapp("word ".repeat(76)))).toEqual(["length"]);
     expect(rulesOf(email("word ".repeat(160), "a subject of six plain words"))).toEqual([]);
     expect(rulesOf(email("word ".repeat(161)))).toEqual(["length"]);
+  });
+
+  it("E3b-1b: the length feedback gives the count, how many words to cut and the opener to drop first", () => {
+    const limits = { ...settings, whatsapp_max_words: 60 };
+    const f = { inboundFirst: false, conversationExists: false, ownerFirstName: "Ravi", companyName: "MOTM Technologies", internalTexts: [], leadCompany: "Acme", threaded: false };
+    expect(checkMessage(whatsapp("word ".repeat(60)), limits, f)).toEqual([]);
+    const [violation] = checkMessage(whatsapp("word ".repeat(61)), limits, f);
+    expect(violation!.message).toMatch(/^61 words; the limit is 60\. Cut at least 1 words: drop the "thank you for reaching out to MOTM Technologies" opener first/);
+  });
+
+  it("E3b-1b: the WhatsApp target is two thirds of the hard limit", () => {
+    expect(whatsappTargetWords(60)).toBe(40);
+    expect(whatsappTargetWords(50)).toBe(33);
   });
 
   it("questions: more than one, compound, exclamation", () => {
