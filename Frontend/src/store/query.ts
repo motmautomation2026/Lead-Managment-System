@@ -93,6 +93,8 @@ export const keys = {
       : (["contactTimeline", workspaceId, id] as const),
   inboundReply: (workspaceId: string | null, contactId: string, messageId: string) =>
     ["inboundReply", workspaceId, contactId, messageId] as const,
+  latestReplyDraft: (workspaceId: string | null, contactId: string) =>
+    ["latestReplyDraft", workspaceId, contactId] as const,
   companyDuplicates: (workspaceId: string | null, params?: object) =>
     params
       ? (["companyDuplicates", workspaceId, params] as const)
@@ -157,10 +159,17 @@ export function refreshContact(client: QueryClient, workspaceId: string | null, 
         keys.contactability(workspaceId, leadId),
         keys.contactTimeline(workspaceId, leadId),
         keys.agentLeadPanel(workspaceId, leadId),
+        keys.latestReplyDraft(workspaceId, leadId),
       ]
-    : ["lead", "contact", "notes", "contactability", "contactTimeline", "agentLeadPanel"].map(
-        (prefix) => [prefix, workspaceId],
-      );
+    : [
+        "lead",
+        "contact",
+        "notes",
+        "contactability",
+        "contactTimeline",
+        "agentLeadPanel",
+        "latestReplyDraft",
+      ].map((prefix) => [prefix, workspaceId]);
   const targets = [
     ...perContact,
     keys.contacts(workspaceId),

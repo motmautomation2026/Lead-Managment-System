@@ -67,6 +67,7 @@ import type {
   InboundReply,
   ReplyLabel,
   ReplyChannel,
+  ReplyDraft,
   User,
   Workflow,
   WorkflowStep,
@@ -1027,6 +1028,14 @@ export const backend = {
       );
       return { ...rest, messageId: replyId } satisfies InboundReply;
     },
+    /** E3b-2a: the contact's open (else latest sent) suggested reply; owner + admins. */
+    latestReplyDraft: (id: string, signal?: AbortSignal) =>
+      get<{ draft: ReplyDraft | null }>(`/contacts/${id}/reply-drafts/latest`, signal),
+    /** E3b-2a: queue the (edited) suggested reply; the worker sends it in the send window. */
+    sendReplyDraft: (id: string, draftId: string, body: string) =>
+      send<ReplyDraft>("POST", `/contacts/${id}/reply-drafts/${draftId}/send`, { body }),
+    discardReplyDraft: (id: string, draftId: string) =>
+      send<ReplyDraft>("POST", `/contacts/${id}/reply-drafts/${draftId}/discard`),
     /** D4a: the owner or an admin changes a reply's label (never "unclassified"). */
     setReplyLabel: (
       id: string,

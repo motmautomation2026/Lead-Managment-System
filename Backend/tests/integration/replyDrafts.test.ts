@@ -280,6 +280,33 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect((await pool.query(`select send_status from public.reply_drafts where id = $1`, [draft.id])).rows[0].send_status).toBe("sent");
   });
 
+  it("API: the draft on the timeline reply row and the task's latest draft (owner/admin only), Send / Discard with 403 / 404 / 400", async () => {
+    const { ws, phone, leadId } = await scenario();
+    const replyId = await inbound(ws, phone, secret("Do you work with steel traders?"));
+    await labelAndDraft(ws, fake());
+    const timelineRow = async (as: Actor) =>
+      (await api.call(as, ws, "GET", `/contacts/${leadId}/timeline`)).body.data.find((r: { reply?: { messageId: string } }) => r.reply?.messageId === replyId);
+    const ownerRow = await timelineRow(owner);
+    expect(ownerRow.reply).toMatchObject({ drafting: false, draft: { status: "open", body: GOOD_WA, canSend: true, channel: "whatsapp" } });
+    expect((await timelineRow(otherRep)).reply.draft).toBeNull();
+    const draftId = ownerRow.reply.draft.id as string;
+
+    expect((await api.call(otherRep, ws, "GET", `/contacts/${leadId}/reply-drafts/latest`)).status).toBe(403);
+    expect((await api.call(admin, ws, "GET", `/contacts/${leadId}/reply-drafts/latest`)).body.draft).toMatchObject({ id: draftId, status: "open" });
+    expect((await api.call(otherRep, ws, "POST", `/contacts/${leadId}/reply-drafts/${draftId}/send`, { body: GOOD_WA })).status).toBe(403);
+    expect((await api.call(owner, ws, "POST", `/contacts/${leadId}/reply-drafts/${randomUUID()}/send`, { body: GOOD_WA })).status).toBe(404);
+    const long = await api.call(owner, ws, "POST", `/contacts/${leadId}/reply-drafts/${draftId}/send`, { body: Array.from({ length: 70 }, () => "word").join(" ") });
+    expect(long.status).toBe(400);
+    expect(JSON.stringify(long.body)).toContain("WhatsApp replies can be at most 60 words; this one has 70.");
+    expect((await api.call(owner, ws, "POST", `/contacts/${leadId}/reply-drafts/${draftId}/send`, {})).status).toBe(400);
+
+    const discarded = await api.call(owner, ws, "POST", `/contacts/${leadId}/reply-drafts/${draftId}/discard`);
+    expect(discarded).toMatchObject({ status: 200, body: { status: "discarded", canSend: false } });
+    expect((await api.call(owner, ws, "POST", `/contacts/${leadId}/reply-drafts/${draftId}/send`, { body: GOOD_WA })).status).toBe(409);
+    expect((await timelineRow(owner)).reply.draft).toBeNull();
+    expect(await openTasks(leadId)).toHaveLength(1);
+  });
+
   it("escalation: once, only after 2 working hours (send window, IST), to admins", async () => {
     const { ws, leadId } = await scenario();
     const created = ist("2026-10-28T18:00"); // a Wednesday, 1 working hour before closing

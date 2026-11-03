@@ -43,6 +43,7 @@ import type {
   ProposalStatus,
   ReplyLabel,
   ReplyChannel,
+  ReplyDraft,
   TemplateType,
   User,
   WorkflowStep,
@@ -982,6 +983,36 @@ export function useCorrectReplyLabel(contactId: string) {
     }) => backend.contacts.setReplyLabel(contactId, input.messageId, input.label, input.channel),
     onSuccess: () => refreshContact(client, ws, contactId),
   });
+}
+
+/** E3b-2a: the contact's open (else latest sent) suggested reply, for the reply task's Sheet. */
+export function useLatestReplyDraft(contactId: string, enabled: boolean) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useQuery({
+    queryKey: keys.latestReplyDraft(ws, contactId),
+    queryFn: ({ signal }) => backend.contacts.latestReplyDraft(contactId, signal),
+    enabled: enabled && Boolean(contactId),
+    retry: false,
+  });
+}
+
+/** E3b-2a: Send (queued; the worker sends) or Discard a suggested reply; refreshes the contact and its tasks. */
+export function useReplyDraftActions(contactId: string) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  const onSuccess = () => refreshContact(client, ws, contactId);
+  return {
+    send: useMutation({
+      mutationFn: (input: { draftId: string; body: string }): Promise<ReplyDraft> =>
+        backend.contacts.sendReplyDraft(contactId, input.draftId, input.body),
+      onSuccess,
+    }),
+    discard: useMutation({
+      mutationFn: (draftId: string): Promise<ReplyDraft> =>
+        backend.contacts.discardReplyDraft(contactId, draftId),
+      onSuccess,
+    }),
+  };
 }
 
 /** A contact's timeline, newest first, paginated; `kind` filters server-side (empty = all). */

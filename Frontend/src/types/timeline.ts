@@ -29,7 +29,31 @@ export interface TimelineEvent {
     labelBy: string | null;
     classifying: boolean;
     canCorrect: boolean;
+    /** E3b-2a: the worker is writing a suggested reply. */
+    drafting?: boolean;
+    /** E3b-2a: the suggested reply (open or sent); null for others than the owner and admins. */
+    draft?: ReplyDraft | null;
   };
+}
+
+/** E3b-2a: an AI-suggested answer to a lead's reply, for the owner to send (edited or not) or discard. */
+export interface ReplyDraft {
+  id: string;
+  channel: ReplyChannel;
+  status: "open" | "sent" | "discarded" | "superseded" | "failed";
+  subject: string | null;
+  body: string | null;
+  edited: boolean | null;
+  sentBody: string | null;
+  sentByName: string | null;
+  queuedAt: string | null;
+  sendStatus: "queued" | "sending" | "sent" | "failed" | "cancelled" | null;
+  /** While queued: when it may go (the send window's next opening). */
+  sendAt: string | null;
+  sentAt: string | null;
+  sendError: string | null;
+  createdAt: string;
+  canSend: boolean;
 }
 
 /** D4a: what a WhatsApp reply says (backend agent/replyClassification.ts REPLY_LABELS). */

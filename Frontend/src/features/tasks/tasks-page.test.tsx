@@ -100,6 +100,9 @@ vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   refreshWork: vi.fn(async () => undefined),
   useIsAdmin: () => false,
+  // E3b-2a: the reply task's Sheet asks for the contact's suggested reply (none here).
+  useLatestReplyDraft: () => ({ data: { draft: null } }),
+  useReplyDraftActions: () => ({ send: { mutate: vi.fn() }, discard: { mutate: vi.fn() } }),
   useSession: () => ({
     users: [
       { id: "u-1", name: "Asha Owner", active: true },

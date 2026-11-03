@@ -52,6 +52,8 @@ export {
   useContactTimeline,
   useInboundReply,
   useCorrectReplyLabel,
+  useLatestReplyDraft,
+  useReplyDraftActions,
   useCreateCompany,
   useUpdateCompany,
   useMergeCompanies,

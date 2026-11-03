@@ -451,6 +451,32 @@ Migration 047.
 - `GET /admin/users` rows add `bookingUrl`; `PATCH /admin/users[/:id]` accepts `bookingUrl` (same validation; omitted = unchanged,
   null = removed).
 
+## 7q. Suggested replies for reps — E3b-2a
+
+`ReplyDraft` = `{ id, channel: "whatsapp" | "email", status: "open" | "sent" | "discarded" | "superseded" | "failed", subject
+(email: our thread's "Re: …"), body (the AI's text, without signature), edited, sentBody, sentByName, queuedAt, sendStatus: "queued" |
+"sending" | "sent" | "failed" | "cancelled" | null, sendAt (while queued: the channel's send-window opening, shown as "Will send at …"),
+sentAt, sendError, createdAt, canSend }`. Never the lead's reply text.
+
+- Contact timeline (`GET /contacts/:id/timeline`) reply rows (§7f/§7g) add `reply.drafting: boolean` (the worker is writing one) and
+  `reply.draft: ReplyDraft | null` (the reply's open or sent draft; always null for others than the owner and admins).
+- `GET /contacts/:id/reply-drafts/latest` → `{ draft: ReplyDraft | null }`: the contact's open draft, else the latest sent one (the
+  reply task's Sheet). **403** for others than the owner and admins, **404** unknown contact.
+- `POST /contacts/:id/reply-drafts/:draftId/send` `{ body }` (owner or admin): queues the text as edited (WhatsApp source
+  `reply_draft` / email source `reply_draft`); the worker sends it through every channel safety rule (send window, spacing, caps,
+  warm-up, pause, opt-out, DNC, channel status, re-check before sending). Not the AI touch limits (48 h gap, 2 per week, 8 total).
+  Marks the open reply task done. Returns the `ReplyDraft` (`status: "sent"`, `sendStatus: "queued"`, `sendAt`). A second Send
+  returns the same state (one send per draft). **400** empty text or over the channel word limit (`agent_settings`
+  `whatsapp_max_words` / `email_max_words`, default 60 / 120: "WhatsApp replies can be at most 60 words; this one has 72."),
+  **403** not owner/admin, **404** not this contact's draft, **409** draft not open ("This suggested reply was discarded.") or the
+  contact is Do Not Contact / opted out / bounced / unsubscribed / has no address.
+- `POST /contacts/:id/reply-drafts/:draftId/discard` (owner or admin) → `ReplyDraft` (`status: "discarded"`); the reply task stays
+  open. **403 / 404** as above, **409** when not open.
+- Timeline on delivery: "Reply sent on WhatsApp" / "Reply sent on email" (detail "Suggested reply[, edited], sent by <rep>",
+  `metadata.replyDraftId`, `edited`). A failed send notifies the rep who sent it.
+- Notifications (no endpoint change): admins get "<Rep> hasn't answered <Name>'s reply yet (2 h)" once per reply task; the owner
+  gets the task "Log the meeting outcome" 2 days after a meeting with no outcome.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

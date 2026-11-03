@@ -310,3 +310,32 @@ describe("ReadReplyLink", () => {
     );
   });
 });
+
+describe("ActivityFeed — suggested replies (E3b-2a)", () => {
+  it("shows 'Writing a suggested reply…' while drafting and the Suggested reply card on the reply row", async () => {
+    const draft = {
+      id: "d-1",
+      channel: "whatsapp" as const,
+      status: "open" as const,
+      subject: null,
+      body: "Thanks, Asha. Would Thursday or Friday suit you?",
+      edited: null,
+      sentBody: null,
+      sentByName: null,
+      queuedAt: null,
+      sendStatus: null,
+      sendAt: null,
+      sentAt: null,
+      sendError: null,
+      createdAt: "2026-11-03T05:00:00Z",
+      canSend: true,
+    };
+    await feed([
+      replyRow(r({ drafting: true }), "t-1"),
+      replyRow(r({ messageId: "m-2", draft }), "t-2"),
+    ]);
+    expect(await screen.findByText("Writing a suggested reply…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Suggested reply")).toHaveValue(draft.body);
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  });
+});

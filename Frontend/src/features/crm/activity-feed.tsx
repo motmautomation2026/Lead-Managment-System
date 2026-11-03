@@ -17,6 +17,7 @@ import { RelativeTime } from "@/components/crm/relative-time";
 import { ACTIVITY_FILTERS, type ActivityFilter } from "@/features/contacts/contact-helpers";
 import { cn } from "@/lib/utils";
 import { REPLY_LABEL_TEXT } from "@/features/agent/agent-labels";
+import { SuggestedReplyCard } from "./suggested-reply-card";
 import {
   messageFromError,
   useCompanyTimeline,
@@ -127,6 +128,14 @@ export function ActivityFeed({
                   <>
                     <ReplyLabelLine contactId={source.contactId} reply={event.reply} />
                     <ReplyText contactId={source.contactId} reply={event.reply} />
+                    {event.reply.drafting && <p className={muted}>Writing a suggested reply…</p>}
+                    {event.reply.draft && (
+                      <SuggestedReplyCard
+                        key={event.reply.draft.id}
+                        contactId={source.contactId}
+                        draft={event.reply.draft}
+                      />
+                    )}
                   </>
                 )}
                 <div className="pt-0.5 type-small text-muted-foreground">

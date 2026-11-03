@@ -154,7 +154,7 @@ function timelinePage<R extends TimelineRow>(db: Queryable, b: SqlBuilder, query
 // D2/D4a/D3: null unless the row is a matched inbound WhatsApp or email reply; never the text itself.
 const replyInfo = (channel: string, id: string) => `json_build_object('channel', '${channel}', 'messageId', ${id}, 'hasText', e.body_ciphertext is not null,
             'label', e.reply_label, 'labelSource', e.reply_label_source, 'classifying', e.classification_status = 'pending' and e.reply_label is null,
-            'labelBy', case when e.reply_label_source = 'rep' then p.full_name end)`;
+            'labelBy', case when e.reply_label_source = 'rep' then p.full_name end, 'drafting', e.draft_status = 'pending')`;
 const REPLY_INFO_SQL = `, coalesce(
      (select ${replyInfo("whatsapp", "e.message_id")}
         from public.whatsapp_inbound_events e left join public.profiles p on p.id = e.label_corrected_by
@@ -173,6 +173,8 @@ interface ReplyInfo {
   labelSource: string | null;
   classifying: boolean;
   labelBy: string | null;
+  /** E3b-2a: the worker is writing a suggested reply for this reply. */
+  drafting: boolean;
 }
 
 /**
