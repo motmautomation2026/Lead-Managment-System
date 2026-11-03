@@ -25,6 +25,7 @@ import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../se
 import { agentSendRecheck } from "../services/agentSendState.service.js";
 import { ASSET_MISSING_REASON, ASSET_TOO_BIG_REASON, ATTACHMENT_MISSING, MAX_ATTACHMENT_BYTES } from "../agent/assetRules.js";
 import { isMissingStorageObject } from "./storageErrors.js";
+import { contactSendProblem } from "../domain/replyDrafts.js";
 
 export interface WhatsAppAttachment {
   storagePath: string;
@@ -49,12 +50,15 @@ export type WhatsAppSendSource =
   | { type: "proposal"; id: string }
   | { type: "meeting"; id: string }
   /** E2: an AI decision (automated); `id` is the agent_decisions id. */
-  | { type: "agent"; id: string };
+  | { type: "agent"; id: string }
+  /** E3b-2a: a rep's Send of an AI reply draft (send window applies); `id` is the reply_drafts id. */
+  | { type: "reply_draft"; id: string };
 
-export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" {
+export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" | "reply_draft_id" {
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
   if (source.type === "agent") return "agent_decision_id";
+  if (source.type === "reply_draft") return "reply_draft_id";
   return "meeting_id";
 }
 
@@ -138,6 +142,23 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
     case "agent":
       // performSend re-checks AI sends with agentSendRecheck (it can defer or cancel, not only refuse).
       throw new Error("AI sends are checked by agentSendRecheck.");
+    case "reply_draft": {
+      // E3b-2a: the rep sent it (no automation_mode gate); opt-out, DNC and channel status still apply.
+      const result = await db.query<{ phone_e164: string | null; lifecycle_state: string; whatsapp_status: string | null; phone_status: string | null }>(
+        `select l.phone_e164, l.lifecycle_state::text as lifecycle_state, cw.status as whatsapp_status, cp.status as phone_status
+           from public.reply_drafts d
+           join public.leads l on l.id = d.lead_id
+           left join public.lead_contact_channels cw on cw.lead_id = l.id and cw.channel = 'whatsapp'
+           left join public.lead_contact_channels cp on cp.lead_id = l.id and cp.channel = 'phone'
+          where d.id = $1 and d.workspace_id = $2 and d.send_status = 'sending'
+          for update of d, l`,
+        [source.id, workspaceId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const problem = contactSendProblem({ channel: "whatsapp", lifecycleState: row.lifecycle_state, channelStatus: row.whatsapp_status, phoneStatus: row.phone_status, address: row.phone_e164 });
+      return problem ? null : row.phone_e164;
+    }
     default:
       return assertNever(source);
   }
@@ -158,6 +179,9 @@ export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSend
       break;
     case "agent":
       table = "public.agent_decisions";
+      break;
+    case "reply_draft":
+      table = "public.reply_drafts";
       break;
     default:
       return assertNever(source);

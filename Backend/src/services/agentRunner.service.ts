@@ -52,13 +52,20 @@ const SHADOW_NOTE = "Shadow mode — not sent";
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 export const IST_MONTH = `date_trunc('month', now() at time zone 'Asia/Kolkata')`;
 const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
-/** This IST month's AI spend of workspace $1: decisions plus reply classifications (D4a). */
+/** This IST month's AI spend of workspace $1: decisions, reply classifications (D4a) and reply drafts (E3b-2a). */
 export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agent_decisions
      where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
    + coalesce((select sum(classification_cost_usd) from public.whatsapp_inbound_events
      where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
    + coalesce((select sum(classification_cost_usd) from public.email_inbound_events
-     where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
+     where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
+   + coalesce((select sum(cost_usd) from public.reply_drafts
+     where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
+/** Today's (IST) count toward max_decisions_per_day of workspace $1: AI decisions plus reply drafts (E3b-2a rule 3). */
+export const DAY_DECISIONS_SQL = `((select count(*) from public.agent_decisions
+     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata'))
+   + (select count(*) from public.reply_drafts
+     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata')))::int`;
 
 export interface AgentRunnerDeps {
   model: DecisionModel;
@@ -377,15 +384,13 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   // 3b. Daily decision cap (IST day); at the cap, wait for the next IST day.
   const today = (
     await pool.query<{ n: number; resume_at: Date }>(
-      `select count(*)::int as n, ((${IST_DAY} + interval '1 day 5 minutes') at time zone 'Asia/Kolkata') as resume_at
-         from public.agent_decisions
-        where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata')`,
+      `select ${DAY_DECISIONS_SQL} as n, ((${IST_DAY} + interval '1 day 5 minutes') at time zone 'Asia/Kolkata') as resume_at`,
       [wakeup.workspace_id],
     )
   ).rows[0]!;
   if (today.n >= state.max_decisions_per_day) {
     await alertAdminsOnce(wakeup.workspace_id, "daily_cap_alerted_on", IST_DAY, "AI agent paused for today: daily decision limit reached",
-      `${today.n} AI decisions today (limit ${state.max_decisions_per_day}). The agent resumes after midnight IST or when an admin raises "Max AI decisions per day" in Settings → AI agent.`);
+      `${today.n} AI decisions and reply drafts today (limit ${state.max_decisions_per_day}). The agent resumes after midnight IST or when an admin raises "Max AI decisions per day" in Settings → AI agent.`);
     console.log(`[agent] wakeup ${wakeup.id}: workspace ${wakeup.workspace_id} reached its daily decision cap; deferred to the next IST day.`);
     await retryLater(wakeup, today.resume_at, true);
     return { ...base, result: "deferred" };

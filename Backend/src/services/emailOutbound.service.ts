@@ -35,6 +35,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
 import { agentSendRecheck, latestAiEmail, recordAgentSendOutcome } from "./agentSendState.service.js";
+import { recordReplyDraftOutcome } from "./replyDrafts.service.js";
 
 /**
  * E1b: every email goes through this queue and is sent only by the worker
@@ -195,6 +196,8 @@ async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { mess
     await db.query(`update public.proposals set email_send_status = 'sent', email_sent_at = now(), email_send_error = null where id = $1`, [row.source_id]);
   } else if (row.source === "meeting") {
     await db.query(`update public.meetings set notify_email_status = 'sent', notify_email_sent_at = now(), notify_email_error = null where id = $1`, [row.source_id]);
+  } else if (row.source === "reply_draft") {
+    await recordReplyDraftOutcome(db, row.source_id, { kind: "sent", providerMessageId: result.messageId, dryRun: result.dryRun });
   }
 }
 
@@ -205,6 +208,8 @@ async function onSourceProblem(db: Queryable, row: EmailOutboundRow, status: "pe
     await db.query(`update public.proposals set email_send_status = $2, email_send_error = $3 where id = $1`, [row.source_id, status, error]);
   } else if (row.source === "meeting") {
     await db.query(`update public.meetings set notify_email_status = $2, notify_email_error = $3 where id = $1`, [row.source_id, status, error]);
+  } else if (row.source === "reply_draft") {
+    await recordReplyDraftOutcome(db, row.source_id, status === "failed" ? { kind: "failed", reason: error } : { kind: "deferred", until: retryAt ?? new Date(), reason: error });
   }
 }
 
@@ -356,6 +361,11 @@ async function agentGate(row: EmailOutboundRow, now: Date): Promise<"ok" | "fres
  * other email is left alone. The subject actually sent is stored, for the next follow-up and the timeline.
  */
 async function agentThread(row: EmailOutboundRow, now: Date): Promise<{ subject: string; headers: { inReplyTo?: string; references?: string } }> {
+  if (row.source === "reply_draft") {
+    // E3b-2a: the rep's answer continues the lead's own message (its Message-ID header; never its text).
+    const lead = (await pool.query<{ in_reply_to: string | null }>(`select in_reply_to from public.reply_drafts where id = $1`, [row.source_id])).rows[0]?.in_reply_to;
+    return { subject: row.subject, headers: lead ? { inReplyTo: lead, references: lead } : {} };
+  }
   if (row.source !== "agent" || !row.lead_id) return { subject: row.subject, headers: {} };
   const previous = await latestAiEmail(pool, row.lead_id, now);
   const subject = previous ? threadSubject(previous.subject) : unthreadedSubject(row.subject);

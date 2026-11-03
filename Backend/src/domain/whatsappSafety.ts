@@ -6,8 +6,11 @@ import { FIRST_INBOUND_WINDOW, nextAllowedSendTime } from "../agent/rules.js";
  * agent in E2). The worker gathers the inputs; nothing here reads the clock or a DB.
  */
 
-/** `scheduled_action` and `agent` are automated; proposal and meeting messages are a rep's choice. */
-export type SafetySource = "scheduled_action" | "proposal" | "meeting" | "agent";
+/**
+ * `scheduled_action` and `agent` are automated; proposal and meeting messages are a rep's choice.
+ * E3b-2a: `reply_draft` (a rep's Send of an AI reply draft) follows the automated rules (send window).
+ */
+export type SafetySource = "scheduled_action" | "proposal" | "meeting" | "agent" | "reply_draft";
 
 export interface SendWindow {
   /** ISO weekdays, 1 = Monday. */
@@ -62,7 +65,7 @@ export const FIRST_MESSAGE_LINK_REASON = "First WhatsApp message can't contain a
 export const OPT_OUT_LINE = "Reply STOP to opt out.";
 
 export function isAutomated(source: SafetySource): boolean {
-  return source === "scheduled_action" || source === "agent";
+  return source === "scheduled_action" || source === "agent" || source === "reply_draft";
 }
 
 /** Effective daily cap during warm-up of a newly paired number. */

@@ -29,6 +29,7 @@ import { imapOf, loadEmailConnection, recordEmailEvent } from "./emailConnection
 import { checkAutoPause } from "./emailOutbound.service.js";
 import { emailReplyAad } from "./inboundReplies.service.js";
 import { applyReplyEffects, applyReplyLabel } from "./replyLabels.service.js";
+import { markReplyForDraft } from "./replyDrafts.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { ensureReplyTask, stopAutomationForReply } from "./whatsapp-inbound.service.js";
@@ -439,4 +440,6 @@ async function applyReply(db: Queryable, workspaceId: string, eventId: string, p
   } else {
     await applyReplyLabel(db, { ...label, label: "unclassified", source: "keyword", status: "skipped" });
   }
+  // E3b-2a rule 1: a suggested reply for the owner (written by the worker once the label is known).
+  await markReplyForDraft(db, { channel: "email", eventId, leadId: lead.id, eligible: Boolean(text || subject) && wasManaged && mode !== "off" && Boolean(lead.owner_id) });
 }

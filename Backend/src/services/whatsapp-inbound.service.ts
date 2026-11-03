@@ -11,6 +11,7 @@ import type { AgentMode, AgentStatus } from "../agent/rules.js";
 import { matchReplyKeyword } from "../domain/replyKeywords.js";
 import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { applyReplyLabel } from "./replyLabels.service.js";
+import { markReplyForDraft } from "./replyDrafts.service.js";
 
 export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
@@ -187,6 +188,8 @@ export async function processInboundUpsert(workspaceId: string, event: { message
           } else {
             await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: "unclassified", source: "keyword", status: "skipped" });
           }
+          // E3b-2a rule 1: a suggested reply for the owner (written by the worker once the label is known).
+          await markReplyForDraft(db, { channel: "whatsapp", eventId: id, leadId: lead.id, eligible: hasText && wasManaged && mode !== "off" && Boolean(lead.owner_id) });
         }
       }
 

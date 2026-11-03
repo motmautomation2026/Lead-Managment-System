@@ -17,6 +17,8 @@ import { createOpenAIDecisionModel, getDefaultEmbedder } from "./providers/opena
 import { runAgentTick } from "./services/agentRunner.service.js";
 import { runAgentSends } from "./services/agentSends.service.js";
 import { runReplyClassification } from "./services/replyClassifier.service.js";
+import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.service.js";
+import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runDealSweep } from "./services/deals.service.js";
 
@@ -207,6 +209,32 @@ async function tick(): Promise<void> {
     return [];
   });
   if (labelled.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
+
+  // E3b-2a: suggested replies for reps (after the labels), behind AGENT_RUNNER_ENABLED.
+  const drafted = await runReplyDrafts(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }).catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Reply drafts failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (drafted.length) console.log(`[worker] Reply drafts: ${drafted.map((d) => d.result).join(", ")}.`);
+
+  // E3b-2a: a rep's Send of a WhatsApp reply draft (emails go through runEmailOutbound above); no flag: the rep chose to send.
+  const replySends = await runReplyDraftSends({ dryRun: env.WORKER_DRY_RUN }).catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Reply sends failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (replySends.length) console.log(`[worker] Reply WhatsApp sends: ${replySends.map((s) => s.result).join(", ")}.`);
+
+  // E3b-2a: unanswered reply tasks (2 working hours → admins) and meetings with no outcome after 2 days (owner task).
+  const escalated = await runReplyEscalation().catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Reply escalation failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (escalated.length) console.log(`[worker] Reply tasks escalated: ${escalated.length}.`);
+  const outcomeTasks = await runMeetingOutcomeTasks().catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Meeting outcome tasks failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return [];
+  });
+  if (outcomeTasks.length) console.log(`[worker] Meeting outcome tasks: ${outcomeTasks.length}.`);
 
   // E2: the AI's queued WhatsApp sends (its emails go through runEmailOutbound above), behind AGENT_RUNNER_ENABLED.
   const aiSends = await runAgentSends(env.AGENT_RUNNER_ENABLED, { dryRun: env.WORKER_DRY_RUN }).catch((err: { code?: string; name?: string }) => {

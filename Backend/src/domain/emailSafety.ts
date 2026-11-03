@@ -8,7 +8,7 @@ import { automatedWindow, nextDayWindowTime, nextWindowTime, PAUSED_RETRY_MS, wa
  * inputs; nothing here reads the clock or a DB.
  */
 
-export type EmailSource = "scheduled_action" | "proposal" | "meeting" | "test" | "agent";
+export type EmailSource = "scheduled_action" | "proposal" | "meeting" | "test" | "agent" | "reply_draft";
 
 export { warmupDayFor, type SendWindow };
 
@@ -46,9 +46,9 @@ export const NOT_CONFIGURED_RETRY_MS = 15 * MINUTE_MS;
 export const MAX_EMAIL_ATTEMPTS = 5;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
-/** Workflow steps and the AI agent; proposal, meeting and test emails are a person's choice. */
+/** Workflow steps, the AI agent and (E3b-2a, send window only) a rep's Send of an AI reply draft; proposal, meeting and test emails are a person's choice. */
 export function isAutomatedEmail(source: EmailSource): boolean {
-  return source === "scheduled_action" || source === "agent";
+  return source === "scheduled_action" || source === "agent" || source === "reply_draft";
 }
 
 /** Effective daily cap during warm-up of a newly configured mailbox. */

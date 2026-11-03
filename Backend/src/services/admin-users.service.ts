@@ -81,8 +81,8 @@ export interface UpdateSalespersonInput {
 }
 
 export async function updateSalesperson(actor: Actor, input: UpdateSalespersonInput) {
-  const existing = await pool.query<{ id: string; full_name: string; email: string; is_active: boolean }>(
-    `select id, full_name, email, is_active from public.profiles where id = $1 and role = 'salesperson'`,
+  const existing = await pool.query<{ id: string; full_name: string; email: string; is_active: boolean; booking_url: string | null }>(
+    `select id, full_name, email, is_active, booking_url from public.profiles where id = $1 and role = 'salesperson'`,
     [input.id],
   );
   const existingProfile = existing.rows[0];
@@ -131,6 +131,10 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
         });
       }
       if (input.password !== undefined) await recordAdminAudit(db, actor, "user.password_reset", "profile", input.id);
+      // E3b-2a rule 7b: an admin changed someone else's booking link (the AI adds it to their messages).
+      if (input.bookingUrl !== undefined && input.id !== actor.id && (input.bookingUrl ?? null) !== existingProfile.booking_url) {
+        await recordAdminAudit(db, actor, "user.booking_url_changed", "profile", input.id, { removed: input.bookingUrl === null, hadLink: existingProfile.booking_url !== null });
+      }
       if (input.active !== undefined) {
         await recordAdminAudit(db, actor, input.active ? "user.reactivated" : "user.deactivated", "profile", input.id);
       }
