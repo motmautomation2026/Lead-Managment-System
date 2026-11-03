@@ -74,7 +74,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `050`).
+  (currently `051`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -85,7 +85,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not bypass Supabase Auth or trust client-supplied user IDs.
 - Do not put service-role keys, provider secrets, encryption keys, or SMTP credentials in the frontend.
 - Do not duplicate business routing tables in React.
-- Do not send provider messages from manual Email/WhatsApp activity buttons.
+- Sends come only from workflows, the AI agent, rep proposal/meeting messages and (E3b-2a) a rep's deliberate Send of an AI
+  reply draft, which is a third allowed send kind (after workflows and the AI): always queued and sent by the worker, never
+  inside the request. Manual Email/WhatsApp activity buttons still never send.
 - Do not execute workflow sends in request/response handlers; use the worker.
 - Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
 - Inbound email reply text (D3) follows the same rules: subject + text (quoted history stripped, never HTML or attachments)
@@ -98,7 +100,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `050`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `051`).
 
 ## Way of working
 
@@ -112,7 +114,8 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
 
 ## WhatsApp safety (E1)
 
-- Every WhatsApp send — workflow steps, rep proposal/meeting messages and (E2) the AI agent — goes through
+- Every WhatsApp send — workflow steps, rep proposal/meeting messages, (E2) the AI agent and (E3b-2a) a rep's Send of an AI
+  reply draft (source `reply_draft`, follows the automated send window) — goes through
   `domain/whatsappSafety.ts` `decideSend` inside `performSend` (`providers/baileys.manager.ts`). **E2 must route agent sends
   through it** (source `agent` = automated). No other code path may call `sendMessage`.
 - Rules (per workspace, admin-adjustable): 1 spacing random 45–120 s between any two sends; 2 "typing…" ~2–8 s by length
@@ -129,7 +132,8 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
 
 ## Email safety (E1b)
 
-- Every email — workflow steps, rep proposal/meeting emails, the Settings test and (E2) the AI agent — is a row in
+- Every email — workflow steps, rep proposal/meeting emails, the Settings test, (E2) the AI agent and (E3b-2a) a rep's Send of
+  an AI reply draft (source `reply_draft`, follows the automated send window, threaded to the lead's Message-ID) — is a row in
   `email_outbound_messages` (`enqueueEmail`, one per source) and is sent only by the worker (`runEmailOutbound` →
   `processEmail`), through `domain/emailSafety.ts` `decideEmailSend`. **E2's AI emails must be queued the same way**
   (source `agent` = automated). No request handler sends email; nothing else may call `sendMail`.
@@ -290,3 +294,20 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   `domain/replyKeywords.ts`), else by the worker's AI step (AI contacts, non-off mode, budget left). `asked_to_stop` → WhatsApp
   opted out + AI stopped (permanent); `not_interested`/`annoyed` → AI stopped (permanent); never Do Not Contact (a rep
   decision). A rep's correction never undoes these.
+- Reply drafts (E3b-2a, `services/replyDrafts.service.ts`, `domain/replyDrafts.ts`): a matched reply (WhatsApp or email) on a contact
+  the AI managed before it (the D4a condition; a contact already handed off by an earlier reply gets none), mode not off, gets ONE
+  suggested reply for the owner, written by the worker (behind `AGENT_RUNNER_ENABLED`) once its label is known: only for
+  `positive|question|other|unclassified`, never DNC / opted-out channel / no budget / daily cap reached. Same writer + checker, code
+  checks, word limit (60 / 120, body only), the reply only inside the delimited `reply` block (never logged or stored), one
+  regeneration, else a `failed` row (no draft; the task stays). Each draft counts in `MONTH_SPEND_SQL` and `DAY_DECISIONS_SQL`
+  (the daily cap). A newer matched reply supersedes the open draft. The AI never sends a draft (it stays `handed_off`); the owner or
+  an admin sends it (edited or not; the word limit still applies, 400) or discards it. The Send is exempt from the AI touch limits
+  (48 h gap, 2 per week, 8 total) but not from the channel rules (send window, spacing, caps, warm-up, pause, opt-out, DNC, channel
+  status, re-check before sending); it marks the reply task done; one send per draft.
+- Escalation (E3b-2a, `services/workReminders.service.ts`, every tick, no flag): a reply task still open 2 working hours after it
+  was created (working hours = the workspace's `agent_settings` send window, IST) → one notification to the admins, once
+  (`tasks.escalated_at`), at most 20 per workspace per tick. A meeting 2–30 days past with no outcome → one owner task "Log the
+  meeting outcome" (`meetings.outcome_task_created_at`).
+- Meeting recap (E3b-2a): when the meeting notes say the lead is deciding or consulting someone (`leadIsDeciding`), the angle is
+  `meeting_recap_deciding` (not a call angle: no suggested days, no booking line); "as agreed" / "as discussed" need an agreement
+  in the notes (`unsupported_agreement`, fixable).

@@ -609,3 +609,28 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   flags a promised follow-up time; `meeting_recap` offers help with questions, not a call slot, when the lead will decide later or
   consult someone. `agent:model-test` `--only`, `--channel`, `--max-cost` (above).
 
+- **E3b-2a (reply drafts for reps, 2-hour escalation, small fixes; nothing sent by the AI):** CLAUDE.md slimmed ("Completed so
+  far" moved here). Migration 051: `reply_drafts` (one per matched reply: WhatsApp message id or email event id, channel, our subject
+  + body, `in_reply_to` = the lead's Message-ID header, status `open|sent|discarded|superseded|failed`, failed check NAMES, model /
+  tokens / cost, the rep's `sent_body` / `edited` / `sent_by`, delivery `send_status|send_next_at|sent_at|send_error`; never the
+  lead's text; RLS on, no policies), `draft_status|draft_attempts|draft_next_at` on both inbound event tables,
+  `whatsapp_outbound_messages.reply_draft_id` (5th source), email source `reply_draft`, `tasks.escalated_at`,
+  `meetings.outcome_task_created_at`. Pure `domain/replyDrafts.ts` (`draftSkipReason`, `contactSendProblem`, `replySendProblem` —
+  no touch history, so the AI's 48 h / 2 per week / 8 total limits never apply — `replySendAt`, `addWorkingTime`, `escalationDue`).
+  `services/replyDrafts.service.ts`: `markReplyForDraft` (both ingestions: supersede open drafts + pending steps of the contact;
+  pending only under the D4a condition), `runReplyDrafts` (worker, behind `AGENT_RUNNER_ENABLED`, after the label step; budget,
+  daily cap (`DAY_DECISIONS_SQL` = decisions + drafts) and channel checks before any call; `buildAgentContext` +
+  `buildReplyDraftMessages` / `buildReplyDraftGroundingMessages` in `agent/prompt.ts`; polish, `checkMessage` (conversation exists,
+  subject from code), grounding; one regeneration; `writeReplyDraft`), `sendReplyDraft` / `discardReplyDraft` (owner/admin, open
+  only, idempotent, 400 word limit, 409 DNC/opt-out/status, queued until the channel window opens, reply task completed),
+  `runReplyDraftSends` (WhatsApp via `performSend`, `loadSourceEligibility` case `reply_draft`), `recordReplyDraftOutcome` (also
+  from `emailOutbound.service.ts`; timeline "Reply sent on WhatsApp/email", failure → the rep notified). `isAutomated` /
+  `isAutomatedEmail` include `reply_draft` (send window). `MONTH_SPEND_SQL` adds draft cost. `services/workReminders.service.ts`:
+  `runReplyEscalation` (2 working hours, once, admins, 20 per workspace, oldest first) and `runMeetingOutcomeTasks` (meetings 2–30
+  days past, no outcome, once). Rohit fix: `leadIsDeciding` (meeting notes) → angle `meeting_recap_deciding` (not in
+  `CALL_ANGLES`); fixable code check `unsupported_agreement` (`agreementClaim`: "as agreed/discussed" unless the notes or a
+  call/note say "agreed") + checker example. Admin booking-link change on someone else → `admin_audit_events`
+  `user.booking_url_changed`. API (`B4-api.md` §7q): timeline `reply.drafting` / `reply.draft`, `GET /contacts/:id/reply-drafts/
+  latest`, `POST …/reply-drafts/:draftId/send|discard`. Frontend: `features/crm/suggested-reply-card.tsx` (`SuggestedReplyCard`,
+  `LatestSuggestedReply`) on the Activity reply row and the reply task's Sheet; `useLatestReplyDraft`, `useReplyDraftActions`; angle
+  label and `CHECK_LABEL.unsupported_agreement`. Integration: `replyDrafts.test.ts`, `freshInboundSunday.test.ts` (E3b-1 7c).
