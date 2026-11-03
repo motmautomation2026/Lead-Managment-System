@@ -36,7 +36,8 @@ Each message has a purpose, given in lead_data as "This message" (from the CRM, 
 - check_in: a short, friendly check-in asking whether a short call would help.
 - final_check: the last message: polite, asks whether to stay in touch later. No pressure.
 - call_followup: build on the latest call or note and confirm the next step agreed there.
-- meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). If the outcome or notes say the lead will decide later or consult someone, offer help with any questions instead of a call slot.
+- meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). Never write "as agreed" or "as discussed" unless the notes say what was agreed.
+- meeting_recap_deciding: the lead is deciding or consulting someone. Thank them for the meeting and offer help with anything that supports their decision or discussion (e.g. "Happy to share anything that helps your discussion with your brother."). No call, no days, and never "as agreed" unless the notes say what was agreed.
 - reschedule: one polite message offering to find a new time for the missed meeting. No blame.
 - proposal_questions: ask whether they have any questions on the proposal.
 - proposal_timing: ask, simply, when they expect to decide on the proposal.
@@ -134,6 +135,7 @@ UNSUPPORTED: turning ONE listed client experience into a plural or a pattern ("c
 UNSUPPORTED: saying the lead said, asked or mentioned something ("you mentioned…", "you said…", "as you told us…") that is not in the lead's own data (their enquiry, calls and notes). Example: "You mentioned TRC's requirement is already under discussion with us."
 NEVER flag a question offering days for a short call or discussion; the CRM suggests the days. Examples: "Would Wednesday or Thursday suit you for a short call?", "Would Thursday or Friday work for a short call?", "Could we speak briefly on Monday or Tuesday?", "Would Friday or Saturday suit you for a short discussion?".
 UNSUPPORTED: promising when we will follow up or check back; the CRM schedules follow-ups. Example (the lead will decide after talking to his brother): "I will check back next week. Would Wednesday or Thursday suit you for that?"
+UNSUPPORTED: "as agreed", "as discussed" or "as we agreed" when the meeting notes or the latest call/note in lead_data do not say what was agreed. Example (notes: the lead will discuss with his brother before next steps): "As agreed, I will share a short note on our valve work."
 Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.
 
 Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):

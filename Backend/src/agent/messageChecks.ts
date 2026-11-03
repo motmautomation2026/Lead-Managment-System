@@ -86,7 +86,8 @@ export interface MessageViolation {
     | "internal_info_leak"
     | "attachment_mention"
     | "subject_style"
-    | "contact_details";
+    | "contact_details"
+    | "unsupported_agreement";
   message: string;
 }
 
@@ -104,6 +105,8 @@ export interface MessageFacts {
   leadCompany: string;
   /** E3a rule 7: an email is a follow-up in a thread; its subject comes from code, not the model. */
   threaded: boolean;
+  /** E3b-2a rule 6: the meeting notes or a call/note record an agreement ("agreed"), so "as agreed" may refer to it. */
+  agreementNoted?: boolean;
 }
 
 export function messageFactsOf(ctx: AgentContext): MessageFacts {
@@ -116,6 +119,9 @@ export function messageFactsOf(ctx: AgentContext): MessageFacts {
     internalTexts: [ctx.internal.companyDescription, ctx.internal.deal.open?.name].filter((t): t is string => Boolean(t)),
     leadCompany: ctx.company?.name ?? ctx.lead.company,
     threaded: Boolean(ctx.emailThread),
+    agreementNoted: [ctx.latestMeeting?.notes, ...ctx.timeline.filter((t) => t.kind === "call" || t.kind === "note" || t.kind === "meeting").map((t) => `${t.title} ${t.detail ?? ""}`)].some(
+      (text) => Boolean(text && /\bagree(?:d|ment)\b/i.test(text)),
+    ),
   };
 }
 
@@ -124,6 +130,11 @@ const tokens = (text: string) => withoutUrls(text).toLowerCase().replace(/[â€™â€
 const contains = (words: string[], phrase: string) => ` ${words.join(" ")} `.includes(` ${tokens(phrase).join(" ")} `);
 
 const THANKS_TARGETS = ["contacting", "reaching out", "getting in touch", "your enquiry", "your inquiry", "your interest", "writing to us", "filling", "submitting", "sharing"];
+
+/** E3b-2a rule 6: an "as agreed" / "as discussed" claim in the text, or null. */
+export function agreementClaim(text: string): string | null {
+  return text.match(/\bas (?:we )?(?:agreed|discussed)\b|\bas per our (?:discussion|conversation|call|agreement)\b|\blike we (?:agreed|discussed)\b/i)?.[0] ?? null;
+}
 
 /** E2c rule 1: "thank you" / "thanks" followed within 6 words by a reason for reaching out. */
 export function hasInboundThanks(text: string): boolean {
@@ -241,6 +252,10 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
   }
 
   if (!facts) return violations;
+  const agreement = agreementClaim(decision.body);
+  if (agreement && !facts.agreementNoted) {
+    violations.push({ rule: "unsupported_agreement", message: `"${agreement}": the notes don't record what was agreed. Don't refer to an agreement or a discussion's outcome.` });
+  }
   if (facts.inboundFirst && !hasInboundThanks(decision.body)) {
     violations.push({ rule: "not_thanking_inbound", message: 'This is the first message to an inbound lead: thank them for reaching out (e.g. "Thank you for contacting us").' });
   }

@@ -395,6 +395,7 @@ describe("E3b-1b: the suggested-day question and the meeting recap", () => {
     expect(system).toContain(`Example (the lead will decide after talking to his brother): "${rohit}"`);
     const writer = buildDecisionMessages(sampleContext(), settings, NOW)[0]!.content;
     expect(writer).toContain('- Never promise when you will follow up ("I will check back next week"): the system schedules follow-ups.');
-    expect(writer).toContain("If the outcome or notes say the lead will decide later or consult someone, offer help with any questions instead of a call slot.");
+    // E3b-2a rule 6: the deciding case is its own angle (no call) instead of a sentence in meeting_recap.
+    expect(writer).toContain("meeting_recap_deciding: the lead is deciding or consulting someone.");
   });
 });

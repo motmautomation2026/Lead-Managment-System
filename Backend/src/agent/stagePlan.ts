@@ -27,6 +27,7 @@ export const ANGLES = [
   "final_check",
   "call_followup",
   "meeting_recap",
+  "meeting_recap_deciding",
   "reschedule",
   "proposal_questions",
   "proposal_timing",
@@ -42,7 +43,8 @@ export const ANGLE_RULES: Record<Angle, string> = {
   check_in: "check_in: a short, friendly check-in asking whether a short call would help.",
   final_check: "final_check: the last message: polite, asks whether to stay in touch later. No pressure.",
   call_followup: "call_followup: build on the latest call or note and confirm the next step agreed there.",
-  meeting_recap: "meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). If the outcome or notes say the lead will decide later or consult someone, offer help with any questions instead of a call slot.",
+  meeting_recap: "meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). Never write \"as agreed\" or \"as discussed\" unless the notes say what was agreed.",
+  meeting_recap_deciding: "meeting_recap_deciding: the lead is deciding or consulting someone. Thank them for the meeting and offer help with anything that supports their decision or discussion (e.g. \"Happy to share anything that helps your discussion with your brother.\"). No call, no days, and never \"as agreed\" unless the notes say what was agreed.",
   reschedule: "reschedule: one polite message offering to find a new time for the missed meeting. No blame.",
   proposal_questions: "proposal_questions: ask whether they have any questions on the proposal.",
   proposal_timing: "proposal_timing: ask, simply, when they expect to decide on the proposal.",
@@ -57,6 +59,7 @@ export const ANGLE_LABELS: Record<Angle, string> = {
   final_check: "final check",
   call_followup: "call follow-up",
   meeting_recap: "meeting recap",
+  meeting_recap_deciding: "meeting recap (lead deciding)",
   reschedule: "reschedule",
   proposal_questions: "proposal questions",
   proposal_timing: "decision timing",
@@ -73,7 +76,7 @@ export const STAGE_LABELS: Record<StageKey, string> = {
   long_term: "Long-term nurture",
 };
 
-/** E3b-1 rule 5: angles that ask for a call (the booking link and the suggested days go with them). */
+/** E3b-1 rule 5: angles that ask for a call (the booking link and the suggested days go with them). meeting_recap_deciding never does (E3b-2a rule 6). */
 export const CALL_ANGLES: readonly Angle[] = ["welcome", "check_in", "reschedule", "meeting_recap", "proposal_timing", "call_followup"];
 
 const JOURNEY: readonly Angle[] = ["welcome", "insight", "client_experience", "check_in"];
@@ -98,7 +101,7 @@ export interface StagePlanInput {
   /** The latest call or note a rep logged. */
   lastCallOrNoteAt: Date | null;
   /** The contact's latest meeting (by scheduled time). */
-  latestMeeting: { status: string; outcome: string | null; scheduledAt: Date; hasNotes: boolean } | null;
+  latestMeeting: { status: string; outcome: string | null; scheduledAt: Date; hasNotes: boolean; deciding?: boolean } | null;
   /** Any meeting still to happen (an upcoming status, scheduled in the future). */
   hasUpcomingMeeting: boolean;
   latestProposal: { status: string; sentAt: Date | null } | null;
@@ -233,7 +236,7 @@ export function stagePlan(input: StagePlanInput): StagePlan | null {
     if (done >= MEETING_HELD_MAX) return noSend("meeting_held_no_proposal", "2 messages after the meeting: the rep owns the next step", REP_OWNED_WAIT_DAYS);
     const notes = meeting.hasNotes ? "" : " (no meeting notes: thanks and the next step only)";
     return done === 0
-      ? send("meeting_held_no_proposal", "meeting_recap", `meeting held (${meeting.outcome.replace(/_/g, " ")})${notes}`)
+      ? send("meeting_held_no_proposal", meeting.deciding ? "meeting_recap_deciding" : "meeting_recap", `meeting held (${meeting.outcome.replace(/_/g, " ")})${notes}`)
       : send("meeting_held_no_proposal", "check_in", "meeting held, recap already sent");
   }
 
@@ -242,6 +245,14 @@ export function stagePlan(input: StagePlanInput): StagePlan | null {
     return journey("after_call", "continuing after the call");
   }
   return journey("new_no_contact", input.touches.length ? `message ${input.touches.length + 1}, no reply yet` : "first message");
+}
+
+// E3b-2a rule 6: the notes say the lead will decide later or talk it over with someone first.
+const DECIDING_RE =
+  /\b(?:discuss|consult|check|talk|speak)\w*\s+(?:it\s+|this\s+)?(?:over\s+)?with\s+(?:his|her|their|the|my|our)\b|\b(?:decide|decision)\s+later\b|\bwill\s+(?:decide|think|get back|revert)\b|\bthink\s+(?:it\s+)?over\b|\binternal(?:ly)?\s+(?:discussion|review|approval)\b|\bbefore\s+(?:deciding|next steps|committing)\b/i;
+
+export function leadIsDeciding(notes: string | null): boolean {
+  return Boolean(notes && DECIDING_RE.test(notes));
 }
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

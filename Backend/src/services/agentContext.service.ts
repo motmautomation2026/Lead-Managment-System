@@ -2,7 +2,7 @@ import type { Queryable } from "../dto.js";
 import { NotFoundError } from "../errors.js";
 import type { LeadLossReason, LifecycleState, ObjectionType, PipelineStage } from "../domain/enums.js";
 import { emailUsable, isFreshInbound, whatsappUsable, type AgentMode, type AgentRuleSettings, type AgentStatus, type RulesContext } from "../agent/rules.js";
-import { stagePlan, type StagePlan, type StagePlanInput } from "../agent/stagePlan.js";
+import { leadIsDeciding, stagePlan, type StagePlan, type StagePlanInput } from "../agent/stagePlan.js";
 import { buildKbQuery } from "../agent/kbQuery.js";
 import { situationOf } from "../agent/situation.js";
 import { signalsOf } from "../agent/signals.js";
@@ -474,7 +474,7 @@ export async function buildAgentContext(
     openDealStage: context.internal.deal.open?.stage ?? null,
     lastCallOrNoteAt: rules.lastRepActivityAt,
     latestMeeting: meeting
-      ? { status: meeting.status, outcome: meeting.outcome, scheduledAt: new Date(meeting.scheduledAt), hasNotes: Boolean(meeting.notes?.trim()) }
+      ? { status: meeting.status, outcome: meeting.outcome, scheduledAt: new Date(meeting.scheduledAt), hasNotes: Boolean(meeting.notes?.trim()), deciding: leadIsDeciding(meeting.notes) }
       : null,
     hasUpcomingMeeting: stage.has_upcoming,
     latestProposal: stage.proposal ? { status: stage.proposal.status, sentAt: stage.proposal.sentAt ? new Date(stage.proposal.sentAt) : null } : null,

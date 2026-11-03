@@ -196,7 +196,7 @@ function stageLines({ stagePlan: plan, latestMeeting }: AgentContext, now: Date 
   const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
   if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
   if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`);
-  if (plan.angle === "meeting_recap" && latestMeeting) {
+  if ((plan.angle === "meeting_recap" || plan.angle === "meeting_recap_deciding") && latestMeeting) {
     lines.push(`Meeting outcome: ${words(latestMeeting.outcome)}`, `Meeting notes: ${latestMeeting.notes ?? "none"}`);
   }
   return lines;
@@ -416,6 +416,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     'UNSUPPORTED: saying the lead said, asked or mentioned something ("you mentioned…", "you said…", "as you told us…") that is not in the lead\'s own data (their enquiry, calls and notes). Example: "You mentioned TRC\'s requirement is already under discussion with us."',
     `NEVER flag a question offering days for a short call or discussion; the CRM suggests the days. Examples: ${DAY_QUESTION_EXAMPLES}.`,
     'UNSUPPORTED: promising when we will follow up or check back; the CRM schedules follow-ups. Example (the lead will decide after talking to his brother): "I will check back next week. Would Wednesday or Thursday suit you for that?"',
+    'UNSUPPORTED: "as agreed", "as discussed" or "as we agreed" when the meeting notes or the latest call/note in lead_data do not say what was agreed. Example (notes: the lead will discuss with his brother before next steps): "As agreed, I will share a short note on our valve work."',
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     "",
     ...styleCheckLines(),
