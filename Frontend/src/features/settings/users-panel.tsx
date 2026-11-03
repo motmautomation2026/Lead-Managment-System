@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { bookingUrlField } from "./booking-url";
 
 /** Settings → Users (admins): today's Admin page — list, create, edit, deactivate / reactivate. */
 export function UsersPanel() {
@@ -93,9 +94,17 @@ function UserEditor({ user }: { user: AdminUser }) {
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
   const [password, setPassword] = useState("");
+  const [bookingUrl, setBookingUrl] = useState(user.bookingUrl ?? "");
+  const bookingCheck = bookingUrlField.safeParse(bookingUrl);
+  const bookingError = bookingCheck.success ? null : bookingCheck.error.issues[0]?.message;
   const mutation = useMutation({
-    mutationFn: (input: { name?: string; email?: string; password?: string; active?: boolean }) =>
-      backend.admin.users.update(user.id, input),
+    mutationFn: (input: {
+      name?: string;
+      email?: string;
+      password?: string;
+      active?: boolean;
+      bookingUrl?: string | null;
+    }) => backend.admin.users.update(user.id, input),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.adminUsers });
       setPassword("");
@@ -121,11 +130,31 @@ function UserEditor({ user }: { user: AdminUser }) {
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
+        <div className="md:col-span-3">
+          <Field label="Booking link (optional)">
+            <Input
+              type="url"
+              inputMode="url"
+              placeholder="https://calendly.com/name"
+              aria-invalid={Boolean(bookingError)}
+              value={bookingUrl}
+              onChange={(e) => setBookingUrl(e.target.value)}
+            />
+          </Field>
+          {bookingError && <p className="mt-1 text-xs text-destructive">{bookingError}</p>}
+        </div>
         <div className="flex gap-2">
           <Button
             size="sm"
-            disabled={mutation.isPending}
-            onClick={() => mutation.mutate({ name, email, ...(password ? { password } : {}) })}
+            disabled={mutation.isPending || Boolean(bookingError)}
+            onClick={() =>
+              mutation.mutate({
+                name,
+                email,
+                bookingUrl: bookingUrl.trim() || null,
+                ...(password ? { password } : {}),
+              })
+            }
           >
             Save
           </Button>

@@ -1,3 +1,4 @@
+import { composeOutgoing } from "../agent/composeMessage.js";
 import { modelSettingProblem } from "../agent/modelSetting.js";
 import { costUsd, priceOf, type ModelPrices } from "../agent/pricing.js";
 import type { DecisionModel } from "../providers/openai.provider.js";
@@ -77,6 +78,8 @@ export interface ContactRun {
   name: string;
   /** E3b-1: "Stage: … · Angle: …" (the stage plan the decision was made under); null = none. */
   stage: string | null;
+  /** E3b-1 rule 5: the composed message got the owner's booking line (null = no message). */
+  bookingLink: boolean | null;
   /** send / wait / stop / "handoff: <title>" / "error: <text>". */
   outcome: string;
   /** A message was written (it went through the checks). */
@@ -124,7 +127,19 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
     const d = draft.decision;
     const sent = d.action === "send_email" || d.action === "send_whatsapp";
     const shown = draft.failedAttempt?.rules.finalDecision ?? d;
+    const composed =
+      shown.action === "send_email" || shown.action === "send_whatsapp"
+        ? composeOutgoing(shown, {
+            ownerName: ctx.lead.ownerName ?? "The team",
+            companyName: ctx.companyName,
+            settings: ctx.settings,
+            isFirstWhatsApp: !ctx.rules.hasSentWhatsApp,
+            bookingUrl: ctx.lead.ownerBookingUrl,
+            angle: plan?.angle ?? null,
+          })
+        : null;
     return {
+      bookingLink: composed ? composed.bookingLinkAdded : null,
       ...base,
       outcome: sent ? "send" : d.action === "handoff" ? `handoff: ${d.title}` : d.action,
       wroteMessage: sent || Boolean(draft.failedAttempt),
@@ -144,7 +159,7 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
     };
   } catch (error) {
     const outcome = `error: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200);
-    return { ...base, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
+    return { ...base, bookingLink: null, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
   }
 }
 
@@ -184,6 +199,7 @@ function contactSection(leadId: string, combos: Combo[], runs: ContactRun[]): st
         `**${combo.label}**: ${r.outcome}`,
         "",
         ...(r.stage ? [r.stage, ""] : []),
+        ...(r.bookingLink === null ? [] : [`Booking link added: ${r.bookingLink ? "yes" : "no"}`, ""]),
         ...(r.subject ? [`Subject: ${r.subject}`, ""] : []),
         ...(r.body ? [quoted(r.body), ""] : []),
         ...r.failedAttempts.flatMap((a) => [`Failed attempt ${a.attempt}:`, ...a.problems.map((p) => `- ${p}`), "", quoted(a.message), ""]),

@@ -37,7 +37,10 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   const workspaces: string[] = [];
 
   // Outbound (linkedin) by default: an inbound first message must thank the lead (E2c), tested on its own below.
-  async function scenario(settings: { mode?: string; monthly_budget_usd?: number; nurture_long_term?: boolean; playbook?: boolean; source?: string } = {}) {
+  // E3b-1: channels alternate from first_channel (default WhatsApp); email-first tests set it.
+  async function scenario(
+    settings: { mode?: string; monthly_budget_usd?: number; nurture_long_term?: boolean; playbook?: boolean; source?: string; firstChannel?: "email" | "whatsapp" } = {},
+  ) {
     const ws = randomUUID();
     await createTestWorkspace(pool, "runner", { id: ws });
     workspaces.push(ws);
@@ -47,9 +50,9 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     await pool.query(
       `update public.agent_settings
           set mode = $2, send_days = '{1,2,3,4,5,6,7}', send_window_start = '00:00', send_window_end = '23:59',
-              monthly_budget_usd = $3, nurture_long_term = $4, current_playbook_version = $5
+              monthly_budget_usd = $3, nurture_long_term = $4, current_playbook_version = $5, first_channel = $6
         where workspace_id = $1`,
-      [ws, settings.mode ?? "shadow", settings.monthly_budget_usd ?? 100, settings.nurture_long_term ?? false, settings.playbook === false ? null : 1],
+      [ws, settings.mode ?? "shadow", settings.monthly_budget_usd ?? 100, settings.nurture_long_term ?? false, settings.playbook === false ? null : 1, settings.firstChannel ?? "whatsapp"],
     );
     const lead = await pool.query(
       `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, agent_status, pipeline_stage)
@@ -97,7 +100,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("happy path: one draft row with tokens and cost, a timer at next_wake_at, a timeline row, the wakeup done; nothing sent", async () => {
-    const { ws, leadId, wakeupId } = await scenario();
+    const { ws, leadId, wakeupId } = await scenario({ firstChannel: "email" });
     const model = createFakeDecisionModel({ decisions: [EMAIL] });
     const before = Date.now();
     expect(await tick(ws, model)).toEqual([{ wakeupId, leadId, result: "draft", action: "send_email" }]);
@@ -135,15 +138,16 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     expect(lead).toEqual({ agent_status: "active", agent_touch_count: 0, agent_last_touch_at: null, pipeline_stage: "connected_qualifying" });
 
     // A second wakeup soon after: the shadow draft counts as a touch, so the 48 h gap applies.
+    // E3b-1: channels alternate, so the second message is a WhatsApp.
     await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 minute' where id = $1`, [timer.id]);
-    await tick(ws, model);
+    await tick(ws, createFakeDecisionModel({ decisions: [{ action: "send_whatsapp", body: "Hi Asha, would a short call on Thursday suit you?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." }] }));
     const [first, second] = await decisions(leadId);
-    expect(second.action).toBe("send_email");
+    expect(second.action).toBe("send_whatsapp");
     expect(second.send_at.getTime() - first.send_at.getTime()).toBeGreaterThanOrEqual(48 * HOUR - MIN);
   });
 
   it("a rules violation is regenerated once, then succeeds", async () => {
-    const { ws, leadId } = await scenario();
+    const { ws, leadId } = await scenario({ firstChannel: "email" });
     const model = createFakeDecisionModel({ decisions: [TOO_LONG, EMAIL] });
     await tick(ws, model);
     const [row] = await decisions(leadId);
@@ -153,7 +157,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("failures record a handoff draft keeping the failed message, with regenerated=true (a fixable problem gets two regenerations, E2f)", async () => {
-    const { ws, leadId } = await scenario();
+    const { ws, leadId } = await scenario({ firstChannel: "email" });
     const model = createFakeDecisionModel({ decisions: [TOO_LONG, TOO_LONG] });
     expect((await tick(ws, model))[0]).toMatchObject({ result: "draft", action: "handoff" });
     const [row] = await decisions(leadId);
@@ -178,7 +182,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("grounding supported=false is regenerated with the unsupported claims", async () => {
-    const { ws, leadId } = await scenario();
+    const { ws, leadId } = await scenario({ firstChannel: "email" });
     const model = createFakeDecisionModel({
       decisions: [EMAIL],
       grounding: [{ supported: false, unsupportedClaims: ["200 clients"] }, { supported: true, unsupportedClaims: [] }],
@@ -289,7 +293,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("claims at most one wakeup per lead: a stale executing row and a due pending one → only the earliest", async () => {
-    const { ws, leadId, wakeupId: pending } = await scenario();
+    const { ws, leadId, wakeupId: pending } = await scenario({ firstChannel: "email" });
     const stale = await wakeup(ws, leadId, { status: "executing", claimedAgo: "20 minutes", attempts: 1 });
     // The stale row is the earlier one.
     await pool.query(`update public.agent_wakeups set due_at = now() - interval '1 hour' where id = $1`, [stale]);
@@ -310,7 +314,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("an event wakeup arriving during processing merges with the new timer", async () => {
-    const { ws, leadId } = await scenario();
+    const { ws, leadId } = await scenario({ firstChannel: "email" });
     const { enqueueWakeup } = await import("../../src/services/agentWakeups.service.js");
     const fake = createFakeDecisionModel({ decisions: [EMAIL] });
     const eventDue = new Date(Date.now() + HOUR);
@@ -330,7 +334,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
   });
 
   it("D1: a decision records the company and open deal it saw; review detail and the lead panel return them", async () => {
-    const { ws, leadId, wakeupId } = await scenario();
+    const { ws, leadId, wakeupId } = await scenario({ firstChannel: "email" });
     const company = (
       await pool.query(
         `insert into public.companies (workspace_id, name, normalized_name, city, description) values ($1, 'Acme Steel Pvt Ltd', 'acme steel', 'Pune', 'Family-owned mill.') returning id`,

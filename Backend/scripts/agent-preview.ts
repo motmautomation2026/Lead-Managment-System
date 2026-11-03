@@ -178,8 +178,11 @@ async function main(id: string) {
         companyName: ctx.companyName,
         settings: ctx.settings,
         isFirstWhatsApp: !ctx.rules.hasSentWhatsApp,
+        bookingUrl: ctx.lead.ownerBookingUrl,
+        angle: ctx.stagePlan?.angle ?? null,
       });
       console.log(composed.channel === "email" ? `Subject: ${composed.subject}\n\n${composed.text}` : composed.text);
+      console.log(`\nBooking link added: ${composed.bookingLinkAdded ? "yes" : "no"}${ctx.lead.ownerBookingUrl ? "" : " (the owner has no booking link)"}`);
     }
   } finally {
     await pool.end();

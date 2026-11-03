@@ -554,7 +554,14 @@ async function executeLive(client: Queryable, wakeup: ClaimedWakeup, ctx: AgentC
   const { workspace_id: workspaceId, lead_id: leadId } = wakeup;
   switch (d.action) {
     case "send_email": {
-      const composed = composeOutgoing(d, { ownerName: ctx.lead.ownerName ?? "The team", companyName: ctx.companyName, settings: ctx.settings, isFirstWhatsApp: false });
+      const composed = composeOutgoing(d, {
+        ownerName: ctx.lead.ownerName ?? "The team",
+        companyName: ctx.companyName,
+        settings: ctx.settings,
+        isFirstWhatsApp: false,
+        bookingUrl: ctx.lead.ownerBookingUrl,
+        angle: ctx.stagePlan?.angle ?? null,
+      });
       if (composed.channel !== "email") return;
       await enqueueEmail(client, {
         workspaceId,

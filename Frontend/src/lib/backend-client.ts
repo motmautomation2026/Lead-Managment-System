@@ -367,6 +367,8 @@ export interface AdminUser {
   initials: string;
   active: boolean;
   createdAt: string;
+  /** E3b-1: the salesperson's booking page; null = none. */
+  bookingUrl: string | null;
 }
 
 export interface Workspace {
@@ -595,8 +597,8 @@ export interface AgentDecisionReport {
   resolutionNote: string | null;
 }
 export type AgentComposedMessage =
-  | { channel: "email"; subject: string; text: string; html: string }
-  | { channel: "whatsapp"; text: string };
+  | { channel: "email"; subject: string; text: string; html: string; bookingLinkAdded?: boolean }
+  | { channel: "whatsapp"; text: string; bookingLinkAdded?: boolean };
 /** The company and open deal the decision saw (D1); null on decisions from before D1 or without one. */
 export interface AgentDecisionContext {
   company: { id: string; name: string } | null;
@@ -1120,7 +1122,17 @@ export const backend = {
     delete: (id: string) => del(`/saved-views/${id}`),
   },
   me: (signal?: AbortSignal) =>
-    get<{ id: string; name: string; email: string; role: "admin" | "salesperson" }>("/me", signal),
+    get<{
+      id: string;
+      name: string;
+      email: string;
+      role: "admin" | "salesperson";
+      /** E3b-1: the user's booking page; null = none. */
+      bookingUrl?: string | null;
+    }>("/me", signal),
+  /** E3b-1 rule 5: the signed-in user's own booking link. */
+  updateMe: (input: { bookingUrl: string | null }) =>
+    send<{ bookingUrl: string | null }>("PATCH", "/me", input),
   profiles: (signal?: AbortSignal) =>
     get<{ data: (Omit<User, "role"> & { role: "admin" | "salesperson" })[] }>("/profiles", signal),
   admin: {
@@ -1130,7 +1142,13 @@ export const backend = {
         send<AdminUser>("POST", "/admin/users", input),
       update: (
         id: string,
-        input: { name?: string; email?: string; password?: string; active?: boolean },
+        input: {
+          name?: string;
+          email?: string;
+          password?: string;
+          active?: boolean;
+          bookingUrl?: string | null;
+        },
       ) => send<AdminUser>("PATCH", `/admin/users/${id}`, input),
     },
   },

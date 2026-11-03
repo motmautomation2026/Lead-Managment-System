@@ -7,6 +7,8 @@ export const SETTINGS_TABS = [
   // E2b: everyone sees the message rules (read-only); the rest of the tab is admin-only.
   { id: "agent", label: "AI agent", admin: false },
   { id: "users", label: "Users", admin: true },
+  // E3b-1: everyone's own booking link.
+  { id: "profile", label: "Profile", admin: false },
   { id: "appearance", label: "Appearance", admin: false },
 ] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -16,7 +18,7 @@ export type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
  * `/admin?calendar=…`); the Calendar panel shows the toast and strips them.
  */
 export const settingsSearchSchema = z.object({
-  tab: z.enum(["workspace", "assignment", "agent", "users", "appearance"]).optional(),
+  tab: z.enum(["workspace", "assignment", "agent", "users", "profile", "appearance"]).optional(),
   calendar: z.string().optional(),
   message: z.string().optional(),
 });

@@ -57,6 +57,7 @@ export function sampleContext(overrides: Partial<AgentContext> = {}): AgentConte
       lossReason: null,
       ownerName: "Ravi Kumar",
       ownerEmail: "ravi@northbeam.in",
+      ownerBookingUrl: null,
     },
     company: null,
     internal: { companyDescription: null, deal: { open: null, wonCount: 0, lostCount: 0 } },

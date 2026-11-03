@@ -63,6 +63,8 @@ export interface AgentContextLead {
   lossReason: LeadLossReason | null;
   ownerName: string | null;
   ownerEmail: string | null;
+  /** E3b-1 rule 5: the owner's booking page (profiles.booking_url); null = none. */
+  ownerBookingUrl: string | null;
 }
 
 export interface AgentTimelineEntry {
@@ -189,6 +191,7 @@ export async function buildAgentContext(
       owner_id: string | null;
       owner_name: string | null;
       owner_email: string | null;
+      owner_booking_url: string | null;
       company_name: string;
       linked_company: CompanyRecord | null;
       merge_target: CompanyRecord | null;
@@ -197,7 +200,7 @@ export async function buildAgentContext(
       `select l.id, l.first_name, l.last_name, l.company, l.job_title, l.industry, l.revenue_range, l.source,
               l.email, l.phone_e164, l.pipeline_stage, l.lifecycle_state, l.objection_type, l.loss_reason,
               l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.agent_live_test, l.created_at, l.owner_id,
-              o.full_name as owner_name, o.email as owner_email, w.name as company_name,
+              o.full_name as owner_name, o.email as owner_email, o.booking_url as owner_booking_url, w.name as company_name,
               ${companyJson("c")} as linked_company, ${companyJson("cm")} as merge_target,
               coalesce(dl.deals, '[]'::json) as deals
          from public.leads l
@@ -332,6 +335,7 @@ export async function buildAgentContext(
       has_upcoming: boolean;
       proposal: { status: string; sentAt: string | null } | null;
       rep_owned_before: boolean;
+      call_or_meeting_held: boolean;
     }>(
       `select (select json_build_object('status', m.status, 'outcome', m.outcome, 'scheduledAt', m.scheduled_at, 'notes', m.notes)
                  from public.meetings m where m.lead_id = $1 and m.workspace_id = $2 order by m.scheduled_at desc limit 1) as meeting,
@@ -339,7 +343,10 @@ export async function buildAgentContext(
                        and m.status = any($3::meeting_status[]) and m.scheduled_at > $4) as has_upcoming,
               (select json_build_object('status', p.status, 'sentAt', p.sent_at)
                  from public.proposals p where p.lead_id = $1 and p.workspace_id = $2 order by p.updated_at desc, p.id desc limit 1) as proposal,
-              exists (select 1 from public.agent_decisions d where d.lead_id = $1 and d.workspace_id = $2 and d.stage_key = 'rep_owned') as rep_owned_before`,
+              exists (select 1 from public.agent_decisions d where d.lead_id = $1 and d.workspace_id = $2 and d.stage_key = 'rep_owned') as rep_owned_before,
+              -- E3b-1 rule 7: a logged call or a held meeting allows a WhatsApp attachment.
+              (exists (select 1 from public.calls c where c.lead_id = $1 and c.workspace_id = $2)
+                or exists (select 1 from public.meetings m where m.lead_id = $1 and m.workspace_id = $2 and m.status = 'completed')) as call_or_meeting_held`,
       [leadId, workspaceId, UPCOMING_MEETING_STATUSES, now],
     ),
   ]);
@@ -360,6 +367,7 @@ export async function buildAgentContext(
     lossReason: leadRow.loss_reason,
     ownerName: leadRow.owner_name,
     ownerEmail: leadRow.owner_email,
+    ownerBookingUrl: leadRow.owner_booking_url,
   };
 
   const company = resolveCompany(leadRow.linked_company, leadRow.merge_target);
@@ -488,6 +496,7 @@ export async function buildAgentContext(
     conversationExists: situation.conversationExists,
     realMessageSent: context.pastMessages.some((m) => m.outcome === "sent") || context.timeline.some((t) => t.kind === "email" || t.kind === "whatsapp"),
     whatsappReplied: assetHistory.rows[0]?.whatsapp_replied ?? false,
+    callOrMeetingHeld: stageRows.rows[0]!.call_or_meeting_held,
     sentAssetIds: assetHistory.rows[0]?.sent_asset_ids ?? [],
   };
   // E2b rule 5: the query adds topics for where the conversation stands.

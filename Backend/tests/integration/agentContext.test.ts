@@ -170,8 +170,8 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     expect(ctx.knowledge.chunks.map((c) => c.title)).toEqual(["Cold calling for steel"]);
     expect(ctx.assets.map((a) => a.title)).toEqual(["Steel case study"]);
     expect(JSON.stringify(ctx.knowledge)).not.toContain("10x ROI");
-    // E2g: a call/meeting/proposal exists and two real WhatsApp sends; no reply, nothing attached yet.
-    expect(ctx.rules.assetFacts).toEqual({ conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] });
+    // E2g: a call/meeting/proposal exists and two real WhatsApp sends; no reply, nothing attached yet. E3b-1: a call was logged.
+    expect(ctx.rules.assetFacts).toEqual({ conversationExists: true, realMessageSent: true, whatsappReplied: false, callOrMeetingHeld: true, sentAssetIds: [] });
     expect(ctx.meta).toMatchObject({ trimmedTimelineEvents: 0, trimmedDecisionSummaries: 0 });
     expect(ctx.meta.tokenEstimate).toBeGreaterThan(0);
   });

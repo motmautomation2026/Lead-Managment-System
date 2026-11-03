@@ -107,6 +107,7 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
 
       <Section title="Message">
         <DecisionMessage decision={d} />
+        {d.composed && <BookingLinkNote added={d.composed.bookingLinkAdded} />}
         {d.attachments && (
           <div className="mt-2">
             <AttachmentsUsed attachments={d.attachments} showNone />
@@ -176,6 +177,17 @@ function DecisionBody({ decision: d }: { decision: AgentDecisionDetail }) {
       />
       <ReportsSection key={d.id} decisionId={d.id} reports={d.reports} />
     </div>
+  );
+}
+
+/** E3b-1 rule 5: whether the owner's booking link was added to the message (call angles, not a first WhatsApp). */
+export function BookingLinkNote({ added }: { added: boolean | undefined }) {
+  return (
+    <p className="mt-2 text-xs text-muted-foreground">
+      {added
+        ? "Booking link added (the owner's link, before the signature)."
+        : "No booking link (not a call ask, a first WhatsApp, or the owner has no link)."}
+    </p>
   );
 }
 

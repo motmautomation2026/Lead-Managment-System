@@ -61,8 +61,9 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     return ws;
   }
 
-  async function lead(ws: string, opts: { marked?: boolean } = {}) {
-    const phone = randomPhone();
+  // emailOnly (E3b-1): no phone, so email is the only usable channel and repeated AI emails aren't switched to WhatsApp.
+  async function lead(ws: string, opts: { marked?: boolean; emailOnly?: boolean } = {}) {
+    const phone = opts.emailOnly ? null : randomPhone();
     const result = await pool.query<{ id: string; email: string }>(
       `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, agent_status, agent_live_test, pipeline_stage)
        values ($1, 'Asha', 'Rao', 'Acme Steel', 'linkedin', $2, $3, $3, $4, 'active', $5, 'connected_qualifying') returning id, email`,
@@ -223,7 +224,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
   it("email goes through email_outbound_messages: one agent row per decision, From owner | company, its Message-ID on the decision", async () => {
     const ws = await workspace("email");
-    const l = await lead(ws);
+    const l = await lead(ws, { emailOnly: true });
     await wakeup(ws, l.id);
     expect((await tick(ws, [EMAIL]))[0]).toMatchObject({ result: "executed", action: "send_email" });
     const [row] = await decisionsOf(l.id);
@@ -260,7 +261,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
     it("the second AI email continues the first's thread, with a new Message-ID; the first has no thread headers; a reply still matches", async () => {
       const ws = await workspace("thread");
-      const l = await lead(ws);
+      const l = await lead(ws, { emailOnly: true });
       const smtp = fakeSmtp();
       await sendAiEmail(ws, l, smtp, EMAIL);
       await sendAiEmail(ws, l, smtp, FOLLOW_UP);
@@ -283,8 +284,8 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
     it("older than 45 days, or bounced: a new thread with the model's subject", async () => {
       const ws = await workspace("thread-old");
-      const old = await lead(ws);
-      const bounced = await lead(ws);
+      const old = await lead(ws, { emailOnly: true });
+      const bounced = await lead(ws, { emailOnly: true });
       const smtp = fakeSmtp();
       await sendAiEmail(ws, old, smtp, EMAIL);
       await sendAiEmail(ws, bounced, smtp, EMAIL);
@@ -301,7 +302,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
     it("a queued follow-up whose earlier email bounced before it went starts a new thread with the plain subject", async () => {
       const ws = await workspace("thread-race");
-      const l = await lead(ws);
+      const l = await lead(ws, { emailOnly: true });
       const smtp = fakeSmtp();
       await sendAiEmail(ws, l, smtp, EMAIL);
       await wakeup(ws, l.id);
@@ -314,7 +315,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
     it("rep proposal and meeting emails are never threaded", async () => {
       const ws = await workspace("thread-rep");
-      const l = await lead(ws);
+      const l = await lead(ws, { emailOnly: true });
       const smtp = fakeSmtp();
       await sendAiEmail(ws, l, smtp, EMAIL);
       const { enqueueEmail } = await import("../../src/services/emailOutbound.service.js");
@@ -378,7 +379,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
         await pool.query(
           `insert into public.whatsapp_inbound_events (message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, match_count, workspace_id, lead_id)
            values ($1, $2, $3, 'conversation', now(), 'matched', 1, $4, $5)`,
-          [`IN-${randomUUID()}`, `${l.phone.slice(1)}@s.whatsapp.net`, l.phone, ws, l.id],
+          [`IN-${randomUUID()}`, `${l.phone!.slice(1)}@s.whatsapp.net`, l.phone, ws, l.id],
         );
       }, /replied after/));
 

@@ -39,6 +39,7 @@ vi.mock("@/app/theme-context", () => ({
   }),
 }));
 // Their own tests cover these panels.
+vi.mock("./profile-panel", () => ({ ProfilePanel: () => <div>profile panel</div> }));
 vi.mock("./agent-panel", () => ({ AgentPanel: () => <div>agent panel</div> }));
 vi.mock("./email-settings", () => ({ EmailPanel: () => <div>email panel</div> }));
 vi.mock("./lead-assignment-panel", () => ({
@@ -116,7 +117,14 @@ afterEach(() => {
 describe("SettingsPage (C6b)", () => {
   it("admins get every section; the tab lives in the URL", async () => {
     const router = await renderPage();
-    expect(sections()).toEqual(["Workspace", "Lead assignment", "AI agent", "Users", "Appearance"]);
+    expect(sections()).toEqual([
+      "Workspace",
+      "Lead assignment",
+      "AI agent",
+      "Users",
+      "Profile",
+      "Appearance",
+    ]);
     expect(await screen.findByText("email panel")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "AI agent" }));
     await waitFor(() => expect(router.state.location.search).toEqual({ tab: "agent" }));
@@ -130,7 +138,7 @@ describe("SettingsPage (C6b)", () => {
   it("salespeople see Workspace, AI agent (message rules, read-only) and Appearance; Users by URL says admins only", async () => {
     mocks.isAdmin = false;
     await renderPage({ tab: "users" });
-    expect(sections()).toEqual(["Workspace", "AI agent", "Appearance"]);
+    expect(sections()).toEqual(["Workspace", "AI agent", "Profile", "Appearance"]);
     expect(screen.getByText("Admins only")).toBeTruthy();
     expect(screen.queryByText("Create salesperson")).toBeNull();
   });

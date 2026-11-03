@@ -94,9 +94,14 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     return { id: row.rows[0]!.id, path };
   }
 
-  /** A live-test contact that already got one real AI message (5 days ago); `replied` adds a matched WhatsApp reply after it. */
-  async function lead(ws: string, opts: { replied?: boolean } = {}) {
-    const phone = randomPhone();
+  /**
+   * A live-test contact that already got one real AI message (5 days ago); `replied` adds a matched WhatsApp reply after it.
+   * E3b-1 channels alternate: the earlier message is on `prior` (default: email when replied, so WhatsApp is due; else
+   * WhatsApp, so email is due); `emailOnly` leaves out the phone, so email is always the channel.
+   */
+  async function lead(ws: string, opts: { replied?: boolean; prior?: "email" | "whatsapp"; emailOnly?: boolean } = {}) {
+    const phone = opts.emailOnly ? null : randomPhone();
+    const prior = opts.prior ?? (opts.replied ? "email" : "whatsapp");
     const l = (
       await pool.query<{ id: string; email: string }>(
         `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, agent_status, agent_live_test, pipeline_stage)
@@ -106,14 +111,14 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     ).rows[0]!;
     await pool.query(
       `insert into public.agent_decisions (workspace_id, lead_id, mode, action, reasoning, message_body, outcome, send_status, sent_at, created_at)
-       values ($1, $2, 'live', 'send_whatsapp', 'First touch', 'Hi Asha, quick question about outbound.', 'sent', 'sent', now() - interval '5 days', now() - interval '5 days')`,
-      [ws, l.id],
+       values ($1, $2, 'live', $3, 'First touch', 'Hi Asha, quick question about outbound.', 'sent', 'sent', now() - interval '5 days', now() - interval '5 days')`,
+      [ws, l.id, `send_${prior}`],
     );
     if (opts.replied) {
       await pool.query(
         `insert into public.whatsapp_inbound_events (message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, match_count, workspace_id, lead_id)
          values ($1, $2, $3, 'conversation', now() - interval '4 days', 'matched', 1, $4, $5)`,
-        [`IN-${randomUUID()}`, `${phone.slice(1)}@s.whatsapp.net`, phone, ws, l.id],
+        [`IN-${randomUUID()}`, `${phone!.slice(1)}@s.whatsapp.net`, phone, ws, l.id],
       );
     }
     await pool.query(`insert into public.agent_wakeups (workspace_id, lead_id, due_at, reason) values ($1, $2, now() - interval '1 minute', 'enrolled')`, [ws, l.id]);
@@ -202,7 +207,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   it("live email with an asset: the email carries it (file name = title + extension, PDF MIME); the decision and timeline say so", async () => {
     const ws = await workspace("email");
     const a = await asset(ws, "Steel trading case study", ["email"]);
-    const l = await lead(ws);
+    const l = await lead(ws, { emailOnly: true });
     expect((await tick(ws, [emailWith([a.id])]))[0]).toMatchObject({ result: "executed", action: "send_email" });
     const d = await decisionOf(l.id);
     expect(d.asset_ids).toEqual([a.id]);
@@ -254,7 +259,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   it("WhatsApp before the contact replied: the attachment is dropped (recorded), the text still goes", async () => {
     const ws = await workspace("wa-noreply");
     const a = await asset(ws, "Steel trading case study", ["email", "whatsapp"]);
-    const l = await lead(ws);
+    const l = await lead(ws, { prior: "email" });
     await tick(ws, [whatsappWith([a.id], PLAIN_LINE)]);
     const d = await decisionOf(l.id);
     expect(d).toMatchObject({ action: "send_whatsapp", asset_ids: [], send_status: "queued" });
@@ -473,7 +478,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   it("the decision detail and the contact's AI panel show the attachments by title", async () => {
     const ws = await workspace("visible");
     const a = await asset(ws, "Steel trading case study", ["email", "whatsapp"]);
-    const l = await lead(ws);
+    const l = await lead(ws, { prior: "email" });
     await tick(ws, [whatsappWith([a.id], PLAIN_LINE)]);
     const { getDecision, getLeadAgentPanel } = await import("../../src/services/agentReview.service.js");
     const d = await decisionOf(l.id);

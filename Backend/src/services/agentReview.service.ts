@@ -143,7 +143,14 @@ interface DecisionDetailRow {
 export async function getDecision(db: Queryable, workspaceId: string, id: string) {
   const row = (
     await db.query<
-      DecisionDetailRow & { _ownerName: string | null; _companyName: string; _emailOptOut: string; _whatsappOptOut: string; _whatsappBefore: boolean }
+      DecisionDetailRow & {
+        _ownerName: string | null;
+        _bookingUrl: string | null;
+        _companyName: string;
+        _emailOptOut: string;
+        _whatsappOptOut: string;
+        _whatsappBefore: boolean;
+      }
     >(
       `select d.id, d.created_at as "createdAt", d.mode, d.action, d.outcome, d.error, d.reasoning,
               d.message_subject as "messageSubject", d.message_body as "messageBody", d.asset_ids as "assetIds",
@@ -159,7 +166,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel,
               d.stage_key as "stageKey", d.angle,
               ${DECISION_CONTEXT} as context, ${DECISION_ATTACHMENTS} as attachments,
-              o.full_name as "_ownerName", coalesce(s.company_display_name, w.name) as "_companyName",
+              o.full_name as "_ownerName", o.booking_url as "_bookingUrl", coalesce(s.company_display_name, w.name) as "_companyName",
               s.email_opt_out_text as "_emailOptOut", s.whatsapp_opt_out_text as "_whatsappOptOut",
               -- The opt-out line goes on the first WhatsApp only: was one sent (or, in shadow, drafted and allowed) earlier?
               exists (select 1 from public.agent_decisions p
@@ -178,7 +185,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
     )
   ).rows[0];
   if (!row) throw new NotFoundError("Decision");
-  const { _ownerName, _companyName, _emailOptOut, _whatsappOptOut, _whatsappBefore, ...decision } = row;
+  const { _ownerName, _bookingUrl, _companyName, _emailOptOut, _whatsappOptOut, _whatsappBefore, ...decision } = row;
 
   let composed: OutgoingMessage | null = null;
   if ((decision.action === "send_email" || decision.action === "send_whatsapp") && decision.messageBody) {
@@ -187,6 +194,9 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
       companyName: _companyName,
       settings: { email_opt_out_text: _emailOptOut, whatsapp_opt_out_text: _whatsappOptOut },
       isFirstWhatsApp: !_whatsappBefore,
+      // E3b-1 rule 5: with the owner's current booking link.
+      bookingUrl: _bookingUrl,
+      angle: (decision.angle as string | null) ?? null,
     });
   }
 

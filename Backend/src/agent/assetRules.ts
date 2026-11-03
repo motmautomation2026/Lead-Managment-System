@@ -29,6 +29,8 @@ export interface AssetFacts {
   realMessageSent: boolean;
   /** At least one matched inbound WhatsApp from this contact. */
   whatsappReplied: boolean;
+  /** E3b-1 rule 7: a rep logged a call with this contact or a meeting was held (absent = no). */
+  callOrMeetingHeld?: boolean;
   /** Assets already really sent to this contact (agent_decisions.sent_asset_ids). */
   sentAssetIds: string[];
 }
@@ -42,7 +44,7 @@ export interface AttachmentRemoval {
 
 export const ATTACHMENT_REMOVAL_TEXT: Record<AttachmentRemovalReason, string> = {
   first_message: "No attachments before a conversation exists",
-  whatsapp_no_reply: "WhatsApp attachments only after the contact has replied on WhatsApp",
+  whatsapp_no_reply: "WhatsApp attachments only after a WhatsApp reply, a logged call or a held meeting",
   already_sent: "Already sent to this contact",
   count_limit: "Too many attachments for this channel",
   size_limit: "Attachments over 10 MB in total",
@@ -62,7 +64,7 @@ export function assetViolations(assetIds: string[], channel: AssetChannel, asset
 
 /**
  * Rules 2–4 + limits, in this order: never before a conversation (all dropped),
- * WhatsApp only after a WhatsApp reply (all dropped), never the same asset twice,
+ * WhatsApp only after a WhatsApp reply, a logged call or a held meeting (E3b-1; all dropped), never the same asset twice,
  * at most 2 (email) / 1 (WhatsApp) — the first ones are kept — and ≤ 10 MB in total
  * (the largest dropped until it fits). `facts` null = unknown → treated as a first message.
  */
@@ -77,7 +79,7 @@ export function applyAssetRules(
   const dropAll = (reason: AttachmentRemovalReason) => ({ kept: [], removed: unique.map((assetId) => ({ assetId, reason })) });
   if (!unique.length) return { kept: [], removed };
   if (!facts || !(facts.conversationExists || facts.realMessageSent)) return dropAll("first_message");
-  if (channel === "whatsapp" && !facts.whatsappReplied) return dropAll("whatsapp_no_reply");
+  if (channel === "whatsapp" && !facts.whatsappReplied && !facts.callOrMeetingHeld) return dropAll("whatsapp_no_reply");
 
   let kept = unique.filter((id) => {
     if (!facts.sentAssetIds.includes(id)) return true;

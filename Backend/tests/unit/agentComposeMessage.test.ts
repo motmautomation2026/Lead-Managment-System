@@ -24,6 +24,7 @@ describe("composeOutgoing", () => {
         "<p>Best regards,<br>Ravi Kumar<br>Northbeam</p>",
         "<p>If you&#39;d prefer not to hear from us, just reply &quot;stop&quot;.</p>",
       ].join("\n"),
+      bookingLinkAdded: false,
     });
   });
 
@@ -52,7 +53,8 @@ describe("composeOutgoing", () => {
     expect(composeOutgoing(whatsapp("Hi Asha"), { ...options, isFirstWhatsApp: true })).toEqual({
       channel: "whatsapp",
       text: "Hi Asha\n\n— Ravi Kumar, Northbeam\n\nReply STOP to opt out.",
+      bookingLinkAdded: false,
     });
-    expect(composeOutgoing(whatsapp("Hi Asha"), options)).toEqual({ channel: "whatsapp", text: "Hi Asha\n\n— Ravi Kumar, Northbeam" });
+    expect(composeOutgoing(whatsapp("Hi Asha"), options)).toEqual({ channel: "whatsapp", text: "Hi Asha\n\n— Ravi Kumar, Northbeam", bookingLinkAdded: false });
   });
 });

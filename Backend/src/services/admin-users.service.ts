@@ -24,8 +24,9 @@ export async function listSalespeople() {
     initials: string;
     is_active: boolean;
     created_at: Date;
+    booking_url: string | null;
   }>(
-    `select id, full_name, email, initials, is_active, created_at
+    `select id, full_name, email, initials, is_active, created_at, booking_url
        from public.profiles
       where role = 'salesperson'
       order by created_at desc`,
@@ -37,6 +38,7 @@ export async function listSalespeople() {
     initials: row.initials,
     active: row.is_active,
     createdAt: row.created_at.toISOString(),
+    bookingUrl: row.booking_url,
   }));
 }
 
@@ -74,6 +76,8 @@ export interface UpdateSalespersonInput {
   email?: string;
   password?: string;
   active?: boolean;
+  /** E3b-1: undefined = unchanged, null = removed. */
+  bookingUrl?: string | null;
 }
 
 export async function updateSalesperson(actor: Actor, input: UpdateSalespersonInput) {
@@ -107,7 +111,8 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
             set full_name = coalesce($2, full_name),
                 email = coalesce($3, email),
                 initials = case when $2::text is null then initials else $4 end,
-                is_active = coalesce($5, is_active)
+                is_active = coalesce($5, is_active),
+                booking_url = case when $6::boolean then $7 else booking_url end
           where id = $1`,
         [
           input.id,
@@ -115,6 +120,8 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
           input.email?.trim().toLowerCase() ?? null,
           input.name ? initials(input.name) : null,
           input.active ?? null,
+          input.bookingUrl !== undefined,
+          input.bookingUrl ?? null,
         ],
       );
       if (input.name !== undefined || input.email !== undefined) {

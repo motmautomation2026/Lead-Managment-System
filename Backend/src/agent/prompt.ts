@@ -257,7 +257,7 @@ function attachmentsNow({ rules }: AgentContext): string {
   const facts = rules.assetFacts;
   const started = Boolean(facts && (facts.conversationExists || facts.realMessageSent));
   if (!started) return "Attachments now: none (no conversation with this contact yet); don't attach or mention one.";
-  return `Attachments now: email yes (at most 2); WhatsApp ${facts!.whatsappReplied ? "yes (at most 1)" : "no (the contact hasn't replied on WhatsApp yet)"}. Never attach an asset already sent to this contact.`;
+  return `Attachments now: email yes (at most 2); WhatsApp ${facts!.whatsappReplied || facts!.callOrMeetingHeld ? "yes (at most 1)" : "no (no WhatsApp reply, call or meeting yet)"}. Never attach an asset already sent to this contact.`;
 }
 
 const INTERNAL_RULE =

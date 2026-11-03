@@ -22,6 +22,7 @@ import { AgentPanel } from "./agent-panel";
 import { AppearancePanel } from "./appearance-panel";
 import { SETTINGS_TABS, settingsSearchSchema, type SettingsTab } from "./settings-search";
 import { UsersPanel } from "./users-panel";
+import { ProfilePanel } from "./profile-panel";
 import { WhatsAppSafety } from "./whatsapp-safety";
 import { EmailPanel } from "./email-settings";
 
@@ -106,6 +107,8 @@ export function SettingsPage() {
             needsWorkspace(<AgentPanel />)
           ) : tab === "users" ? (
             <UsersPanel />
+          ) : tab === "profile" ? (
+            <ProfilePanel />
           ) : (
             <AppearancePanel />
           )}

@@ -42,6 +42,8 @@ interface ClaimedSend {
   message_body: string;
   /** The rules-checked assets (at most 1 on WhatsApp). */
   asset_ids: string[] | null;
+  /** E3b-1: the stage plan's angle (the booking line goes with call angles). */
+  angle: string | null;
   send_attempts: number;
   send_claimed_at: Date;
 }
@@ -77,7 +79,7 @@ export async function runAgentSends(enabled: boolean, deps: AgentSendDeps = {}):
            order by send_next_at
            limit $2
            for update skip locked)
-        returning id, workspace_id, lead_id, message_body, asset_ids, send_attempts, send_claimed_at`,
+        returning id, workspace_id, lead_id, message_body, asset_ids, angle, send_attempts, send_claimed_at`,
       [deps.workspaceIds ?? null, BATCH],
     )
   ).rows;
@@ -184,8 +186,16 @@ async function loadAsset(row: ClaimedSend): Promise<{ attachment: { assetId: str
 /** The AI's text with the owner's signature and (first AI WhatsApp only) the opt-out line; performSend's safety rules add nothing twice. */
 async function composeWhatsApp(row: ClaimedSend): Promise<{ text: string; phone: string | null }> {
   const info = (
-    await pool.query<{ phone_e164: string | null; owner_name: string | null; company_name: string; email_opt_out_text: string; whatsapp_opt_out_text: string; sent_before: boolean }>(
-      `select l.phone_e164, o.full_name as owner_name, coalesce(nullif(trim(s.company_display_name), ''), w.name) as company_name,
+    await pool.query<{
+      phone_e164: string | null;
+      owner_name: string | null;
+      booking_url: string | null;
+      company_name: string;
+      email_opt_out_text: string;
+      whatsapp_opt_out_text: string;
+      sent_before: boolean;
+    }>(
+      `select l.phone_e164, o.full_name as owner_name, o.booking_url, coalesce(nullif(trim(s.company_display_name), ''), w.name) as company_name,
               s.email_opt_out_text, s.whatsapp_opt_out_text,
               exists (select 1 from public.agent_decisions p where p.lead_id = l.id and p.action = 'send_whatsapp' and p.outcome = 'sent') as sent_before
          from public.leads l
@@ -198,7 +208,14 @@ async function composeWhatsApp(row: ClaimedSend): Promise<{ text: string; phone:
   ).rows[0]!;
   const composed = composeOutgoing(
     { action: "send_whatsapp", body: row.message_body, assetIds: [], nextWakeInDays: 1, reasoning: "" },
-    { ownerName: info.owner_name ?? "The team", companyName: info.company_name, settings: info, isFirstWhatsApp: !info.sent_before },
+    {
+      ownerName: info.owner_name ?? "The team",
+      companyName: info.company_name,
+      settings: info,
+      isFirstWhatsApp: !info.sent_before,
+      bookingUrl: info.booking_url,
+      angle: row.angle,
+    },
   );
   return { text: composed.text, phone: info.phone_e164 };
 }
