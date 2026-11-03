@@ -1,8 +1,9 @@
 import { composeOutgoing } from "../agent/composeMessage.js";
+import { wordCount } from "../agent/messageChecks.js";
 import { modelSettingProblem } from "../agent/modelSetting.js";
 import { costUsd, priceOf, type ModelPrices } from "../agent/pricing.js";
 import type { DecisionModel } from "../providers/openai.provider.js";
-import { ANGLE_LABELS, STAGE_LABELS, stagePlan } from "../agent/stagePlan.js";
+import { ANGLE_LABELS, STAGE_LABELS, stagePlan, type Channel } from "../agent/stagePlan.js";
 import type { AgentContext } from "./agentContext.service.js";
 import { draftDecision, type Usage } from "./agentRunner.service.js";
 
@@ -11,7 +12,38 @@ import { draftDecision, type Usage } from "./agentRunner.service.js";
  * combinations on the same contacts and reports them side by side. Saves and sends nothing.
  */
 
-export const SPEND_CAP_USD = 3;
+/** E3b-1b rule 5: the default --max-cost; --max-cost may raise it up to MAX_SPEND_CAP_USD. */
+export const SPEND_CAP_USD = 0.1;
+export const MAX_SPEND_CAP_USD = 3;
+
+export interface RunOptions {
+  /** Forces the planned channel (when that channel is usable); null = as planned. */
+  channel: Channel | null;
+  /** Full names to run (case-insensitive); null = every contact. */
+  only: string[] | null;
+  maxCostUsd: number;
+}
+
+const normName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** E3b-1b rule 5: --channel, --only and --max-cost; throws on anything invalid. */
+export function parseRunOptions(raw: { channel?: string; only?: string; maxCost?: string }): RunOptions {
+  if (raw.channel !== undefined && raw.channel !== "email" && raw.channel !== "whatsapp") throw new Error("--channel takes email or whatsapp.");
+  const only = raw.only === undefined ? null : raw.only.split(",").map(normName).filter(Boolean);
+  if (only && !only.length) throw new Error("--only takes comma-separated full names.");
+  const maxCostUsd = raw.maxCost === undefined ? SPEND_CAP_USD : Number(raw.maxCost);
+  if (!(maxCostUsd > 0 && maxCostUsd <= MAX_SPEND_CAP_USD)) throw new Error(`--max-cost takes US dollars above 0 and at most ${MAX_SPEND_CAP_USD}.`);
+  return { channel: (raw.channel as Channel | undefined) ?? null, only, maxCostUsd };
+}
+
+/** The contacts whose full name is in --only (all when null); throws when a name matches none, so a typo never runs a different set. */
+export function filterByNames<T extends { first_name: string; last_name: string | null }>(leads: T[], only: string[] | null): T[] {
+  if (!only) return leads;
+  const full = (lead: T) => normName(`${lead.first_name} ${lead.last_name ?? ""}`);
+  const missing = only.filter((name) => !leads.some((lead) => full(lead) === name));
+  if (missing.length) throw new Error(`No test contact named: ${missing.join(", ")}.`);
+  return leads.filter((lead) => only.includes(full(lead)));
+}
 
 // A guess for the plan only: about what staging decisions cost in tokens (2026-10-29 onward: 13,655 input per decision).
 const ESTIMATE = { attempts: 1.4, decide: { input: 6000, output: 400 }, grounding: { input: 5000, output: 200 } };
@@ -51,7 +83,7 @@ export function estimateCost(combos: Combo[], contacts: number, prices: ModelPri
 }
 
 /** The contact as the runner would see it if mode, AI status and touch limits allowed a decision (they are quality runs). */
-export function evaluationContext(ctx: AgentContext): { ctx: AgentContext; ignored: string[] } {
+export function evaluationContext(ctx: AgentContext, channel: Channel | null = null): { ctx: AgentContext; ignored: string[] } {
   const { rules } = ctx;
   const ignored = [
     rules.mode === "off" && "workspace mode off (evaluated as shadow)",
@@ -59,8 +91,10 @@ export function evaluationContext(ctx: AgentContext): { ctx: AgentContext; ignor
     (rules.lead.agentTouchCount > 0 || rules.recentTouchTimes.length > 0) && `${rules.lead.agentTouchCount} touch(es) so far, ${rules.recentTouchTimes.length} in the last 7 days (evaluated as none)`,
   ].filter((note): note is string => Boolean(note));
   const mode = rules.mode === "off" ? ("shadow" as const) : rules.mode;
-  // E3b-1: the stage plan as if no message had been sent yet (touches are ignored too).
-  const plan = ctx.stagePlanInput ? stagePlan({ ...ctx.stagePlanInput, touches: [] }) : ctx.stagePlan;
+  // E3b-1: the stage plan as if no message had been sent yet (touches are ignored too); E3b-1b: --channel is its first channel.
+  const input = ctx.stagePlanInput;
+  const plan = input ? stagePlan({ ...input, touches: [], ...(channel ? { firstChannel: channel } : {}) }) : ctx.stagePlan;
+  if (channel && plan?.preferredChannel && plan.preferredChannel !== channel) ignored.push(`--channel ${channel}: not usable for this contact (planned ${plan.preferredChannel})`);
   return {
     ignored,
     ctx: {
@@ -80,6 +114,8 @@ export interface ContactRun {
   stage: string | null;
   /** E3b-1 rule 5: the composed message got the owner's booking line (null = no message). */
   bookingLink: boolean | null;
+  /** E3b-1b rule 5: the message's channel, whether it is a first WhatsApp (opt-out line, no link) and the body's word count; null = no message. */
+  message: { channel: Channel; firstWhatsApp: boolean; words: number } | null;
   /** send / wait / stop / "handoff: <title>" / "error: <text>". */
   outcome: string;
   /** A message was written (it went through the checks). */
@@ -98,23 +134,31 @@ export interface ModelTestResult {
   runs: ContactRun[];
   spentUsd: number;
   stoppedAtCap: boolean;
+  capUsd: number;
+  /** Runs planned (contacts × combinations), to say how far a stopped run got. */
+  plannedRuns: number;
 }
 
-/** Combination by combination, one contact at a time; stops once the spend passes the cap. */
+/** Combination by combination, one contact at a time; stops before the next contact once the spend reaches the cap. */
 export async function runModelTest(input: { contexts: AgentContext[]; combos: Combo[]; model: DecisionModel; prices: ModelPrices; now: Date; capUsd?: number }): Promise<ModelTestResult> {
-  const cap = input.capUsd ?? SPEND_CAP_USD;
+  const capUsd = input.capUsd ?? SPEND_CAP_USD;
+  const plannedRuns = input.contexts.length * input.combos.length;
   const runs: ContactRun[] = [];
   let spentUsd = 0;
   for (const combo of input.combos) {
     for (const ctx of input.contexts) {
-      if (spentUsd > cap) return { runs, spentUsd, stoppedAtCap: true };
+      if (spentUsd >= capUsd) return { runs, spentUsd, stoppedAtCap: true, capUsd, plannedRuns };
       const run = await runContact(ctx, combo, input);
       runs.push(run);
       spentUsd += run.usage.costUsd;
     }
   }
-  return { runs, spentUsd, stoppedAtCap: spentUsd > cap };
+  return { runs, spentUsd, stoppedAtCap: false, capUsd, plannedRuns };
 }
+
+/** How far a run stopped at the cap got. */
+export const stoppedText = (result: ModelTestResult) =>
+  `STOPPED: the spend reached the $${result.capUsd.toFixed(2)} cap after ${result.runs.length} of ${result.plannedRuns} runs, so the results are incomplete.`;
 
 async function runContact(ctx: AgentContext, combo: Combo, deps: { model: DecisionModel; prices: ModelPrices; now: Date }): Promise<ContactRun> {
   const usage: Required<Usage> = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0 };
@@ -140,6 +184,7 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
         : null;
     return {
       bookingLink: composed ? composed.bookingLinkAdded : null,
+      message: composed && (shown.action === "send_email" || shown.action === "send_whatsapp") ? { channel: composed.channel, firstWhatsApp: composed.channel === "whatsapp" && !ctx.rules.hasSentWhatsApp, words: wordCount(shown.body) } : null,
       ...base,
       outcome: sent ? "send" : d.action === "handoff" ? `handoff: ${d.title}` : d.action,
       wroteMessage: sent || Boolean(draft.failedAttempt),
@@ -159,7 +204,7 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
     };
   } catch (error) {
     const outcome = `error: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200);
-    return { ...base, bookingLink: null, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
+    return { ...base, bookingLink: null, message: null, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
   }
 }
 
@@ -199,6 +244,7 @@ function contactSection(leadId: string, combos: Combo[], runs: ContactRun[]): st
         `**${combo.label}**: ${r.outcome}`,
         "",
         ...(r.stage ? [r.stage, ""] : []),
+        ...(r.message ? [`Channel: ${r.message.channel === "email" ? "email" : "WhatsApp"} · first WhatsApp: ${r.message.firstWhatsApp ? "yes" : "no"} · ${r.message.words} words`, ""] : []),
         ...(r.bookingLink === null ? [] : [`Booking link added: ${r.bookingLink ? "yes" : "no"}`, ""]),
         ...(r.subject ? [`Subject: ${r.subject}`, ""] : []),
         ...(r.body ? [quoted(r.body), ""] : []),
@@ -213,7 +259,7 @@ export function renderReport(result: ModelTestResult, combos: Combo[], meta: { a
   return [
     `# AI model test, ${meta.at.toISOString()}`,
     "",
-    `${meta.contacts} contacts, ${combos.length} combinations (writer > checker). Spent $${result.spentUsd.toFixed(4)}.${result.stoppedAtCap ? ` STOPPED: the spend passed the $${SPEND_CAP_USD} cap, so the results are incomplete.` : ""}`,
+    `${meta.contacts} contacts, ${combos.length} combinations (writer > checker). Spent $${result.spentUsd.toFixed(4)}.${result.stoppedAtCap ? ` ${stoppedText(result)}` : ""}`,
     "",
     "## Summary",
     "",

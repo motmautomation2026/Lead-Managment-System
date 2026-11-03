@@ -2,7 +2,18 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import { parsePrices } from "../../src/agent/pricing.js";
-import { estimateCost, evaluationContext, parseCombos, renderReport, runModelTest, unpricedModels } from "../../src/services/agentModelTest.service.js";
+import type { StagePlanInput } from "../../src/agent/stagePlan.js";
+import {
+  estimateCost,
+  evaluationContext,
+  filterByNames,
+  parseCombos,
+  parseRunOptions,
+  renderReport,
+  runModelTest,
+  SPEND_CAP_USD,
+  unpricedModels,
+} from "../../src/services/agentModelTest.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { sampleContext } from "../helpers/agentContextFixture.js";
 
@@ -71,12 +82,84 @@ describe("agent:model-test", () => {
     expect(result.runs[1]).toMatchObject({ outcome: "send" });
   });
 
-  it("stops once the spend passes the cap and marks the report", async () => {
+  it("stops before the next contact once the spend reaches the cap and says how far it got", async () => {
     const model = createFakeDecisionModel({ decisions: [CLEAN], tokens: { input: 1_000_000, output: 0 } });
     const result = await runModelTest({ contexts: [sampleContext(), sampleContext(), sampleContext()], combos, model, prices, now: NOW, capUsd: 2.5 });
     expect(result.stoppedAtCap).toBe(true);
     expect(result.runs).toHaveLength(1);
-    expect(renderReport(result, combos, { at: NOW, contacts: 3 })).toContain("STOPPED: the spend passed");
+    expect(renderReport(result, combos, { at: NOW, contacts: 3 })).toContain("STOPPED: the spend reached the $2.50 cap after 1 of 6 runs");
+  });
+
+  it("E3b-1b: the default cap is $0.10; a run that reaches it exactly stops, one under it goes on", async () => {
+    expect(SPEND_CAP_USD).toBe(0.1);
+    const model = createFakeDecisionModel({ decisions: [CLEAN], tokens: { input: 1000, output: 100 } });
+    const one = await runModelTest({ contexts: [sampleContext()], combos: combos.slice(0, 1), model, prices, now: NOW });
+    const perRun = one.spentUsd;
+    expect(perRun).toBeGreaterThan(0);
+    const contexts = [sampleContext(), sampleContext(), sampleContext()];
+    const atCap = await runModelTest({ contexts, combos: combos.slice(0, 1), model, prices, now: NOW, capUsd: perRun * 2 });
+    expect(atCap).toMatchObject({ stoppedAtCap: true, plannedRuns: 3 });
+    expect(atCap.runs).toHaveLength(2);
+    const under = await runModelTest({ contexts, combos: combos.slice(0, 1), model, prices, now: NOW, capUsd: perRun * 2 + 1e-9 });
+    expect(under).toMatchObject({ stoppedAtCap: false });
+    expect(under.runs).toHaveLength(3);
+  });
+
+  it("E3b-1b: parses --channel, --only and --max-cost and refuses anything else", () => {
+    expect(parseRunOptions({})).toEqual({ channel: null, only: null, maxCostUsd: 0.1 });
+    expect(parseRunOptions({ channel: "email", only: " Rakesh  Sharda ,lakshmi narayanan,", maxCost: "0.05" })).toEqual({
+      channel: "email",
+      only: ["rakesh sharda", "lakshmi narayanan"],
+      maxCostUsd: 0.05,
+    });
+    expect(() => parseRunOptions({ channel: "sms" })).toThrow("--channel takes email or whatsapp.");
+    expect(() => parseRunOptions({ only: " , " })).toThrow("--only");
+    for (const maxCost of ["0", "-1", "abc", "3.01", "--confirm"]) expect(() => parseRunOptions({ maxCost })).toThrow("--max-cost");
+    expect(parseRunOptions({ maxCost: "3" }).maxCostUsd).toBe(3);
+  });
+
+  it("E3b-1b: --only keeps the named contacts (case-insensitive full name) and refuses an unknown name", () => {
+    const leads = [
+      { id: "1", first_name: "Rakesh", last_name: "Sharda" },
+      { id: "2", first_name: "Rohit", last_name: "Saxena" },
+      { id: "3", first_name: "Raj", last_name: null },
+    ];
+    expect(filterByNames(leads, null)).toBe(leads);
+    expect(filterByNames(leads, ["rohit saxena", "raj"]).map((l) => l.id)).toEqual(["2", "3"]);
+    expect(() => filterByNames(leads, ["rohit saxena", "rohit"])).toThrow("No test contact named: rohit.");
+  });
+
+  it("E3b-1b: --channel sets the first channel of the evaluated plan, and says when it can't", () => {
+    const base = sampleContext();
+    const input: StagePlanInput = {
+      now: NOW,
+      lifecycleState: "active",
+      nurtureLongTerm: false,
+      pipelineStage: "contact_attempted",
+      openDealStage: null,
+      lastCallOrNoteAt: null,
+      latestMeeting: null,
+      hasUpcomingMeeting: false,
+      latestProposal: null,
+      touches: [],
+      conversationExists: false,
+      emailUsable: true,
+      whatsappUsable: true,
+      firstChannel: "whatsapp",
+      maxTouchesTotal: 8,
+      repOwnedBefore: false,
+    };
+    expect(evaluationContext({ ...base, stagePlanInput: input }, "email").ctx.rules.stagePlan?.preferredChannel).toBe("email");
+    expect(evaluationContext({ ...base, stagePlanInput: input }).ctx.rules.stagePlan?.preferredChannel).toBe("whatsapp");
+    const { ignored } = evaluationContext({ ...base, stagePlanInput: { ...input, emailUsable: false } }, "email");
+    expect(ignored).toContain("--channel email: not usable for this contact (planned whatsapp)");
+  });
+
+  it("E3b-1b: the report shows each message's channel, first WhatsApp and word count", async () => {
+    const model = createFakeDecisionModel({ decisions: [CLEAN] });
+    const result = await runModelTest({ contexts: [sampleContext()], combos: combos.slice(0, 1), model, prices, now: NOW });
+    expect(result.runs[0]!.message).toEqual({ channel: "whatsapp", firstWhatsApp: true, words: 10 });
+    expect(renderReport(result, combos.slice(0, 1), { at: NOW, contacts: 1 })).toContain("Channel: WhatsApp · first WhatsApp: yes · 10 words");
   });
 
   it("the script refuses a production DATABASE_URL before connecting", () => {
