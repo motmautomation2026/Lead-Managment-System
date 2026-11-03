@@ -233,7 +233,8 @@ export const withIstTimes = (text: string, format: (iso: string) => string) =>
 /** E2g: why the rules removed an attachment (the message was kept). Mirrors agent/assetRules.ts. */
 export const ATTACHMENT_REMOVED_LABEL: Record<AttachmentRemovalReason, string> = {
   first_message: "No attachments before a conversation exists",
-  whatsapp_no_reply: "WhatsApp attachments only after the contact has replied on WhatsApp",
+  whatsapp_no_reply:
+    "WhatsApp attachments only after a WhatsApp reply, a logged call or a held meeting",
   already_sent: "Already sent to this contact",
   count_limit: "Too many attachments for this channel",
   size_limit: "Attachments over 10 MB in total",

@@ -183,7 +183,8 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     expect(await sendTick(ws, send)).toEqual([{ id: liveRow.id, result: "sent" }]);
     expect(socket.sendMessage).toHaveBeenCalledTimes(1);
     const text = socket.sendMessage.mock.calls[0]![1].text!;
-    expect(text).toContain("— Govinda Rep, MOTM Technologies");
+    expect(text).toContain("\n\nGovinda, MOTM Technologies");
+    expect(text).not.toContain("—");
     expect(text.match(/Reply STOP to opt out\./g)).toHaveLength(1);
     expect(socket.sendPresenceUpdate.mock.calls.map((c) => c[0])).toContain("composing");
 

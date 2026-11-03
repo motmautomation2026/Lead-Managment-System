@@ -67,8 +67,8 @@ export function MessageRulesCard({
           <ListChecks /> Message rules
         </CardTitle>
         <CardDescription>
-          Every AI message is checked against these. A message that breaks one is rewritten once,
-          then handed to the rep.
+          Every AI message is checked against these. A message that breaks one is rewritten up to
+          twice for simple problems, otherwise handed to the rep.
         </CardDescription>
       </CardHeader>
       <CardContent>

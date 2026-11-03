@@ -52,9 +52,18 @@ describe("composeOutgoing", () => {
   it("WhatsApp: opt-out only on the first message", () => {
     expect(composeOutgoing(whatsapp("Hi Asha"), { ...options, isFirstWhatsApp: true })).toEqual({
       channel: "whatsapp",
-      text: "Hi Asha\n\n— Ravi Kumar, Northbeam\n\nReply STOP to opt out.",
+      text: "Hi Asha\n\nRavi, Northbeam\n\nReply STOP to opt out.",
       bookingLinkAdded: false,
     });
-    expect(composeOutgoing(whatsapp("Hi Asha"), options)).toEqual({ channel: "whatsapp", text: "Hi Asha\n\n— Ravi Kumar, Northbeam", bookingLinkAdded: false });
+    expect(composeOutgoing(whatsapp("Hi Asha"), options)).toEqual({ channel: "whatsapp", text: "Hi Asha\n\nRavi, Northbeam", bookingLinkAdded: false });
+  });
+
+  it("E3b-1: the WhatsApp signature is the owner's first name and the company on its own line, no dash; email keeps the full name", () => {
+    const wa = composeOutgoing(whatsapp("Hi Asha, would Thursday or Friday suit you?"), options);
+    expect(wa.text).toBe("Hi Asha, would Thursday or Friday suit you?\n\nRavi, Northbeam");
+    expect(wa.text).not.toMatch(/[—–-]\s*Ravi/);
+    expect(composeOutgoing(whatsapp("Hi"), { ...options, ownerName: "Ravi" }).text).toBe("Hi\n\nRavi, Northbeam");
+    const mail = composeOutgoing(email("Hi Asha,\n\nWould Thursday or Friday suit you?"), options);
+    expect(mail.text).toBe('Hi Asha,\n\nWould Thursday or Friday suit you?\n\nBest regards,\nRavi Kumar\nNorthbeam\n\nIf you\'d prefer not to hear from us, just reply "stop".');
   });
 });

@@ -351,7 +351,7 @@ function styleCheckLines(): string[] {
     "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
     '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"',
     '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (in the user message). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."',
-    '- unsupported_sector_claim: says we help, work with or have experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow."',
+    '- unsupported_sector_claim: claims results, clients or experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow." ALLOWED (not a violation): describing our approach or process for their sector, e.g. "We usually start by mapping the right corporate segments and decision-makers."',
   ];
 }
 
@@ -377,11 +377,15 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
       `the sender's own company name (${ownNames}); the lead's own company name (given in the user message).`,
     'SUPPORTED: a faithful paraphrase or summary of an approved fact; it need not use the same words. Examples: the knowledge says we target the right decision-makers and qualify opportunities, so "We focus on targeting the right decision-makers and qualifying opportunities" is supported; a case study says a steel trader got new customers and repeat business, so "we helped a steel trader with repeat business" is supported.',
     "SUPPORTED: general statements of our approach that the playbook or knowledge describe (how we work, what we start with, what we focus on).",
+    'SUPPORTED: describing HOW we work (our approach or process) for ANY B2B sector, including sectors the knowledge doesn\'t list (it covers "other B2B sectors"). Example (allowed for a CA firm): "We usually start by mapping the right corporate segments and decision-makers, then reach out to them for you."',
     'UNSUPPORTED: a specific, checkable claim that is in no approved source: numbers, named clients, results beyond the case study\'s wording, claims about "many" or "most" clients, sector experience not listed, and promises (visits, timelines, outcomes).',
     'UNSUPPORTED example (an invented generalisation about other clients): "Many clients in precision components who already have teams find it helpful to add outside support."',
     'UNSUPPORTED: any number or result attributed to an attachment or document we send (e.g. "the attached case study shows 10x ROI"). Attachments are never an approved source; only mentioning that something is attached is fine.',
     "Flag any other company name unless an approved source names it.",
-    "Exception to the vague-intent rule: saying we help, work with or have experience in the lead's sector or industry IS a claim; flag it unless an approved source says so.",
+    "Exception to the vague-intent rule: saying we have results, clients or experience in the lead's sector or industry IS a claim; flag it unless an approved source says so. Describing how we would approach their sector is not.",
+    'UNSUPPORTED: saying what a past call, meeting, discussion or proposal contained, unless the latest call/note or the meeting outcome notes in lead_data say so. Example: "Based on our discussion, the focus was on a practical plan for reaching the right buyers."',
+    'UNSUPPORTED: turning ONE listed client experience into a plural or a pattern ("clients", "similar companies", "industrial exporters like you"). Examples: "Our published client experiences also include industrial exporters", "we have worked with similar industrial companies".',
+    'UNSUPPORTED: saying the lead said, asked or mentioned something ("you mentioned…", "you said…", "as you told us…") that is not in the lead\'s own data (their enquiry, calls and notes). Example: "You mentioned TRC\'s requirement is already under discussion with us."',
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     "",
     ...styleCheckLines(),

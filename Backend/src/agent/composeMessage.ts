@@ -39,7 +39,9 @@ export function composeOutgoing(decision: SendDecision, options: ComposeOptions)
   const { ownerName, companyName, settings } = options;
   if (decision.action === "send_whatsapp") {
     const booking = bookingLine("whatsapp", options);
-    let text = [...paragraphs(decision.body), ...(booking ? [booking] : [])].join("\n\n") + `\n\n— ${ownerName}, ${companyName}`;
+    // E3b-1 rule 8: "<first name>, <company>" on its own line, no leading dash.
+    const firstName = ownerName.trim().split(/\s+/)[0] || ownerName;
+    let text = [...paragraphs(decision.body), ...(booking ? [booking] : [])].join("\n\n") + `\n\n${firstName}, ${companyName}`;
     if (options.isFirstWhatsApp) text += `\n\n${settings.whatsapp_opt_out_text}`;
     return { channel: "whatsapp", text, bookingLinkAdded: Boolean(booking) };
   }

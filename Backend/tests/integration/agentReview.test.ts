@@ -253,8 +253,10 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
     const secondWa = await decision(ws, leadId, { action: "send_whatsapp", createdAt: "2026-10-05T00:00:00Z" });
     const first = (await api(owner, ws, "GET", `/agent/decisions/${firstWa}`)).body.composed;
     const second = (await api(owner, ws, "GET", `/agent/decisions/${secondWa}`)).body.composed;
-    expect(first.text).toContain(`— ${owner.fullName}, MOTM Technologies\n\n${settings.whatsapp_opt_out_text}`);
-    expect(second.text.endsWith(`— ${owner.fullName}, MOTM Technologies`)).toBe(true);
+    // E3b-1: "<first name>, <company>" on its own line, no dash.
+    const firstName = owner.fullName.split(" ")[0];
+    expect(first.text).toContain(`\n\n${firstName}, MOTM Technologies\n\n${settings.whatsapp_opt_out_text}`);
+    expect(second.text.endsWith(`\n\n${firstName}, MOTM Technologies`)).toBe(true);
 
     const handoff = await decision(ws, leadId, { action: "handoff" });
     expect((await api(owner, ws, "GET", `/agent/decisions/${handoff}`)).body.composed).toBeNull();
