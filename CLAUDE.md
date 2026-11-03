@@ -74,7 +74,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `049`).
+  (currently `050`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -98,7 +98,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `049`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `050`).
 
 ## Way of working
 
@@ -707,6 +707,12 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   "Booking link added"). Frontend: Settings → Profile (`profile-panel.tsx`, `booking-url.ts`), Users booking link field, AI agent
   "First message channel", `StageUsed` + `BookingLinkNote` in the decision Sheet / contact AI panel, Message rules card text.
   `B4-api.md` §7p.
+- **E3b-1b (fixes from the 2026-11-03 model test; nothing new sent, no OpenAI calls):** migration 050 `agent_settings.whatsapp_max_words`
+  default 50 → 60 (rows on 50 moved); prompt "aim for about 40" (`whatsappTargetWords`, ⅔ of the limit); the `length` feedback gives the
+  count, words to cut and "drop the thank-you opener first". `applyGroundingAllowList(result, ctx, now)` drops an unsupported claim or
+  `asks_lead_to_describe_business` whose quote is only the suggested-day question (`isDayOptionQuestion`); checker prompt allows it and
+  flags a promised follow-up time; `meeting_recap` offers help with questions, not a call slot, when the lead will decide later or
+  consult someone. `agent:model-test` `--only`, `--channel`, `--max-cost` (above).
 
 ## WhatsApp safety (E1)
 
@@ -864,14 +870,16 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Auto-fixes (E3a, both modes, in code): `polishDecision` runs before every check, on subject + body; a fixed problem never causes a
   regeneration; every fix is in `quality_checks[].autoFixes`. It never changes meaning: if a fix would break a sentence the text stays
   and the normal check fails. The model never writes links, emails or phones (`contact_details`, fixable).
-- Message shape (E3a): limits 120 / 50 words by default, admin style examples in the prompt (never a fact source), subject 2–7 plain
+- Message shape (E3a, E3b-1b): limits 120 / 60 words by default (the model's body only, never the signature, opt-out or booking
+  line; the writer aims for about two thirds on WhatsApp, 40), admin style examples in the prompt (never a fact source), subject 2–7 plain
   words (`subject_style`, fixable).
 - Threading (E3a): a follow-up AI email to a contact with a real AI email (sent, not bounced, not dry run) in the last 45 days uses
   `In-Reply-To` + `References` = that email's Message-ID and "Re: <first subject>"; the model's subject is ignored (it writes "-").
   Decided again at send time. A new Message-ID every time. Rep proposal/meeting emails are never threaded.
 - Measuring (E3a): `GET /agent/stats.quality` (since `readiness_since` and last 7 days); `npm run agent:model-test -- --combos
-  "writer/checker,..."` (`>` also works, but not through `npm.cmd`: cmd.exe redirects it) prints the plan; `--confirm` spends (stops past $3), saves
-  nothing, writes `scripts/output/model-test-<timestamp>.md`.
+  "writer/checker,..."` (`>` also works, but not through `npm.cmd`: cmd.exe redirects it) prints the plan and the estimated cost; E3b-1b: `--only "Full Name,..."`, `--channel email|whatsapp`, `--max-cost <usd>` (default
+  $0.10, at most $3; stops before the next contact once reached); `--confirm` spends, saves nothing, writes
+  `scripts/output/model-test-<timestamp>.md` (per message: channel, first WhatsApp, word count).
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text, the meeting outcome notes for a
   recap, and the company facts: name, domain, website, industry, location, employees, revenue). Checker (E3b-1): describing our
   approach for any B2B sector is fine; flagged: claims of results/experience in an unlisted sector, what a past call/meeting/proposal
