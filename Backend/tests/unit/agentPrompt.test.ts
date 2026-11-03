@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
-import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, neutralise, parseGroundingOutput } from "../../src/agent/prompt.js";
+import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, isDayOptionQuestion, neutralise, parseGroundingOutput } from "../../src/agent/prompt.js";
 import { buildDealContext, type AgentDealRow } from "../../src/agent/dealContext.js";
 
 import { sampleContext, settings } from "../helpers/agentContextFixture.js";
@@ -341,5 +341,60 @@ describe("company and deal context (D1)", () => {
     expect(user!.content).toContain("<internal_context>\nOpen deal: none\nEarlier deals: 0 won, 1 lost\n</internal_context>");
     expect(user!.content).not.toContain("Company record:");
     expect(user!.content).toContain("The internal_context block");
+  });
+});
+
+describe("E3b-1b: the suggested-day question and the meeting recap", () => {
+  // Suggested days are the next two working days (IST): Tue → Wed/Thu, Wed → Thu/Fri, Thu → Fri/Sat, Sat → Mon/Tue.
+  const cases = [
+    { now: new Date("2026-11-03T06:00:00Z"), quote: "Would Wednesday or Thursday suit you for a short call?" },
+    { now: new Date("2026-11-04T06:00:00Z"), quote: "Would Thursday or Friday work for a short call?" },
+    { now: new Date("2026-11-07T06:00:00Z"), quote: "Could we speak briefly on Monday or Tuesday?" },
+    { now: new Date("2026-11-05T06:00:00Z"), quote: '"Would Friday or Saturday suit you for a short discussion?"' },
+  ];
+  const describeAsk = "Could you tell me more about your business before we speak on Wednesday or Thursday?";
+  const rohit = "I will check back next week. Would Wednesday or Thursday suit you for that?";
+
+  it("drops the day question from unsupported claims and asks_lead_to_describe_business, in code", () => {
+    for (const { now, quote } of cases) {
+      expect(
+        applyGroundingAllowList(
+          { supported: false, unsupportedClaims: [quote], styleViolations: [{ rule: "asks_lead_to_describe_business", quote }, { rule: "unsupported_sector_claim", quote: "x" }] },
+          sampleContext(),
+          now,
+        ),
+      ).toEqual({ supported: true, unsupportedClaims: [], styleViolations: [{ rule: "unsupported_sector_claim", quote: "x" }], ignoredClaims: [quote, quote] });
+    }
+  });
+
+  it("keeps a real ask to describe the business, a promise with the days, other days and calls without now", () => {
+    const now = cases[0]!.now;
+    for (const quote of [describeAsk, "Tell me more about your business?", rohit, "Would Friday or Saturday suit you for a short call?"]) {
+      const result = { supported: false, unsupportedClaims: [quote], styleViolations: [{ rule: "asks_lead_to_describe_business" as const, quote }] };
+      expect(applyGroundingAllowList(result, sampleContext(), now)).toBe(result);
+    }
+    expect(isDayOptionQuestion(cases[0]!.quote, "Wednesday or Thursday")).toBe(true);
+    const plain = { supported: false, unsupportedClaims: [cases[0]!.quote] };
+    expect(applyGroundingAllowList(plain, sampleContext())).toBe(plain);
+  });
+
+  it("a style-only drop keeps the model's supported flag", () => {
+    const quote = cases[0]!.quote;
+    expect(applyGroundingAllowList({ supported: true, unsupportedClaims: [], styleViolations: [{ rule: "asks_lead_to_describe_business", quote }] }, sampleContext(), cases[0]!.now)).toEqual({
+      supported: true,
+      unsupportedClaims: [],
+      styleViolations: [],
+      ignoredClaims: [quote],
+    });
+  });
+
+  it("the checker allows the four day questions and flags Rohit's follow-up promise; the writer never promises a follow-up time", () => {
+    const decision: AgentDecision = { action: "send_whatsapp", body: rohit, assetIds: [], nextWakeInDays: 3, reasoning: "r" };
+    const system = buildGroundingMessages(decision, sampleContext())![0]!.content;
+    for (const { quote } of cases) expect(system).toContain(quote.replace(/"/g, ""));
+    expect(system).toContain(`Example (the lead will decide after talking to his brother): "${rohit}"`);
+    const writer = buildDecisionMessages(sampleContext(), settings, NOW)[0]!.content;
+    expect(writer).toContain('- Never promise when you will follow up ("I will check back next week"): the system schedules follow-ups.');
+    expect(writer).toContain("If the outcome or notes say the lead will decide later or consult someone, offer help with any questions instead of a call slot.");
   });
 });

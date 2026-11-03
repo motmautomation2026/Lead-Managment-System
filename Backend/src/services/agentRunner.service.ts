@@ -150,7 +150,7 @@ export async function draftDecision(
         jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
       });
       add(deps.groundingModel, checked, tokens);
-      grounding = applyGroundingAllowList(checked.json, ctx);
+      grounding = applyGroundingAllowList(checked.json, ctx, deps.now);
     }
     const unsupported = grounding && !grounding.supported ? (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]) : [];
     // E2b rule 2: style problems from the same grounding call.

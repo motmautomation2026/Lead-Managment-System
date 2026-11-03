@@ -89,6 +89,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- The first line is about the lead, not about us: use their latest call, note or enquiry. Never send a generic message.",
     "- Never start two messages to the same contact the same way.",
     "- End with one easy question. When you propose a call, offer the two days under \"Suggested days\" (e.g. \"Would Thursday or Friday suit you?\") or ask a simple yes/no; never an exact clock time (the rep confirms the time).",
+    "- Never promise when you will follow up (\"I will check back next week\"): the system schedules follow-ups.",
     "",
     "Each message has a purpose, given in lead_data as \"This message\" (from the CRM, reliable). Write for that purpose:",
     ...ANGLES.map((angle) => `- ${ANGLE_RULES[angle]}`),
@@ -331,13 +332,33 @@ export type GroundingResult = z.infer<typeof groundingSchema>;
  * workspace name, or the lead's own company): the grounding model sometimes flags them
  * despite the prompt. Kept in ignoredClaims for review.
  */
-export function applyGroundingAllowList(result: GroundingResult, ctx: AgentContext): GroundingResult & { ignoredClaims?: string[] } {
+export function applyGroundingAllowList(result: GroundingResult, ctx: AgentContext, now?: Date): GroundingResult & { ignoredClaims?: string[] } {
   const norm = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const allowed = new Set([ctx.companyName, ctx.workspaceName, ctx.lead.company, ctx.company?.name ?? ""].filter(Boolean).map(norm));
-  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)));
-  if (!ignored.length) return result;
-  const unsupportedClaims = result.unsupportedClaims.filter((claim) => !allowed.has(norm(claim)));
-  return { ...result, supported: unsupportedClaims.length === 0, unsupportedClaims, ignoredClaims: ignored };
+  // E3b-1b rule 3: the code-suggested day question is never a claim or an ask to describe their business.
+  const days = now ? suggestedDays(now) : null;
+  const dayQuestion = (text: string) => days !== null && isDayOptionQuestion(text, days);
+  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim));
+  const ignoredStyle = (result.styleViolations ?? []).filter((v) => v.rule === "asks_lead_to_describe_business" && dayQuestion(v.quote));
+  if (!ignored.length && !ignoredStyle.length) return result;
+  const unsupportedClaims = result.unsupportedClaims.filter((claim) => !ignored.includes(claim));
+  return {
+    ...result,
+    supported: ignored.length ? unsupportedClaims.length === 0 : result.supported,
+    unsupportedClaims,
+    ...(result.styleViolations ? { styleViolations: result.styleViolations.filter((v) => !ignoredStyle.includes(v)) } : {}),
+    ignoredClaims: [...ignored, ...ignoredStyle.map((v) => v.quote)],
+  };
+}
+
+// A request for them to describe their business or needs; such a question stays flagged.
+const DESCRIBE_ASK = /\b(?:tell|describe|explain|share|walk|what|which|how|business|needs|requirements?|challenges?|customers|industr\w*|process\w*)\b/i;
+
+/** E3b-1b rule 3: the quote is only one question offering both suggested days ("Would Wednesday or Thursday suit you for a short call?"). */
+export function isDayOptionQuestion(quote: string, days: string): boolean {
+  const text = quote.trim().replace(/^["'“‘]+|["'”’.]+$/g, "").toLowerCase();
+  const oneQuestion = text.endsWith("?") && !/[.!?]\s+\S/.test(text);
+  return oneQuestion && days.toLowerCase().split(" or ").every((day) => text.includes(day)) && !DESCRIBE_ASK.test(text);
 }
 
 /** Parses the grounding model's output (a JSON string or an object). Throws on invalid input. */
@@ -347,11 +368,16 @@ export function parseGroundingOutput(json: unknown): GroundingResult {
 
 const yesNo = (value: boolean) => (value ? "yes" : "no");
 
+// E3b-1b rule 3: the model-test messages that were wrongly flagged (Harish, Ajay, Pooja, Karthik).
+const DAY_QUESTION_EXAMPLES =
+  '"Would Wednesday or Thursday suit you for a short call?", "Would Thursday or Friday work for a short call?", "Could we speak briefly on Monday or Tuesday?", "Would Friday or Saturday suit you for a short discussion?"';
+
 /** E2b rule 2: the style rules, each with one example, and the CRM facts they depend on. */
 function styleCheckLines(): string[] {
   return [
     "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
-    '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"',
+    '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"; and a question offering days for a short call (the CRM suggests the days), e.g. ' +
+      DAY_QUESTION_EXAMPLES,
     '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (in the user message). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."',
     '- unsupported_sector_claim: claims results, clients or experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow." ALLOWED (not a violation): describing our approach or process for their sector, e.g. "We usually start by mapping the right corporate segments and decision-makers."',
   ];
@@ -388,6 +414,8 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     'UNSUPPORTED: saying what a past call, meeting, discussion or proposal contained, unless the latest call/note or the meeting outcome notes in lead_data say so. Example: "Based on our discussion, the focus was on a practical plan for reaching the right buyers."',
     'UNSUPPORTED: turning ONE listed client experience into a plural or a pattern ("clients", "similar companies", "industrial exporters like you"). Examples: "Our published client experiences also include industrial exporters", "we have worked with similar industrial companies".',
     'UNSUPPORTED: saying the lead said, asked or mentioned something ("you mentioned…", "you said…", "as you told us…") that is not in the lead\'s own data (their enquiry, calls and notes). Example: "You mentioned TRC\'s requirement is already under discussion with us."',
+    `NEVER flag a question offering days for a short call or discussion; the CRM suggests the days. Examples: ${DAY_QUESTION_EXAMPLES}.`,
+    'UNSUPPORTED: promising when we will follow up or check back; the CRM schedules follow-ups. Example (the lead will decide after talking to his brother): "I will check back next week. Would Wednesday or Thursday suit you for that?"',
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
     "",
     ...styleCheckLines(),

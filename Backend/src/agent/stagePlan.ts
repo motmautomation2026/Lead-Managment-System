@@ -42,7 +42,7 @@ export const ANGLE_RULES: Record<Angle, string> = {
   check_in: "check_in: a short, friendly check-in asking whether a short call would help.",
   final_check: "final_check: the last message: polite, asks whether to stay in touch later. No pressure.",
   call_followup: "call_followup: build on the latest call or note and confirm the next step agreed there.",
-  meeting_recap: "meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question).",
+  meeting_recap: "meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). If the outcome or notes say the lead will decide later or consult someone, offer help with any questions instead of a call slot.",
   reschedule: "reschedule: one polite message offering to find a new time for the missed meeting. No blame.",
   proposal_questions: "proposal_questions: ask whether they have any questions on the proposal.",
   proposal_timing: "proposal_timing: ask, simply, when they expect to decide on the proposal.",
