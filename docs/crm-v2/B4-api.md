@@ -435,6 +435,22 @@ Migration 047.
   `subject_style`, `contact_details`.
 - `messageSubject` of an AI follow-up is the subject really used ("Re: <first subject>").
 
+## 7p. AI conversion core — E3b-1
+
+- `GET|PUT /agent/settings` (PUT admin-only): `firstChannel: "whatsapp" | "email"` (default `whatsapp`, else **400**): the channel of a
+  contact's first AI message when both channels are usable; later messages alternate.
+- Decision list, decision detail and the contact's AI panel rows: `stageKey` (`new_no_contact | after_call | meeting_scheduled |
+  meeting_held_no_proposal | meeting_no_show | proposal_sent | rep_owned | long_term`, null before E3b-1) and `angle` (`welcome |
+  insight | client_experience | check_in | final_check | call_followup | meeting_recap | reschedule | proposal_questions |
+  proposal_timing`, only on send decisions). New rule notes: adjustment `stage_plan` (the stage allows no message now → wait / the one
+  rep-owned handoff), adjustment `channel_balance` + violation `channel_switch` (fixable; the other channel is due).
+- Decision detail `composed` gains `bookingLinkAdded: boolean` (the owner's current booking link was added, before the signature).
+  The WhatsApp signature is now "<owner first name>, <company>" on its own line (no dash).
+- `GET /me` adds `bookingUrl: string | null`. `PATCH /me` `{ bookingUrl: string | null }` (every signed-in user, own profile only):
+  https only, ≤ 300 characters, blank → null, else **400**; returns `{ bookingUrl }`.
+- `GET /admin/users` rows add `bookingUrl`; `PATCH /admin/users[/:id]` accepts `bookingUrl` (same validation; omitted = unchanged,
+  null = removed).
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

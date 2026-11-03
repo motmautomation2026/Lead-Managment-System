@@ -74,7 +74,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `048`).
+  (currently `049`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -98,7 +98,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `048`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `049`).
 
 ## Way of working
 
@@ -680,6 +680,33 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   (`domain/emailSafety.ts`), `agentThread` in `processEmail` decides again at send time. `GET /agent/stats.quality`
   (`loadQuality`), `messageRules.styleExamples`. `services/agentModelTest.service.ts` + `npm run agent:model-test`. Frontend:
   `StyleExamplesCard`, "Fixed automatically" in the decision Checks, `QualityStats` on AI Activity. `B4-api.md` §7o.
+- **E3b-1 (conversion core; nothing new sent to real leads):** migration 049: `agent_decisions.stage_key` / `angle`,
+  `agent_settings.first_channel` (`whatsapp|email`, default whatsapp), `profiles.booking_url` (https, ≤ 300). Pure `agent/stagePlan.ts`
+  (`stagePlan` → `{stageKey, angle, allowedActions, preferredChannel, reason, fallback}`, `journeyAngle`, `preferredChannel`,
+  `suggestedDays`, `CALL_ANGLES`, labels); `buildAgentContext` builds it from the latest meeting/proposal, calls/notes, touches per
+  channel (real sends; shadow also allowed drafts), `conversationExists`, channel usability and an earlier `rep_owned` decision
+  (`ctx.stagePlan`, `ctx.stagePlanInput`, `ctx.latestMeeting` {outcome, notes}, `rules.stagePlan`). Status mapping (Item 0): upcoming
+  meeting, or a past one with no outcome → `meeting_scheduled`; completed with an outcome (incl. second_meeting) and no sent proposal →
+  `meeting_held_no_proposal`; `no_show` → `meeting_no_show`; cancelled/failed → back to the journey; proposal `sent` →
+  `proposal_sent`; `revision_requested|revised|withdrawn` or a deal/lead in negotiation → `rep_owned`; draft/uploaded/ready_to_send =
+  no proposal yet; won/accepted, LTN without nurture, DNC… stay stopped by the existing rules. `validateDecision` 5b: an action the
+  stage doesn't allow → its fallback (adjustment `stage_plan`); the channel that isn't due while the other is usable → switched +
+  fixable violation `channel_switch` (adjustment `channel_balance`). Prompt: one system list of angles + the easy-yes rule (cached),
+  lead_data "This message: <angle> (<reason>)", "Channel for this message", "Suggested days: Thursday or Friday" (call angles), meeting
+  outcome + notes for a recap. Speed to lead: `isFreshInbound` (website/inbound_form, < 2 h, no touch) → `FIRST_INBOUND_WINDOW`
+  08:00–21:00 IST any day in `rules.ts` (`sendWindowSettings`), `sendRecheck` (`freshInbound`, returned by `agentSendRecheck`), and
+  `decideSend` / `decideEmailSend` (`firstInboundWindow`, source agent only, `automatedWindow`); caps, spacing, warm-up, new-chat
+  limit, pause unchanged; `onAgentEvent` lead_created wakes a fresh inbound contact at once; "First call" due in 1 hour and the
+  notification "New website lead — call within 1 hour" (website form; manual inbound_form/website create). Booking link:
+  `GET|PATCH /me` (`bookingUrlSchema`, `profiles.service.ts`), admin `PATCH /admin/users` `bookingUrl`; `composeOutgoing` `bookingLine`
+  (email "If it's easier, you can pick a time here: <url>", WhatsApp "You can also pick a time here: <url>", call angles only, never a
+  first WhatsApp; `bookingLinkAdded`). `assetRules`: a WhatsApp attachment also after a logged call or a held meeting
+  (`AssetFacts.callOrMeetingHeld`). Checker: approach statements for any B2B sector are supported; invented call/meeting/proposal
+  history, one client experience made plural and "you mentioned…" not in the lead's data are flagged. WhatsApp signature
+  "<first name>, <company>" (no dash). `agent:preview` / `agent:model-test` print stage + angle (model test: plan without touches,
+  "Booking link added"). Frontend: Settings → Profile (`profile-panel.tsx`, `booking-url.ts`), Users booking link field, AI agent
+  "First message channel", `StageUsed` + `BookingLinkNote` in the decision Sheet / contact AI panel, Message rules card text.
+  `B4-api.md` §7p.
 
 ## WhatsApp safety (E1)
 
@@ -791,7 +818,23 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   removed, paused/stopped contact → queued sends are cancelled at the re-check; WhatsApp pause defers.
 - Live counting: touches, gaps and limits use real sends only (`outcome = 'sent'`); `leads.agent_touch_*` only on a real
   send; shadow drafts never count for a live contact and are labelled "draft — never sent to the contact" in prompts.
-- One question per message (both modes): > 1 → regenerate (up to twice, E2f) → handoff.
+- One question per message (both modes): > 1 → regenerate (up to twice, E2f) → handoff. A choice between two options ("Would
+  Thursday or Friday suit you?") is one question (E3b-1).
+- Stage plan (E3b-1, both modes, in code: `agent/stagePlan.ts`, the only place): `new_no_contact` journey welcome → insight →
+  client_experience → check_in, then insight/client_experience alternately, `final_check` always the last allowed touch;
+  `after_call` (call/note newer than our last message → `call_followup`, then the journey without welcome); `meeting_scheduled` no
+  sends (wait until after it); `meeting_held_no_proposal` recap (only from the outcome notes) then check-in, max 2; `meeting_no_show`
+  one `reschedule` ≥ 24 h after, then the journey; `proposal_sent` questions ≥ 2 d, timing ≥ 7 d, client_experience ≥ 14 d, max 3,
+  then wait; `rep_owned` no sends, one handoff the first time, then wait 7 days; `long_term` insight/check_in ≤ 1 per 30 days. The
+  model may still pick wait/handoff/stop.
+- Channels (E3b-1): both usable → the first touch on `agent_settings.first_channel`, then the other channel than the last touch
+  (real sends; shadow: allowed drafts); the wrong one is switched + regenerated (`channel_switch`, fixable). One usable → that one.
+  Limits count both channels together.
+- Speed to lead (E3b-1): a website/inbound-form contact < 2 h old with no touch may get its FIRST AI message 08:00–21:00 IST any day
+  (rules, send re-check and both channel checks); every other safety rule unchanged; follow-ups keep the normal window.
+- Booking link + suggested days (E3b-1): call angles get "Suggested days" (next two working days, Mon–Sat, ≥ 1 day ahead, IST) and,
+  when the owner has `profiles.booking_url`, a code-added booking line before the signature (never a first WhatsApp). Never exact clock
+  times; the model never writes URLs.
 - E2f (both modes, in code): signals from the website enquiry/industry (consumer business → stop `not_a_fit`) and the latest
   call/note (price, visit/in-person, ready for a call/next step → handoff) turn any send into that action without a
   regeneration (`agent/signals.ts`, `rules.signal`); never offer or promise a visit. A banned phrase negated within 3 words
@@ -809,7 +852,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - A contact is never AI-live and in a workflow: becoming live cancels its runs ("Managed by AI agent"), `autoEnroll`
   skips it, manual enrolment → 409.
 - Attachments (E2g, both modes, in code): only assets from the library on their allowed channels (rule 1 = violation);
-  never before a conversation or a real message from us, WhatsApp only after the contact replied on WhatsApp, never the
+  never before a conversation or a real message from us, WhatsApp only after the contact replied on WhatsApp (E3b-1: or a logged call / held meeting), never the
   same asset twice, ≤ 2 email / ≤ 1 WhatsApp, ≤ 10 MB in total — these DROP the attachment and keep the message (no
   regeneration, recorded in `quality_checks`). The AI sees only an asset's title and "use when"; asset chunks are never a
   fact source (decide or grounding) and grounding flags numbers/results attributed to an attachment. Live sends attach the
@@ -829,8 +872,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Measuring (E3a): `GET /agent/stats.quality` (since `readiness_since` and last 7 days); `npm run agent:model-test -- --combos
   "writer/checker,..."` (`>` also works, but not through `npm.cmd`: cmd.exe redirects it) prints the plan; `--confirm` spends (stops past $3), saves
   nothing, writes `scripts/output/model-test-<timestamp>.md`.
-- Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text and the company
-  facts: name, domain, website, industry, location, employees, revenue). Internal context (company description +
+- Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text, the meeting outcome notes for a
+  recap, and the company facts: name, domain, website, industry, location, employees, revenue). Checker (E3b-1): describing our
+  approach for any B2B sector is fine; flagged: claims of results/experience in an unlisted sector, what a past call/meeting/proposal
+  contained unless the notes say so, one client experience turned plural ("similar companies"), and "you mentioned…" not in the
+  lead's own data. Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
 - The agent never marks Won/Lost/DNC, never deletes, never changes the owner; never contacts
   DNC/won/lost/discarded/merged leads or leads whose `agent_status` ≠ `active`. Every safety ceiling, the daily decision
