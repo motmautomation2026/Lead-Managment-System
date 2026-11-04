@@ -413,7 +413,7 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
 
     const page = await api.call(owner, ws, "GET", `/contacts/${c.id}/timeline`);
     const row = page.body.data.find((r: { title: string }) => r.title === "Replied by email");
-    expect(row.reply).toEqual({ channel: "email", messageId: event.id, hasText: true, label: null, labelSource: null, labelBy: null, classifying: true, canRead: true, canCorrect: true });
+    expect(row.reply).toEqual({ channel: "email", messageId: event.id, hasText: true, label: null, labelSource: null, labelBy: null, classifying: true, canRead: true, canCorrect: true, drafting: true, draft: null });
 
     const read = await api.call(owner, ws, "GET", `/contacts/${c.id}/email-replies/${event.id}`);
     expect(read.status).toBe(200);
