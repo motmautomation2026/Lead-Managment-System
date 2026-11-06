@@ -51,6 +51,11 @@ export const settingsUpdateSchema = z
       .array(z.string().trim().max(60, "Each phrase can be at most 60 characters."))
       .transform((phrases) => phrases.filter((p, i) => p && phrases.findIndex((q) => q.toLowerCase() === p.toLowerCase()) === i))
       .pipe(z.array(z.string()).max(100, "At most 100 banned phrases.")),
+    // E3b-2b rule 16: the workspace's buyer industries for the hot-lead score: lower case, ≤ 100, each 1–60 characters.
+    targetIndustryKeywords: z
+      .array(z.string().trim().toLowerCase().max(60, "Each industry can be at most 60 characters."))
+      .transform((list) => list.filter((k, i) => k && list.indexOf(k) === i))
+      .pipe(z.array(z.string()).max(100, "At most 100 target industries.")),
     // E3a: ≤ 6,000 characters (migration 048); empty = no block.
     styleExamples: z.string().trim().max(6000, "Style examples can be at most 6,000 characters."),
     wakeMinDays: positiveInt,

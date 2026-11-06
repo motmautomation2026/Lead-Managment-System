@@ -55,6 +55,7 @@ export const NO_FILTERS = Object.fromEntries(
 export const DEFAULT_SORT = "createdAt:desc";
 export const DEFAULT_COLUMNS = [
   "name",
+  "hotScore",
   "company",
   "email",
   "phone",

@@ -22,6 +22,7 @@ import { LIVE_SCOPE_LABEL } from "@/features/agent/agent-labels";
 import { GatePanel, LiveBanner, LiveConfirmDialog } from "@/features/agent/live-mode";
 import { MessageRulesCard } from "./message-rules-card";
 import { StyleExamplesCard } from "./style-examples-card";
+import { TargetIndustriesCard } from "./target-industries-card";
 import {
   messageFromError,
   useAgentPlaybooks,
@@ -169,6 +170,7 @@ function AgentEditor() {
       <MessageRulesCard rules={settings.data} editable />
       <PlaybookCard />
       <StyleExamplesCard examples={settings.data.styleExamples} editable />
+      <TargetIndustriesCard keywords={settings.data.targetIndustryKeywords ?? []} />
     </div>
   );
 }

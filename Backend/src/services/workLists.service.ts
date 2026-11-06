@@ -41,7 +41,7 @@ interface RefColumns {
   owner_full_name: string | null;
 }
 
-const CONTACT_JSON = `json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name))`;
+const CONTACT_JSON = `json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name), 'hotBand', l.hot_band, 'hotScore', l.hot_score)`;
 const COMPANY_JSON = `case when c.id is null then null else json_build_object('id', c.id, 'name', c.name) end`;
 const DEAL_JSON = `case when d.id is null then null else json_build_object('id', d.id, 'name', d.name) end`;
 
@@ -63,6 +63,8 @@ export const TASK_SORTS = defineSorts({
     dueAt: { columns: ["t.due_at"], type: "timestamptz" },
     createdAt: { columns: ["t.created_at"], type: "timestamptz" },
     updatedAt: { columns: ["t.updated_at"], type: "timestamptz" },
+    // E3b-2b "Hottest first": the contact's hot score (a joined column: no (workspace_id, field, id) index, like companies contactCount).
+    hotScore: { columns: ["l.hot_score"], type: "int", nullable: true },
   },
 });
 

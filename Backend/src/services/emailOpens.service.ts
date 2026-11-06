@@ -8,6 +8,7 @@ import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { PREFETCH_WINDOW_MS } from "../domain/emailTracking.js";
+import { markHotScore } from "./messageFacts.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 
 /** Rule 12: every open raises open_count; only one more than 60 s after sending can be the first counted open. */
@@ -57,7 +58,7 @@ export async function runOpenEvents(options: { limit?: number; workspaceIds?: st
         id,
         row.first_counted_open_at,
       ]);
-      await db.query(`update public.leads set hot_score_dirty = true where id = $1`, [row.lead_id]);
+      await markHotScore(db, row.lead_id);
       recorded++;
     });
   }

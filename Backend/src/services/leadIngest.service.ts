@@ -150,7 +150,8 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
       metadata: submissionMetadata(form),
       ...SYSTEM_ACTOR,
     });
-    await db.query(`update public.leads set last_activity_at = now() where id = $1`, [existing.id]);
+    // E3b-2b rule 17: a new enquiry text → the hot score is recomputed.
+    await db.query(`update public.leads set last_activity_at = now(), hot_score_dirty = true where id = $1`, [existing.id]);
 
     const stateNote = existing.lifecycle_state === "active" ? "" : ` This lead is currently "${existing.lifecycle_state}" - nothing was changed automatically.`;
     await notifyAboutLead(

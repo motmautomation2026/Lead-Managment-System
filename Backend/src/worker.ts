@@ -21,6 +21,7 @@ import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.servi
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
+import { runLeadScoreSweep } from "./services/leadScore.service.js";
 import { runDealSweep } from "./services/deals.service.js";
 
 /**
@@ -203,6 +204,13 @@ async function tick(): Promise<void> {
     });
     if (swept && swept.processed + swept.failed > 0) console.log(`[worker] Deal sweep: ${swept.processed} contact(s), ${swept.created} deal(s) created, ${swept.attachedMeetings} meeting(s) and ${swept.attachedProposals} proposal(s) attached, ${swept.failed} failed.`);
   }
+
+  // E3b-2b: recompute up to 200 marked or day-old hot-lead scores (backfills every lead after deploy).
+  const scored = await runLeadScoreSweep().catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Hot-score sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return 0;
+  });
+  if (scored) console.log(`[worker] Hot-score sweep: ${scored} contact(s).`);
 
   // D4a: label WhatsApp replies that matched no keyword, behind AGENT_RUNNER_ENABLED.
   const labelled = await runReplyClassification(env.AGENT_RUNNER_ENABLED, { model: decisionModel }).catch((err: { code?: string; name?: string }) => {

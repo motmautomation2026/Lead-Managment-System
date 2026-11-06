@@ -157,7 +157,7 @@ const truncate = (text: string | null, max: number) => (text && text.length > ma
 // stage changes, manual/inbound email and WhatsApp, and lifecycle changes.
 const TIMELINE_KINDS = ["call", "note", "meeting", "proposal", "stage", "email", "whatsapp"];
 const LIFECYCLE_TITLES = ["Won", "Lost", "Discarded", "Do Not Contact", "Moved to Long-Term Nurture", "Reactivated", "Merged"];
-const WEBSITE_TITLES = ["Website form submission", "Website form submitted again"];
+export const WEBSITE_TITLES = ["Website form submission", "Website form submitted again"];
 const UPCOMING_MEETING_STATUSES = ["tentative", "scheduled", "confirmed", "rescheduled"];
 
 export async function buildAgentContext(

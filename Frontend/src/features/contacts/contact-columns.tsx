@@ -9,6 +9,7 @@ import { label } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { ContactListItem } from "@/types";
 import { RecordLink } from "@/features/crm/record-link";
+import { HotScorePill } from "./hot-score";
 
 const dash = <span className="text-muted-foreground">–</span>;
 
@@ -57,6 +58,13 @@ export const CONTACT_COLUMNS: DataTableColumn<ContactListItem>[] = [
         <span className="truncate">{r.owner?.name ?? "Unassigned"}</span>
       </span>
     ),
+  },
+  {
+    id: "hotScore",
+    header: "Hot",
+    sortable: true,
+    size: 110,
+    cell: (r) => <HotScorePill score={r.hotScore} band={r.hotBand} reasons={r.hotReasons} />,
   },
   {
     id: "leadStatus",

@@ -30,6 +30,10 @@ import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notify
 export interface LeadRow {
   id: string;
   workspace_id: string;
+  hot_score?: number | null;
+  hot_band?: string | null;
+  hot_reasons?: string[] | null;
+  hot_score_at?: Date | null;
   first_name: string;
   last_name: string;
   company: string;
@@ -94,6 +98,10 @@ export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof g
     phone: row.phone ?? "",
     source: row.source,
     serviceInterest: row.service_interest ?? "",
+    // E3b-2b rule 15: recomputed by the worker; null until the first sweep.
+    hotScore: row.hot_score ?? null,
+    hotBand: row.hot_band ?? null,
+    hotReasons: row.hot_reasons ?? [],
     revenueRange: row.revenue_range ?? "",
     revenueMinCr: row.revenue_min_cr === null ? null : Number(row.revenue_min_cr),
     revenueMaxCr: row.revenue_max_cr === null ? null : Number(row.revenue_max_cr),
@@ -640,7 +648,8 @@ export async function updateLead(
 
   if (sets.length === 0) return current;
 
-  sets.push(`last_activity_at = now()`);
+  // E3b-2b rule 17: any edit (enquiry facts, company, email, lifecycle…) → the hot score is recomputed by the worker.
+  sets.push(`last_activity_at = now()`, `hot_score_dirty = true`);
   params.push(id);
   await db.query(`update public.leads set ${sets.join(", ")} where id = $${i}`, params);
 

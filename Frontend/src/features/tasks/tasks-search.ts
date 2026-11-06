@@ -117,6 +117,12 @@ export const BUILT_IN_VIEWS: BuiltInView<TasksSearch>[] = [
   },
   // Not "all": that id means "no view= in the URL", which is the default view's landing.
   { id: "everyone", label: "All open", state: () => ({}) },
+  // E3b-2b: my open tasks, the hottest contacts first (their hot-lead score; unscored last).
+  {
+    id: "hottest",
+    label: "Hottest first",
+    state: () => ({ ownerId: ["me"], sort: "hotScore:desc" }),
+  },
 ];
 
 /** The "My overdue" count (Overdue tab badge and the sidebar badge). */

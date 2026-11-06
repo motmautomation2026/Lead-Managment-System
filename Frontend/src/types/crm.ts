@@ -42,6 +42,10 @@ export interface ContactListItem {
   nextAction: NextAction | null;
   lastActivityAt: string;
   createdAt: string;
+  /** E3b-2b: hot-lead score (null until the worker's first sweep). */
+  hotScore?: number | null;
+  hotBand?: string | null;
+  hotReasons?: string[] | null;
 }
 
 export interface ContactDeal {

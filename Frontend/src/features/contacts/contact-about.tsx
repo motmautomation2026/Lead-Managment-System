@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PropertyList, type Property } from "@/components/crm/property-list";
+import { HOT_BAND_LABEL, hotReasonText, type HotBand } from "./hot-score-labels";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { label } from "@/lib/labels";
@@ -289,6 +290,35 @@ export function ContactAbout({
           ),
       };
     }),
+    {
+      id: "hotScore",
+      label: "Hot-lead score",
+      value:
+        contact.hotScore == null || !contact.hotBand ? (
+          "Not scored yet"
+        ) : (
+          <div className="space-y-1">
+            <StatusBadge
+              value=""
+              display={`${HOT_BAND_LABEL[contact.hotBand as HotBand]} · ${contact.hotScore}`}
+              tone={
+                contact.hotBand === "hot"
+                  ? "danger"
+                  : contact.hotBand === "warm"
+                    ? "warning"
+                    : "muted"
+              }
+            />
+            {contact.hotReasons?.length ? (
+              <ul className="type-small list-disc pl-4 text-muted-foreground">
+                {contact.hotReasons.map((code) => (
+                  <li key={code}>{hotReasonText(code)}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ),
+    },
     { id: "createdAt", label: "Created", value: <RelativeTime value={contact.createdAt} /> },
   ];
   return (

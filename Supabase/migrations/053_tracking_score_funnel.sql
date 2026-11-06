@@ -126,3 +126,28 @@ create index if not exists leads_hot_score_at_idx on public.leads (hot_score_at)
 
 comment on column public.leads.hot_score is 'E3b-2b rule 15: hot-lead score 0–100 (domain/leadScore.ts), recomputed by the worker; null = not computed yet.';
 comment on column public.leads.hot_score_dirty is 'E3b-2b rule 17: set by services when an input changed; the worker sweeper recomputes and clears it.';
+
+-- A score-only update (the sweeper, a recompute mark) keeps leads.updated_at: "recently updated"
+-- stays about real changes. Runs after leads_set_updated_at (triggers fire in name order).
+create or replace function public.leads_keep_updated_at_for_score()
+returns trigger
+language plpgsql
+as $$
+declare
+  score_columns constant text[] := array['hot_score', 'hot_band', 'hot_reasons', 'hot_score_at', 'hot_score_dirty', 'updated_at'];
+begin
+  if (to_jsonb(new) - score_columns) = (to_jsonb(old) - score_columns) then
+    new.updated_at := old.updated_at;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists leads_zz_keep_updated_at_for_score on public.leads;
+create trigger leads_zz_keep_updated_at_for_score
+  before update on public.leads
+  for each row
+  when (old.hot_score_dirty is distinct from new.hot_score_dirty or old.hot_score is distinct from new.hot_score
+        or old.hot_score_at is distinct from new.hot_score_at or old.hot_band is distinct from new.hot_band
+        or old.hot_reasons is distinct from new.hot_reasons)
+  execute function public.leads_keep_updated_at_for_score();

@@ -65,7 +65,7 @@ export async function attributeOutcome(db: Queryable, leadId: string, kind: Outc
         and ${column} is null`,
     [leadId, at ?? null],
   );
-  await db.query(`update public.leads set hot_score_dirty = true where id = $1`, [leadId]);
+  await markHotScore(db, leadId);
 }
 
 /** D4a label of a reply: on the fact that got the latest reply (set once; a rep's correction never changes it). */
@@ -76,5 +76,10 @@ export async function attributeReplyLabel(db: Queryable, leadId: string, label: 
         and reply_label is null`,
     [leadId, label],
   );
-  await db.query(`update public.leads set hot_score_dirty = true where id = $1`, [leadId]);
+  await markHotScore(db, leadId);
+}
+
+/** Rule 17: the lead's hot score is recomputed by the worker's next sweep (a no-op when already marked). */
+export async function markHotScore(db: Queryable, leadId: string): Promise<void> {
+  await db.query(`update public.leads set hot_score_dirty = true where id = $1 and not hot_score_dirty`, [leadId]);
 }

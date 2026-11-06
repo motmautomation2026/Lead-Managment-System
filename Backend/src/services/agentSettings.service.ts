@@ -21,6 +21,7 @@ interface SettingsRow {
   email_max_words: number;
   whatsapp_max_words: number;
   banned_phrases: string[];
+  target_industry_keywords: string[];
   style_examples: string;
   first_channel: "whatsapp" | "email";
   wake_min_days: number;
@@ -69,6 +70,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   companyDisplayName: "company_display_name",
   liveScope: "live_scope",
   bannedPhrases: "banned_phrases",
+  targetIndustryKeywords: "target_industry_keywords",
   styleExamples: "style_examples",
   firstChannel: "first_channel",
 };
@@ -89,6 +91,7 @@ function settingsToDto(row: SettingsRow, activeLeadCount: number, liveContactCou
     emailMaxWords: row.email_max_words,
     whatsappMaxWords: row.whatsapp_max_words,
     bannedPhrases: row.banned_phrases,
+    targetIndustryKeywords: row.target_industry_keywords,
     styleExamples: row.style_examples,
     firstChannel: row.first_channel,
     wakeMinDays: row.wake_min_days,

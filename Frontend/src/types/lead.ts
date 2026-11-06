@@ -131,6 +131,10 @@ export interface Lead {
   revenueRange?: string;
   revenueMinCr?: number | null;
   revenueMaxCr?: number | null;
+  /** E3b-2b: hot-lead score 0–100, band and reason codes (null until the worker's first sweep). */
+  hotScore?: number | null;
+  hotBand?: string | null;
+  hotReasons?: string[];
   ownerId?: string;
   ownerName?: string;
   pipelineStage: PipelineStage;

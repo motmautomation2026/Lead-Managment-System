@@ -44,6 +44,8 @@ export const CONTACT_SORTS = defineSorts({
     updatedAt: { columns: ["l.updated_at"], type: "timestamptz" },
     name: { columns: ["l.last_name", "l.first_name"], type: "text" },
     company: { columns: ["l.company"], type: "text" },
+    // E3b-2b: the hot-lead score (index (workspace_id, hot_score desc nulls last, id desc)).
+    hotScore: { columns: ["l.hot_score"], type: "int", nullable: true },
   },
 });
 
@@ -70,7 +72,7 @@ export type ContactFilters = z.infer<typeof contactFilterSchema>;
 
 /** Column ids a saved contacts view may show. */
 export const CONTACT_COLUMNS = [
-  "name", "email", "phone", "jobTitle", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt", "source",
+  "name", "email", "phone", "jobTitle", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt", "source", "hotScore",
 ] as const;
 
 const DEFAULT_LIFECYCLES = ["active", "long_term_nurture"];
@@ -114,6 +116,9 @@ interface ContactListRow {
   agentStatus: string;
   lastActivityAt: Date;
   createdAt: Date;
+  hotScore: number | null;
+  hotBand: string | null;
+  hotReasons: string[] | null;
 }
 
 export async function listContacts(db: Queryable, actor: Actor, workspaceId: string, query: z.infer<typeof contactListSchema>) {
@@ -125,6 +130,7 @@ export async function listContacts(db: Queryable, actor: Actor, workspaceId: str
             case when o.id is null then null else json_build_object('id', o.id, 'name', o.full_name) end as owner,
             l.pipeline_stage as "leadStatus", l.lifecycle_state as lifecycle, od.deal as "openDeal",
             l.agent_status as "agentStatus", l.last_activity_at as "lastActivityAt", l.created_at as "createdAt",
+            l.hot_score as "hotScore", l.hot_band as "hotBand", l.hot_reasons as "hotReasons",
             ${cursorSelect}
        from public.leads l
        left join public.companies c on c.id = l.company_id

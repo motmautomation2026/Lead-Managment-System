@@ -137,7 +137,7 @@ export async function linkCompanyForLead(db: Queryable, workspaceId: string, lea
 
     await db.query(
       `update public.leads
-          set company_id = $2, company = (select name from public.companies where id = $2), company_link_checked_at = now()
+          set company_id = $2, company = (select name from public.companies where id = $2), company_link_checked_at = now(), hot_score_dirty = true
         where id = $1`,
       [leadId, companyId],
     );
