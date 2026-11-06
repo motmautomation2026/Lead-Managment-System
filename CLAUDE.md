@@ -27,6 +27,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Email has no env vars (E1b): no `RESEND_API_KEY` / `SMTP_FROM_*`; the SMTP + IMAP mailbox is saved per workspace by an
   admin in Settings → Email. Tests never contact a real SMTP/IMAP server or DNS (fake transport, IMAP client, resolver).
 - `EMAIL_IMAP_POLL_SECONDS` (worker; default 120, 30–3600): how often each workspace's mailbox is read over IMAP (D3).
+- `PUBLIC_API_BASE_URL` (API + worker, E3b-2b; https in production; malformed = startup error; missing = open tracking off): the API's
+  public address for the email open pixel `<base>/t/o/<token>.gif`.
 
 ## Tests
 
@@ -74,7 +76,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `052`).
+  (currently `053`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -100,7 +102,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `052`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `053`).
 
 ## Way of working
 
@@ -149,10 +151,17 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   responses, ≥ 5 temporary failures in 30 min, ≥ 5 % recipient rejections of ≥ 40 attempts in 24 h; paused emails defer;
   9 recipient checks (syntax, DNC, email contactability `invalid|permanent_bounce|unsubscribed`) fail with the reason;
   10 From "<owner> | <company display name>" for contacts else the default name, Reply-To, `Message-ID <uuid@from-domain>`
-  stored, Date, text + HTML, `List-Unsubscribe: <mailto:…?subject=unsubscribe>` to contacts, no tracking/`Precedence`,
+  stored, Date, text + HTML, `List-Unsubscribe: <mailto:…?subject=unsubscribe>` to contacts, no `Precedence`, no tracking except the
+  E3b-2b open pixel below,
   attachments ≤ 10 MB; 11 DNS check reads only; 12 monitoring for every CRM user; 13 `WORKER_DRY_RUN` marks sent
   (`dry_run`, not counted) without SMTP.
 - Deferrals never burn attempts.
+- E3b-2b open tracking (soft signal only): a random 128-bit token per queued email; the worker adds a 1×1 pixel at the end of the HTML
+  part of AI agent and workflow emails only (never reply drafts, proposals, meetings, tests), only with `PUBLIC_API_BASE_URL` AND the
+  workspace's "Track email opens" on (admin, default OFF; the privacy policy must mention it before production use). Public
+  `GET /t/o/<token>.gif` (before auth): always the same no-store GIF, token format checked before the DB, one UPDATE, 60/min per IP in
+  memory, no IP / user agent stored. An open within 60 s of sending is not counted. The worker turns the first counted open into one
+  timeline event, the message fact and a score mark. Opens never send, never wake the agent, never count as a reply, never reach a prompt.
 - D3: SMTP 451 auto-pauses only with a `4.7.x` code or rate-limit wording ("rate", "limit", "too many", "throttl"); other
   451s are temporary retries. A queued meeting email whose meeting has started / was cancelled is cancelled ("Meeting time
   has passed" / "Meeting was cancelled").
@@ -182,6 +191,15 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
 - B7 never fetch the WA Web version per connect (pinned by the installed Baileys); standard `Browsers` preset for new
   pairings only; no history sync; no link previews (`link-preview-js` not installed); stay on 7.0.0-rc14 (v8 is pre-release).
 
+## Tracking, score and funnel (E3b-2b)
+
+- `message_facts`: one row per message that really went out (never queued / dry run; email in `markSent`, WhatsApp in `performSend`);
+  outcomes only through `attributeOutcome` / `attributeReplyLabel` (last touch within 14 days, set once). No backfill.
+- Hot-lead score: pure `domain/leadScore.ts` (enquiry ≤ 25, fit ≤ 25, engagement ≤ 50; bands hot ≥ 60 / warm 30–59 / cold); services
+  only set `leads.hot_score_dirty` (`markHotScore`); the worker sweeper recomputes (200 per tick, plus scores older than 24 h). Never
+  recompute in a request, never give the score to the AI. A score-only update keeps `leads.updated_at` (trigger).
+- Funnel: `GET /analytics/funnel` (≤ 180 days); lead numbers by cohort, channel / number / angle by message facts.
+
 ## CRM v2
 
 - Design: `docs/crm-v2/B2-design.md` (approved); inventory `docs/crm-v2/B1-inventory.md`.
@@ -208,6 +226,11 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
 
 ## AI agent (Feature 3)
 
+- E3b-2b: AI reply labels count only toward the monthly budget, never the daily decision cap (reply drafts count toward both).
+  Auto-fixes `call_days` (time phrase after both suggested days removed) and `generic_client_claim` (a general client-experience
+  sentence removed when ≥ 2 other sentences stay, else the fixable check); an auto-fixed draft is a first-try pass. The writer gets the
+  exact "Closing question: Would <Day1> or <Day2> suit you for a short call?". After the daily draft limit a newer reply never
+  supersedes the open draft (`newer_reply_at`). Seeded drafts (`staging-seed`) can never be sent (409).
 - One action per wake-up: `send_email`, `send_whatsapp`, `wait`, `handoff`, `update_stage`,
   `stop`. Code enforces the safety rules (`src/agent/rules.ts`), not the model.
 - Workspace modes: `off` (default) → `shadow` (drafts only, sends nothing) → `live` (E2). In `live` the **live scope** picks

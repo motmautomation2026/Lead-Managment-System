@@ -656,3 +656,29 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   reply drafts); frontend `CHECK_LABEL.call_days`. API shape unchanged (`B4-api.md` §7q as is). Tests: `replyDrafts.test.ts`
   (bursts, limit, stop label, new burst after Send, old tasks/meetings, SMTP headers), `seedReplyDraft.test.ts`,
   `replyDraftFixes.test.ts`.
+
+- **E3b-2b (small fixes, email open tracking, per-message tracking, hot-lead score, funnel; migration 053; no OpenAI call):**
+  Rule 1: `DAY_DECISIONS_SQL` counts AI decisions + reply drafts only (AI reply labels: monthly budget only). Rule 2:
+  `markReplyForDraft` never supersedes the open draft once the contact has 3 drafts today; it sets `reply_drafts.newer_reply_at` and the
+  Suggested reply card shows "<Name> wrote again after this draft…". Rule 3: `SEEDED_DRAFT_MODEL = 'staging-seed'` (the existing
+  marker) → Send **409** "Seeded test draft — sending is disabled"; `--remove` also deletes queued WhatsApp/email sends of seeded drafts
+  (prints both counts). Rule 4: prompt "Closing question: Would <Day1> or <Day2> suit you for a short call?" (decisions and reply drafts,
+  `callQuestion`), no time phrase; auto-fix `call_days` removes "in the coming days / in the next few days / in the coming week /
+  sometime soon" when both suggested days are offered (`polishDecision` gets `suggestedDays`). Rule 5: writer rule (one listed client
+  experience or none); auto-fix `generic_client_claim` drops such a sentence when ≥ 2 other sentences stay, else fixable code check
+  `generic_client_claim`. Auto-fixes never add an attempt, so an auto-fixed draft counts as passed first try. Rule 6: `agentAssets`
+  polls Storage up to 60 s after a delete. Rules 7–13: `domain/emailTracking.ts` (token, pixel, `PUBLIC_API_BASE_URL` validation, rate
+  limiter), token on every queued email, pixel added by `processEmail` (agent + workflow only, env + `integration_connections.track_opens`),
+  `routes/tracking.routes.ts` (public GIF), `services/emailOpens.service.ts` (`recordEmailOpen` UPDATE; worker `runOpenEvents`: one
+  timeline event "Email opened: <subject>", the email's fact, score mark; `open_event_at`), "Opened" pill, Settings → Email toggle.
+  Rule 14: `message_facts` written by `recordEmailFact` (markSent, not dry run) and `recordWhatsAppFact` (performSend); sources agent /
+  workflow / reply_draft / proposal / meeting; `attributeOutcome` (last touch ≤ 14 days, set once) on matched replies, labels
+  (`attributeReplyLabel`), meetings, deals created / won; `whatsapp_connection.id`. Rules 15–18: `domain/leadScore.ts`,
+  `services/leadScore.service.ts` `runLeadScoreSweep` (worker, 200 per tick: marked, then older than 24 h; backfill via
+  `hot_score_dirty` default true), marks via `markHotScore`, `updateLead`, company link, website re-submission; trigger
+  `leads_zz_keep_updated_at_for_score` keeps `updated_at` on score-only updates; `agent_settings.target_industry_keywords` (MOTM default);
+  Contacts "Hot" column + sort, Tasks "Hottest first", contact record, Settings → AI agent "Target industries". Rules 19–20:
+  `services/funnel.service.ts`, `GET /analytics/funnel`, Home "Conversion (last 30 days)", AI Activity "Results"
+  (`features/analytics/funnel.tsx`). Frontend `testTimeout` 15 s. Migration 053 (re-runnable) applied to staging. Tests:
+  `emailTracking`, `leadScore` (unit), `emailOpens`, `messageFacts`, `leadScore`, `funnel` (integration) + updates in `replyDrafts`,
+  `seedReplyDraft`, `emailOutbound`, `whatsappSafety`, `emailSettingsApi`, `agentAssets`, `agentDraft`, `agentPolish`.

@@ -477,6 +477,42 @@ sentAt, sendError, createdAt, canSend }`. Never the lead's reply text.
 - Notifications (no endpoint change): admins get "<Rep> hasn't answered <Name>'s reply yet (2 h)" once per reply task; the owner
   gets the task "Log the meeting outcome" 2 days after a meeting with no outcome.
 
+## 7r. Tracking, hot-lead score and funnel — E3b-2b
+
+- `ReplyDraft` (§7q) adds `newerReplyAt` (open draft only: the contact wrote again after the daily draft limit of 3, so the draft was
+  kept, not superseded; the card says "<Name> wrote again after this draft. Read the newer reply before sending.") and
+  `contactFirstName`. `POST …/reply-drafts/:draftId/send` on a draft made by `staging:seed-reply-draft` (model `staging-seed`) →
+  **409** "Seeded test draft — sending is disabled" (both channels).
+- **Public open pixel** `GET /t/o/<token>.gif` (outside `/api/v1`: no auth, no `X-Workspace-Id`). Always **200**, the same 1×1
+  transparent GIF, `Cache-Control: no-store, private`, `Referrer-Policy: no-referrer` — also for unknown or malformed tokens, errors and
+  over 60 requests per minute from one IP (then nothing is recorded). The token (22 URL-safe characters, 128 bits, no personal data)
+  is checked before the database; then one UPDATE (`open_count`, first / last open; the first open more than 60 s after sending is the
+  first counted open). No IP address or user agent is stored. The pixel is only in AI agent and workflow emails, only when the API has
+  `PUBLIC_API_BASE_URL` and the workspace's "Track email opens" is on. Opens are a soft signal.
+- Email settings (`GET /connections/email/settings`, §7i) add `trackOpens` (default false) and `openTrackingAvailable`
+  (`PUBLIC_API_BASE_URL` set). `PUT /connections/email/track-opens` `{ enabled: boolean }` (**admin**, audited) → the settings;
+  **400** not a boolean, **403** others.
+- AI send states (`GET /agent/decisions`, `GET /agent/decisions/:id`, §7k) add `openedAt` (the AI email's first counted open, else null).
+- Contacts (§2): row fields `hotScore` (0–100, null until the worker's first sweep), `hotBand` (`hot` ≥ 60 | `warm` 30–59 | `cold`),
+  `hotReasons` (codes: `closed`, `stopped`, `enquiry`, `enquiry_detailed`, `enquiry_need`, `enquiry_signal`, `consumer`,
+  `corporate_email`, `company`, `target_industry`, `revenue`, `opened`, `opened_often`, `replied`, `replied_positive`, `meeting`,
+  `proposal`); sort `hotScore` (NULLs last; index `(workspace_id, hot_score desc nulls last, id desc)`); column id `hotScore`.
+  `GET /contacts/:id` adds the same three fields.
+- Tasks (§7a): sort `hotScore` (the contact's score; a joined column, no `(workspace_id, field, id)` index, like companies
+  `contactCount`); the row's `contact` adds `hotBand`, `hotScore`.
+- Agent settings (`GET|PUT /agent/settings`) add `targetIndustryKeywords: string[]` (lower case, de-duplicated, ≤ 100, each ≤ 60
+  characters; empty = fit uses the email domain, company and revenue only). The score is never given to the AI.
+- **Funnel** `GET /analytics/funnel?from&to&groupBy=` (any CRM user, the selected workspace). `from` / `to` ISO 8601 with offset;
+  default the last 30 days; **400** when `from` ≥ `to`, the range is over 180 days or `groupBy` is not `source | channel | number |
+  angle`. Returns `{ from, to, groupBy, totals, websiteMeetingRate: { websiteLeads, bookedWithin14Days, pct }, medianMinutesReplyToAnswer,
+  groups }`. `totals` (leads created in the period): `leadsCreated, contacted, firstMessageWithin15Min: { count, pct }` (% of leads
+  created), `medianMinutesToFirstMessage, emailsSent, countedOpens` (soft signal), `replies, positiveReplies,
+  meetingsBookedWithin14Days, proposals, won`. `groupBy=source` groups have the same fields per lead source; `channel` / `number`
+  (WhatsApp connection, labelled by its number) / `angle` groups count messages sent in the period and their last-touch outcomes:
+  `{ key, label, messagesSent, emailsSent, countedOpens, replies, positiveReplies, meetingsBooked, dealsCreated, won }`. Website =
+  sources `website` + `inbound_form`. Reply → answer = the first message we sent after a matched reply or its reply task done,
+  whichever is first. Messages count only from E3b-2b on (no backfill).
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
