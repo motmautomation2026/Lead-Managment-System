@@ -23,7 +23,8 @@ const limits = { whatsapp_max_words: 60, email_max_words: 120 };
 
 const eligible = (over: Partial<DraftEligibilityInput> = {}): DraftEligibilityInput => ({
   ...wa,
-  label: "question",
+  labels: ["question"],
+  contactDraftsToday: 0,
   mode: "shadow",
   spentUsd: 1,
   budgetUsd: 20,
@@ -34,14 +35,22 @@ const eligible = (over: Partial<DraftEligibilityInput> = {}): DraftEligibilityIn
 });
 
 describe("draftSkipReason (rules 1 + 3)", () => {
-  it.each(["positive", "question", "other", "unclassified"] as const)("%s gets a draft", (label) => expect(draftSkipReason(eligible({ label }))).toBeNull());
-  it.each(["asked_to_stop", "not_interested", "annoyed"] as const)("%s never does", (label) => expect(draftSkipReason(eligible({ label }))).toBe(`label ${label}`));
+  it.each(["positive", "question", "other", "unclassified"] as const)("%s gets a draft", (label) => expect(draftSkipReason(eligible({ labels: [label] }))).toBeNull());
+  it.each(["asked_to_stop", "not_interested", "annoyed"] as const)("%s never does", (label) => expect(draftSkipReason(eligible({ labels: [label] }))).toBe(`label ${label}`));
   it("not while the label is unknown, the agent is off, the budget or the daily cap is used up, or there is no owner", () => {
-    expect(draftSkipReason(eligible({ label: null }))).toBe("label none");
+    expect(draftSkipReason(eligible({ labels: [null] }))).toBe("label none");
+    expect(draftSkipReason(eligible({ labels: ["question", null] }))).toBe("label none");
     expect(draftSkipReason(eligible({ mode: "off" }))).toBe("agent off");
     expect(draftSkipReason(eligible({ spentUsd: 20 }))).toBe("monthly budget reached");
     expect(draftSkipReason(eligible({ decisionsToday: 50 }))).toBe("daily decision limit reached");
     expect(draftSkipReason(eligible({ hasOwner: false }))).toBe("no owner");
+  });
+  it("E3b-2a-2: a burst gets a draft unless ANY of its replies is a stop label; at most 3 drafts per contact per IST day", () => {
+    expect(draftSkipReason(eligible({ labels: ["other", "question"] }))).toBeNull();
+    expect(draftSkipReason(eligible({ labels: ["annoyed", "question"] }))).toBe("label annoyed");
+    expect(draftSkipReason(eligible({ labels: ["question", "not_interested"] }))).toBe("label not_interested");
+    expect(draftSkipReason(eligible({ contactDraftsToday: 2 }))).toBeNull();
+    expect(draftSkipReason(eligible({ contactDraftsToday: 3 }))).toBe("contact's daily draft limit reached");
   });
   it("not for Do Not Contact or an opted-out channel", () => {
     expect(draftSkipReason(eligible({ lifecycleState: "do_not_contact" }))).toBe("The contact is Do Not Contact.");

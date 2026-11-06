@@ -20,7 +20,7 @@ import type { ReplyChannel, ReplyLabel } from "../agent/replyClassification.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
 import { threadSubject } from "../domain/emailSafety.js";
-import { contactSendProblem, draftSkipReason, replySendAt, replySendProblem, type ContactSendState } from "../domain/replyDrafts.js";
+import { contactSendProblem, DRAFT_DEBOUNCE_MS, draftSkipReason, MAX_BURST_REPLIES, replySendAt, replySendProblem, type ContactSendState } from "../domain/replyDrafts.js";
 import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.js";
 import { resolveAgentModels, type DecisionModel, type Embedder } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "../providers/provider-errors.js";
@@ -52,9 +52,24 @@ const DRAFT_REF: Record<ReplyChannel, string> = { whatsapp: "whatsapp_message_id
 // --- Ingestion (inside the reply's transaction) --------------------------------------
 
 /**
+ * E3b-2a-2 rule 1: a reply on a contact handed off by an earlier reply still gets a label and a draft
+ * while that conversation is open: an open reply task, or a suggested reply already written for it.
+ */
+export async function isReplyFollowUp(db: Queryable, leadId: string, agentStatus: string): Promise<boolean> {
+  if (agentStatus !== "handed_off") return false;
+  const row = await db.query(
+    `select 1 where exists (select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]))
+                 or exists (select 1 from public.reply_drafts where lead_id = $1)`,
+    [leadId, REPLY_TASK_TITLES],
+  );
+  return Boolean(row.rowCount);
+}
+
+/**
  * Called for every matched reply. Any earlier open draft or pending draft step of the contact is
- * superseded (rule 3: the newest reply wins); `eligible` (AI-managed before the reply, mode not
- * off, text stored) queues this reply for the draft step, which waits for its label.
+ * superseded (rule 3: the newest reply wins); `eligible` (AI-managed before the reply or a follow-up,
+ * mode not off, text stored) queues this reply for the draft step, which waits for its label and
+ * (E3b-2a-2) for 3 quiet minutes, then answers every reply since our last message at once.
  */
 export async function markReplyForDraft(db: Queryable, input: { channel: ReplyChannel; eventId: string; leadId: string; eligible: boolean }): Promise<void> {
   await db.query(`update public.reply_drafts set status = 'superseded' where lead_id = $1 and status = 'open'`, [input.leadId]);
@@ -63,7 +78,7 @@ export async function markReplyForDraft(db: Queryable, input: { channel: ReplyCh
   }
   if (!input.eligible) return;
   const e = EVENTS[input.channel];
-  await db.query(`update ${e.table} set draft_status = 'pending', draft_next_at = now() where ${e.key} = $1`, [input.eventId]);
+  await db.query(`update ${e.table} set draft_status = 'pending', draft_next_at = now() + $2 * interval '1 millisecond' where ${e.key} = $1`, [input.eventId, DRAFT_DEBOUNCE_MS]);
 }
 
 // --- The draft step (worker, behind AGENT_RUNNER_ENABLED) ---------------------------
@@ -201,6 +216,7 @@ interface DraftState {
   whatsapp_status: string | null;
   email_status: string | null;
   phone_status: string | null;
+  contact_drafts_today: number;
 }
 
 const contactState = (channel: ReplyChannel, s: Pick<DraftState, "lifecycle_state" | "phone_e164" | "email" | "whatsapp_status" | "email_status" | "phone_status">): ContactSendState => ({
@@ -230,7 +246,9 @@ async function draftOne(reply: ClaimedReply, deps: ReplyDraftDeps): Promise<Draf
   const state = (
     await pool.query<DraftState>(
       `select s.mode, s.decision_model, s.grounding_model, s.monthly_budget_usd as budget, s.max_decisions_per_day,
-              ${MONTH_SPEND_SQL} as spent, ${DAY_DECISIONS_SQL} as today, ${CONTACT_SQL}
+              ${MONTH_SPEND_SQL} as spent, ${DAY_DECISIONS_SQL} as today, ${CONTACT_SQL},
+              (select count(*)::int from public.reply_drafts
+                where lead_id = l.id and created_at >= (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')) as contact_drafts_today
          from public.agent_settings s
          join public.leads l on l.workspace_id = s.workspace_id and l.id = $2 and l.merged_into_lead_id is null
          ${CONTACT_JOINS}
@@ -239,9 +257,16 @@ async function draftOne(reply: ClaimedReply, deps: ReplyDraftDeps): Promise<Draf
     )
   ).rows[0];
   if (!state) return skip("contact gone");
+  const burst = await loadBurst(reply);
+  // A reply in the burst still waiting for its label: try again shortly.
+  if (burst.some((r) => r.classification_status === "pending")) {
+    await retryAt(reply, MINUTE, true);
+    return { ...base, result: "deferred", reason: "label pending" };
+  }
   const reason = draftSkipReason({
     ...contactState(reply.channel, state),
-    label: reply.reply_label,
+    labels: burst.map((r) => r.reply_label),
+    contactDraftsToday: state.contact_drafts_today,
     mode: state.mode,
     spentUsd: Number(state.spent),
     budgetUsd: Number(state.budget),
@@ -267,8 +292,12 @@ async function draftOne(reply: ClaimedReply, deps: ReplyDraftDeps): Promise<Draf
 
   let text: string | null;
   try {
-    const plain = decryptInboundBody(reply, EVENTS[reply.channel].aad(reply.reply_id));
-    text = plain === null ? null : reply.channel === "email" ? ((b: EmailReplyBody) => (b.text.trim() ? b.text : b.subject))(JSON.parse(plain) as EmailReplyBody) : plain;
+    // Every reply since our last message, oldest first, in the one delimited block.
+    const texts = burst.map((r) => {
+      const plain = decryptInboundBody(r, EVENTS[r.channel].aad(r.reply_id));
+      return plain === null ? "" : r.channel === "email" ? ((b: EmailReplyBody) => (b.text.trim() ? b.text : b.subject))(JSON.parse(plain) as EmailReplyBody) : plain;
+    });
+    text = texts.filter((t) => t.trim()).join("\n\n---\n\n") || null;
   } catch {
     console.warn(`[reply-drafts] could not decrypt reply ${reply.reply_id}; no draft.`);
     await finish(reply, "failed");
@@ -304,6 +333,45 @@ async function draftOne(reply: ClaimedReply, deps: ReplyDraftDeps): Promise<Draf
     await retryAt(reply, 2 * MINUTE, false);
     return { ...base, result: "retry" };
   }
+}
+
+interface BurstReply extends InboundBody {
+  channel: ReplyChannel;
+  reply_id: string;
+  reply_label: ReplyLabel | null;
+  classification_status: string | null;
+}
+
+/**
+ * E3b-2a-2 rule 1: the contact's matched replies (both channels) since our last message — an AI send,
+ * any email to them, or the rep's Send / Discard of a suggested reply — oldest first, at most 10.
+ * The claimed reply is always part of it.
+ */
+async function loadBurst(reply: ClaimedReply): Promise<BurstReply[]> {
+  const cols = `e.reply_label, e.classification_status, e.body_ciphertext, e.body_iv, e.body_tag, e.body_key_version, e.received_at`;
+  const rows = (
+    await pool.query<BurstReply>(
+      `with since as (
+         select coalesce(greatest(
+           (select max(sent_at) from public.agent_decisions where lead_id = $1 and outcome = 'sent'),
+           (select max(sent_at) from public.email_outbound_messages where lead_id = $1 and status = 'sent'),
+           (select max(greatest(queued_at, discarded_at)) from public.reply_drafts where lead_id = $1)), '-infinity'::timestamptz) as at)
+       select * from (
+         select 'whatsapp' as channel, e.message_id as reply_id, ${cols}
+           from public.whatsapp_inbound_events e, since where e.lead_id = $1 and e.disposition = 'matched' and e.received_at > since.at
+         union all
+         select 'email', e.id::text, ${cols}
+           from public.email_inbound_events e, since where e.lead_id = $1 and e.kind = 'reply' and e.match_status = 'matched' and e.received_at > since.at
+       ) r
+       order by received_at desc
+       limit $2`,
+      [reply.lead_id, MAX_BURST_REPLIES],
+    )
+  ).rows.reverse();
+  if (!rows.some((r) => r.channel === reply.channel && r.reply_id === reply.reply_id)) {
+    rows.push({ ...reply, classification_status: null });
+  }
+  return rows;
 }
 
 async function draftSubject(outboundId: string | null): Promise<string> {

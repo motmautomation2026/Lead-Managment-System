@@ -66,12 +66,22 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
   const fake = (opts: { replies?: ReplyClassification[]; decisions?: AgentDecision[] } = {}) =>
     createFakeDecisionModel({ replies: opts.replies ?? [{ label: "question", confidence: 0.9 }], decisions: opts.decisions ?? [wa(GOOD_WA)] });
 
-  async function labelAndDraft(ws: string, model: ReturnType<typeof fake>) {
+  // E3b-2a-2: the draft waits for 3 quiet minutes; `quiet` makes them pass (draft_next_at → now).
+  async function labelAndDraft(ws: string, model: ReturnType<typeof fake>, opts: { quiet?: boolean } = {}) {
     const { runReplyClassification } = await import("../../src/services/replyClassifier.service.js");
     const { runReplyDrafts } = await import("../../src/services/replyDrafts.service.js");
     await runReplyClassification(true, { model, prices: PRICES, defaultModels: MODELS, workspaceIds: [ws] });
+    if (opts.quiet ?? true) {
+      for (const table of ["whatsapp_inbound_events", "email_inbound_events"]) {
+        await pool.query(`update public.${table} set draft_next_at = now() where workspace_id = $1 and draft_status = 'pending'`, [ws]);
+      }
+    }
     return runReplyDrafts(true, { model, embedder: fakeEmbedder, prices: PRICES, defaultModels: MODELS, workspaceIds: [ws] });
   }
+  const replyBlock = (model: ReturnType<typeof fake>) => {
+    const calls = model.calls.filter((c) => c.kind === "decide");
+    return /<reply>\n([\s\S]*?)\n<\/reply>/.exec(calls[calls.length - 1]!.input.messages[1]!.content)?.[1] ?? "";
+  };
 
   const drafts = async (leadId: string) =>
     (await pool.query(`select id, status, body, problems, cost_usd, send_status, edited, sent_body from public.reply_drafts where lead_id = $1 order by created_at`, [leadId])).rows;
@@ -117,7 +127,8 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(draftCall.input.messages[1]!.content).toMatch(/<reply>\nDo you work with steel traders\? \[e3b2a-/);
     const { DAY_DECISIONS_SQL, MONTH_SPEND_SQL } = await import("../../src/services/agentRunner.service.js");
     const counted = (await pool.query(`select ${DAY_DECISIONS_SQL} as n, ${MONTH_SPEND_SQL}::float8 as spent`, [ws])).rows[0];
-    expect(counted.n).toBe(1);
+    // E3b-2a-2: the AI label and the draft both count toward the daily cap.
+    expect(counted.n).toBe(2);
     expect(counted.spent).toBeGreaterThan(0.0054);
     expect((await pool.query(`select agent_status from public.leads where id = $1`, [leadId])).rows[0].agent_status).toBe("handed_off");
     // At most one draft per reply: another tick does nothing.
@@ -167,24 +178,80 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(await openTasks(leadId)).toHaveLength(1);
   });
 
-  it("a new reply supersedes the open draft; it gets its own draft only under rule 1 (AI-managed before it)", async () => {
+  it("a new reply supersedes the open draft at once; a contact handed off for another reason (no reply task, no draft) gets no label or draft", async () => {
     const { ws, phone, leadId } = await scenario();
     await inbound(ws, phone, secret("Do you work in Pune?"));
     await labelAndDraft(ws, fake());
-    // Handed off by the first reply: like D4a, no label step and no draft for the next one.
-    const handedOff = await inbound(ws, phone, secret("Also, how long does it take?"));
-    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded"]);
-    expect((await pool.query(`select draft_status from public.whatsapp_inbound_events where message_id = $1`, [handedOff])).rows[0].draft_status).toBeNull();
-    // An admin resumed the AI; the next reply is drafted.
-    await pool.query(`update public.leads set agent_status = 'active' where id = $1`, [leadId]);
-    const second = await inbound(ws, phone, secret("What is the next step?"));
-    expect(await labelAndDraft(ws, fake({ decisions: [wa("Thanks, Asha. Timelines depend on your market; we can go through it on a short call. Would Thursday or Friday suit you?")] }))).toEqual([
-      { replyId: second, result: "drafted" },
-    ]);
-    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded", "open"]);
-    // While a draft is open, a new reply supersedes it at once.
     await inbound(ws, phone, secret("Thanks"));
-    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded", "superseded"]);
+    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded"]);
+
+    const other = await scenario({ agentStatus: "handed_off" });
+    const id = await inbound(other.ws, other.phone, secret("Any update?"));
+    expect((await pool.query(`select draft_status, classification_status from public.whatsapp_inbound_events where message_id = $1`, [id])).rows[0]).toMatchObject({
+      draft_status: null,
+      classification_status: "skipped",
+    });
+  });
+
+  it("E3b-2a-2 burst: 'Hi' then a question a minute later → one draft after 3 quiet minutes, answering both", async () => {
+    const { ws, phone, leadId } = await scenario();
+    const hi = await inbound(ws, phone, secret("Hi"));
+    const question = await inbound(ws, phone, secret("Do you work with steel traders in Pune?"));
+    // The follow-up (handed off by "Hi", reply task open) is labelled too; the first reply's draft step folds into the second.
+    const events = await pool.query(`select message_id, draft_status, draft_next_at > now() + interval '2 minutes' as waits from public.whatsapp_inbound_events where lead_id = $1`, [leadId]);
+    expect(Object.fromEntries(events.rows.map((r) => [r.message_id, [r.draft_status, r.waits]]))).toEqual({ [hi]: ["skipped", null], [question]: ["pending", true] });
+    const model = fake({ replies: [{ label: "other", confidence: 0.9 }, { label: "question", confidence: 0.9 }] });
+    // Not quiet yet: labelled, nothing drafted.
+    expect(await labelAndDraft(ws, model, { quiet: false })).toEqual([]);
+    expect(model.calls.filter((c) => c.kind === "reply")).toHaveLength(2);
+    expect(await labelAndDraft(ws, model)).toEqual([{ replyId: question, result: "drafted" }]);
+    expect(replyBlock(model)).toMatch(/^Hi \[e3b2a-\w+\]\n\n---\n\nDo you work with steel traders in Pune\? \[e3b2a-\w+\]$/);
+    const rows = await drafts(leadId);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].cost_usd)).toBeGreaterThan(0);
+  });
+
+  it("E3b-2a-2: at most 3 drafts per contact per IST day; every label and draft counts toward the daily cap", async () => {
+    const { ws, phone, leadId } = await scenario();
+    const outcomes: string[] = [];
+    for (const text of ["Hi", "Do you work in Pune?", "And Nashik?", "One more thing"]) {
+      await inbound(ws, phone, secret(text));
+      outcomes.push(...(await labelAndDraft(ws, fake())).map((o) => o.reason ?? o.result));
+    }
+    expect(outcomes).toEqual(["drafted", "drafted", "drafted", "contact's daily draft limit reached"]);
+    // The 4th reply still supersedes the open draft (newest reply wins); it just gets none of its own.
+    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded", "superseded", "superseded"]);
+    const { DAY_DECISIONS_SQL } = await import("../../src/services/agentRunner.service.js");
+    // 4 AI labels + 3 drafts.
+    expect((await pool.query(`select ${DAY_DECISIONS_SQL} as n`, [ws])).rows[0].n).toBe(7);
+  });
+
+  it("E3b-2a-2: a stop label on any reply in the burst → no draft, and its effects apply", async () => {
+    const { ws, phone, leadId } = await scenario();
+    await inbound(ws, phone, secret("Why do you keep writing"));
+    await inbound(ws, phone, secret("What do you charge?"));
+    const model = fake({ replies: [{ label: "annoyed", confidence: 0.9 }, { label: "question", confidence: 0.9 }] });
+    expect(await labelAndDraft(ws, model)).toMatchObject([{ result: "skipped", reason: "label annoyed" }]);
+    expect(model.calls.filter((c) => c.kind === "decide")).toEqual([]);
+    expect(await drafts(leadId)).toEqual([]);
+    expect((await pool.query(`select agent_status from public.leads where id = $1`, [leadId])).rows[0].agent_status).toBe("stopped");
+  });
+
+  it("E3b-2a-2: after the rep sends, the next reply starts a new burst and gets its own draft", async () => {
+    const { ws, phone, leadId } = await scenario();
+    await inbound(ws, phone, secret("Do you work with steel traders?"));
+    await labelAndDraft(ws, fake());
+    const [first] = await drafts(leadId);
+    const { sendReplyDraft } = await import("../../src/services/replyDrafts.service.js");
+    await sendReplyDraft(owner, ws, leadId, first.id, GOOD_WA);
+    expect(await openTasks(leadId)).toEqual([]);
+    const next = await inbound(ws, phone, secret("Thursday works"));
+    // A new reply task for the owner, and a draft that sees only the new reply.
+    expect(await openTasks(leadId)).toHaveLength(1);
+    const model = fake({ replies: [{ label: "positive", confidence: 0.9 }] });
+    expect(await labelAndDraft(ws, model)).toEqual([{ replyId: next, result: "drafted" }]);
+    expect(replyBlock(model)).toMatch(/^Thursday works \[e3b2a-\w+\]$/);
+    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["sent", "open"]);
   });
 
   it("the rep's Send: owner/admin only, word limit 400, queued (never sent in the request), task done, idempotent; the worker sends through the reply_draft source", async () => {

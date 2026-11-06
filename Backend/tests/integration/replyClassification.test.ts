@@ -219,10 +219,12 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     expect(await leadRow(a.leadId)).toMatchObject({ agent_status: "handed_off" });
     expect(await tasks(a.leadId)).toEqual([{ title: "Wants to talk — respond today", status: "open" }]);
 
-    // A later unclassified reply keeps the task's title; still one task.
+    // A later "other" reply keeps the task's title; still one task. E3b-2a-2: a follow-up (handed off by
+    // the earlier reply, its task open) gets the AI step too.
     const idA2 = await inbound(a.ws, a.phone, secret("ok"));
-    expect((await event(idA2)).classification_status).toBe("skipped"); // handed_off now: no AI step
-    expect((await event(idA2)).reply_label).toBe("unclassified");
+    expect((await event(idA2)).classification_status).toBe("pending");
+    await classify(a.ws, fake({ label: "other", confidence: 0.8 }));
+    expect((await event(idA2)).reply_label).toBe("other");
     expect(await tasks(a.leadId)).toEqual([{ title: "Wants to talk — respond today", status: "open" }]);
 
     const b = await scenario();

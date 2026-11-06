@@ -11,7 +11,7 @@ import type { AgentMode, AgentStatus } from "../agent/rules.js";
 import { matchReplyKeyword } from "../domain/replyKeywords.js";
 import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { applyReplyLabel } from "./replyLabels.service.js";
-import { markReplyForDraft } from "./replyDrafts.service.js";
+import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
 
 export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
@@ -171,7 +171,8 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         }
         await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
         // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
-        const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused";
+        // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
+        const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (disposition === "matched" && (await isReplyFollowUp(db, lead.id, lead.agent_status)));
         if (disposition === "matched" && lead.owner_id && wasManaged) {
           await ensureReplyTask(db, workspaceId, { id: lead.id, owner_id: lead.owner_id, owner_name: lead.owner_name }, REPLY_TASK_TITLE);
         }

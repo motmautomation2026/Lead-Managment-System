@@ -12,6 +12,13 @@ import { nextWindowTime, type SendWindow } from "./whatsappSafety.js";
 /** Rule 1: labels that get a draft (never asked_to_stop, not_interested, annoyed). */
 export const DRAFT_LABELS: readonly ReplyLabel[] = ["positive", "question", "other", "unclassified"];
 
+/** E3b-2a-2 rule 1: the draft waits until the contact has been quiet this long, so one draft answers a whole burst. */
+export const DRAFT_DEBOUNCE_MS = 3 * 60_000;
+/** E3b-2a-2 rule 1: at most this many drafts (any outcome) per contact per IST day. */
+export const MAX_DRAFTS_PER_CONTACT_PER_DAY = 3;
+/** The burst sent to the writer: the newest replies since our last message, at most this many. */
+export const MAX_BURST_REPLIES = 10;
+
 /** Channel statuses that refuse a send on that channel (the reply's channel, or the phone for WhatsApp). */
 const BLOCKED_STATUS: Record<ReplyChannel, readonly string[]> = {
   whatsapp: ["opted_out", "invalid", "wrong_number", "do_not_contact"],
@@ -45,7 +52,10 @@ export function contactSendProblem(state: ContactSendState): string | null {
 }
 
 export interface DraftEligibilityInput extends ContactSendState {
-  label: ReplyLabel | null;
+  /** The labels of every reply in the burst (since our last message), oldest first; the last is the newest. */
+  labels: (ReplyLabel | null)[];
+  /** Today's (IST) drafts of this contact, any outcome. */
+  contactDraftsToday: number;
   mode: AgentMode;
   spentUsd: number;
   budgetUsd: number;
@@ -55,11 +65,15 @@ export interface DraftEligibilityInput extends ContactSendState {
   hasOwner: boolean;
 }
 
-/** Rules 1 + 3, checked by the worker before any model call: null = write a draft, else why not. */
+/** Rules 1 + 3, checked by the worker before any model call: null = write a draft, else why not. A stop label on ANY reply in the burst means no draft. */
 export function draftSkipReason(input: DraftEligibilityInput): string | null {
-  if (!input.label || !DRAFT_LABELS.includes(input.label)) return `label ${input.label ?? "none"}`;
+  const newest = input.labels.at(-1) ?? null;
+  const blocking = input.labels.find((l) => l && !DRAFT_LABELS.includes(l));
+  if (blocking) return `label ${blocking}`;
+  if (!newest) return "label none";
   if (input.mode === "off") return "agent off";
   if (!input.hasOwner) return "no owner";
+  if (input.contactDraftsToday >= MAX_DRAFTS_PER_CONTACT_PER_DAY) return "contact's daily draft limit reached";
   if (input.spentUsd >= input.budgetUsd) return "monthly budget reached";
   if (input.decisionsToday >= input.maxDecisionsPerDay) return "daily decision limit reached";
   return contactSendProblem(input);

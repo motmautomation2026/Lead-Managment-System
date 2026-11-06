@@ -29,7 +29,7 @@ import { imapOf, loadEmailConnection, recordEmailEvent } from "./emailConnection
 import { checkAutoPause } from "./emailOutbound.service.js";
 import { emailReplyAad } from "./inboundReplies.service.js";
 import { applyReplyEffects, applyReplyLabel } from "./replyLabels.service.js";
-import { markReplyForDraft } from "./replyDrafts.service.js";
+import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { ensureReplyTask, stopAutomationForReply } from "./whatsapp-inbound.service.js";
@@ -424,7 +424,8 @@ async function applyReply(db: Queryable, workspaceId: string, eventId: string, p
     );
   }
   await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "email_inbound", payload: { emailReplyId: eventId } });
-  const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused";
+  // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
+  const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (await isReplyFollowUp(db, lead.id, lead.agent_status));
   if (lead.owner_id && wasManaged) {
     await ensureReplyTask(db, workspaceId, { id: lead.id, owner_id: lead.owner_id, owner_name: lead.owner_name }, DEFAULT_EMAIL_REPLY_TASK_TITLE);
   }
