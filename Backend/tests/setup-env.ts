@@ -12,8 +12,8 @@ if (testDatabaseUrl) {
   process.env.NORTHBEAM_DB_ROLE = "test";
   process.env.PGAPPNAME = "northbeam-test";
   // Every statement is a network round trip to the remote test database.
-  // Hooks create or delete many workspaces/contacts (~1.3 s per contact at ~65 ms per round trip): 120 s.
-  vi.setConfig({ testTimeout: 30_000, hookTimeout: 120_000 });
+  // Scenario tests and hooks create or delete many workspaces/contacts (~1.3 s per contact at ~65 ms per round trip).
+  vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
   // Guard: integration tests never write leads into a real workspace (only `[test] …` ones,
   // see tests/helpers/testWorkspaces.ts). Database clock, so local clock skew doesn't matter.
   let fileStartedAt: Date | undefined;
