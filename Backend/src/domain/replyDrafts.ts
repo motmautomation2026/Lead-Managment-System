@@ -18,6 +18,9 @@ export const DRAFT_DEBOUNCE_MS = 3 * 60_000;
 export const MAX_DRAFTS_PER_CONTACT_PER_DAY = 3;
 /** The burst sent to the writer: the newest replies since our last message, at most this many. */
 export const MAX_BURST_REPLIES = 10;
+/** E3b-2b rule 3: `reply_drafts.model` of a draft made by `staging:seed-reply-draft`; such a draft can never be sent. */
+export const SEEDED_DRAFT_MODEL = "staging-seed";
+export const SEEDED_DRAFT_SEND_MESSAGE = "Seeded test draft — sending is disabled";
 
 /** Channel statuses that refuse a send on that channel (the reply's channel, or the phone for WhatsApp). */
 const BLOCKED_STATUS: Record<ReplyChannel, readonly string[]> = {

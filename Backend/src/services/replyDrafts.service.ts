@@ -20,7 +20,18 @@ import type { ReplyChannel, ReplyLabel } from "../agent/replyClassification.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
 import { threadSubject } from "../domain/emailSafety.js";
-import { contactSendProblem, DRAFT_DEBOUNCE_MS, draftSkipReason, MAX_BURST_REPLIES, replySendAt, replySendProblem, type ContactSendState } from "../domain/replyDrafts.js";
+import {
+  contactSendProblem,
+  DRAFT_DEBOUNCE_MS,
+  draftSkipReason,
+  MAX_BURST_REPLIES,
+  MAX_DRAFTS_PER_CONTACT_PER_DAY,
+  replySendAt,
+  replySendProblem,
+  SEEDED_DRAFT_MODEL,
+  SEEDED_DRAFT_SEND_MESSAGE,
+  type ContactSendState,
+} from "../domain/replyDrafts.js";
 import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.js";
 import { resolveAgentModels, type DecisionModel, type Embedder } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "../providers/provider-errors.js";
@@ -67,12 +78,24 @@ export async function isReplyFollowUp(db: Queryable, leadId: string, agentStatus
 
 /**
  * Called for every matched reply. Any earlier open draft or pending draft step of the contact is
- * superseded (rule 3: the newest reply wins); `eligible` (AI-managed before the reply or a follow-up,
+ * superseded (rule 3: the newest reply wins), except after the contact's daily draft limit (E3b-2b
+ * rule 2): then the open draft stays, marked `newer_reply_at`, since no newer draft can replace it; `eligible` (AI-managed before the reply or a follow-up,
  * mode not off, text stored) queues this reply for the draft step, which waits for its label and
  * (E3b-2a-2) for 3 quiet minutes, then answers every reply since our last message at once.
  */
 export async function markReplyForDraft(db: Queryable, input: { channel: ReplyChannel; eventId: string; leadId: string; eligible: boolean }): Promise<void> {
-  await db.query(`update public.reply_drafts set status = 'superseded' where lead_id = $1 and status = 'open'`, [input.leadId]);
+  const limited = await db.query(
+    `select 1 from public.reply_drafts
+      where lead_id = $1 and created_at >= (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')
+     having count(*) >= $2`,
+    [input.leadId, MAX_DRAFTS_PER_CONTACT_PER_DAY],
+  );
+  await db.query(
+    limited.rowCount
+      ? `update public.reply_drafts set newer_reply_at = now() where lead_id = $1 and status = 'open'`
+      : `update public.reply_drafts set status = 'superseded' where lead_id = $1 and status = 'open'`,
+    [input.leadId],
+  );
   for (const e of Object.values(EVENTS)) {
     await db.query(`update ${e.table} set draft_status = 'skipped', draft_next_at = null where lead_id = $1 and draft_status = 'pending'`, [input.leadId]);
   }
@@ -454,6 +477,9 @@ interface DraftRow {
   send_next_at: Date | null;
   sent_at: Date | null;
   send_error: string | null;
+  newer_reply_at: Date | null;
+  model: string | null;
+  contact_first_name: string | null;
   created_at: Date;
 }
 
@@ -473,6 +499,9 @@ export function replyDraftToDto(row: DraftRow, canSend: boolean) {
     sendAt: row.send_status === "queued" || row.send_status === "sending" ? (row.send_next_at?.toISOString() ?? null) : null,
     sentAt: row.sent_at?.toISOString() ?? null,
     sendError: row.send_error,
+    // E3b-2b rule 2: the contact wrote again after this draft (the daily draft limit kept it open).
+    newerReplyAt: row.status === "open" ? (row.newer_reply_at?.toISOString() ?? null) : null,
+    contactFirstName: row.contact_first_name,
     createdAt: row.created_at.toISOString(),
     canSend: canSend && row.status === "open",
   };
@@ -480,7 +509,8 @@ export function replyDraftToDto(row: DraftRow, canSend: boolean) {
 export type ReplyDraftDto = ReturnType<typeof replyDraftToDto>;
 
 const DRAFT_COLUMNS = `d.id, d.workspace_id, d.lead_id, d.channel, d.whatsapp_message_id, d.email_event_id, d.subject, d.body, d.status, d.edited,
-       d.sent_body, d.sent_by_name, d.queued_at, d.send_status, d.send_next_at, d.sent_at, d.send_error, d.created_at`;
+       d.sent_body, d.sent_by_name, d.queued_at, d.send_status, d.send_next_at, d.sent_at, d.send_error, d.newer_reply_at, d.model, d.created_at,
+       (select first_name from public.leads where id = d.lead_id) as contact_first_name`;
 
 /** The draft of each reply (by WhatsApp message id / email event id) of a contact, for the timeline; owner + admins only. */
 export async function draftsForReplies(db: Queryable, actor: Actor, leadId: string, ownerId: string | null, replyIds: string[]): Promise<Map<string, ReplyDraftDto>> {
@@ -571,6 +601,7 @@ function composeReply(row: Awaited<ReturnType<typeof lockDraft>>, body: string) 
 export async function sendReplyDraft(actor: Actor, workspaceId: string, leadId: string, draftId: string, body: string, now = new Date()): Promise<ReplyDraftDto> {
   return withTransaction(async (db) => {
     const row = await lockDraft(db, actor, workspaceId, leadId, draftId);
+    if (row.model === SEEDED_DRAFT_MODEL) throw new ConflictError(SEEDED_DRAFT_SEND_MESSAGE);
     if (row.status === "sent") return replyDraftToDto(row, true);
     if (row.status !== "open") throw new ConflictError(`This suggested reply was ${row.status}.`);
     const state = contactState(row.channel, row);

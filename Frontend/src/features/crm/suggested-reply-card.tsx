@@ -51,6 +51,15 @@ export function SuggestedReplyCard({ contactId, draft }: { contactId: string; dr
         </Label>
         <StatusPill tone="primary">AI draft · {channel}</StatusPill>
       </div>
+      {draft.newerReplyAt && (
+        <p
+          role="status"
+          className="rounded bg-warning-soft px-2 py-1 type-small text-warning-soft-foreground"
+        >
+          {draft.contactFirstName?.trim() || "The contact"} wrote again after this draft. Read the
+          newer reply before sending.
+        </p>
+      )}
       {draft.subject && (
         <p className="type-small break-words text-muted-foreground">Subject: {draft.subject}</p>
       )}

@@ -52,6 +52,9 @@ export interface ReplyDraft {
   sendAt: string | null;
   sentAt: string | null;
   sendError: string | null;
+  /** E3b-2b rule 2: the contact wrote again after this open draft (the daily draft limit kept it). */
+  newerReplyAt?: string | null;
+  contactFirstName?: string | null;
   createdAt: string;
   canSend: boolean;
 }

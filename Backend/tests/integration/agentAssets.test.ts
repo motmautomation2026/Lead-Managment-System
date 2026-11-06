@@ -273,6 +273,16 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     expect(await decisionOf(l.id)).toMatchObject({ send_status: "sent", sent_asset_ids: null });
   });
 
+  // Staging Storage can serve a deleted file from a cache for a while: wait (≤ ~60 s) until a download fails.
+  const removeFile = async (path: string) => {
+    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
+    await supabaseAdmin.storage.from("agent-assets").remove([path]);
+    for (const started = Date.now(); Date.now() - started < 60_000; await new Promise((r) => setTimeout(r, 2_000))) {
+      if ((await supabaseAdmin.storage.from("agent-assets").download(path)).error) return;
+    }
+    throw new Error(`Storage still serves ${path} 60 s after it was removed.`);
+  };
+
   it("a file deleted at send time, text not mentioning it: the email and the WhatsApp go without it, and it is recorded", async () => {
     const ws = await workspace("deleted");
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
@@ -281,7 +291,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const emailAsset = await asset(ws, "Steel trading case study", ["email"]);
     const e = await lead(ws);
     await tick(ws, [emailWith([emailAsset.id], PLAIN_LINE)]);
-    await supabaseAdmin.storage.from("agent-assets").remove([emailAsset.path]);
+    await removeFile(emailAsset.path);
     const smtp = fakeSmtp();
     await emailTick(ws, smtp);
     expect(smtp.sent).toHaveLength(1);
@@ -305,12 +315,8 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const waDecision = await decisionOf(w.id);
     expect(waDecision).toMatchObject({ send_status: "sent", sent_asset_ids: null });
     expect(waDecision.attachment_issues).toEqual([{ assetId: waAsset.id, title: null, reason: "The asset was deleted or turned off before sending." }]);
-  });
+  }, 120_000); // removeFile may wait for Storage.
 
-  const removeFile = async (path: string) => {
-    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
-    await supabaseAdmin.storage.from("agent-assets").remove([path]);
-  };
   const touches = async (leadId: string) => (await pool.query(`select agent_touch_count from public.leads where id = $1`, [leadId])).rows[0].agent_touch_count;
   const wakeNow = async (leadId: string) =>
     (await pool.query(`select count(*)::int as n from public.agent_wakeups where lead_id = $1 and status = 'pending' and due_at <= now() + interval '1 minute'`, [leadId])).rows[0].n;
@@ -339,7 +345,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const fresh = await decisionOf(l.id);
     expect(fresh.id).not.toBe(d.id);
     expect(fresh).toMatchObject({ send_status: "queued", asset_ids: [], regenerated: true });
-  });
+  }, 120_000);
 
   it("E2h WhatsApp after a reply, file missing: text mentions it → cancelled + wake-up; text doesn't → sent without it, recorded", async () => {
     const ws = await workspace("mention-wa");
@@ -370,7 +376,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     const sent = await decisionOf(plain.id);
     expect(sent).toMatchObject({ send_status: "sent", sent_asset_ids: null });
     expect(sent.attachment_issues).toEqual([{ assetId: b.id, title: "EPC case study", reason: "The file was missing from storage." }]);
-  });
+  }, 120_000);
 
   it("E2h: asset turned off, text mentions it: both channels cancel", async () => {
     const ws = await workspace("mention-off");

@@ -129,8 +129,8 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(draftCall.input.messages[1]!.content).toMatch(/<reply>\nDo you work with steel traders\? \[e3b2a-/);
     const { DAY_DECISIONS_SQL, MONTH_SPEND_SQL } = await import("../../src/services/agentRunner.service.js");
     const counted = (await pool.query(`select ${DAY_DECISIONS_SQL} as n, ${MONTH_SPEND_SQL}::float8 as spent`, [ws])).rows[0];
-    // E3b-2a-2: the AI label and the draft both count toward the daily cap.
-    expect(counted.n).toBe(2);
+    // E3b-2b rule 1: only the draft counts toward the daily cap; the AI label only toward the month's spend.
+    expect(counted.n).toBe(1);
     expect(counted.spent).toBeGreaterThan(0.0054);
     expect((await pool.query(`select agent_status from public.leads where id = $1`, [leadId])).rows[0].agent_status).toBe("handed_off");
     // At most one draft per reply: another tick does nothing.
@@ -213,7 +213,7 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(Number(rows[0].cost_usd)).toBeGreaterThan(0);
   });
 
-  it("E3b-2a-2: at most 3 drafts per contact per IST day; every label and draft counts toward the daily cap", async () => {
+  it("E3b-2a-2: at most 3 drafts per contact per IST day; drafts count toward the daily cap, labels don't; E3b-2b: a 4th reply keeps the open draft, marked", async () => {
     const { ws, phone, leadId } = await scenario();
     const outcomes: string[] = [];
     for (const text of ["Hi", "Do you work in Pune?", "And Nashik?", "One more thing"]) {
@@ -221,11 +221,19 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
       outcomes.push(...(await labelAndDraft(ws, fake())).map((o) => o.reason ?? o.result));
     }
     expect(outcomes).toEqual(["drafted", "drafted", "drafted", "contact's daily draft limit reached"]);
-    // The 4th reply still supersedes the open draft (newest reply wins); it just gets none of its own.
-    expect((await drafts(leadId)).map((d) => d.status)).toEqual(["superseded", "superseded", "superseded"]);
+    // E3b-2b rule 2: the 4th reply never supersedes the open draft; it is marked, and the reply task stays open.
+    const rows = (await pool.query(`select id, status, newer_reply_at from public.reply_drafts where lead_id = $1 order by created_at`, [leadId])).rows;
+    expect(rows.map((d) => [d.status, d.newer_reply_at !== null])).toEqual([
+      ["superseded", false],
+      ["superseded", false],
+      ["open", true],
+    ]);
+    expect(await openTasks(leadId)).toHaveLength(1);
+    const card = await api.call(owner, ws, "GET", `/contacts/${leadId}/reply-drafts/latest`);
+    expect(card.body.draft).toMatchObject({ id: rows[2].id, status: "open", newerReplyAt: expect.any(String) });
     const { DAY_DECISIONS_SQL } = await import("../../src/services/agentRunner.service.js");
-    // 4 AI labels + 3 drafts.
-    expect((await pool.query(`select ${DAY_DECISIONS_SQL} as n`, [ws])).rows[0].n).toBe(7);
+    // 3 drafts; the 4 AI labels count only toward the monthly budget.
+    expect((await pool.query(`select ${DAY_DECISIONS_SQL} as n`, [ws])).rows[0].n).toBe(3);
   });
 
   it("E3b-2a-2: a stop label on any reply in the burst → no draft, and its effects apply", async () => {

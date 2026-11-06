@@ -99,6 +99,23 @@ describe("SuggestedReplyCard", () => {
     await waitFor(() => expect(mocks.discardReplyDraft).toHaveBeenCalledWith("c-1", "d-1"));
   });
 
+  it("E3b-2b: a newer reply after the daily limit shows the marker; without one there is none", () => {
+    const { rerender } = renderCard(<SuggestedReplyCard contactId="c-1" draft={draft()} />);
+    expect(screen.queryByText(/wrote again after this draft/)).not.toBeInTheDocument();
+    rerender(
+      <QueryClientProvider client={client}>
+        <SuggestedReplyCard
+          contactId="c-1"
+          draft={draft({ newerReplyAt: "2026-11-03T06:00:00Z", contactFirstName: "Asha" })}
+        />
+      </QueryClientProvider>,
+    );
+    expect(
+      screen.getByText("Asha wrote again after this draft. Read the newer reply before sending."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  });
+
   it("an empty text can't be sent", () => {
     renderCard(<SuggestedReplyCard contactId="c-1" draft={draft()} />);
     fireEvent.change(screen.getByLabelText("Suggested reply"), { target: { value: "   " } });

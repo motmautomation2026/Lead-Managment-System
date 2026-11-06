@@ -11,17 +11,18 @@
  * path would create (AI-managed contact with an owner, none open), already marked escalated so the 2-hour
  * escalation never fires. Nothing is sent, queued for the worker or notified.
  * --remove deletes what this script created (markers: reply_drafts.model = 'staging-seed', reply ids starting with
- * 'staging-seed-', timeline rows with metadata.seeded), plus a queued rep Send of a seeded draft, for the named contact
- * or all seeded contacts.
+ * 'staging-seed-', timeline rows with metadata.seeded), plus any queued (not yet sent) email or WhatsApp send of a
+ * seeded draft, for the named contact or all seeded contacts. A seeded draft can never be sent (E3b-2b rule 3: 409).
  */
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { Queryable } from "../src/dto.js";
 import { replyTaskTitle, REPLY_TASK_TITLES } from "../src/agent/replyClassification.js";
-import { contactSendProblem } from "../src/domain/replyDrafts.js";
+import { contactSendProblem, SEEDED_DRAFT_MODEL } from "../src/domain/replyDrafts.js";
 import { assertStagingDatabase, SEED_MARKER } from "./seed-ai-test-contacts.js";
 
-export const SEED_DRAFT_MODEL = "staging-seed";
+// E3b-2b rule 3: this marker also makes the API refuse to send the draft (409).
+export const SEED_DRAFT_MODEL = SEEDED_DRAFT_MODEL;
 export const SEED_REPLY_PREFIX = "staging-seed-";
 export const DEFAULT_REPLY_TEXT = "Hi, can you share how you would find buyers for us?";
 export const SAMPLE_BODY: Record<"whatsapp" | "email", string> = {
@@ -178,6 +179,7 @@ export interface RemovedCounts {
   tasks: number;
   timeline: number;
   queuedEmails: number;
+  queuedWhatsApp: number;
 }
 
 /** Deletes what this script created (seeded contacts only), for one contact or all; returns the counts. */
@@ -200,6 +202,13 @@ export async function removeSeededReplyDrafts(db: Queryable, input: { contact?: 
     `delete from public.email_outbound_messages where source = 'reply_draft' and status <> 'sent' and source_id in (${seededDrafts})`,
     [leads, SEED_DRAFT_MODEL, like],
   );
+  // A WhatsApp Send is queued on the draft row itself (plus a prepared outbound row while sending): both go with the draft.
+  const queuedWhatsApp = await db.query(`select 1 from public.reply_drafts where id in (${seededDrafts}) and channel = 'whatsapp' and send_status in ('queued', 'sending')`, [
+    leads,
+    SEED_DRAFT_MODEL,
+    like,
+  ]);
+  await db.query(`delete from public.whatsapp_outbound_messages where status <> 'sent' and reply_draft_id in (${seededDrafts})`, [leads, SEED_DRAFT_MODEL, like]);
   const drafts = await db.query(`delete from public.reply_drafts where id in (${seededDrafts})`, [leads, SEED_DRAFT_MODEL, like]);
   const taskIds = (
     await db.query<{ id: string }>(`select metadata->>'seededTaskId' as id from public.timeline_events where lead_id = any($1::uuid[]) and metadata->>'seeded' = 'true' and metadata->>'seededTaskId' is not null`, [leads])
@@ -220,6 +229,7 @@ export async function removeSeededReplyDrafts(db: Queryable, input: { contact?: 
     tasks: tasks.rowCount ?? 0,
     timeline: timeline.rowCount ?? 0,
     queuedEmails: queuedEmails.rowCount ?? 0,
+    queuedWhatsApp: queuedWhatsApp.rowCount ?? 0,
   };
 }
 
@@ -243,7 +253,7 @@ async function main() {
   try {
     if (remove) {
       const n = await withTransaction((db) => removeSeededReplyDrafts(db, { contact }));
-      console.log(`Removed ${n.drafts} seeded suggested reply draft(s), ${n.replies} fake repl(ies), ${n.tasks} reply task(s), ${n.timeline} timeline row(s), ${n.queuedEmails} queued email(s).`);
+      console.log(`Removed ${n.drafts} seeded suggested reply draft(s), ${n.replies} fake repl(ies), ${n.tasks} reply task(s), ${n.timeline} timeline row(s), ${n.queuedEmails} queued email(s), ${n.queuedWhatsApp} queued WhatsApp send(s).`);
     } else {
       console.log(await withTransaction((db) => seedReplyDraft(db, { contact: contact!, withReply: withReplyArg(process.argv) })));
     }

@@ -88,7 +88,7 @@ describeIfDb("E3b-2a-2 staging:seed-reply-draft (requires TEST_DATABASE_URL)", (
       asha.id,
       (await whatsappReply(asha.id, 20)).rows[0].message_id,
     ]);
-    expect(await removeSeededReplyDrafts(pool, { contact: asha.name, workspaceId: ws })).toEqual({ drafts: 1, replies: 0, tasks: 0, timeline: 0, queuedEmails: 0 });
+    expect(await removeSeededReplyDrafts(pool, { contact: asha.name, workspaceId: ws })).toEqual({ drafts: 1, replies: 0, tasks: 0, timeline: 0, queuedEmails: 0, queuedWhatsApp: 0 });
     expect((await pool.query(`select model from public.reply_drafts where lead_id = $1`, [asha.id])).rows).toEqual([{ model: "m" }]);
     expect(await count(`public.whatsapp_inbound_events where lead_id = $1`, [asha.id])).toBe(3);
   });
@@ -121,6 +121,16 @@ describeIfDb("E3b-2a-2 staging:seed-reply-draft (requires TEST_DATABASE_URL)", (
     expect(await runReplyEscalation({ now: new Date(Date.now() + 7 * 86_400_000), workspaceIds: [ws] })).toEqual([]);
     expect(await count(`public.notifications where lead_id = $1`, [neha.id])).toBe(0);
     expect(await count(`public.email_outbound_messages where lead_id = $1`, [neha.id])).toBe(0);
+
+    // E3b-2b rule 3: a seeded draft can never be sent; it stays open.
+    const draftId = (await pool.query(`select id from public.reply_drafts where lead_id = $1`, [neha.id])).rows[0].id as string;
+    const refused = await api.call(owner, ws, "POST", `/contacts/${neha.id}/reply-drafts/${draftId}/send`, { body: SAMPLE_BODY.whatsapp });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toBe("Seeded test draft — sending is disabled");
+    expect((await pool.query(`select status, send_status from public.reply_drafts where id = $1`, [draftId])).rows[0]).toEqual({ status: "open", send_status: null });
+    // A WhatsApp Send queued before this rule existed: --remove deletes it and counts it.
+    await pool.query(`update public.reply_drafts set status = 'sent', send_status = 'queued', send_next_at = now() + interval '1 day' where id = $1`, [draftId]);
+    expect(await removeSeededReplyDrafts(pool, { contact: neha.name, workspaceId: ws })).toMatchObject({ drafts: 1, queuedWhatsApp: 1, queuedEmails: 0 });
     expect((await pool.query(`select agent_status from public.leads where id = $1`, [neha.id])).rows[0].agent_status).toBe("active");
   });
 
@@ -139,12 +149,16 @@ describeIfDb("E3b-2a-2 staging:seed-reply-draft (requires TEST_DATABASE_URL)", (
     expect(draft).toMatchObject({ channel: "email", subject: "Re: your message", in_reply_to: expect.stringMatching(/^<staging-seed-.+@seed\.invalid>$/) });
     expect((await pool.query(`select title from public.tasks where lead_id = $1 and origin = 'agent'`, [raj.id])).rows).toEqual([{ title: "Asked a question — respond today" }]);
 
-    // The rep sends it: a queued reply_draft email (the worker is stopped) and the reply task done.
-    const { sendReplyDraft } = await import("../../src/services/replyDrafts.service.js");
-    await sendReplyDraft(owner, ws, raj.id, draft.id, SAMPLE_BODY.email);
-    expect(await count(`public.email_outbound_messages where source = 'reply_draft' and source_id = $1 and status = 'queued'`, [draft.id])).toBe(1);
+    // E3b-2b rule 3: the email Send is refused too (409), nothing queued.
+    const refused = await api.call(owner, ws, "POST", `/contacts/${raj.id}/reply-drafts/${draft.id}/send`, { body: SAMPLE_BODY.email });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toBe("Seeded test draft — sending is disabled");
+    expect(await count(`public.email_outbound_messages where source = 'reply_draft' and source_id = $1`, [draft.id])).toBe(0);
+    // An email Send queued before this rule existed (the worker is stopped): --remove deletes it.
+    const { enqueueEmail } = await import("../../src/services/emailOutbound.service.js");
+    await enqueueEmail(pool, { workspaceId: ws, source: "reply_draft", sourceId: draft.id, leadId: raj.id, to: "raj@example.com", subject: "Re: your message", html: "<p>Hi</p>" });
 
-    expect(await removeSeededReplyDrafts(pool, { contact: raj.name, workspaceId: ws })).toEqual({ drafts: 1, replies: 1, tasks: 1, timeline: 1, queuedEmails: 1 });
+    expect(await removeSeededReplyDrafts(pool, { contact: raj.name, workspaceId: ws })).toEqual({ drafts: 1, replies: 1, tasks: 1, timeline: 1, queuedEmails: 1, queuedWhatsApp: 0 });
     expect(await count(`public.email_inbound_events where lead_id = $1`, [raj.id])).toBe(0);
     expect(await count(`public.reply_drafts where lead_id = $1`, [raj.id])).toBe(0);
     expect(await count(`public.email_outbound_messages where lead_id = $1`, [raj.id])).toBe(0);

@@ -61,15 +61,11 @@ export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agen
      where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
    + coalesce((select sum(cost_usd) from public.reply_drafts
      where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
-/** Today's (IST) count toward max_decisions_per_day of workspace $1: AI decisions plus reply drafts (E3b-2a rule 3) plus AI reply labels (E3b-2a-2 rule 1). */
+/** Today's (IST) count toward max_decisions_per_day of workspace $1: AI decisions plus reply drafts (E3b-2a rule 3). AI reply labels count only toward the monthly budget (E3b-2b rule 1). */
 export const DAY_DECISIONS_SQL = `((select count(*) from public.agent_decisions
      where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata'))
    + (select count(*) from public.reply_drafts
-     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata'))
-   + (select count(*) from public.whatsapp_inbound_events
-     where workspace_id = $1 and classification_cost_usd is not null and classified_at >= (${IST_DAY} at time zone 'Asia/Kolkata'))
-   + (select count(*) from public.email_inbound_events
-     where workspace_id = $1 and classification_cost_usd is not null and classified_at >= (${IST_DAY} at time zone 'Asia/Kolkata')))::int`;
+     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata')))::int`;
 
 export interface AgentRunnerDeps {
   model: DecisionModel;
