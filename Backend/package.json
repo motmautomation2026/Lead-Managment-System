@@ -29,7 +29,8 @@
     "crm:deal-sweep": "tsx scripts/crm-deal-sweep.ts",
     "staging:seed-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts",
     "staging:remove-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts --remove",
-    "staging:repair-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts --repair"
+    "staging:repair-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts --repair",
+    "staging:seed-reply-draft": "tsx scripts/seed-reply-draft.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
