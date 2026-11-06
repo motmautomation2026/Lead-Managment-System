@@ -434,9 +434,13 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     // Email, text doesn't mention it → sent without it, recorded.
     const b = await asset(ws, "EPC case study", ["email"]);
     const quiet = await lead(ws);
+    // The cancelled contact's new wake-up isn't part of this step: only the quiet contact decides and sends.
+    await pool.query(`delete from public.agent_wakeups where lead_id = $1 and status = 'pending'`, [e.id]);
     await tick(ws, [emailWith([b.id], PLAIN_LINE)]);
     await grow(b.path);
     await pool.query(`update public.integration_connections set next_send_at = null where workspace_id = $1 and id = 'email'`, [ws]);
+    // The queued time comes from this machine's clock, which can be a few ms ahead of the database's: make it due now.
+    await pool.query(`update public.email_outbound_messages set next_attempt_at = now() where workspace_id = $1 and status = 'queued'`, [ws]);
     await emailTick(ws, smtp);
     expect(smtp.sent).toHaveLength(1);
     expect(smtp.sent[0]!.attachments).toEqual([]);
@@ -453,7 +457,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await sendTick(ws, send);
     expect(socket.sendMessage).not.toHaveBeenCalled();
     expect(await decisionOf(w.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
-  }, 90_000); // Uploads a real file over 10 MB to Storage.
+  }, 180_000); // Uploads real files over 10 MB to Storage (three times).
 
   it("createAsset stores the real file size", async () => {
     const ws = await workspace("upload");

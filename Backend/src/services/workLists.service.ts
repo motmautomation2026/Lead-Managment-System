@@ -41,7 +41,7 @@ interface RefColumns {
   owner_full_name: string | null;
 }
 
-const CONTACT_JSON = `json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name), 'hotBand', l.hot_band, 'hotScore', l.hot_score)`;
+const CONTACT_JSON = `json_build_object('id', l.id, 'name', trim(l.first_name || ' ' || l.last_name))`;
 const COMPANY_JSON = `case when c.id is null then null else json_build_object('id', c.id, 'name', c.name) end`;
 const DEAL_JSON = `case when d.id is null then null else json_build_object('id', d.id, 'name', d.name) end`;
 

@@ -78,12 +78,22 @@ create table if not exists public.message_facts (
   created_at timestamptz not null default now(),
   constraint message_facts_channel_valid check (channel in ('email', 'whatsapp')),
   constraint message_facts_source_valid check (source in ('agent', 'workflow', 'reply_draft', 'proposal', 'meeting')),
-  constraint message_facts_one_outbound check ((email_outbound_id is null) <> (whatsapp_outbound_id is null)),
   constraint message_facts_email_unique unique (email_outbound_id),
   constraint message_facts_whatsapp_unique unique (whatsapp_outbound_id)
 );
 
 alter table public.message_facts enable row level security;
+
+-- Never both outbound ids; either may become null when its outbound row is deleted (on delete set null).
+alter table public.message_facts drop constraint if exists message_facts_one_outbound;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'message_facts_not_both_outbound') then
+    alter table public.message_facts add constraint message_facts_not_both_outbound
+      check (email_outbound_id is null or whatsapp_outbound_id is null);
+  end if;
+end $$;
+create index if not exists message_facts_decision_idx on public.message_facts (agent_decision_id) where agent_decision_id is not null;
 
 -- Attribution (last message to the lead) and message_number; funnel by period.
 create index if not exists message_facts_lead_sent_idx on public.message_facts (lead_id, sent_at desc);

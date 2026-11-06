@@ -108,7 +108,7 @@ describeIfDb("contacts API (requires TEST_DATABASE_URL)", () => {
     expect(res.body.data).toHaveLength(1);
     const row = res.body.data[0];
     expect(Object.keys(row).sort()).toEqual(
-      ["id", "name", "firstName", "lastName", "email", "phone", "jobTitle", "source", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt"].sort(),
+      ["id", "name", "firstName", "lastName", "email", "phone", "jobTitle", "source", "company", "owner", "leadStatus", "lifecycle", "openDeal", "agentStatus", "nextAction", "lastActivityAt", "createdAt", "hotScore", "hotBand", "hotReasons"].sort(),
     );
     expect(row.name).toBe(`First12 Tie`);
     expect(row.source).toBe("website");

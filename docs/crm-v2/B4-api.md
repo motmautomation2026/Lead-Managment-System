@@ -499,7 +499,7 @@ sentAt, sendError, createdAt, canSend }`. Never the lead's reply text.
   `proposal`); sort `hotScore` (NULLs last; index `(workspace_id, hot_score desc nulls last, id desc)`); column id `hotScore`.
   `GET /contacts/:id` adds the same three fields.
 - Tasks (§7a): sort `hotScore` (the contact's score; a joined column, no `(workspace_id, field, id)` index, like companies
-  `contactCount`); the row's `contact` adds `hotBand`, `hotScore`.
+  `contactCount`).
 - Agent settings (`GET|PUT /agent/settings`) add `targetIndustryKeywords: string[]` (lower case, de-duplicated, ≤ 100, each ≤ 60
   characters; empty = fit uses the email domain, company and revenue only). The score is never given to the AI.
 - **Funnel** `GET /analytics/funnel?from&to&groupBy=` (any CRM user, the selected workspace). `from` / `to` ISO 8601 with offset;
