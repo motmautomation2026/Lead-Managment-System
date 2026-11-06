@@ -62,12 +62,12 @@ describe("E3b-1 rule 8: flagged claims are regenerated (fake grounding model)", 
     ["Raj", `Hi Raj, ${RAJ} Would Thursday suit you?`, RAJ],
   ])("%s: the flagged claim is fed back and the rewrite without it passes", async (_name, body, claim) => {
     const d = deps(
-      [whatsapp(body), whatsapp("Hi, would a short call on Thursday suit you?")],
+      [whatsapp(body), whatsapp("Hi, would a short call on Thursday or Friday suit you?")],
       [{ supported: false, unsupportedClaims: [claim] }, { supported: true, unsupportedClaims: [] }],
     );
     const result = await draftDecision(ctx(), d, usage());
     expect(result.attempts[0]!.problems).toEqual([`Unsupported claim: ${claim}`]);
-    expect(result.decision).toMatchObject({ action: "send_whatsapp", body: "Hi, would a short call on Thursday suit you?" });
+    expect(result.decision).toMatchObject({ action: "send_whatsapp", body: "Hi, would a short call on Thursday or Friday suit you?" });
     const retry = d.model.calls.filter((c) => c.kind === "decide")[1]!.input.messages.at(-1)!.content;
     expect(retry).toContain(`Unsupported claim: ${claim}`);
   });

@@ -87,7 +87,8 @@ export interface MessageViolation {
     | "attachment_mention"
     | "subject_style"
     | "contact_details"
-    | "unsupported_agreement";
+    | "unsupported_agreement"
+    | "call_days";
   message: string;
 }
 
@@ -134,6 +135,26 @@ const THANKS_TARGETS = ["contacting", "reaching out", "getting in touch", "your 
 /** E3b-2a rule 6: an "as agreed" / "as discussed" claim in the text, or null. */
 export function agreementClaim(text: string): string | null {
   return text.match(/\bas (?:we )?(?:agreed|discussed)\b|\bas per our (?:discussion|conversation|call|agreement)\b|\blike we (?:agreed|discussed)\b/i)?.[0] ?? null;
+}
+
+const WEEKDAYS = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
+// A question that asks for a call or a conversation (not "can you talk to your team about it" in a statement).
+const CALL_ASK = /\b(?:call|calls|speak|discussion|discuss|chat|talk|meeting|meet)\b/i;
+const VAGUE_TIME = /\b(?:in the coming days|in the next few days|coming days|next few days|in the coming week)\b/i;
+
+/**
+ * E3b-2a-2 rule 5c: a message that asks for a call offers the two suggested days (both channels), and a
+ * question that names days never also says "in the coming days". The problem, or null.
+ */
+export function callDaysProblem(body: string): string | null {
+  const questions = withoutUrls(body).match(/[^.!?？\n]*[?？]/g) ?? [];
+  if (!questions.some((q) => CALL_ASK.test(q))) return null;
+  const days = new Set((body.match(WEEKDAYS) ?? []).map((d) => d.toLowerCase()));
+  const vague = VAGUE_TIME.exec(body)?.[0];
+  if (days.size < 2) {
+    return `The message asks for a call without offering the two suggested days${vague ? ` ("${vague}")` : ""}. Ask which of the two suggested days suits them, e.g. "Would Thursday or Friday suit you for a short call?"`;
+  }
+  return vague ? `The message offers days and also says "${vague}"; keep only the two days.` : null;
 }
 
 /** E2c rule 1: "thank you" / "thanks" followed within 6 words by a reason for reaching out. */
@@ -240,6 +261,9 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
     const subject = subjectProblem(modelSubject, facts ? [facts.companyName, facts.leadCompany] : []);
     if (subject) violations.push({ rule: "subject_style", message: subject });
   }
+
+  const days = callDaysProblem(decision.body);
+  if (days) violations.push({ rule: "call_days", message: days });
 
   const compound = compoundQuestion(decision.body);
   if (compound) violations.push({ rule: "compound_question", message: `The question asks two things at once: "${compound}". Ask about one thing only.` });

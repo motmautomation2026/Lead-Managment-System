@@ -39,7 +39,7 @@ const rulesOf = (decision: AgentDecision) => checkMessage(decision, settings).ma
 
 describe("findBannedPhrases", () => {
   it.each([
-    ["Hi Suyash, thanks for connecting. Shall we talk?", ["thanks for connecting"]],
+    ["Hi Suyash, thanks for connecting. Shall we talk on Monday or Tuesday?", ["thanks for connecting"]],
     ["THANKS FOR   CONNECTING!", ["thanks for connecting"]],
     ["Are you free on Monday?", ["free"]],
     ["We work with 100+ brands", ["100+"]],
@@ -137,7 +137,7 @@ describe("E2h rule 1: mentionsAttachment", () => {
     "Please find a time that works for you.",
     "Would you like me to send a case study?",
     "A semi-attached unit.",
-    "Hi Asha, would a short call on Tuesday work?",
+    "Hi Asha, would a short call on Tuesday or Wednesday work?",
     "Details at https://motm.example/attached-file.pdf",
   ])("false: %s", (text) => expect(mentionsAttachment(text)).toBe(false));
 
@@ -162,7 +162,7 @@ describe("checkMessage", () => {
   });
 
   it("flags banned phrases in the email subject too", () => {
-    expect(rulesOf(email("Hi Raj, shall we talk?", "Just checking in"))).toEqual(["banned_phrase"]);
+    expect(rulesOf(email("Hi Raj, shall we talk on Monday or Tuesday?", "Just checking in"))).toEqual(["banned_phrase"]);
   });
 
   it("word limits at the boundary, per channel, body only", () => {
@@ -188,9 +188,9 @@ describe("checkMessage", () => {
   it("questions: more than one, compound, exclamation", () => {
     expect(rulesOf(whatsapp("Is Tuesday ok? Or Wednesday?"))).toEqual(["one_question"]);
     expect(rulesOf(whatsapp("Which industries do you target, and how do you handle follow-ups?"))).toEqual(["compound_question"]);
-    expect(rulesOf(whatsapp("Great to hear from you! Shall we talk?"))).toEqual(["exclamation"]);
+    expect(rulesOf(whatsapp("Great to hear from you! Shall we talk on Monday or Tuesday?"))).toEqual(["exclamation"]);
     // A link's own "?" and "!" don't count (the link itself is a contact_details problem).
-    expect(rulesOf(whatsapp("See https://acme.in/a?b=1#!x — shall we talk?"))).toEqual(["contact_details"]);
+    expect(rulesOf(whatsapp("See https://acme.in/a?b=1#!x — shall we talk on Monday or Tuesday?"))).toEqual(["contact_details"]);
   });
 
   it("collects every violation and ignores non-send actions", () => {
@@ -220,7 +220,7 @@ const e2cRules = (decision: AgentDecision, f: MessageFacts) => checkMessage(deci
 
 describe("E2c rule 1: inbound first message thanks them", () => {
   it.each([
-    ["Hello Suyash, thank you for contacting MOTM Technologies. Would a short call suit you?", true],
+    ["Hello Suyash, thank you for contacting MOTM Technologies. Would a short call on Monday or Tuesday suit you?", true],
     ["Thanks for your enquiry about outbound calling.", true],
     ["Thank you for sharing your requirements with us.", true],
     ["THANK YOU FOR REACHING OUT, Asha.", true],
@@ -231,7 +231,7 @@ describe("E2c rule 1: inbound first message thanks them", () => {
     ["Thank you for filling in the form on our website.", true],
     ["Thank you, Ravi, for submitting the enquiry form.", true],
     ["Thank-you for contacting us.", true],
-    ["Hope you are well. Would a short call suit you?", false],
+    ["Hope you are well. Would a short call on Monday or Tuesday suit you?", false],
     ["Thanks. We help B2B firms; would a call suit you?", false],
     ["Thank you for your time on the call last week, which was very useful for sharing.", false],
     ["We are happy you are contacting us, thank you.", false],
@@ -241,7 +241,7 @@ describe("E2c rule 1: inbound first message thanks them", () => {
   });
 
   it("is not checked for a message that is not the first one to an inbound lead", () => {
-    expect(e2cRules(whatsapp("Hope you are well. Would a short call suit you?"), facts())).toEqual([]);
+    expect(e2cRules(whatsapp("Hope you are well. Would a short call on Monday or Tuesday suit you?"), facts())).toEqual([]);
   });
 
   it("first = no real send and no current-playbook draft (shadow); inbound = website / form", () => {
@@ -254,7 +254,7 @@ describe("E2c rule 1: inbound first message thanks them", () => {
 describe("E2c rule 2: no introduction mid-conversation", () => {
   const f = facts({ conversationExists: true });
   it.each([
-    "Hi Raj, thank you for reaching out. Shall we talk?",
+    "Hi Raj, thank you for reaching out. Shall we talk on Monday or Tuesday?",
     "Hi Raj, thank you for contacting us.",
     "Hi Raj, this is Govinda from MOTM Technologies.",
     "Hi Raj, I am Govinda from MOTM.",
@@ -275,7 +275,7 @@ describe("E2c rule 2: no introduction mid-conversation", () => {
   });
 
   it("E2d: with a conversation, thank you for contacting is an introduction phrase (no inbound exception)", () => {
-    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Is Monday good for the call we discussed?"), f)).toEqual(["introduction_mid_conversation"]);
+    expect(e2cRules(whatsapp("Hi Suyash, thank you for contacting MOTM. Is Monday or Tuesday good for the call we discussed?"), f)).toEqual(["introduction_mid_conversation"]);
   });
 
   it("the subject counts too", () => {
@@ -299,7 +299,7 @@ describe("E2c rule 3: internal information leak", () => {
   });
   it("checks the open deal name and the email subject, and feeds the phrase back", () => {
     const f = facts({ internalTexts: [description, "TRC Gujarat dyeing unit expansion"] });
-    const v = checkMessage(email("Hi Raj, shall we talk?", "About the Gujarat dyeing unit expansion"), settings, f);
+    const v = checkMessage(email("Hi Raj, shall we talk on Monday or Tuesday?", "About the Gujarat dyeing unit expansion"), settings, f);
     expect(v).toEqual([{ rule: "internal_info_leak", message: 'Repeats internal information. Do not mention: "gujarat dyeing unit expansion".' }]);
   });
   it("messageFactsOf takes the company description and the open deal name", () => {
@@ -311,7 +311,7 @@ describe("E2c rule 3: internal information leak", () => {
 
 describe("E3a: subject_style", () => {
   const facts = { inboundFirst: false, conversationExists: false, ownerFirstName: "Ravi", companyName: "MOTM Technologies", internalTexts: [], leadCompany: "SKF India", threaded: false };
-  const check = (subject: string) => checkMessage(email("Hi Raj, shall we talk?", subject), settings, facts).filter((v) => v.rule === "subject_style");
+  const check = (subject: string) => checkMessage(email("Hi Raj, shall we talk on Monday or Tuesday?", subject), settings, facts).filter((v) => v.rule === "subject_style");
 
   it("accepts a plain, specific subject, acronyms and company names", () => {
     for (const subject of ["Steel exports to Pune", "Your CRM enquiry", "B2B outbound for SKF", "MOTM and your Gujarat plant"]) expect(check(subject)).toEqual([]);

@@ -50,7 +50,7 @@ describe("E2 rule 7: one question per message", () => {
   const ctx = () => sampleContext({ rules: { ...sampleContext().rules, contactability: { email: null, whatsapp: null, phone: null } } });
 
   it("two questions → regenerated once with feedback → one question passes", async () => {
-    const d = deps([whatsapp("Hi Asha, is Tuesday good? Or Wednesday?"), whatsapp("Hi Asha, would Tuesday work for a short call?")]);
+    const d = deps([whatsapp("Hi Asha, is Tuesday good? Or Wednesday?"), whatsapp("Hi Asha, would Tuesday or Wednesday work for a short call?")]);
     const result = await draftDecision(ctx(), d, usage());
     expect(result.regenerated).toBe(true);
     expect(result.decision.action).toBe("send_whatsapp");
@@ -84,8 +84,8 @@ describe("E2b: message checks, style check, one regeneration", () => {
   });
   const usage = (): Usage => ({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const ctx = () => sampleContext({ rules: { ...sampleContext().rules, contactability: { email: null, whatsapp: null, phone: null } } });
-  const BAD = whatsapp("Hi Asha, thanks for connecting. Could we have a quick chat?");
-  const CLEAN = whatsapp("Hi Asha, thank you for your enquiry. Would a short call on Tuesday suit you?");
+  const BAD = whatsapp("Hi Asha, thanks for connecting. Could we have a quick chat on Tuesday or Wednesday?");
+  const CLEAN = whatsapp("Hi Asha, thank you for your enquiry. Would a short call on Tuesday or Wednesday suit you?");
   const decideCalls = (d: ReturnType<typeof deps>) => d.model.calls.filter((c) => c.kind === "decide");
 
   it('"thanks for connecting" → regenerated with the violation as feedback → clean draft accepted', async () => {
@@ -114,7 +114,7 @@ describe("E2b: message checks, style check, one regeneration", () => {
   });
 
   it("a style violation from grounding → regenerated with the quote", async () => {
-    const sector = whatsapp("Hi Asha, we help steel makers grow. Would a short call on Tuesday suit you?");
+    const sector = whatsapp("Hi Asha, we help steel makers grow. Would a short call on Tuesday or Wednesday suit you?");
     const d = deps(
       [sector, CLEAN],
       [
@@ -130,7 +130,7 @@ describe("E2b: message checks, style check, one regeneration", () => {
 
   it("both kinds of problems → still only one regeneration, then handoff", async () => {
     const d = deps(
-      [BAD, whatsapp("Hi Asha, we help steel makers grow. Shall we talk?")],
+      [BAD, whatsapp("Hi Asha, we help steel makers grow. Shall we talk on Monday or Tuesday?")],
       [{ supported: false, unsupportedClaims: ["we help steel makers"], styleViolations: [{ rule: "unsupported_sector_claim", quote: "we help steel makers grow" }] }],
     );
     const result = await draftDecision(ctx(), d, usage());
@@ -182,7 +182,7 @@ describe("E2b rule 4: what the model sees", () => {
   // E2d: Raj (inbound, no sends, deal in Negotiation) got both contradictory checklist lines and a forced "thank you".
   describe("E2d: inbound thanks only when no conversation exists", () => {
     const wa = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "r" });
-    const FOLLOW_UP = wa("Hi Asha, following up on our discussion, would Tuesday suit you to go through the next steps?");
+    const FOLLOW_UP = wa("Hi Asha, following up on our discussion, would Tuesday or Wednesday suit you to go through the next steps?");
     const THANKS = wa("Hi Asha, thank you for reaching out with your enquiry. Would Tuesday suit you to go through the next steps?");
     const rules = (ctx: ReturnType<typeof sampleContext>, d: AgentDecision) => checkMessage(d, settings, messageFactsOf(ctx)).map((v) => v.rule);
     const checklist = (ctx: ReturnType<typeof sampleContext>) => {
@@ -254,9 +254,9 @@ describe("E2g: attachments", () => {
     });
   const firstMessage = { conversationExists: false, realMessageSent: false, whatsappReplied: false, sentAssetIds: [] };
   const talking = { conversationExists: true, realMessageSent: true, whatsappReplied: false, sentAssetIds: [] };
-  const body = "Hi Asha,\n\nI've attached a short case study on a steel trader we worked with. Would a short call next week suit you?";
+  const body = "Hi Asha,\n\nI've attached a short case study on a steel trader we worked with. Would a short call on Monday or Tuesday suit you?";
 
-  const plain = "Hi Asha,\n\nWe helped a steel trader build outbound. Would a short call next week suit you?";
+  const plain = "Hi Asha,\n\nWe helped a steel trader build outbound. Would a short call on Monday or Tuesday suit you?";
 
   it("an attachment on a first message is dropped; a text that doesn't mention it is kept and nothing is regenerated", async () => {
     const d = deps([email(plain)]);
@@ -311,7 +311,7 @@ describe("E2g: attachments", () => {
   });
 
   it("quoting a number from the attachment fails grounding and is regenerated", async () => {
-    const quoting = email("Hi Asha,\n\nThe attached case study shows how a steel trader got 10x ROI. Would a short call next week suit you?");
+    const quoting = email("Hi Asha,\n\nThe attached case study shows how a steel trader got 10x ROI. Would a short call on Monday or Tuesday suit you?");
     const d = deps([quoting, email(body)], [{ supported: false, unsupportedClaims: ["10x ROI"], styleViolations: [] }, { supported: true, unsupportedClaims: [], styleViolations: [] }]);
     const result = await draftDecision(ctx(talking), d, usage());
     expect(result.regenerated).toBe(true);
@@ -333,10 +333,10 @@ describe("E3a: auto-fix instead of rejecting", () => {
   };
 
   it('a draft with "—" and "!" passes after the auto-fix, with no regeneration', async () => {
-    const { result, model } = await run([draft("Hi Asha, great to speak — we can help with your steel buyers! Shall we talk on Monday?")]);
+    const { result, model } = await run([draft("Hi Asha, great to speak — we can help with your steel buyers! Shall we talk on Monday or Tuesday?")]);
     expect(result.regenerated).toBe(false);
     expect(result.attempts).toHaveLength(1);
-    expect(result.decision).toMatchObject({ body: "Hi Asha, great to speak, we can help with your steel buyers. Shall we talk on Monday?" });
+    expect(result.decision).toMatchObject({ body: "Hi Asha, great to speak, we can help with your steel buyers. Shall we talk on Monday or Tuesday?" });
     expect(result.attempts[0]!.autoFixes.map((f) => f.rule)).toEqual(["dash", "exclamation"]);
     expect(model.calls.filter((c) => c.kind === "decide")).toHaveLength(1);
     expect(model.calls.find((c) => c.kind === "grounding")!.input.messages[1]!.content).toContain("great to speak, we can help");
@@ -344,15 +344,15 @@ describe("E3a: auto-fix instead of rejecting", () => {
 
   it('a draft with "I hope this email finds you well" regenerates', async () => {
     const ctx = sampleContext({ settings: { ...settings, banned_phrases: ["hope this email finds you well"] } });
-    const model = createFakeDecisionModel({ decisions: [draft("Hi Asha, I hope this email finds you well. Shall we talk?"), draft("Hi Asha, shall we talk on Monday?")] });
+    const model = createFakeDecisionModel({ decisions: [draft("Hi Asha, I hope this email finds you well. Shall we talk on Monday or Tuesday?"), draft("Hi Asha, shall we talk on Monday or Tuesday?")] });
     const result = await draftDecision(ctx, { model, decisionModel: "m-decide", groundingModel: "m-ground", prices: {}, now: NOW }, { inputTokens: 0, outputTokens: 0, costUsd: 0 });
     expect(result.regenerated).toBe(true);
     expect(result.attempts[0]!.problems[0]).toContain("banned_phrase");
-    expect(result.decision).toMatchObject({ body: "Hi Asha, shall we talk on Monday?" });
+    expect(result.decision).toMatchObject({ body: "Hi Asha, shall we talk on Monday or Tuesday?" });
   });
 
   it("subject_style is fixable: a second regeneration, then a playbook handoff", async () => {
-    const bad: AgentDecision = { action: "send_email", subject: "Re: your enquiry", body: "Hi Asha, shall we talk on Monday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" };
+    const bad: AgentDecision = { action: "send_email", subject: "Re: your enquiry", body: "Hi Asha, shall we talk on Monday or Tuesday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" };
     const { result, model } = await run([bad]);
     expect(model.calls.filter((c) => c.kind === "decide")).toHaveLength(3);
     expect(result.decision).toMatchObject({ action: "handoff", title: "AI couldn't write a message that meets the playbook" });
@@ -361,7 +361,7 @@ describe("E3a: auto-fix instead of rejecting", () => {
 
 describe("E3a: follow-up emails keep their thread", () => {
   const thread = { messageId: "<first@motm.tech>", subject: "Steel buyers in Pune" };
-  const followUp = (subject: string): AgentDecision => ({ action: "send_email", subject, body: "Hi Asha, one more thought. Shall we talk on Monday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" });
+  const followUp = (subject: string): AgentDecision => ({ action: "send_email", subject, body: "Hi Asha, one more thought. Shall we talk on Monday or Tuesday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" });
 
   it("the model's subject is ignored (even a bad one) and the prompt says none is needed", async () => {
     const ctx = sampleContext({ emailThread: thread });

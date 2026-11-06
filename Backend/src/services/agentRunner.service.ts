@@ -42,10 +42,10 @@ const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playb
 const QUESTION_RULE = "one_question";
 // Problems that are about the playbook's writing rules (E2b), not safety or facts.
 // internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
-const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", ...STYLE_RULES];
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", "call_days", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 // E2f rule 7: code-checked writing problems a rewrite reliably fixes; only these earn a second regeneration.
-const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement"];
+const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement", "call_days"];
 // Grounding only runs when the code checks pass, so a grounded attempt (unsupported claim / style) is never "fixable only".
 const fixableOnly = (a: DraftAttempt) => !a.grounding && a.rules.violations.length > 0 && a.rules.violations.every((v) => FIXABLE_RULES.includes(v.rule));
 const SHADOW_NOTE = "Shadow mode — not sent";

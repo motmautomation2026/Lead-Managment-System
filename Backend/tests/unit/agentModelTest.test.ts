@@ -20,8 +20,8 @@ import { sampleContext } from "../helpers/agentContextFixture.js";
 const NOW = new Date("2026-10-27T11:00:00Z");
 const prices = parsePrices('{"gpt-5.1":{"inputPer1M":1,"cachedInputPer1M":0.1,"outputPer1M":1},"gpt-4.1":{"inputPer1M":2,"outputPer1M":2}}');
 const combos = parseCombos("gpt-5.1>gpt-4.1,gpt-5.1@low>gpt-4.1");
-const CLEAN: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, good to speak. Shall we talk on Monday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" };
-const TWO: AgentDecision = { ...CLEAN, body: "Hi Asha, shall we talk? Is Monday good?" } as AgentDecision;
+const CLEAN: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, good to speak. Shall we talk on Monday or Tuesday?", assetIds: [], nextWakeInDays: 3, reasoning: "r" };
+const TWO: AgentDecision = { ...CLEAN, body: "Hi Asha, shall we talk on Monday or Tuesday? Is Monday good?" } as AgentDecision;
 
 describe("agent:model-test", () => {
   it("parses combos and refuses anything else", () => {
@@ -70,7 +70,7 @@ describe("agent:model-test", () => {
     expect(report).toContain("- Cached input: 0 %");
     expect(report).toContain("  - send: 2");
     expect(report).toContain("### Raj Shah (lead-2)");
-    expect(report).toContain("> Hi Asha, good to speak. Shall we talk on Monday?");
+    expect(report).toContain("> Hi Asha, good to speak. Shall we talk on Monday or Tuesday?");
     expect(report).toContain("Failed attempt 1:");
     expect(report).toContain("one_question:");
   });
@@ -158,8 +158,8 @@ describe("agent:model-test", () => {
   it("E3b-1b: the report shows each message's channel, first WhatsApp and word count", async () => {
     const model = createFakeDecisionModel({ decisions: [CLEAN] });
     const result = await runModelTest({ contexts: [sampleContext()], combos: combos.slice(0, 1), model, prices, now: NOW });
-    expect(result.runs[0]!.message).toEqual({ channel: "whatsapp", firstWhatsApp: true, words: 10 });
-    expect(renderReport(result, combos.slice(0, 1), { at: NOW, contacts: 1 })).toContain("Channel: WhatsApp · first WhatsApp: yes · 10 words");
+    expect(result.runs[0]!.message).toEqual({ channel: "whatsapp", firstWhatsApp: true, words: 12 });
+    expect(renderReport(result, combos.slice(0, 1), { at: NOW, contacts: 1 })).toContain("Channel: WhatsApp · first WhatsApp: yes · 12 words");
   });
 
   it("the script refuses a production DATABASE_URL before connecting", () => {

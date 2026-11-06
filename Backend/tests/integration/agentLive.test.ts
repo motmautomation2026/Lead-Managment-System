@@ -21,8 +21,8 @@ const describeIfDb = DATABASE_URL ? describe : describe.skip;
 const PRICES = { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } };
 const MODELS = { decision: "m-decide", grounding: "m-ground" };
 
-const WHATSAPP: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, following up on our call about outbound for Acme Steel. Would a short call on Tuesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
-const EMAIL: AgentDecision = { action: "send_email", subject: "Outbound for Acme Steel", body: "Hi Asha,\n\nFollowing up on our call. Would a short call on Tuesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
+const WHATSAPP: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, following up on our call about outbound for Acme Steel. Would a short call on Tuesday or Wednesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
+const EMAIL: AgentDecision = { action: "send_email", subject: "Outbound for Acme Steel", body: "Hi Asha,\n\nFollowing up on our call. Would a short call on Tuesday or Wednesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
 
 describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;

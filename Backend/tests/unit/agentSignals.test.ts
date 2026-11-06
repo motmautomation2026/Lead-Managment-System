@@ -145,7 +145,7 @@ describe("E2f rule 6: what the model sees", () => {
 describe("E2f rule 7: regenerations", () => {
   const whatsapp = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." });
   const TWO = whatsapp("Hi Asha, is Tuesday good? Or Wednesday?");
-  const CLEAN = whatsapp("Hi Asha, would a short call on Tuesday suit you?");
+  const CLEAN = whatsapp("Hi Asha, would a short call on Tuesday or Wednesday suit you?");
   const ctx = () => sampleContext({ rules: { ...sampleContext().rules, contactability: { email: null, whatsapp: null, phone: null } } });
   const run = async (decisions: AgentDecision[], grounding?: GroundingResult[]) => {
     const model = createFakeDecisionModel({ decisions, ...(grounding ? { grounding } : {}) });

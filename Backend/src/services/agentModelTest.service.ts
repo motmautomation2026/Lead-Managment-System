@@ -3,7 +3,7 @@ import { wordCount } from "../agent/messageChecks.js";
 import { modelSettingProblem } from "../agent/modelSetting.js";
 import { costUsd, priceOf, type ModelPrices } from "../agent/pricing.js";
 import type { DecisionModel } from "../providers/openai.provider.js";
-import { ANGLE_LABELS, STAGE_LABELS, stagePlan, type Channel } from "../agent/stagePlan.js";
+import { ANGLE_LABELS, CALL_ANGLES, STAGE_LABELS, stagePlan, type Angle, type Channel } from "../agent/stagePlan.js";
 import type { AgentContext } from "./agentContext.service.js";
 import { draftDecision, type Usage } from "./agentRunner.service.js";
 
@@ -114,6 +114,8 @@ export interface ContactRun {
   stage: string | null;
   /** E3b-1 rule 5: the composed message got the owner's booking line (null = no message). */
   bookingLink: boolean | null;
+  /** E3b-2a-2 rule 5a: why it didn't (null = added, or no message). */
+  bookingLinkNote: string | null;
   /** E3b-1b rule 5: the message's channel, whether it is a first WhatsApp (opt-out line, no link) and the body's word count; null = no message. */
   message: { channel: Channel; firstWhatsApp: boolean; words: number } | null;
   /** send / wait / stop / "handoff: <title>" / "error: <text>". */
@@ -137,6 +139,13 @@ export interface ModelTestResult {
   capUsd: number;
   /** Runs planned (contacts × combinations), to say how far a stopped run got. */
   plannedRuns: number;
+}
+
+/** E3b-2a-2 rule 5a: why the composed message has no booking line (the same conditions as composeMessage's bookingLine). */
+export function bookingLinkNote(ctx: AgentContext, angle: Angle | null, channel: Channel): string {
+  if (!ctx.lead.ownerBookingUrl) return "owner has no booking link";
+  if (!angle || !CALL_ANGLES.includes(angle)) return "the angle doesn't ask for a call";
+  return channel === "whatsapp" && !ctx.rules.hasSentWhatsApp ? "first WhatsApp: no links" : "not added";
 }
 
 /** Combination by combination, one contact at a time; stops before the next contact once the spend reaches the cap. */
@@ -184,6 +193,7 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
         : null;
     return {
       bookingLink: composed ? composed.bookingLinkAdded : null,
+      bookingLinkNote: composed && !composed.bookingLinkAdded ? bookingLinkNote(ctx, plan?.angle ?? null, composed.channel) : null,
       message: composed && (shown.action === "send_email" || shown.action === "send_whatsapp") ? { channel: composed.channel, firstWhatsApp: composed.channel === "whatsapp" && !ctx.rules.hasSentWhatsApp, words: wordCount(shown.body) } : null,
       ...base,
       outcome: sent ? "send" : d.action === "handoff" ? `handoff: ${d.title}` : d.action,
@@ -204,7 +214,7 @@ async function runContact(ctx: AgentContext, combo: Combo, deps: { model: Decisi
     };
   } catch (error) {
     const outcome = `error: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200);
-    return { ...base, bookingLink: null, message: null, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
+    return { ...base, bookingLink: null, bookingLinkNote: null, message: null, outcome, wroteMessage: false, passedFirstTry: false, regenerations: 0, autoFixes: 0, subject: null, body: null, failedAttempts: [], usage, latencyMs: Date.now() - started };
   }
 }
 
@@ -245,7 +255,7 @@ function contactSection(leadId: string, combos: Combo[], runs: ContactRun[]): st
         "",
         ...(r.stage ? [r.stage, ""] : []),
         ...(r.message ? [`Channel: ${r.message.channel === "email" ? "email" : "WhatsApp"} · first WhatsApp: ${r.message.firstWhatsApp ? "yes" : "no"} · ${r.message.words} words`, ""] : []),
-        ...(r.bookingLink === null ? [] : [`Booking link added: ${r.bookingLink ? "yes" : "no"}`, ""]),
+        ...(r.bookingLink === null ? [] : [`Booking link added: ${r.bookingLink ? "yes" : `no${r.bookingLinkNote ? ` (${r.bookingLinkNote})` : ""}`}`, ""]),
         ...(r.subject ? [`Subject: ${r.subject}`, ""] : []),
         ...(r.body ? [quoted(r.body), ""] : []),
         ...r.failedAttempts.flatMap((a) => [`Failed attempt ${a.attempt}:`, ...a.problems.map((p) => `- ${p}`), "", quoted(a.message), ""]),

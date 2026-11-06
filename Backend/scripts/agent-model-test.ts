@@ -74,7 +74,7 @@ async function main(rawCombos: string) {
     const result = await runModelTest({ contexts, combos, model: createOpenAIDecisionModel(), prices, now, capUsd: options.maxCostUsd });
 
     for (const r of result.runs) {
-      const m = r.message ? ` · ${r.message.channel} · first WhatsApp: ${r.message.firstWhatsApp ? "yes" : "no"} · ${r.message.words} words` : "";
+      const m = r.message ? ` · ${r.message.channel} · first WhatsApp: ${r.message.firstWhatsApp ? "yes" : "no"} · ${r.message.words} words · booking link: ${r.bookingLink ? "yes" : `no (${r.bookingLinkNote})`}` : "";
       console.log(`  ${r.combo} · ${r.name}: ${r.outcome}${m}`);
     }
     mkdirSync("scripts/output", { recursive: true });
