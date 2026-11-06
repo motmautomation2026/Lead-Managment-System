@@ -176,6 +176,7 @@ export const CHECK_LABEL: Record<string, string> = {
   contact_details: "Link, email address or phone number",
   unsupported_agreement: '"As agreed" not in the notes',
   call_days: "Call ask without the two suggested days",
+  generic_client_claim: "General sentence about client experiences",
   content_contacts: "Contact details not allowed",
   content_html: "Contains HTML",
   content_opt_out: "Contains opt-out text",
@@ -200,6 +201,8 @@ export const AUTO_FIX_LABEL: Record<string, string> = {
   sign_off: "Sign-off removed",
   contact_details: "Link or contact removed",
   spacing: "Spacing",
+  call_days: "Time phrase after the suggested days removed",
+  generic_client_claim: "General client-experience sentence removed",
 };
 
 /** Serious problems shown in red wherever they appear (also among a regenerated attempt's failures). */

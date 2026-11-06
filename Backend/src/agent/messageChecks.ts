@@ -88,7 +88,8 @@ export interface MessageViolation {
     | "subject_style"
     | "contact_details"
     | "unsupported_agreement"
-    | "call_days";
+    | "call_days"
+    | "generic_client_claim";
   message: string;
 }
 
@@ -155,6 +156,17 @@ export function callDaysProblem(body: string): string | null {
     return `The message asks for a call without offering the two suggested days${vague ? ` ("${vague}")` : ""}. Ask which of the two suggested days suits them, e.g. "Would Thursday or Friday suit you for a short call?"`;
   }
   return vague ? `The message offers days and also says "${vague}"; keep only the two days.` : null;
+}
+
+/** E3b-2b rule 5: a general sentence about our client experiences instead of ONE named one. */
+export const GENERIC_CLIENT_CLAIM =
+  /\b(?:our\s+(?:published\s+)?client\s+experiences|published\s+client\s+experiences|case\s+studies\s+(?:describe|show)|helped\s+similar\s+(?:B2B\s+)?(?:firms|businesses|companies))\b/i;
+/** Sentences: text up to and including its . ? or ! (a greeting line "Hi Neha," is not one). */
+export const SENTENCE = /[^.!?\n]+[.!?]+/g;
+
+/** The first sentence of `body` with a generic client-experience claim, or null. */
+export function genericClientClaim(body: string): string | null {
+  return (body.match(SENTENCE) ?? []).find((s) => GENERIC_CLIENT_CLAIM.test(s))?.trim() ?? null;
 }
 
 /** E2c rule 1: "thank you" / "thanks" followed within 6 words by a reason for reaching out. */
@@ -264,6 +276,14 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
 
   const days = callDaysProblem(decision.body);
   if (days) violations.push({ rule: "call_days", message: days });
+
+  const generic = genericClientClaim(decision.body);
+  if (generic) {
+    violations.push({
+      rule: "generic_client_claim",
+      message: `"${generic}": don't write a general sentence about our client experiences. Name ONE listed client experience as the knowledge gives it, or none.`,
+    });
+  }
 
   const compound = compoundQuestion(decision.body);
   if (compound) violations.push({ rule: "compound_question", message: `The question asks two things at once: "${compound}". Ask about one thing only.` });

@@ -14,6 +14,7 @@ import { composeOutgoing } from "../agent/composeMessage.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision, type SendDecision } from "../agent/decisionSchema.js";
 import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
 import { polishDecision } from "../agent/polish.js";
+import { suggestedDays } from "../agent/stagePlan.js";
 import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
 import { applyGroundingAllowList, buildReplyDraftGroundingMessages, buildReplyDraftMessages, GROUNDING_JSON_SCHEMA } from "../agent/prompt.js";
 import type { ReplyChannel, ReplyLabel } from "../agent/replyClassification.js";
@@ -436,7 +437,7 @@ export async function writeReplyDraft(
       problems = [`wrong_action: answer with ${action}`];
       continue;
     }
-    const polished = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName }).decision as SendDecision;
+    const polished = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName, suggestedDays: suggestedDays(deps.now) }).decision as SendDecision;
     const draft: SendDecision = { ...polished, assetIds: [] } as SendDecision;
     problems = checkMessage(draft as AgentDecision, ctx.settings, facts).map((v) => `${v.rule}: ${v.message}`);
     if (!problems.length) {

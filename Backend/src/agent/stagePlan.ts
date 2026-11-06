@@ -268,3 +268,8 @@ export function suggestedDays(now: Date): string {
   }
   return days.join(" or ");
 }
+
+/** E3b-2b rule 4: the exact closing question for a call, built from the two suggested days. */
+export function callQuestion(now: Date): string {
+  return `Would ${suggestedDays(now)} suit you for a short call?`;
+}

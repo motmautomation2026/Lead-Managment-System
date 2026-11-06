@@ -127,3 +127,45 @@ describe("polishDecision: spacing and the result", () => {
     expect(polish("https://motm.tech").body).toBe("https://motm.tech");
   });
 });
+
+describe("E3b-2b rule 4: call-days auto-fix", () => {
+  const days = { ...names, suggestedDays: "Saturday or Monday" };
+  const fix = (body: string) => {
+    const { decision, autoFixes } = polishDecision(whatsapp(body), days);
+    return { body: (decision as { body: string }).body, rules: autoFixes.map((f) => f.rule) };
+  };
+
+  it("removes the time phrase cleanly when both suggested days are offered", () => {
+    expect(fix("Hi Rakesh, thanks. Would Saturday or Monday suit you for a short call in the coming days?")).toEqual({
+      body: "Hi Rakesh, thanks. Would Saturday or Monday suit you for a short call?",
+      rules: ["call_days"],
+    });
+    expect(fix("Would Saturday or Monday work, in the next few days, for a call?").body).toBe("Would Saturday or Monday work, for a call?");
+    expect(fix("Thanks. In the coming week, would Saturday or Monday suit you?").body).toBe("Thanks. Would Saturday or Monday suit you?");
+    expect(fix("Hi Rakesh,\nSometime soon would Saturday or Monday suit you?").body).toBe("Hi Rakesh,\nWould Saturday or Monday suit you?");
+  });
+
+  it("leaves the text alone without both days (the check then regenerates) or without a time phrase", () => {
+    expect(fix("Would Saturday suit you for a short call in the coming days?").rules).toEqual([]);
+    expect(fix("Would a short call in the coming days suit you?").rules).toEqual([]);
+    expect(fix("Would Saturday or Monday suit you for a short call?").rules).toEqual([]);
+    expect(polishDecision(whatsapp("Would Saturday or Monday suit you in the coming days?"), names).autoFixes).toEqual([]);
+  });
+});
+
+describe("E3b-2b rule 5: generic client-experience auto-fix", () => {
+  const NEHA = "Our published client experiences describe how we helped similar B2B firms find new buyers.";
+
+  it("removes Neha's sentence when at least 2 other sentences stay", () => {
+    const body = `Hi Neha,\n\nThanks for your enquiry about export buyers. ${NEHA}\n\nWe start by mapping the right buyer segments. Would Saturday or Monday suit you for a short call?`;
+    expect(polish(body)).toMatchObject({
+      body: "Hi Neha,\n\nThanks for your enquiry about export buyers.\n\nWe start by mapping the right buyer segments. Would Saturday or Monday suit you for a short call?",
+      rules: ["generic_client_claim"],
+    });
+    expect(polish(`Hi Neha,\n\n${NEHA}\n\nThanks for your enquiry. Would Saturday or Monday suit you?`).body).toBe("Hi Neha,\n\nThanks for your enquiry. Would Saturday or Monday suit you?");
+  });
+
+  it("keeps it when fewer than 2 other sentences would stay (the check then regenerates)", () => {
+    expect(polish(`Hi Neha,\n\n${NEHA} Would Saturday or Monday suit you?`).rules).toEqual([]);
+  });
+});

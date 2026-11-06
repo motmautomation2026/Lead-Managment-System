@@ -379,3 +379,55 @@ describe("E3a: follow-up emails keep their thread", () => {
     expect(unthreadedSubject("Re: Steel buyers")).toBe("Steel buyers");
   });
 });
+
+describe("E3b-2b rules 4–5: call days and generic client claims without regenerations", () => {
+  // Friday 30 Oct 2026, 16:30 IST: the suggested days are Saturday or Monday.
+  const FRIDAY = new Date("2026-10-30T11:00:00Z");
+  const whatsapp = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." });
+  const deps = (decisions: AgentDecision[]) => ({
+    model: createFakeDecisionModel({ decisions }),
+    decisionModel: "m-decide",
+    groundingModel: "m-ground",
+    prices: { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } },
+    now: FRIDAY,
+  });
+  const usage = (): Usage => ({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
+  const ctx = () => sampleContext({ rules: { ...sampleContext().rules, contactability: { email: null, whatsapp: null, phone: null } } });
+  const NEHA = "Our published client experiences describe how we helped similar B2B firms find new buyers.";
+
+  it("the prompt gives the exact closing question and forbids time phrases", () => {
+    const messages = buildDecisionMessages(ctx(), settings, FRIDAY);
+    expect(messages[0]!.content).toContain('Never add "in the coming days", "in the next few days", "this week" or any other time phrase to it.');
+    expect(messages[0]!.content).toContain('Never a general sentence about "our client experiences"');
+  });
+
+  it('Rakesh: "…suit you for a short call in the coming days?" is auto-fixed and passes first try', async () => {
+    const d = deps([whatsapp("Hi Asha, thank you for your enquiry. Would Saturday or Monday suit you for a short call in the coming days?")]);
+    const result = await draftDecision(ctx(), d, usage());
+    expect(result).toMatchObject({ regenerated: false, outcome: "draft" });
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0]!.autoFixes.map((f) => f.rule)).toEqual(["call_days"]);
+    expect((result.decision as { body: string }).body).toBe("Hi Asha, thank you for your enquiry. Would Saturday or Monday suit you for a short call?");
+  });
+
+  it("days missing → call_days regeneration as before", async () => {
+    const clean = whatsapp("Hi Asha, thank you for your enquiry. Would Saturday or Monday suit you for a short call?");
+    const result = await draftDecision(ctx(), deps([whatsapp("Hi Asha, thank you for your enquiry. Could we have a short call in the coming days?"), clean]), usage());
+    expect(result.regenerated).toBe(true);
+    expect(result.attempts[0]!.problems[0]).toMatch(/^call_days: /);
+    expect(result.decision).toEqual(clean);
+  });
+
+  it("Neha's generic sentence is removed when 2 other sentences stay (first try); otherwise generic_client_claim regenerates", async () => {
+    const first = await draftDecision(ctx(), deps([whatsapp(`Hi Asha, thank you for your enquiry. ${NEHA} Would Saturday or Monday suit you for a short call?`)]), usage());
+    expect(first.attempts).toHaveLength(1);
+    expect(first.attempts[0]!.autoFixes.map((f) => f.rule)).toEqual(["generic_client_claim"]);
+    expect((first.decision as { body: string }).body).toBe("Hi Asha, thank you for your enquiry. Would Saturday or Monday suit you for a short call?");
+
+    const clean = whatsapp("Hi Asha, thank you for your enquiry. Would Saturday or Monday suit you for a short call?");
+    const short = await draftDecision(ctx(), deps([whatsapp(`Hi Asha, ${NEHA} Would Saturday or Monday suit you?`), clean]), usage());
+    expect(short.regenerated).toBe(true);
+    expect(short.attempts[0]!.problems[0]).toMatch(/^generic_client_claim: /);
+    expect(short.decision).toEqual(clean);
+  });
+});

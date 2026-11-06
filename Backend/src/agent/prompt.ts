@@ -5,7 +5,7 @@ import { hasDealContext } from "./dealContext.js";
 import { whatsappTargetWords } from "./messageChecks.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 import { signalsOf, type AgentSignal } from "./signals.js";
-import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, suggestedDays } from "./stagePlan.js";
+import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, callQuestion, suggestedDays } from "./stagePlan.js";
 
 /**
  * Prompt builders for the agent's decision and the grounding check. Pure: no
@@ -88,7 +88,8 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- No long dashes, no exclamation marks, no emojis.",
     "- The first line is about the lead, not about us: use their latest call, note or enquiry. Never send a generic message.",
     "- Never start two messages to the same contact the same way.",
-    "- End with one easy question. When you propose a call, offer the two days under \"Suggested days\" (e.g. \"Would Thursday or Friday suit you?\") or ask a simple yes/no; never an exact clock time (the rep confirms the time).",
+    "- End with one easy question. When you propose a call, end with the exact \"Closing question\" from lead_data, word for word, or ask a simple yes/no; never an exact clock time (the rep confirms the time). Never add \"in the coming days\", \"in the next few days\", \"this week\" or any other time phrase to it.",
+    "- Name ONE listed client experience specifically, as the knowledge gives it, or none. Never a general sentence about \"our client experiences\", \"published client experiences\", \"case studies describe\" or \"helped similar B2B firms/businesses\".",
     "- Never promise when you will follow up (\"I will check back next week\"): the system schedules follow-ups.",
     "",
     "Each message has a purpose, given in lead_data as \"This message\" (from the CRM, reliable). Write for that purpose:",
@@ -195,7 +196,7 @@ function stageLines({ stagePlan: plan, latestMeeting }: AgentContext, now: Date 
   const lines = [plan.angle ? `This message: ${ANGLE_LABELS[plan.angle]} (${plan.reason})` : `This message: none now (${plan.reason})`];
   const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
   if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
-  if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`);
+  if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`, `Closing question: ${callQuestion(now)}`);
   if ((plan.angle === "meeting_recap" || plan.angle === "meeting_recap_deciding") && latestMeeting) {
     lines.push(`Meeting outcome: ${words(latestMeeting.outcome)}`, `Meeting notes: ${latestMeeting.notes ?? "none"}`);
   }
@@ -474,7 +475,7 @@ export function buildReplyDraftMessages(ctx: AgentContext, replyText: string, ch
   const timeline = ctx.timeline.map((t) => `- ${t.at} [${t.kind}] ${t.title}${t.detail ? ` — ${t.detail}` : ""}`).join("\n");
   const user = [
     `Writing as: ${ctx.lead.ownerName ?? "a member of the sales team"} at ${ctx.companyName}.`,
-    `Now: ${istNow(now)} IST. Suggested days for a short call: ${suggestedDays(now)}.`,
+    `Now: ${istNow(now)} IST. Suggested days for a short call: ${suggestedDays(now)}. Closing question when you offer a call (word for word, no time phrase added): ${callQuestion(now)}`,
     "",
     // The stage plan is for the AI's own messages, not for answering a reply.
     block("lead_data", neutralise(leadDataText({ ...ctx, stagePlan: null }, null))),

@@ -1,6 +1,6 @@
 import type { AgentDecision, SendDecision } from "./decisionSchema.js";
 import { EMAIL_RE, PHONE_RE } from "./rules.js";
-import { URL_RE } from "./messageChecks.js";
+import { GENERIC_CLIENT_CLAIM, SENTENCE, URL_RE } from "./messageChecks.js";
 
 /**
  * E3a rule 3: small writing problems are fixed by code, not rejected. Runs on subject + body
@@ -8,7 +8,7 @@ import { URL_RE } from "./messageChecks.js";
  * empty or broken sentence isn't made: the text stays and the normal check fails. Pure.
  */
 
-export const AUTO_FIX_RULES = ["dash", "exclamation", "ellipsis", "sign_off", "contact_details", "spacing"] as const;
+export const AUTO_FIX_RULES = ["dash", "exclamation", "ellipsis", "sign_off", "contact_details", "spacing", "call_days", "generic_client_claim"] as const;
 export type AutoFixRule = (typeof AUTO_FIX_RULES)[number];
 
 export interface AutoFix {
@@ -20,6 +20,8 @@ export interface AutoFix {
 export interface PolishNames {
   ownerName: string | null;
   companyName: string;
+  /** E3b-2b rule 4: the two suggested days ("Thursday or Friday"); null = no call-days fix. */
+  suggestedDays?: string | null;
 }
 
 const CONTEXT = 20;
@@ -163,6 +165,33 @@ function fixSpacing(text: string, fixes: AutoFix[]): string {
   return fixed;
 }
 
+// E3b-2b rule 4: time phrases removed when the message already offers both suggested days.
+const VAGUE_PHRASE = "(?:in the coming days|in the next few days|in the coming week|sometime soon)";
+const VAGUE_AT_START = new RegExp(String.raw`(^|[.!?][ \t]+|\n[ \t]*)${VAGUE_PHRASE},?[ \t]*(\p{L})`, "giu");
+const VAGUE_IN_SENTENCE = new RegExp(String.raw`[ \t]*,?[ \t]+${VAGUE_PHRASE}\b`, "gi");
+
+function fixCallDays(body: string, days: string | null | undefined, fixes: AutoFix[]): string {
+  const offered = days?.split(" or ").every((day) => new RegExp(String.raw`\b${day}\b`, "i").test(body));
+  if (!offered) return body;
+  const fixed = body.replace(VAGUE_AT_START, (_m, before: string, next: string) => `${before}${next.toUpperCase()}`).replace(VAGUE_IN_SENTENCE, "");
+  if (fixed !== body) fixes.push({ rule: "call_days", before: body.match(new RegExp(VAGUE_PHRASE, "i"))![0], after: "" });
+  return fixed;
+}
+
+// E3b-2b rule 5: a general client-experience sentence goes when at least 2 other sentences stay; else the check fails.
+function fixGenericClaims(body: string, fixes: AutoFix[]): string {
+  const sentences = body.match(SENTENCE) ?? [];
+  const generic = sentences.filter((s) => GENERIC_CLIENT_CLAIM.test(s));
+  if (!generic.length || sentences.length - generic.length < 2) return body;
+  let out = body;
+  for (const sentence of generic) {
+    out = out.replace(sentence, "");
+    fixes.push({ rule: "generic_client_claim", before: sentence.trim(), after: "" });
+  }
+  // A paragraph that was only that sentence leaves an empty line; spacing collapses it.
+  return out.replace(/^[ \t]+/gm, "");
+}
+
 function polishText(text: string, fixes: AutoFix[], signOff: (text: string, fixes: AutoFix[]) => string): string {
   const found: AutoFix[] = [];
   let out = removeContacts(text, found);
@@ -178,7 +207,8 @@ function polishText(text: string, fixes: AutoFix[], signOff: (text: string, fixe
 export function polishDecision(decision: AgentDecision, names: PolishNames): { decision: AgentDecision; autoFixes: AutoFix[] } {
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return { decision, autoFixes: [] };
   const autoFixes: AutoFix[] = [];
-  const body = polishText(decision.body, autoFixes, (text, fixes) => fixSignOff(text, names, fixes));
+  // Before the ellipsis fix, which would split a "…" inside a generic sentence.
+  const body = polishText(fixCallDays(fixGenericClaims(decision.body, autoFixes), names.suggestedDays, autoFixes), autoFixes, (text, fixes) => fixSignOff(text, names, fixes));
   const polished: SendDecision =
     decision.action === "send_email" ? { ...decision, body, subject: polishText(decision.subject, autoFixes, (text) => text) } : { ...decision, body };
   return { decision: polished, autoFixes };

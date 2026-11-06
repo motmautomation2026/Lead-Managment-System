@@ -7,6 +7,7 @@ import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricin
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "../agent/prompt.js";
 import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
 import { polishDecision, type AutoFix } from "../agent/polish.js";
+import { suggestedDays } from "../agent/stagePlan.js";
 import { threadSubject } from "../domain/emailSafety.js";
 import { precheck, validateDecision, type RulesResult } from "../agent/rules.js";
 import type { DecisionModel, Embedder, ModelCallResult } from "../providers/openai.provider.js";
@@ -42,10 +43,10 @@ const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playb
 const QUESTION_RULE = "one_question";
 // Problems that are about the playbook's writing rules (E2b), not safety or facts.
 // internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
-const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", "call_days", ...STYLE_RULES];
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", "call_days", "generic_client_claim", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 // E2f rule 7: code-checked writing problems a rewrite reliably fixes; only these earn a second regeneration.
-const FIXABLE_RULES = [QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement", "call_days"];
+const FIXABLE_RULES = ["generic_client_claim", QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement", "call_days"];
 // Grounding only runs when the code checks pass, so a grounded attempt (unsupported claim / style) is never "fixable only".
 const fixableOnly = (a: DraftAttempt) => !a.grounding && a.rules.violations.length > 0 && a.rules.violations.every((v) => FIXABLE_RULES.includes(v.rule));
 const SHADOW_NOTE = "Shadow mode — not sent";
@@ -141,7 +142,7 @@ export async function draftDecision(
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
     add(deps.decisionModel, decided, tokens);
     // E3a rule 3: auto-fixes first, so a fixed problem never costs a regeneration.
-    const { decision: polished, autoFixes } = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName });
+    const { decision: polished, autoFixes } = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName, suggestedDays: suggestedDays(deps.now) });
     // E3a rule 7: a follow-up email keeps its thread's subject; the model's is ignored.
     const thread = ctx.emailThread;
     const final = thread && polished.action === "send_email" ? { ...polished, subject: threadSubject(thread.subject) } : polished;

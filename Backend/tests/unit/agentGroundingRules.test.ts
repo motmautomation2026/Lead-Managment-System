@@ -57,7 +57,6 @@ describe("E3b-1 rule 8: flagged claims are regenerated (fake grounding model)", 
 
   it.each([
     ["Priya", `Hi Priya, ${PRIYA} Would Thursday suit you?`, PRIYA],
-    ["Imran", `Hi Imran, ${IMRAN}. Would Thursday suit you?`, IMRAN],
     ["Ritu", `Hi Ritu, ${RITU}. Would Thursday suit you?`, RITU],
     ["Raj", `Hi Raj, ${RAJ} Would Thursday suit you?`, RAJ],
   ])("%s: the flagged claim is fed back and the rewrite without it passes", async (_name, body, claim) => {
@@ -70,6 +69,14 @@ describe("E3b-1 rule 8: flagged claims are regenerated (fake grounding model)", 
     expect(result.decision).toMatchObject({ action: "send_whatsapp", body: "Hi, would a short call on Thursday or Friday suit you?" });
     const retry = d.model.calls.filter((c) => c.kind === "decide")[1]!.input.messages.at(-1)!.content;
     expect(retry).toContain(`Unsupported claim: ${claim}`);
+  });
+
+  it("Imran (E3b-2b rule 5): the code check catches the generic sentence before the checker is called", async () => {
+    const d = deps([whatsapp(`Hi Imran, ${IMRAN}. Would Thursday suit you?`), whatsapp("Hi, would a short call on Thursday or Friday suit you?")], [{ supported: true, unsupportedClaims: [] }]);
+    const result = await draftDecision(ctx(), d, usage());
+    expect(result.attempts[0]!.problems).toEqual([expect.stringMatching(/^generic_client_claim: .*Our published client experiences also include industrial exporters/)]);
+    expect(result.decision).toMatchObject({ action: "send_whatsapp", body: "Hi, would a short call on Thursday or Friday suit you?" });
+    expect(d.model.calls.map((c) => c.kind)).toEqual(["decide", "decide", "grounding"]);
   });
 
   it("Neha: an approach statement the checker supports goes through first time", async () => {
