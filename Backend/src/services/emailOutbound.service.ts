@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pool, withTransaction } from "../db.js";
 import { env } from "../env.js";
 import { isTrackedSource, newOpenToken, withOpenPixel } from "../domain/emailTracking.js";
+import { recordEmailFact } from "./messageFacts.service.js";
 import type { Queryable } from "../dto.js";
 import { NotFoundError } from "../errors.js";
 import {
@@ -225,6 +226,8 @@ async function markSent(row: EmailOutboundRow, result: { messageId: string | nul
         where id = $1`,
       [row.id, result.messageId, result.response, result.dryRun],
     );
+    // E3b-2b rule 14: a fact only for a message that really went out.
+    if (!result.dryRun) await recordEmailFact(db, row.id);
     await onSourceSent(db, row, result);
   });
   if (row.source === "proposal") await tryAdvanceToSent(row.workspace_id, row.source_id);

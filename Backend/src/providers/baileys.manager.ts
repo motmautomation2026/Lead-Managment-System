@@ -23,6 +23,7 @@ import { supabaseAdmin } from "../supabaseAdmin.js";
 import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
 import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 import { agentSendRecheck } from "../services/agentSendState.service.js";
+import { recordWhatsAppFact } from "../services/messageFacts.service.js";
 import { ASSET_MISSING_REASON, ASSET_TOO_BIG_REASON, ATTACHMENT_MISSING, MAX_ATTACHMENT_BYTES } from "../agent/assetRules.js";
 import { isMissingStorageObject } from "./storageErrors.js";
 import { contactSendProblem } from "../domain/replyDrafts.js";
@@ -852,13 +853,16 @@ export class BaileysManager {
     const payload = proto.Message.toObject(proto.Message.fromObject(sent.message));
     const encrypted = encryptBytes(Buffer.from(JSON.stringify(payload), "utf8"), `whatsapp:outbound:${claim.messageId}`);
     await withTransaction(async (db) => {
-      await db.query(
+      const sentRow = await db.query<{ id: string }>(
         `update public.whatsapp_outbound_messages
             set status = 'sent', payload_ciphertext = $2, payload_iv = $3, payload_tag = $4,
                 key_version = $5, sent_at = now(), last_error = null, updated_at = now(), new_chat = $6
-          where ${column} = $1`,
+          where ${column} = $1
+          returning id`,
         [sourceId, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion, claim.newChat],
       );
+      // E3b-2b rule 14: the message really went out.
+      if (sentRow.rows[0]) await recordWhatsAppFact(db, sentRow.rows[0].id);
       // Spacing: the next send of this workspace waits a fresh random min–max delay (45–120 s by default).
       await db.query(`update public.whatsapp_connection set next_send_at = now() + make_interval(secs => $2) where workspace_id = $1`, [
         this.workspaceId,

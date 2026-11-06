@@ -14,6 +14,7 @@ import {
   pickDealToAttach,
 } from "../domain/dealRouting.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
 import { getLeadRowOr404, markWon, type LeadRow } from "./leads.service.js";
 
 export type DealSource = "meeting" | "proposal" | "manual" | "backfill";
@@ -93,6 +94,8 @@ export async function createDeal(db: Queryable, actor: Actor | null, workspaceId
   );
   const deal = rows[0]!;
   await addTimelineEvent(db, { leadId: contact.id, kind: "system", title: "Deal created", detail: `${name} (${DEAL_STAGE_LABELS[stage]})`, ...eventActor(actor), relatedDealId: deal.id });
+  await attributeOutcome(db, contact.id, "deal_created");
+  if (stage === "won") await attributeOutcome(db, contact.id, "deal_won");
   return deal;
 }
 
@@ -150,6 +153,7 @@ export async function moveDealStage(
     metadata: { from: current.stage, to: toStage, manual: options.manual },
   });
 
+  if (toStage === "won") await attributeOutcome(db, deal.lead_id, "deal_won");
   if (options.manual && toStage === "won" && (await openDealIds(db, deal.lead_id)).length === 0) {
     const contact = await getLeadRowOr404(db, workspaceId, deal.lead_id);
     // A deal never lifts DNC or revives a merged contact.

@@ -12,6 +12,7 @@ import { matchReplyKeyword } from "../domain/replyKeywords.js";
 import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { applyReplyLabel } from "./replyLabels.service.js";
 import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
 
 export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
@@ -178,6 +179,8 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         }
         // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
         if (disposition === "matched") {
+          // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).
+          await attributeOutcome(db, lead.id, "reply");
           const mode = (await db.query<{ mode: AgentMode }>(`select mode from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0]?.mode ?? "off";
           if (keyword) {
             await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: keyword, source: "keyword", status: "done" });

@@ -30,6 +30,7 @@ import { checkAutoPause } from "./emailOutbound.service.js";
 import { emailReplyAad } from "./inboundReplies.service.js";
 import { applyReplyEffects, applyReplyLabel } from "./replyLabels.service.js";
 import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { ensureReplyTask, stopAutomationForReply } from "./whatsapp-inbound.service.js";
@@ -416,6 +417,8 @@ async function applyReply(db: Queryable, workspaceId: string, eventId: string, p
   ).rows[0]!;
   await stopAutomationForReply(db, lead.id, "Inbound email reply");
   await addTimelineEvent(db, { leadId: lead.id, kind: "email", title: "Replied by email", metadata: { emailReplyId: eventId }, ...SYSTEM_ACTOR });
+  // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).
+  await attributeOutcome(db, lead.id, "reply");
   if (lead.owner_id) {
     await db.query(
       `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)

@@ -238,6 +238,11 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     expect(pixelIn(String(sentHtml(smtp, "Your proposal").html))).toBe(false);
     // The stored HTML is unchanged (the pixel is added at send time only).
     expect((await email(wf.id)).html).toBe("<p>Hi</p>");
+    // E3b-2b rule 14: each real send has its fact (workflow, proposal), numbered per lead.
+    expect((await pool.query(`select source, message_number from public.message_facts where lead_id = $1 order by message_number`, [l.id])).rows).toEqual([
+      { source: "workflow", message_number: 1 },
+      { source: "proposal", message_number: 2 },
+    ]);
 
     // No address (tracking off) or the toggle off: no pixel.
     const off = fakeSmtp();
@@ -487,5 +492,7 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     expect(await email(row.id)).toMatchObject({ status: "sent", dry_run: true, smtp_response: "DRY_RUN" });
     expect(smtp.sent).toHaveLength(0);
     expect((await pool.query(`select email_send_status from public.proposals where id = $1`, [proposalId])).rows[0].email_send_status).toBe("sent");
+    // E3b-2b rule 14: a dry run is not a message that went out.
+    expect((await pool.query(`select count(*)::int as n from public.message_facts where email_outbound_id = $1`, [row.id])).rows[0].n).toBe(0);
   });
 });

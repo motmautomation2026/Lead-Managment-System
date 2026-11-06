@@ -185,6 +185,23 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     const repLead = await lead(ws);
     expect(await send(m, await proposalSource(ws, repLead.id), repLead.phone)).toMatchObject({ ok: true });
     expect(socket.sendMessage).toHaveBeenCalledOnce();
+
+    // E3b-2b rule 14: one fact for the message that really went out (with the connection's id), none for the deferred one.
+    const facts = (await pool.query(`select lead_id, source, channel, message_number, whatsapp_connection_id from public.message_facts where workspace_id = $1`, [ws])).rows;
+    const connectionId = (await pool.query(`select id from public.whatsapp_connection where workspace_id = $1`, [ws])).rows[0].id;
+    expect(facts).toEqual([{ lead_id: repLead.id, source: "proposal", channel: "whatsapp", message_number: 1, whatsapp_connection_id: connectionId }]);
+    // message_number counts across channels: an email sent to the same lead afterwards is message 2.
+    const mail = await pool.query(
+      `insert into public.email_outbound_messages (workspace_id, source, source_id, lead_id, to_address, subject, html, text_body, status, sent_at)
+       values ($1, 'scheduled_action', gen_random_uuid(), $2, 'x@example.com', 's', 's', 's', 'sent', now()) returning id`,
+      [ws, repLead.id],
+    );
+    const { recordEmailFact } = await import("../../src/services/messageFacts.service.js");
+    await recordEmailFact(pool, mail.rows[0].id);
+    expect((await pool.query(`select channel, message_number from public.message_facts where lead_id = $1 order by message_number`, [repLead.id])).rows).toEqual([
+      { channel: "whatsapp", message_number: 1 },
+      { channel: "email", message_number: 2 },
+    ]);
   });
 
   it("warm-up: day 2 after pairing caps the day at 20", async () => {

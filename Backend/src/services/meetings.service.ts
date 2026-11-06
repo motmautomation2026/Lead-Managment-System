@@ -6,6 +6,7 @@ import type { MeetingOutcome, MeetingStatus } from "../domain/enums.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
 import { routeMeetingOutcome } from "../domain/meetingRouting.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
 import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead, type LeadRow } from "./leads.service.js";
 import { autoEnroll, cancelRunsForLead } from "./runs.service.js";
@@ -156,6 +157,7 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
 
   await autoEnroll(db, workspaceId, input.leadId, "meeting_scheduled", `Meeting scheduled: ${input.title.trim()}`);
   await onAgentEvent(db, { workspaceId, leadId: input.leadId, event: "meeting_booked", payload: { meetingId: id } });
+  await attributeOutcome(db, input.leadId, "meeting_booked");
 
   return getMeetingOr404(db, workspaceId, id);
 }

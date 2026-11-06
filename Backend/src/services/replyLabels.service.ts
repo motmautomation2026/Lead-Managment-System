@@ -21,6 +21,7 @@ import {
 } from "../agent/replyClassification.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { attributeReplyLabel } from "./messageFacts.service.js";
 import { canReadReplies } from "./inboundReplies.service.js";
 
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
@@ -85,6 +86,7 @@ export async function applyReplyLabel(db: Queryable, input: ReplyLabelInput): Pr
     ],
   );
   const applied = await applyReplyEffects(db, { channel, workspaceId: input.workspaceId, leadId: input.leadId, messageId: input.messageId, label: input.label });
+  await attributeReplyLabel(db, input.leadId, input.label);
   // other/unclassified keep the task's current title: a later "ok" must not hide an earlier "Wants to talk".
   if (applied && input.label !== "other" && input.label !== "unclassified") await retitleReplyTask(db, input.leadId, input.label, channel);
 }
