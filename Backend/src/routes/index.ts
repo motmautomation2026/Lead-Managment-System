@@ -19,6 +19,7 @@ import { companiesRouter, companyDuplicatesRouter } from "./companies.routes.js"
 import { dealsRouter } from "./deals.routes.js";
 import { savedViewsRouter, searchRouter } from "./search.routes.js";
 import { googleCalendarOAuthRouter } from "./googleCalendarOAuth.routes.js";
+import { analyticsRouter } from "./analytics.routes.js";
 import { createPublicLeadsRouter } from "./publicLeads.routes.js";
 import { env } from "../env.js";
 import { requireAuth, requireCrmUser, requireWorkspace } from "../authMiddleware.js";
@@ -83,4 +84,5 @@ crmRouter.use("/company-duplicates", companyDuplicatesRouter);
 crmRouter.use("/deals", dealsRouter);
 crmRouter.use("/search", searchRouter);
 crmRouter.use("/saved-views", savedViewsRouter);
+crmRouter.use("/analytics", analyticsRouter);
 apiRouter.use(crmRouter);

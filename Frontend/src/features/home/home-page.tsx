@@ -23,6 +23,7 @@ import { joinLink } from "@/features/meetings/meeting-labels";
 import { RefLink } from "@/features/work/ref-link";
 import { fmtDateTime } from "@/lib/format";
 import { useHomeSummary, useSession } from "@/store";
+import { ConversionCard } from "@/features/analytics/funnel";
 import type { HomeSummary } from "@/types";
 
 /**
@@ -263,6 +264,9 @@ function HomeCards({ data }: { data: HomeSummary }) {
             </Link>
           </CardContent>
         </Card>
+        <div className="sm:col-span-2">
+          <ConversionCard />
+        </div>
         {ai && (
           <Card>
             <CardContent className="space-y-1 p-4">

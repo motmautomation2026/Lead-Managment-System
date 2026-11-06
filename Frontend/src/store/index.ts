@@ -97,6 +97,7 @@ export {
   useRunAction,
   useWorkflowList,
   useHomeSummary,
+  useFunnel,
   type RunAction,
 } from "./automation-hooks";
 export {

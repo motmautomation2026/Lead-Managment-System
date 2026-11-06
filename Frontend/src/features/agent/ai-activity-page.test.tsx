@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   filters: [] as AgentDecisionFilters[],
   rate: vi.fn(),
   fetchNextPage: vi.fn(),
+  funnelParams: [] as unknown[],
+  funnelGroups: [] as unknown[],
 }));
 
 const row: AgentDecisionRow = {
@@ -137,6 +139,30 @@ vi.mock("@/store", () => ({
   useRateDecision: () => ({ mutate: mocks.rate, isPending: false }),
   useReportDecision: () => ({ mutate: vi.fn(), isPending: false }),
   useResolveReport: () => ({ mutate: vi.fn(), isPending: false }),
+  useFunnel: (params: unknown) => {
+    mocks.funnelParams.push(params);
+    return {
+      data: {
+        totals: {
+          leadsCreated: 4,
+          contacted: 3,
+          firstMessageWithin15Min: { count: 2, pct: 50 },
+          medianMinutesToFirstMessage: 8,
+          emailsSent: 2,
+          countedOpens: 1,
+          replies: 1,
+          positiveReplies: 1,
+          meetingsBookedWithin14Days: 1,
+          proposals: 0,
+          won: 0,
+        },
+        websiteMeetingRate: { websiteLeads: 2, bookedWithin14Days: 1, pct: 50 },
+        medianMinutesReplyToAnswer: 90,
+        groups: mocks.funnelGroups,
+      },
+      error: null,
+    };
+  },
 }));
 
 import { AiActivityPage } from "./ai-activity-page";
@@ -243,5 +269,44 @@ describe("AiActivityPage (C6b)", () => {
       { id: "d-1", input: { rating: "good", reason: undefined, note: undefined } },
       expect.anything(),
     );
+  });
+});
+
+describe("E3b-2b AI Activity → Results", () => {
+  it("the Results tab shows the funnel tiles and a plain table; an empty group says so in plain words", async () => {
+    mocks.funnelGroups = [
+      {
+        key: "website",
+        label: "website",
+        leadsCreated: 3,
+        contacted: 2,
+        firstMessageWithin15Min: { count: 2, pct: 66.7 },
+        medianMinutesToFirstMessage: 8,
+        emailsSent: 2,
+        countedOpens: 1,
+        replies: 1,
+        positiveReplies: 1,
+        meetingsBookedWithin14Days: 1,
+        proposals: 0,
+        won: 0,
+      },
+    ];
+    await renderPage({ tab: "results" });
+    expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Website leads with a meeting in 14 days")).toBeInTheDocument();
+    expect(screen.getByText("1.5 h")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Lead source" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "2 (66.7 %)" })).toBeInTheDocument();
+    expect(mocks.funnelParams.at(-1)).toEqual({
+      from: undefined,
+      to: undefined,
+      groupBy: "source",
+    });
+    // The decisions list isn't shown on the Results tab.
+    expect(screen.queryByText("Asha Rao")).toBeNull();
+    cleanup();
+    mocks.funnelGroups = [];
+    await renderPage({ tab: "results" });
+    expect(screen.getByText("No new leads in this period")).toBeInTheDocument();
   });
 });

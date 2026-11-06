@@ -16,6 +16,8 @@ export const aiActivitySearchSchema = z.object({
   /** YYYY-MM-DD, whole IST days. */
   from: z.string().optional(),
   to: z.string().optional(),
+  /** E3b-2b: the Results tab (funnel numbers); absent = the decisions list. */
+  tab: z.enum(["results"]).optional(),
 });
 export type AiActivitySearch = z.infer<typeof aiActivitySearchSchema>;
 

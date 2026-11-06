@@ -3,7 +3,7 @@
  * workflows reference list and the Home summary.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { backend } from "@/lib/backend-client";
+import { backend, type FunnelParams } from "@/lib/backend-client";
 import type { RunListParams, ScheduledActionListParams } from "@/types";
 import { keys, refreshContact } from "./query";
 import { useCursorList } from "./server-hooks";
@@ -84,6 +84,16 @@ export function useWorkflowList() {
   return useQuery({
     queryKey: keys.workflows(ws),
     queryFn: ({ signal }) => backend.workflows.list(signal),
+    enabled: Boolean(ws),
+  });
+}
+
+/** E3b-2b: funnel numbers for the selected workspace. */
+export function useFunnel(params: FunnelParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useQuery({
+    queryKey: ["funnel", ws, params] as const,
+    queryFn: ({ signal }) => backend.analytics.funnel(params, signal),
     enabled: Boolean(ws),
   });
 }

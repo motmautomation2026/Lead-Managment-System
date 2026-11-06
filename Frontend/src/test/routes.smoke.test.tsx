@@ -17,6 +17,30 @@ vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Request failed"),
   useSession: () => ({ users: [], currentUser: null, userName: () => "Unassigned" }),
   useIsAdmin: () => false,
+  useFunnel: () => ({
+    data: {
+      from: "2026-10-07T00:00:00Z",
+      to: "2026-11-06T00:00:00Z",
+      groupBy: null,
+      totals: {
+        leadsCreated: 0,
+        contacted: 0,
+        firstMessageWithin15Min: { count: 0, pct: null },
+        medianMinutesToFirstMessage: null,
+        emailsSent: 0,
+        countedOpens: 0,
+        replies: 0,
+        positiveReplies: 0,
+        meetingsBookedWithin14Days: 0,
+        proposals: 0,
+        won: 0,
+      },
+      websiteMeetingRate: { websiteLeads: 0, bookedWithin14Days: 0, pct: null },
+      medianMinutesReplyToAnswer: null,
+      groups: [],
+    },
+    error: null,
+  }),
   useHomeSummary: () => ({
     data: {
       tasks: { overdue: 0, dueToday: 0, next: [] },

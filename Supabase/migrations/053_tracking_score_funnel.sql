@@ -151,3 +151,7 @@ create trigger leads_zz_keep_updated_at_for_score
         or old.hot_score_at is distinct from new.hot_score_at or old.hot_band is distinct from new.hot_band
         or old.hot_reasons is distinct from new.hot_reasons)
   execute function public.leads_keep_updated_at_for_score();
+
+-- Funnel (rule 19) and score inputs: replies by contact, email replies by period.
+create index if not exists whatsapp_inbound_lead_idx on public.whatsapp_inbound_events (lead_id) where lead_id is not null;
+create index if not exists email_inbound_ws_received_idx on public.email_inbound_events (workspace_id, received_at);

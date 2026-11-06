@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   openContact: vi.fn(),
   openTask: vi.fn(),
   openDeal: vi.fn(),
+  funnel: undefined as unknown,
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -31,6 +32,7 @@ vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useSession: () => ({ currentUser: { id: "u-1", name: "Asha Owner" } }),
   useHomeSummary: () => ({ ...mocks.summary, refetch: mocks.refetch }),
+  useFunnel: () => ({ data: mocks.funnel, error: null }),
 }));
 
 import { HomePage } from "./home-page";
@@ -165,6 +167,44 @@ describe("HomePage (C6b)", () => {
     expect(screen.getByText("No open tasks. Nice.")).toBeTruthy();
     expect(screen.getByText("No meetings left today.")).toBeTruthy();
     expect(screen.getByText("No open deals")).toBeTruthy();
+  });
+
+  it("E3b-2b: the Conversion card shows the main number and the plain funnel; no leads → plain words", async () => {
+    mocks.summary = { data: summary(), isLoading: false, error: null };
+    const totals = {
+      leadsCreated: 10,
+      contacted: 8,
+      firstMessageWithin15Min: { count: 4, pct: 40 },
+      medianMinutesToFirstMessage: 12,
+      emailsSent: 6,
+      countedOpens: 2,
+      replies: 3,
+      positiveReplies: 1,
+      meetingsBookedWithin14Days: 2,
+      proposals: 1,
+      won: 0,
+    };
+    mocks.funnel = {
+      totals,
+      websiteMeetingRate: { websiteLeads: 5, bookedWithin14Days: 2, pct: 40 },
+      medianMinutesReplyToAnswer: 30,
+      groups: [],
+    };
+    await renderPage();
+    expect(screen.getByText("Conversion (last 30 days)")).toBeTruthy();
+    expect(screen.getByText("40 %")).toBeTruthy();
+    expect(screen.getByText(/of new website leads booked a meeting within 14 days/)).toBeTruthy();
+    const funnel = screen.getByRole("list", { name: "Funnel" });
+    expect(within(funnel).getByText("Contacted").parentElement?.textContent).toContain("8");
+    cleanup();
+    mocks.funnel = {
+      totals: { ...totals, leadsCreated: 0 },
+      websiteMeetingRate: { websiteLeads: 0, bookedWithin14Days: 0, pct: null },
+      medianMinutesReplyToAnswer: null,
+      groups: [],
+    };
+    await renderPage();
+    expect(screen.getByText("No new leads in the last 30 days.")).toBeTruthy();
   });
 
   it("loading and error states", async () => {

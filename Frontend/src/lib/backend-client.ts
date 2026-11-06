@@ -865,6 +865,47 @@ export interface EmailSettings {
   updatedAt: string;
 }
 
+/** E3b-2b GET /analytics/funnel. */
+export type FunnelGroupBy = "source" | "channel" | "number" | "angle";
+export interface FunnelParams {
+  from?: string | undefined;
+  to?: string | undefined;
+  groupBy?: FunnelGroupBy | undefined;
+}
+export interface FunnelLeadMetrics {
+  leadsCreated: number;
+  contacted: number;
+  firstMessageWithin15Min: { count: number; pct: number | null };
+  medianMinutesToFirstMessage: number | null;
+  emailsSent: number;
+  countedOpens: number;
+  replies: number;
+  positiveReplies: number;
+  meetingsBookedWithin14Days: number;
+  proposals: number;
+  won: number;
+}
+export interface FunnelMessageMetrics {
+  messagesSent: number;
+  emailsSent: number;
+  countedOpens: number;
+  replies: number;
+  positiveReplies: number;
+  meetingsBooked: number;
+  dealsCreated: number;
+  won: number;
+}
+export interface Funnel {
+  from: string;
+  to: string;
+  groupBy: FunnelGroupBy | null;
+  totals: FunnelLeadMetrics;
+  websiteMeetingRate: { websiteLeads: number; bookedWithin14Days: number; pct: number | null };
+  medianMinutesReplyToAnswer: number | null;
+  groups: ({ key: string | null; label: string | null } & (Partial<FunnelLeadMetrics> &
+    Partial<FunnelMessageMetrics>))[];
+}
+
 /** PUT /connections/email/settings (admin). Blank secrets keep the saved ones. */
 export interface EmailSettingsInput {
   enabled: boolean;
@@ -1466,6 +1507,10 @@ export const backend = {
   },
   home: {
     summary: (signal?: AbortSignal) => get<HomeSummary>("/home/summary", signal),
+  },
+  analytics: {
+    funnel: (params: FunnelParams, signal?: AbortSignal) =>
+      get<Funnel>(listQuery("/analytics/funnel", { ...params }), signal),
   },
   notifications: {
     list: (signal?: AbortSignal) => get<{ data: AppNotification[] }>("/notifications", signal),
