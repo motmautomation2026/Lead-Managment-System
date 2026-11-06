@@ -5,6 +5,7 @@
  * Skipped unless TEST_DATABASE_URL is set; [test] workspaces only.
  */
 import { randomUUID } from "node:crypto";
+import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
@@ -14,6 +15,7 @@ import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import type { ReplyClassification } from "../../src/agent/replyClassification.js";
 import type { Actor } from "../../src/authMiddleware.js";
+import type { EmailTransport } from "../../src/providers/email.provider.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -340,10 +342,42 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(queued[0]).toMatchObject({ status: "queued", subject: "Re: New buyers for Acme Steel" });
     expect(queued[0].text_body).toContain("Best regards,\nE3b2a Owner");
 
-    // The email queue's write-back (dry run: no SMTP).
+    // E3b-2a-2 rule 3: sent through a fake SMTP transport (real MIME, no network), the reply continues the lead's message.
+    const { encryptJson } = await import("../../src/security/encryption.js");
+    const smtpSecret = encryptJson({ smtpUsername: "crm@motm.example", smtpPassword: "app-password" }, "integration:email");
+    await pool.query(
+      `insert into public.integration_connections
+         (workspace_id, id, provider, enabled, settings, secret_ciphertext, secret_iv, secret_tag, key_version,
+          send_window_days, send_window_start, send_window_end, min_delay_seconds, max_delay_seconds)
+       values ($1, 'email', 'smtp', true, $2, $3, $4, $5, $6, '{1,2,3,4,5,6,7}', '00:00', '23:59:59', 1, 1)`,
+      [
+        ws,
+        { senderName: "MOTM Sales", senderAddress: "crm@motm.example", replyTo: "replies@motm.example", smtpHost: "smtp.motm.example", smtpPort: 465, smtpSecurity: "ssl" },
+        smtpSecret.ciphertext,
+        smtpSecret.iv,
+        smtpSecret.tag,
+        smtpSecret.keyVersion,
+      ],
+    );
+    const raw: string[] = [];
+    const builder = nodemailer.createTransport({ streamTransport: true, buffer: true });
+    const transport: EmailTransport = {
+      async sendMail(m) {
+        const info = await builder.sendMail(m);
+        raw.push((info.message as Buffer).toString("utf8"));
+        return { messageId: info.messageId, response: "250 2.0.0 OK queued" };
+      },
+      verify: async () => true,
+      close: () => undefined,
+    };
+    const { TransportCache } = await import("../../src/providers/email.provider.js");
     await pool.query(`update public.email_outbound_messages set next_attempt_at = now() where source = 'reply_draft' and source_id = $1`, [draft.id]);
     const { runEmailOutbound } = await import("../../src/services/emailOutbound.service.js");
-    await runEmailOutbound({ dryRun: true, workspaceIds: [ws] });
+    await runEmailOutbound({ workspaceIds: [ws], transports: new TransportCache(() => transport), wait: async () => undefined });
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toMatch(/^In-Reply-To: <lead-msg@example\.com>\r?$/m);
+    expect(raw[0]).toMatch(/^References: <lead-msg@example\.com>\r?$/m);
+    expect(raw[0]).toMatch(/^Subject: Re: New buyers for Acme Steel\r?$/m);
     expect((await pool.query(`select send_status from public.reply_drafts where id = $1`, [draft.id])).rows[0].send_status).toBe("sent");
   });
 
@@ -377,6 +411,8 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
   it("escalation: once, only after 2 working hours (send window, IST), to admins", async () => {
     const { ws, leadId } = await scenario();
     const created = ist("2026-10-28T18:00"); // a Wednesday, 1 working hour before closing
+    // E3b-2a-2 rule 2: only tasks created at or after reminders_since (here: before this test's dates).
+    await pool.query(`update public.agent_settings set reminders_since = $2 where workspace_id = $1`, [ws, ist("2026-10-01T00:00")]);
     const task = await pool.query(
       `insert into public.tasks (workspace_id, lead_id, owner_id, owner_name, task_type, title, due_at, origin, created_at)
        values ($1, $2, $3, 'E3b2a Owner', 'follow_up', 'Asked a question — respond today', $4, 'agent', $4) returning id`,
@@ -403,6 +439,31 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(await runMeetingOutcomeTasks({ workspaceIds: [ws] })).toEqual([old.rows[0].id]);
     expect(await runMeetingOutcomeTasks({ workspaceIds: [ws] })).toEqual([]);
     expect((await openTasks(leadId)).map((t) => t.title)).toEqual(["Log the meeting outcome"]);
+  });
+
+  it("E3b-2a-2 rule 2: no flood on deploy — reply tasks and meetings created before reminders_since are never acted on", async () => {
+    const { ws, leadId } = await scenario();
+    const since = (await pool.query(`select reminders_since from public.agent_settings where workspace_id = $1`, [ws])).rows[0].reminders_since as Date;
+    const task = (createdAt: Date) =>
+      pool.query(
+        `insert into public.tasks (workspace_id, lead_id, owner_id, owner_name, task_type, title, due_at, origin, created_at)
+         values ($1, $2, $3, 'E3b2a Owner', 'follow_up', 'Asked a question — respond today', $4, 'agent', $4) returning id`,
+        [ws, leadId, owner.id, createdAt],
+      );
+    await task(new Date(since.getTime() - 60_000));
+    const fresh = await task(new Date(since.getTime() + 60_000));
+    const { runReplyEscalation, runMeetingOutcomeTasks } = await import("../../src/services/workReminders.service.js");
+    // A week later both are long past 2 working hours; only the new one escalates.
+    expect(await runReplyEscalation({ now: new Date(since.getTime() + 7 * 86_400_000), workspaceIds: [ws] })).toEqual([fresh.rows[0].id]);
+
+    const meeting = (createdAt: Date) =>
+      pool.query(
+        `insert into public.meetings (workspace_id, lead_id, owner_id, title, scheduled_at, status, created_at) values ($1, $2, $3, 'Intro', now() - interval '3 days', 'scheduled', $4) returning id`,
+        [ws, leadId, owner.id, createdAt],
+      );
+    await meeting(new Date(since.getTime() - 60_000));
+    const newMeeting = await meeting(new Date(since.getTime() + 1_000));
+    expect(await runMeetingOutcomeTasks({ workspaceIds: [ws] })).toEqual([newMeeting.rows[0].id]);
   });
 
   it("an admin changing someone else's booking link is audited", async () => {

@@ -4,6 +4,8 @@
  *   reply → one notification to the admins, once per task (`tasks.escalated_at`);
  * - rule 7a: a meeting 2 days past with no outcome → one owner task "Log the meeting outcome", once per
  *   meeting (`meetings.outcome_task_created_at`).
+ * E3b-2a-2 rule 2: both act only on tasks / meetings created at or after `agent_settings.reminders_since`
+ * (migration 052's apply time), so a deploy never floods admins and owners about old work.
  */
 import { pool, withTransaction } from "../db.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
@@ -41,6 +43,7 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
               s.send_days, s.send_window_start::text as send_window_start, s.send_window_end::text as send_window_end
          from (select t.*, row_number() over (partition by t.workspace_id order by t.created_at) as rn
                  from public.tasks t
+                 join public.agent_settings rs on rs.workspace_id = t.workspace_id and t.created_at >= rs.reminders_since
                 where t.status = 'open' and t.origin = 'agent' and t.escalated_at is null and t.title = any($1::text[])
                   and t.created_at < $2::timestamptz - interval '2 hours'
                   and ($3::uuid[] is null or t.workspace_id = any($3::uuid[]))) t
@@ -85,6 +88,7 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
                 (select full_name from public.profiles p where p.id = coalesce(m.owner_id, l.owner_id)) as owner_name, m.title
            from public.meetings m
            join public.leads l on l.id = m.lead_id and l.merged_into_lead_id is null
+           join public.agent_settings rs on rs.workspace_id = m.workspace_id and m.created_at >= rs.reminders_since
           where m.outcome is null and m.outcome_task_created_at is null
             and m.status::text not in ('cancelled', 'no_show', 'failed')
             and m.scheduled_at < now() - interval '2 days' and m.scheduled_at > now() - interval '30 days'
