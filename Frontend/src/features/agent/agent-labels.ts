@@ -175,6 +175,7 @@ export const CHECK_LABEL: Record<string, string> = {
   subject_style: "Subject line",
   contact_details: "Link, email address or phone number",
   unsupported_agreement: '"As agreed" not in the notes',
+  call_days: "Call ask without the two suggested days",
   content_contacts: "Contact details not allowed",
   content_html: "Contains HTML",
   content_opt_out: "Contains opt-out text",

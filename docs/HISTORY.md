@@ -634,3 +634,25 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   latest`, `POST …/reply-drafts/:draftId/send|discard`. Frontend: `features/crm/suggested-reply-card.tsx` (`SuggestedReplyCard`,
   `LatestSuggestedReply`) on the Activity reply row and the reply task's Sheet; `useLatestReplyDraft`, `useReplyDraftActions`; angle
   label and `CHECK_LABEL.unsupported_agreement`. Integration: `replyDrafts.test.ts`, `freshInboundSunday.test.ts` (E3b-1 7c).
+
+- **E3b-2a-2 (reply draft fixes before the manual test; nothing sent by the AI, no OpenAI call):** Rule 1 bursts: a matched reply on a
+  contact `handed_off` with an open reply task or any reply draft (`isReplyFollowUp`, both ingestions) is labelled, gets a reply task
+  and a draft step like an AI-managed one (keywords still first). `markReplyForDraft` sets `draft_next_at = now() + 3 min`
+  (`DRAFT_DEBOUNCE_MS`); a newer reply skips the older pending step. The draft step (`loadBurst`) reads every matched reply of the
+  contact (both channels, newest 10, oldest first, joined by `---` in the one `reply` block) since our last message (an AI send, any
+  sent email to the contact, the rep's Send `queued_at` / Discard `discarded_at`); a reply in the burst still being labelled → retry
+  in 1 min; `draftSkipReason` takes the burst's `labels` (any `asked_to_stop|not_interested|annoyed` → no draft) and
+  `contactDraftsToday` (≤ 3 per contact per IST day, `MAX_DRAFTS_PER_CONTACT_PER_DAY`). `DAY_DECISIONS_SQL` now also counts AI reply
+  labels (`classification_cost_usd` set). Rule 2: migration 052 `agent_settings.reminders_since` (default `now()`: existing workspaces
+  get the apply time, new ones their creation time); `runReplyEscalation` / `runMeetingOutcomeTasks` only for tasks / meetings
+  created at or after it. Rule 3: already sent `In-Reply-To` + `References` = the lead's Message-ID (`agentThread`); now tested via a
+  fake SMTP transport. Rule 4: `npm run staging:seed-reply-draft -- --contact "<full name>"` (`scripts/seed-reply-draft.ts`; staging
+  ref only, seeded "AI test seed" contacts only, latest matched reply, refuses an open draft; model `staging-seed`, cost 0;
+  `--remove`). Rule 5 (2026-11-04 email model test): (a) Naitik has no `booking_url` → `agent:model-test` prints "Booking link added:
+  no (owner has no booking link)" (`bookingLinkNote`); (b) Anil's steel-trader story was in KB_MOTM_Client_Experiences and the writer
+  and checker get the same knowledge block → checker prompt: naming one listed client experience as described is supported in any
+  sector, never `unsupported_sector_claim` (`LISTED_EXPERIENCE_EXAMPLE`); (c) fixable code check `call_days` (`callDaysProblem`): a
+  question asking for a call offers two weekdays and a day question never says "in the coming days" (both channels, decisions and
+  reply drafts); frontend `CHECK_LABEL.call_days`. API shape unchanged (`B4-api.md` §7q as is). Tests: `replyDrafts.test.ts`
+  (bursts, limit, stop label, new burst after Send, old tasks/meetings, SMTP headers), `seedReplyDraft.test.ts`,
+  `replyDraftFixes.test.ts`.

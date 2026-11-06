@@ -74,7 +74,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `051`).
+  (currently `052`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -100,7 +100,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `051`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `052`).
 
 ## Way of working
 
@@ -238,6 +238,8 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   Limits count both channels together.
 - Speed to lead (E3b-1): a website/inbound-form contact < 2 h old with no touch may get its FIRST AI message 08:00–21:00 IST any day
   (rules, send re-check and both channel checks); every other safety rule unchanged; follow-ups keep the normal window.
+- Call days (E3b-2a-2, code check `call_days`, fixable, both channels, decisions and reply drafts): a question asking for a call offers
+  the two suggested days; a day question never also says "in the coming days".
 - Booking link + suggested days (E3b-1): call angles get "Suggested days" (next two working days, Mon–Sat, ≥ 1 day ahead, IST) and,
   when the owner has `profiles.booking_url`, a code-added booking line before the signature (never a first WhatsApp). Never exact clock
   times; the model never writes URLs.
@@ -282,7 +284,7 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   `scripts/output/model-test-<timestamp>.md` (per message: channel, first WhatsApp, word count).
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text, the meeting outcome notes for a
   recap, and the company facts: name, domain, website, industry, location, employees, revenue). Checker (E3b-1): describing our
-  approach for any B2B sector is fine; flagged: claims of results/experience in an unlisted sector, what a past call/meeting/proposal
+  approach for any B2B sector is fine, and so is naming ONE listed client experience as described (any sector, E3b-2a-2); flagged: claims of results/experience in an unlisted sector, what a past call/meeting/proposal
   contained unless the notes say so, one client experience turned plural ("similar companies"), and "you mentioned…" not in the
   lead's own data. Internal context (company description +
   the open deal and won/lost counts) is decide-only: never stated, never a grounding source, never amounts/loss notes.
@@ -300,14 +302,20 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   `positive|question|other|unclassified`, never DNC / opted-out channel / no budget / daily cap reached. Same writer + checker, code
   checks, word limit (60 / 120, body only), the reply only inside the delimited `reply` block (never logged or stored), one
   regeneration, else a `failed` row (no draft; the task stays). Each draft counts in `MONTH_SPEND_SQL` and `DAY_DECISIONS_SQL`
-  (the daily cap). A newer matched reply supersedes the open draft. The AI never sends a draft (it stays `handed_off`); the owner or
+  (the daily cap; E3b-2a-2: AI reply labels count there too). A newer matched reply supersedes the open draft.
+  E3b-2a-2 bursts: a reply on a contact `handed_off` with an open reply task or any draft (`isReplyFollowUp`) is labelled, gets a
+  reply task and a draft too; the draft waits for 3 quiet minutes and answers every matched reply since our last message (AI send,
+  any email sent, the rep's Send/Discard; both channels, ≤ 10) in the one reply block; a stop label on any reply in the burst → no
+  draft; ≤ 3 drafts per contact per IST day. Staging test data: `npm run staging:seed-reply-draft -- --contact "<full name>"` (no AI
+  call; `--remove`). The AI never sends a draft (it stays `handed_off`); the owner or
   an admin sends it (edited or not; the word limit still applies, 400) or discards it. The Send is exempt from the AI touch limits
   (48 h gap, 2 per week, 8 total) but not from the channel rules (send window, spacing, caps, warm-up, pause, opt-out, DNC, channel
   status, re-check before sending); it marks the reply task done; one send per draft.
 - Escalation (E3b-2a, `services/workReminders.service.ts`, every tick, no flag): a reply task still open 2 working hours after it
   was created (working hours = the workspace's `agent_settings` send window, IST) → one notification to the admins, once
   (`tasks.escalated_at`), at most 20 per workspace per tick. A meeting 2–30 days past with no outcome → one owner task "Log the
-  meeting outcome" (`meetings.outcome_task_created_at`).
+  meeting outcome" (`meetings.outcome_task_created_at`). Both only for tasks / meetings created at or after
+  `agent_settings.reminders_since` (migration 052's apply time: no old-task flood on deploy).
 - Meeting recap (E3b-2a): when the meeting notes say the lead is deciding or consulting someone (`leadIsDeciding`), the angle is
   `meeting_recap_deciding` (not a call angle: no suggested days, no booking line); "as agreed" / "as discussed" need an agreement
   in the notes (`unsupported_agreement`, fixable).
