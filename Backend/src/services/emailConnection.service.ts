@@ -1,5 +1,6 @@
 import type { Actor } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
+import { env } from "../env.js";
 import type { Queryable } from "../dto.js";
 import { ValidationError } from "../errors.js";
 import { decryptJson, encryptJson, type EncryptedValue } from "../security/encryption.js";
@@ -58,6 +59,7 @@ export interface EmailRow {
   paused_reason: string | null;
   paused_at: Date | null;
   resumed_at: Date | null;
+  track_opens: boolean;
 }
 
 export async function loadEmailConnection(db: Queryable, workspaceId: string): Promise<{ row: EmailRow; secrets: EmailSecrets }> {
@@ -93,6 +95,8 @@ export interface Mailbox {
   alreadyWarmed: boolean;
   nextSendAt: Date | null;
   resumedAt: Date | null;
+  /** E3b-2b: "Track email opens" (the pixel also needs PUBLIC_API_BASE_URL). */
+  trackOpens: boolean;
 }
 
 export function mailboxOf(row: EmailRow, secrets: EmailSecrets): Mailbox | null {
@@ -115,6 +119,7 @@ export function mailboxOf(row: EmailRow, secrets: EmailSecrets): Mailbox | null 
     alreadyWarmed: row.already_warmed,
     nextSendAt: row.next_send_at,
     resumedAt: row.resumed_at,
+    trackOpens: row.track_opens,
   };
 }
 
@@ -345,6 +350,9 @@ export async function getEmailSettings(workspaceId: string) {
     daily: monitoring.daily,
     /** D3: reading replies, bounces and unsubscribes (null until an IMAP login is saved). */
     imapStatus: imapOf(row, secrets) ? imapStatus : null,
+    /** E3b-2b: open tracking (soft signal) needs both this switch and the API's public address. */
+    trackOpens: row.track_opens,
+    openTrackingAvailable: Boolean(env.PUBLIC_API_BASE_URL),
     updatedAt: row.updated_at.toISOString(),
   };
 }
@@ -454,6 +462,15 @@ export async function updateEmailSettings(actor: Actor, workspaceId: string, inp
       hourlyCap: input.hourlyCap,
       alreadyWarmed: input.alreadyWarmed,
     });
+  });
+  return getEmailSettings(workspaceId);
+}
+
+/** E3b-2b rule 10: admin only (route guard); default off. Audited. */
+export async function setTrackOpens(actor: Actor, workspaceId: string, enabled: boolean) {
+  await withTransaction(async (db) => {
+    await db.query(`update public.integration_connections set track_opens = $2, updated_by = $3 where workspace_id = $1 and id = 'email'`, [workspaceId, enabled, actor.id]);
+    await recordAdminAudit(db, actor, "connection.email.track_opens", "integration_connection", `${workspaceId}:email`, { enabled });
   });
   return getEmailSettings(workspaceId);
 }

@@ -467,6 +467,8 @@ export interface AgentSendState {
   /** E3b-1: the stage plan the decision was made under (null before E3b-1); the angle only for a message. */
   stageKey?: string | null;
   angle?: string | null;
+  /** E3b-2b: the AI email's first counted open (soft signal), else null. */
+  openedAt?: string | null;
 }
 export interface AgentReadiness {
   ready: boolean;
@@ -855,6 +857,9 @@ export interface EmailSettings {
   daily: { date: string; sent: number; failed: number; rejected: number }[];
   /** D3: reading replies, bounces and unsubscribes over IMAP; null until an IMAP login is saved. */
   imapStatus: EmailImapStatus | null;
+  /** E3b-2b: "Track email opens" (default off) and whether the API has a public address for the pixel. */
+  trackOpens: boolean;
+  openTrackingAvailable: boolean;
   updatedAt: string;
 }
 
@@ -1178,6 +1183,8 @@ export const backend = {
       resume: () => send<EmailSettings>("POST", "/connections/email/resume"),
       /** D3 (admin): the worker reads the mailbox on its next tick. */
       checkNow: () => send<EmailSettings>("POST", "/connections/email/check-now"),
+      setTrackOpens: (enabled: boolean) =>
+        send<EmailSettings>("PUT", "/connections/email/track-opens", { enabled }),
       deliverability: (selector: string, signal?: AbortSignal) =>
         get<DeliverabilityCheck>(
           `/connections/email/deliverability${selector ? `?selector=${encodeURIComponent(selector)}` : ""}`,

@@ -33,11 +33,16 @@ alter table public.email_outbound_messages
   add column if not exists open_count integer not null default 0,
   add column if not exists first_opened_at timestamptz,
   add column if not exists last_opened_at timestamptz,
-  add column if not exists first_counted_open_at timestamptz;
+  add column if not exists first_counted_open_at timestamptz,
+  add column if not exists open_event_at timestamptz;
 
 create unique index if not exists email_outbound_open_token_idx on public.email_outbound_messages (open_token) where open_token is not null;
 
 comment on column public.email_outbound_messages.open_token is 'E3b-2b: random URL-safe token (128 bits) for the open pixel; no personal data.';
+-- The worker's queue of counted opens not yet turned into the timeline event / attribution / score mark.
+create index if not exists email_outbound_open_events_idx on public.email_outbound_messages (first_counted_open_at)
+  where first_counted_open_at is not null and open_event_at is null;
+comment on column public.email_outbound_messages.open_event_at is 'E3b-2b: when the worker recorded the first counted open (timeline event, attribution, score mark); the pixel route only updates counts.';
 comment on column public.email_outbound_messages.first_counted_open_at is 'E3b-2b: first open more than 60 s after sending (earlier ones are prefetches: counted in open_count only).';
 
 alter table public.integration_connections add column if not exists track_opens boolean not null default false;

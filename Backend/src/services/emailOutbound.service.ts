@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pool, withTransaction } from "../db.js";
+import { env } from "../env.js";
+import { isTrackedSource, newOpenToken, withOpenPixel } from "../domain/emailTracking.js";
 import type { Queryable } from "../dto.js";
 import { NotFoundError } from "../errors.js";
 import {
@@ -76,6 +78,7 @@ export interface EmailOutboundRow {
   message_id: string | null;
   dry_run: boolean;
   sent_at: Date | null;
+  open_token: string | null;
 }
 
 export interface EnqueueEmailInput {
@@ -111,8 +114,8 @@ export async function enqueueEmail(db: Queryable, input: EnqueueEmailInput): Pro
   }
   const inserted = await db.query<EmailOutboundRow>(
     `insert into public.email_outbound_messages
-       (workspace_id, source, source_id, lead_id, to_address, from_name, to_contact, subject, html, text_body, attachments, created_by, next_attempt_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, greatest(now(), coalesce($13::timestamptz, now())))
+       (workspace_id, source, source_id, lead_id, to_address, from_name, to_contact, subject, html, text_body, attachments, created_by, next_attempt_at, open_token)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, greatest(now(), coalesce($13::timestamptz, now())), $14)
      on conflict (source, source_id) do nothing
      returning *`,
     [
@@ -129,6 +132,7 @@ export async function enqueueEmail(db: Queryable, input: EnqueueEmailInput): Pro
       JSON.stringify(input.attachments ?? []),
       input.createdBy ?? null,
       input.notBefore ?? null,
+      newOpenToken(),
     ],
   );
   if (inserted.rows[0]) return inserted.rows[0];
@@ -391,6 +395,8 @@ export interface EmailOutboundDeps {
   now?: () => Date;
   random?: () => number;
   download?: (ref: AttachmentRef) => Promise<Buffer>;
+  /** E3b-2b: the open pixel's base address (default PUBLIC_API_BASE_URL; unset = no pixel). */
+  publicApiBaseUrl?: string | null;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -495,13 +501,16 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
       }
     }
     const thread = await agentThread(row, now);
+    // E3b-2b rule 9: the open pixel, HTML part only (text, word count, headers and threading unchanged).
+    const base = deps.publicApiBaseUrl === undefined ? env.PUBLIC_API_BASE_URL : deps.publicApiBaseUrl;
+    const html = base && box.trackOpens && isTrackedSource(row.source) && row.open_token ? withOpenPixel(row.html, base, row.open_token) : row.html;
     const transport = (deps.transports ?? defaultTransportCache).get(row.workspace_id, box.transportKey, box.smtp);
     const info = await transport.sendMail({
       from: { name: row.from_name || box.fromName, address: box.fromAddress },
       to: row.to_address,
       replyTo: box.replyTo,
       subject: thread.subject,
-      html: row.html,
+      html,
       text: row.text_body,
       messageId,
       date: now,

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   testStatus: vi.fn(),
   deliverability: vi.fn(),
   checkNow: vi.fn(),
+  setTrackOpens: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -35,6 +36,7 @@ vi.mock("@/lib/backend-client", () => ({
         testStatus: mocks.testStatus,
         deliverability: mocks.deliverability,
         checkNow: mocks.checkNow,
+        setTrackOpens: mocks.setTrackOpens,
       },
     },
   },
@@ -92,6 +94,8 @@ const SAVED: EmailSettings = {
     today: { replies: 4, bounces: 2, autoReplies: 1, unsubscribes: 1, unmatched: 3 },
     bounces24h: 2,
   },
+  trackOpens: false,
+  openTrackingAvailable: true,
   updatedAt: "2026-10-28T04:00:00.000Z",
 };
 
@@ -116,6 +120,26 @@ afterEach(() => {
 });
 
 describe("EmailPanel (E1b)", () => {
+  it("E3b-2b: Track email opens is off by default; an admin turns it on; without a public API address it says so", async () => {
+    mocks.isAdmin = true;
+    mocks.setTrackOpens.mockResolvedValue({ ...SAVED, trackOpens: true });
+    renderPanel();
+    const toggle = await screen.findByRole("switch", { name: "Track email opens" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText(/needs a public API address/)).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mocks.setTrackOpens).toHaveBeenCalledWith(true, expect.anything()));
+    cleanup();
+    renderPanel({ openTrackingAvailable: false });
+    expect(await screen.findByText(/Open tracking needs a public API address/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Track email opens" })).toBeDisabled();
+  });
+
+  it("E3b-2b: a salesperson can't change Track email opens", async () => {
+    renderPanel({ trackOpens: true });
+    expect(await screen.findByRole("switch", { name: "Track email opens" })).toBeDisabled();
+  });
+
   it("a salesperson sees the settings read-only, the monitoring, and no secret, test or form", async () => {
     renderPanel();
     expect(await screen.findByText("MOTM Sales <sales@motm.test>")).toBeInTheDocument();

@@ -40,9 +40,11 @@ const HEADLINE = `case d.action when 'send_email' then d.message_subject when 'h
 const LEAD_NAME = `concat_ws(' ', l.first_name, nullif(l.last_name, ''))`;
 const OPEN_REPORTS = `(select count(*)::int from public.agent_decision_reports r where r.decision_id = d.id and r.resolved_at is null)`;
 // E2: a live decision's send state; channel for send decisions.
+// E3b-2b: the AI email's first counted open (soft signal), for the "Opened" pill.
+const OPENED_AT = `(select e.first_counted_open_at from public.email_outbound_messages e where e.source = 'agent' and e.source_id = d.id) as "openedAt"`;
 const SEND_COLUMNS = `d.mode, d.send_status as "sendStatus", d.sent_at as "sentAt", d.send_error as "sendError", d.cancel_reason as "cancelReason",
               case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel,
-              d.stage_key as "stageKey", d.angle`;
+              d.stage_key as "stageKey", d.angle, ${OPENED_AT}`;
 const IST_DAY = `date_trunc('day', now() at time zone 'Asia/Kolkata')`;
 
 /** Opaque keyset cursor: the row's created_at as Postgres text (keeps microseconds) and id. */
@@ -164,7 +166,7 @@ export async function getDecision(db: Queryable, workspaceId: string, id: string
               d.lead_id as "leadId", json_build_object('id', l.id, 'name', ${LEAD_NAME}, 'company', l.company, 'ownerId', l.owner_id) as lead,
               d.send_status as "sendStatus", d.sent_at as "sentAt", d.send_error as "sendError", d.cancel_reason as "cancelReason",
               case d.action when 'send_email' then 'email' when 'send_whatsapp' then 'whatsapp' end as channel,
-              d.stage_key as "stageKey", d.angle,
+              d.stage_key as "stageKey", d.angle, ${OPENED_AT},
               ${DECISION_CONTEXT} as context, ${DECISION_ATTACHMENTS} as attachments,
               o.full_name as "_ownerName", o.booking_url as "_bookingUrl", coalesce(s.company_display_name, w.name) as "_companyName",
               s.email_opt_out_text as "_emailOptOut", s.whatsapp_opt_out_text as "_whatsappOptOut",

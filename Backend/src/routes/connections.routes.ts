@@ -66,6 +66,15 @@ connectionsRouter.put(
     res.json(await emailConnection.updateEmailSettings(req.actor!, req.workspaceId!, parseBody(emailSettingsSchema, req.body))),
   ),
 );
+// E3b-2b: "Track email opens" (admin only, default off).
+connectionsRouter.put(
+  "/email/track-opens",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { enabled } = parseBody(z.object({ enabled: z.boolean() }).strict(), req.body);
+    res.json(await emailConnection.setTrackOpens(req.actor!, req.workspaceId!, enabled));
+  }),
+);
 // D3: the next worker tick reads the mailbox; this request never opens IMAP itself.
 connectionsRouter.post(
   "/email/check-now",

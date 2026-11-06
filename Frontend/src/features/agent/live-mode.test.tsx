@@ -112,6 +112,18 @@ describe("E2 live UI pieces", () => {
     expect(screen.getAllByText("First WhatsApp message can't contain a link")).toHaveLength(1);
   });
 
+  it("E3b-2b: a sent AI email with a counted open also shows Opened (soft signal)", () => {
+    const { unmount } = render(<SendStatusPill state={{ ...state, sendStatus: "sent" }} />);
+    expect(screen.queryByText("Opened")).toBeNull();
+    unmount();
+    render(
+      <SendStatusPill
+        state={{ ...state, sendStatus: "sent", channel: "email", openedAt: "2026-11-06T06:00:00Z" }}
+      />,
+    );
+    expect(screen.getByText("Opened").getAttribute("title")).toMatch(/^Soft signal/);
+  });
+
   it("the Live banner says who is live and what was sent", () => {
     render(
       <LiveBanner

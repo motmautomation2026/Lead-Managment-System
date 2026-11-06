@@ -140,8 +140,23 @@ describeIfDb("E1b email settings API (requires TEST_DATABASE_URL)", () => {
       sentToday: 0,
       failures24h: 0,
       rejections24h: 0,
+      // E3b-2b: open tracking is off by default (the test env has no PUBLIC_API_BASE_URL).
+      trackOpens: false,
+      openTrackingAvailable: false,
     });
     expect(res.body.daily).toHaveLength(14);
+  });
+
+  it("E3b-2b: only an admin turns Track email opens on or off (audited)", async () => {
+    expect((await api.call(rep, ws, "PUT", "/connections/email/track-opens", { enabled: true })).status).toBe(403);
+    expect((await api.call(admin, ws, "PUT", "/connections/email/track-opens", { enabled: "yes" })).status).toBe(400);
+    const on = await api.call(admin, ws, "PUT", "/connections/email/track-opens", { enabled: true });
+    expect(on.status).toBe(200);
+    expect(on.body.trackOpens).toBe(true);
+    const off = await api.call(admin, ws, "PUT", "/connections/email/track-opens", { enabled: false });
+    expect(off.body.trackOpens).toBe(false);
+    const audit = await pool.query(`select count(*)::int as n from public.admin_audit_events where action = 'connection.email.track_opens' and target_id = $1`, [`${ws}:email`]);
+    expect(audit.rows[0].n).toBe(2);
   });
 
   it("only admins write, test, send a test, resume or check DNS (403 for a salesperson)", async () => {

@@ -214,6 +214,44 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     expect(after.status).toBe("sent");
   });
 
+  it("E3b-2b: the open pixel goes only into AI/workflow emails with PUBLIC_API_BASE_URL and Track email opens on; the text part is unchanged", async () => {
+    const BASE = "https://api.example.com";
+    const pixelIn = (html: string) => html.includes("/t/o/");
+    const sentHtml = (smtp: ReturnType<typeof fakeSmtp>, subject: string) => smtp.sent.find((s) => s.mail.subject === subject)!.mail;
+
+    // Toggle on + address: the workflow email carries the pixel (its own token), the proposal email doesn't.
+    const ws = await workspace("open-pixel", { track_opens: true });
+    const l = await lead(ws);
+    const { row: wf } = await workflowEmail(ws, l.id, l.email);
+    const { row: prop } = await proposalEmail(ws, l.id, l.email);
+    expect(wf.open_token).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(prop.open_token).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(wf.open_token).not.toBe(prop.open_token);
+    const smtp = fakeSmtp();
+    await run(ws, smtp, { publicApiBaseUrl: BASE });
+    await makeDue(ws);
+    await run(ws, smtp, { publicApiBaseUrl: BASE });
+    const workflowMail = sentHtml(smtp, "Hi");
+    expect(workflowMail.html).toBe(`<p>Hi</p><img src="${BASE}/t/o/${wf.open_token}.gif" width="1" height="1" alt="" style="display:block;border:0">`);
+    expect(workflowMail.text).toBe(wf.text_body);
+    expect(workflowMail.headers?.["List-Unsubscribe"]).toBeDefined();
+    expect(pixelIn(String(sentHtml(smtp, "Your proposal").html))).toBe(false);
+    // The stored HTML is unchanged (the pixel is added at send time only).
+    expect((await email(wf.id)).html).toBe("<p>Hi</p>");
+
+    // No address (tracking off) or the toggle off: no pixel.
+    const off = fakeSmtp();
+    const l2 = await lead(ws);
+    await workflowEmail(ws, l2.id, l2.email);
+    await run(ws, off, { publicApiBaseUrl: null });
+    const ws2 = await workspace("open-pixel-off");
+    const l3 = await lead(ws2);
+    await workflowEmail(ws2, l3.id, l3.email);
+    await run(ws2, off, { publicApiBaseUrl: BASE });
+    expect(off.sent).toHaveLength(2);
+    expect(off.sent.some((s) => pixelIn(String(s.mail.html)))).toBe(false);
+  });
+
   it("one email per source key, even when enqueued twice and claimed by two ticks at once", async () => {
     const ws = await workspace("once");
     const contact = await lead(ws);

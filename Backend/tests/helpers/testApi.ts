@@ -20,6 +20,8 @@ export interface TestApi {
   newUser(role: "admin" | "salesperson", options?: { isActive?: boolean; name?: string }): Promise<Actor>;
   call(as: Actor, workspaceId: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: JsonBody; headers: Headers }>;
   close(): Promise<void>;
+  /** The server's origin (routes outside /api/v1, e.g. the open pixel). */
+  origin: string;
 }
 
 export async function startTestApi(pool: Pool, label: string): Promise<TestApi> {
@@ -38,6 +40,7 @@ export async function startTestApi(pool: Pool, label: string): Promise<TestApi> 
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
 
   return {
+    origin: base.replace(/\/api\/v1$/, ""),
     async newUser(role, options = {}) {
       const isActive = options.isActive ?? true;
       const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`${label}-${role}-${randomUUID()}@example.com`]);

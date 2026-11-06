@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { z } from "zod";
 import { parsePrices } from "./agent/pricing.js";
+import { parsePublicApiBaseUrl } from "./domain/emailTracking.js";
 
 // A blank `KEY=` line in .env arrives as "" — treat it as "not set".
 const blankToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
@@ -77,6 +78,10 @@ const EnvSchema = DbEnvSchema.extend({
         }
       }, 'OPENAI_PRICES_JSON must be JSON like {"<model>": {"inputPer1M": 2.5, "outputPer1M": 10}}'),
   ),
+
+  // E3b-2b email open tracking (API and worker): the API's public address for the open pixel
+  // (https in production). Missing = tracking off; malformed = startup error (checked in loadEnv).
+  PUBLIC_API_BASE_URL: blankToUndefined(z.string().optional()),
 });
 
 // WORKER_* tuning is validated separately in workerEnv.ts. Provider secrets
@@ -105,7 +110,7 @@ function loadEnv() {
   if (Boolean(parsed.data.INGEST_API_KEY) !== Boolean(parsed.data.INGEST_WORKSPACE_ID)) {
     throw new Error("INGEST_API_KEY and INGEST_WORKSPACE_ID must both be set, or both left blank. See .env.example.");
   }
-  return parsed.data;
+  return { ...parsed.data, PUBLIC_API_BASE_URL: parsePublicApiBaseUrl(parsed.data.PUBLIC_API_BASE_URL, parsed.data.NODE_ENV) };
 }
 
 export const env = loadEnv();

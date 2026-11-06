@@ -20,6 +20,7 @@ import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.service.js";
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
+import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runDealSweep } from "./services/deals.service.js";
 
 /**
@@ -211,6 +212,13 @@ async function tick(): Promise<void> {
   if (labelled.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
 
   // E3b-2a: suggested replies for reps (after the labels), behind AGENT_RUNNER_ENABLED.
+  // E3b-2b: first counted email opens → one timeline event, the message fact, a hot-score mark.
+  const opens = await runOpenEvents().catch((err: { code?: string; name?: string }) => {
+    console.error(`[worker] Email open events failed: ${err?.code ?? err?.name ?? "unknown error"}`);
+    return 0;
+  });
+  if (opens) console.log(`[worker] Email opens recorded: ${opens}.`);
+
   const drafted = await runReplyDrafts(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }).catch((err: { code?: string; name?: string }) => {
     console.error(`[worker] Reply drafts failed: ${err?.code ?? err?.name ?? "unknown error"}`);
     return [];

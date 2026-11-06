@@ -220,6 +220,14 @@ export function SendStatusPill({
         tone={SEND_STATUS_TONE[status]}
         title={reason ?? undefined}
       />
+      {state.openedAt && (
+        <StatusBadge
+          value=""
+          display="Opened"
+          tone="info"
+          title="Soft signal: some mail apps load images without the email being read."
+        />
+      )}
       {showReason && reason && <span className="text-xs text-muted-foreground">{reason}</span>}
     </span>
   );

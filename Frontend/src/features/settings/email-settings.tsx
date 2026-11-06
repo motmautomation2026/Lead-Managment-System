@@ -291,6 +291,8 @@ export function EmailPanel({ workspaceId }: { workspaceId: string }) {
           <RepliesAndBounces status={data.imapStatus} isAdmin={isAdmin} onChecked={store} />
         )}
 
+        <OpenTracking data={data} isAdmin={isAdmin} onSaved={store} />
+
         {isAdmin && data.configured && <DeliverabilityCard />}
 
         <ConfirmDialog
@@ -864,6 +866,52 @@ function DeliverabilityCard() {
             );
           })}
         </ul>
+      )}
+    </section>
+  );
+}
+
+/** E3b-2b: "Track email opens" (admin; default off). A soft signal for AI and workflow emails only. */
+function OpenTracking({
+  data,
+  isAdmin,
+  onSaved,
+}: {
+  data: EmailSettings;
+  isAdmin: boolean;
+  onSaved: (next: EmailSettings) => void;
+}) {
+  const save = useMutation({
+    mutationFn: backend.connections.email.setTrackOpens,
+    onSuccess: (next) => {
+      onSaved(next);
+      toast.success(next.trackOpens ? "Email open tracking is on." : "Email open tracking is off.");
+    },
+    onError: (error) => toast.error(messageFromError(error)),
+  });
+  return (
+    <section aria-labelledby="email-open-tracking" className="space-y-2 border-t pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <Label id="email-open-tracking" htmlFor="track-opens" className="text-sm font-semibold">
+          Track email opens
+        </Label>
+        <Switch
+          id="track-opens"
+          checked={data.trackOpens}
+          disabled={!isAdmin || save.isPending || (!data.openTrackingAvailable && !data.trackOpens)}
+          onCheckedChange={(checked) => save.mutate(checked)}
+        />
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Adds a tiny image to AI and workflow emails (never replies, proposals or meeting emails) so
+        a first open shows on the contact and raises the hot-lead score. A soft signal only: some
+        mail apps load images without the email being read. Update the privacy policy before turning
+        this on.
+      </p>
+      {!data.openTrackingAvailable && (
+        <p role="status" className="text-sm text-warning-soft-foreground">
+          Open tracking needs a public API address (PUBLIC_API_BASE_URL on the API and worker).
+        </p>
       )}
     </section>
   );
