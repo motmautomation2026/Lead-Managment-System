@@ -15,6 +15,8 @@ import { canReadReplies, readEmailReply, readInboundReply } from "../services/in
 import { correctReplyLabel, replyLabelCorrectionSchema } from "../services/replyLabels.service.js";
 import { discardReplyDraft, draftsForReplies, getLatestReplyDraft, sendReplyDraft } from "../services/replyDrafts.service.js";
 import { z } from "zod";
+import { requireAdmin } from "../authMiddleware.js";
+import { changeLeadNumber } from "../services/whatsappNumbers.service.js";
 
 /** E3b-2a: the rep's text (the word limit is checked by the service: 400 with the count). */
 const replyDraftSendSchema = z.object({ body: z.string().max(5000) }).strict();
@@ -65,6 +67,16 @@ contactsRouter.get(
     const replyIds = page.data.flatMap((row) => ("reply" in row && row.reply ? [row.reply.messageId] : []));
     const drafts = await draftsForReplies(pool, req.actor!, req.params.id!, lead.owner_id, replyIds);
     res.json({ ...page, data: page.data.map((row) => ("reply" in row && row.reply ? { ...row, reply: { ...row.reply, draft: drafts.get(row.reply.messageId) ?? null } } : row)) });
+  }),
+);
+
+/** E4a rule 6: an admin moves the contact to another WhatsApp number (reason required; audited; timeline event). */
+const whatsappNumberSchema = z.object({ numberId: z.string().uuid(), reason: z.string().trim().min(1, "A reason is required.").max(500) }).strict();
+contactsRouter.post(
+  "/:id/whatsapp-number",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    res.json(await changeLeadNumber(req.actor!, req.workspaceId!, req.params.id!, parseBody(whatsappNumberSchema, req.body)));
   }),
 );
 

@@ -3,14 +3,28 @@ import type { Actor } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { env } from "../env.js";
-import { ValidationError } from "../errors.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 import { decryptText, encryptText } from "../security/encryption.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import { exchangeCodeForTokens, getAuthorizationUrl, type GoogleOAuthClientConfig } from "../providers/google-calendar.provider.js";
 import { warmupCap, warmupDayFor } from "../domain/whatsappSafety.js";
-import { loadSafetyMonitoring, resumeSending, updateSafetySettings, type WhatsAppSafetySettings } from "./whatsappSafety.service.js";
+import {
+  IST_MIDNIGHT,
+  loadSafetyMonitoring,
+  pauseSending,
+  resumeSending,
+  updateNumberSettings,
+  updateWorkspaceSettings,
+  type WhatsAppNumberSettings,
+  type WhatsAppWorkspaceSettings,
+} from "./whatsappSafety.service.js";
+import { addNumber, removeNumber } from "./whatsappNumbers.service.js";
 
-interface WhatsAppRow {
+interface WhatsAppNumberRow {
+  id: string;
+  label: string;
+  owner_user_id: string | null;
+  owner_name: string | null;
   enabled: boolean;
   desired_state: string;
   status: string;
@@ -32,27 +46,102 @@ interface WhatsAppRow {
   max_delay_seconds: number;
   paired_at: Date | null;
   max_new_chats_per_day: number;
-  send_window_days: number[];
-  send_window_start: string;
-  send_window_end: string;
   paused_reason: string | null;
   paused_at: Date | null;
+  paused_by_name: string | null;
+  sent_today: number;
+  new_chats_today: number;
+  lead_count: number;
+  queued_sends: number;
+}
+
+/**
+ * E4a rule 12: session-pooler client slots. Every connected number holds one session-lock client;
+ * the API and the worker each keep a session pool of DB_SESSION_POOL_MAX; a few slots stay free for
+ * the Supabase dashboard, scripts and `db:connections --probe`.
+ * headroom = SESSION_POOLER_CLIENTS − 2 × DB_SESSION_POOL_MAX − SESSION_SLOT_RESERVE (defaults: 15 − 4 − 3 = 8).
+ * shortcut: the pooler size is the staging value from CLAUDE.md, not read from Supabase; make it an env var if production differs.
+ */
+export const SESSION_POOLER_CLIENTS = 15;
+export const SESSION_SLOT_RESERVE = 3;
+export function sessionSlotHeadroom(sessionPoolMax: number = env.DB_SESSION_POOL_MAX): number {
+  return SESSION_POOLER_CLIENTS - 2 * sessionPoolMax - SESSION_SLOT_RESERVE;
+}
+
+function decryptQr(row: WhatsAppNumberRow): string | null {
+  return row.qr_ciphertext && row.qr_iv && row.qr_tag && row.qr_expires_at && row.qr_expires_at.getTime() > Date.now()
+    ? decryptText({ ciphertext: row.qr_ciphertext, iv: row.qr_iv, tag: row.qr_tag, keyVersion: row.qr_key_version }, "whatsapp:pairing-qr")
+    : null;
+}
+
+function numberToDto(row: WhatsAppNumberRow) {
+  const warmupDay = warmupDayFor(row.paired_at, new Date());
+  const newChatCap = row.new_chat_cap as { capping_status?: string; ote_status?: string } | null;
+  return {
+    id: row.id,
+    label: row.label,
+    ownerUserId: row.owner_user_id,
+    ownerName: row.owner_name,
+    enabled: row.enabled,
+    desiredState: row.desired_state,
+    status: row.status,
+    connectedPhone: row.connected_phone,
+    displayName: row.display_name,
+    qr: decryptQr(row),
+    qrExpiresAt: row.qr_expires_at?.toISOString() ?? null,
+    lastError: row.last_error,
+    workerHeartbeatAt: row.worker_heartbeat_at?.toISOString() ?? null,
+    lastConnectedAt: row.last_connected_at?.toISOString() ?? null,
+    lastDisconnectedAt: row.last_disconnected_at?.toISOString() ?? null,
+    outboundRestricted: Boolean(
+      (row.reachout_lock as { isActive?: boolean } | null)?.isActive || newChatCap?.capping_status === "CAPPED" || newChatCap?.ote_status === "EXHAUSTED",
+    ),
+    pairedAt: row.paired_at?.toISOString() ?? null,
+    warmupDay,
+    dailyCap: row.daily_cap,
+    effectiveDailyCap: warmupCap(warmupDay, row.daily_cap),
+    minDelaySeconds: row.min_delay_seconds,
+    maxDelaySeconds: row.max_delay_seconds,
+    maxNewChatsPerDay: row.max_new_chats_per_day,
+    sentToday: row.sent_today,
+    newChatsToday: row.new_chats_today,
+    leadCount: row.lead_count,
+    queuedSends: row.queued_sends,
+    pause: row.enabled ? null : { reason: row.paused_reason, at: row.paused_at?.toISOString() ?? null, byName: row.paused_by_name },
+  };
+}
+
+/** Every number of the workspace that isn't removed, oldest first, with today's per-number counts. */
+async function listNumbers(workspaceId: string) {
+  const result = await pool.query<WhatsAppNumberRow>(
+    `select n.*, owner.full_name as owner_name, pauser.full_name as paused_by_name,
+            (select count(*)::int from public.whatsapp_outbound_messages o
+              where o.whatsapp_number_id = n.id and o.status = 'sent' and o.sent_at >= ${IST_MIDNIGHT}) as sent_today,
+            (select count(*)::int from public.whatsapp_outbound_messages o
+              where o.whatsapp_number_id = n.id and o.status = 'sent' and o.new_chat and o.sent_at >= ${IST_MIDNIGHT}) as new_chats_today,
+            (select count(*)::int from public.leads l where l.whatsapp_number_id = n.id) as lead_count,
+            (select count(*)::int from public.whatsapp_outbound_messages o where o.whatsapp_number_id = n.id and o.status = 'prepared') as queued_sends
+       from public.whatsapp_numbers n
+       left join public.profiles owner on owner.id = n.owner_user_id
+       left join public.profiles pauser on pauser.id = n.paused_by
+      where n.workspace_id = $1 and n.removed_at is null
+      order by n.created_at, n.id`,
+    [workspaceId],
+  );
+  return result.rows.map(numberToDto);
 }
 
 export async function getWhatsAppConnection(workspaceId: string) {
-  const result = await pool.query<WhatsAppRow>(`select * from public.whatsapp_connection where workspace_id = $1`, [workspaceId]);
-  const row = result.rows[0]!;
-  const qr =
-    row.qr_ciphertext && row.qr_iv && row.qr_tag && row.qr_expires_at && row.qr_expires_at.getTime() > Date.now()
-      ? decryptText(
-          { ciphertext: row.qr_ciphertext, iv: row.qr_iv, tag: row.qr_tag, keyVersion: row.qr_key_version },
-          "whatsapp:pairing-qr",
-        )
-      : null;
-  const [counts, invalid, review, safety] = await Promise.all([
+  const [workspace, numbers, counts, invalid, review, safety, slots] = await Promise.all([
+    pool.query<{ outbound_enabled: boolean; max_numbers: number; send_window_days: number[]; send_window_start: string; send_window_end: string }>(
+      `select outbound_enabled, max_numbers, send_window_days, send_window_start::text, send_window_end::text
+         from public.whatsapp_connection where workspace_id = $1`,
+      [workspaceId],
+    ),
+    listNumbers(workspaceId),
     pool.query<{ today: string; pending: string }>(
       `select
-         count(*) filter (where sent_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')::text as today,
+         count(*) filter (where sent_at >= ${IST_MIDNIGHT})::text as today,
          (select count(*)::text from public.scheduled_actions where workspace_id = $1 and action_type = 'send_whatsapp' and status in ('pending','due','executing','paused')) as pending
        from public.whatsapp_outbound_messages
       where workspace_id = $1 and status = 'sent'`,
@@ -78,43 +167,28 @@ export async function getWhatsAppConnection(workspaceId: string) {
       [workspaceId],
     ),
     loadSafetyMonitoring(pool, workspaceId),
+    // Rule 12: numbers holding (or about to hold) a session-lock client, across every active workspace.
+    pool.query<{ count: number }>(
+      `select count(*)::int as count
+         from public.whatsapp_numbers n join public.workspaces w on w.id = n.workspace_id
+        where w.is_active and n.removed_at is null and n.desired_state in ('connected', 'restart')`,
+    ),
   ]);
-  const warmupDay = warmupDayFor(row.paired_at, new Date());
+  const ws = workspace.rows[0]!;
+  const sessionNumbers = slots.rows[0]!.count;
+  const headroom = sessionSlotHeadroom();
   return {
-    enabled: row.enabled,
-    desiredState: row.desired_state,
-    status: row.status,
-    connectedPhone: row.connected_phone,
-    displayName: row.display_name,
-    qr,
-    qrExpiresAt: row.qr_expires_at?.toISOString() ?? null,
-    lastError: row.last_error,
-    reachoutLock: row.reachout_lock,
-    newChatCap: row.new_chat_cap,
-    workerHeartbeatAt: row.worker_heartbeat_at?.toISOString() ?? null,
-    lastConnectedAt: row.last_connected_at?.toISOString() ?? null,
-    lastDisconnectedAt: row.last_disconnected_at?.toISOString() ?? null,
-    dailyCap: row.daily_cap,
-    minDelaySeconds: row.min_delay_seconds,
-    maxDelaySeconds: row.max_delay_seconds,
+    enabled: ws.outbound_enabled,
+    maxNumbers: ws.max_numbers,
+    sendWindow: { days: ws.send_window_days, start: ws.send_window_start.slice(0, 5), end: ws.send_window_end.slice(0, 5) },
+    numbers,
+    sessionSlots: { numbers: sessionNumbers, headroom, overHeadroom: sessionNumbers > headroom },
     todayCount: Number(counts.rows[0]?.today ?? 0),
     pendingCount: Number(counts.rows[0]?.pending ?? 0),
     invalidPhoneCount: Number(invalid.rows[0]?.count ?? 0),
-    outboundRestricted: Boolean(
-      (row.reachout_lock as { isActive?: boolean } | null)?.isActive ||
-        (row.new_chat_cap as { capping_status?: string; ote_status?: string } | null)?.capping_status === "CAPPED" ||
-        (row.new_chat_cap as { capping_status?: string; ote_status?: string } | null)?.ote_status === "EXHAUSTED",
-    ),
-    // E1 safety: settings (admin-editable) and monitoring.
-    pairedAt: row.paired_at?.toISOString() ?? null,
-    warmupDay,
-    effectiveDailyCap: warmupCap(warmupDay, row.daily_cap),
-    maxNewChatsPerDay: row.max_new_chats_per_day,
-    sendWindow: { days: row.send_window_days, start: row.send_window_start.slice(0, 5), end: row.send_window_end.slice(0, 5) },
-    pause: row.enabled ? null : { reason: row.paused_reason, at: row.paused_at?.toISOString() ?? null, byName: safety.pausedByName },
-    newChatsToday: safety.newChatsToday,
     failures24h: safety.failures24h,
     stops24h: safety.stops24h,
+    newChatsToday: safety.newChatsToday,
     safetyEvents: safety.safetyEvents,
     daily: safety.daily,
     inboundReview: review.rows.map((event) => ({
@@ -128,29 +202,62 @@ export async function getWhatsAppConnection(workspaceId: string) {
   };
 }
 
-export async function updateWhatsAppSettings(actor: Actor, workspaceId: string, input: WhatsAppSafetySettings) {
-  await withTransaction((db) => updateSafetySettings(db, actor, workspaceId, input));
+export async function updateWhatsAppSettings(actor: Actor, workspaceId: string, input: WhatsAppWorkspaceSettings) {
+  await withTransaction((db) => updateWorkspaceSettings(db, actor, workspaceId, input));
   return getWhatsAppConnection(workspaceId);
 }
 
-export async function resumeWhatsApp(actor: Actor, workspaceId: string) {
-  await withTransaction((db) => resumeSending(db, actor, workspaceId));
+async function requireNumber(db: Queryable, workspaceId: string, numberId: string) {
+  const found = await db.query(`select 1 from public.whatsapp_numbers where id = $1 and workspace_id = $2 and removed_at is null`, [numberId, workspaceId]);
+  if (!found.rowCount) throw new NotFoundError("WhatsApp number");
+}
+
+export async function addWhatsAppNumber(actor: Actor, workspaceId: string, input: { label?: string; ownerUserId?: string | null }) {
+  if (input.ownerUserId) await requireActiveUser(input.ownerUserId);
+  await addNumber(actor, workspaceId, input);
   return getWhatsAppConnection(workspaceId);
 }
 
-export async function commandWhatsApp(actor: Actor, workspaceId: string, command: "connect" | "restart" | "logout") {
-  const desired = command === "logout" ? "disconnected" : command === "restart" ? "restart" : "connected";
+export async function updateWhatsAppNumber(actor: Actor, workspaceId: string, numberId: string, input: WhatsAppNumberSettings) {
+  if (input.ownerUserId) await requireActiveUser(input.ownerUserId);
+  const updated = await withTransaction((db) => updateNumberSettings(db, actor, workspaceId, numberId, input));
+  if (!updated) throw new NotFoundError("WhatsApp number");
+  return getWhatsAppConnection(workspaceId);
+}
+
+export async function pauseWhatsAppNumber(actor: Actor, workspaceId: string, numberId: string, pause: boolean) {
   await withTransaction(async (db) => {
-    await db.query(
-      `update public.whatsapp_connection
-          set desired_state = $1, command_version = command_version + 1, updated_by = $2,
-              qr_ciphertext = null, qr_iv = null, qr_tag = null, qr_expires_at = null
-        where workspace_id = $3`,
-      [desired, actor.id, workspaceId],
-    );
-    await recordAdminAudit(db, actor, `connection.whatsapp.${command}`, "whatsapp_connection", workspaceId);
+    await requireNumber(db, workspaceId, numberId);
+    await (pause ? pauseSending : resumeSending)(db, actor, workspaceId, numberId);
   });
   return getWhatsAppConnection(workspaceId);
+}
+
+export async function removeWhatsAppNumber(actor: Actor, workspaceId: string, numberId: string, input: { leads?: "move" | "unassign"; moveToNumberId?: string }) {
+  await removeNumber(actor, workspaceId, numberId, input);
+  return getWhatsAppConnection(workspaceId);
+}
+
+export async function commandWhatsApp(actor: Actor, workspaceId: string, numberId: string, command: "connect" | "restart" | "logout") {
+  const desired = command === "logout" ? "disconnected" : command === "restart" ? "restart" : "connected";
+  await withTransaction(async (db) => {
+    const updated = await db.query(
+      `update public.whatsapp_numbers
+          set desired_state = $1, command_version = command_version + 1, updated_by = $2, updated_at = now(),
+              qr_ciphertext = null, qr_iv = null, qr_tag = null, qr_expires_at = null
+        where id = $3 and workspace_id = $4 and removed_at is null`,
+      [desired, actor.id, numberId, workspaceId],
+    );
+    if (!updated.rowCount) throw new NotFoundError("WhatsApp number");
+    await recordAdminAudit(db, actor, `connection.whatsapp.${command}`, "whatsapp_number", numberId);
+  });
+  return getWhatsAppConnection(workspaceId);
+}
+
+/** A number's owner must be an active CRM user (rule 2; users are not workspace-scoped). */
+async function requireActiveUser(userId: string) {
+  const found = await pool.query(`select 1 from public.profiles where id = $1 and is_active`, [userId]);
+  if (!found.rowCount) throw new ValidationError("The owner must be an active CRM user.");
 }
 
 interface GoogleCalendarRow {

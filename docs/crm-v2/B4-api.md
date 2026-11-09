@@ -223,21 +223,8 @@ What a matched WhatsApp reply says, never the text or a quote of it (migration 0
 
 Migration 041. The send-time rules live in `Backend/src/domain/whatsappSafety.ts` (`decideSend`).
 
-- `GET /connections/whatsapp/settings` (every CRM user) adds:
-  `pairedAt` (null = paired before E1, fully warmed), `warmupDay` (1 = pairing day, IST; null), `effectiveDailyCap`
-  (= min(daily cap, warm-up cap 20/40/80 for days 1–3/4–7/8–14)), `maxNewChatsPerDay`, `sendWindow { days (ISO, 1 = Mon),
-  start, end ("HH:MM" IST) }`, `pause` (null while `enabled`, else `{ reason, at, byName }`; `byName` null = automatic or
-  never set), `newChatsToday`, `failures24h` (WhatsApp send failures; "not on WhatsApp" is not one), `stops24h`
-  (`asked_to_stop` replies), `safetyEvents` (last 20: `{ kind: send_failed|reconnect_failed|disconnected|restricted|paused|
-  resumed, detail, at }`), `daily` (last 14 IST days, newest first: `{ date, sent, failed, stops }`). Existing fields
-  unchanged (`todayCount` = sent today).
-- `PUT /connections/whatsapp/settings` — **admin only** (403 otherwise). Body `{ enabled, dailyCap (1–10000),
-  minDelaySeconds? (1–300), maxDelaySeconds? (1–600, ≥ min), maxNewChatsPerDay? (0–1000), sendWindow? { days (1–7 items),
-  start < end } }` (omitted optional fields keep their value; 400 on invalid). `enabled` true → false records a pause
-  "Paused by <admin>."; false → true is a resume. Returns the GET body.
-- `POST /connections/whatsapp/resume` — **admin only**. `enabled` = true, pause cleared, `resumed_at` = now (auto-pause
-  signals count only after it). Returns the GET body.
-- `POST /connections/whatsapp/connect|restart|logout` unchanged (every CRM user).
+E4a (migration 054) replaced the single connection with **numbers**; see §7s. The safety fields below are per number
+(`numbers[]`) except the send window, the master switch and the monitoring, which stay per workspace.
 - `POST /leads/:id/contactability` (old route, unchanged otherwise): changing a WhatsApp `opted_out` to any other status is
   **admin only** (403 "Only an admin can clear a WhatsApp opt-out.") and needs a non-blank `reason` (400); the timeline row
   is "WhatsApp opt-out cleared by <admin>: <reason>". Every other contactability change stays open to every CRM user.
@@ -512,6 +499,50 @@ sentAt, sendError, createdAt, canSend }`. Never the lead's reply text.
   `{ key, label, messagesSent, emailsSent, countedOpens, replies, positiveReplies, meetingsBooked, dealsCreated, won }`. Website =
   sources `website` + `inbound_form`. Reply → answer = the first message we sent after a matched reply or its reply task done,
   whichever is first. Messages count only from E3b-2b on (no backfill).
+
+## 7s. Several WhatsApp numbers — E4a
+
+Migration 054. One row per number in `whatsapp_numbers` (own QR pairing, Baileys auth, socket, session-lock client,
+`paired_at` / warm-up, daily cap, spacing, new-chat limit, pause); `whatsapp_connection` keeps the workspace's send window,
+`outbound_enabled` (master switch for every number) and `max_numbers` (1–20, default 5). A contact's **sticky number**
+(`leads.whatsapp_number_id`) is set on its first send (any source; `domain/whatsappNumbers.ts`: the owner's usable number with
+room today, else the most room after warm-up → fewest new chats → oldest pairing; none → the send waits, no attempt burned) or
+on its first matched inbound, whichever is first, and never changes automatically: a paused / disconnected sticky number makes
+its contacts' sends wait. Inbound on another number is recorded and handled as usual with `other_number = true`.
+
+- `GET /connections/whatsapp/settings` (every CRM user): `{ enabled (master switch), maxNumbers, sendWindow { days, start, end },
+  numbers[], sessionSlots { numbers, headroom, overHeadroom }, todayCount, pendingCount, invalidPhoneCount, newChatsToday,
+  failures24h, stops24h, safetyEvents[] ({ kind, detail, at, numberLabel }), daily[], inboundReview[] }`. Each `numbers[]` item
+  (not removed, oldest first): `{ id, label, ownerUserId, ownerName, enabled, desiredState, status, connectedPhone, displayName,
+  qr (only while valid), qrExpiresAt, lastError, workerHeartbeatAt, lastConnectedAt, lastDisconnectedAt, outboundRestricted,
+  pairedAt, warmupDay, dailyCap, effectiveDailyCap, minDelaySeconds, maxDelaySeconds, maxNewChatsPerDay, sentToday,
+  newChatsToday, leadCount, queuedSends (prepared rows), pause }`. `sessionSlots.numbers` = numbers of active workspaces that
+  want a session (desired connected / restart, not removed) across **all** workspaces; `headroom` = 15 − 2 × DB_SESSION_POOL_MAX
+  − 3 (8 with the defaults); `overHeadroom` when numbers > headroom.
+- `PUT /connections/whatsapp/settings` — **admin only**. Body `{ enabled, maxNumbers? (1–20), sendWindow? { days, start < end } }`
+  (strict; 400 otherwise). `enabled` is the master switch: off = every number's sends wait. Returns the GET body.
+- `POST /connections/whatsapp/numbers` — **admin only**. Body `{ label? (1–60), ownerUserId? }`; label default `#<n>`; the new
+  number asks for pairing (desired connected), the worker shows its QR within a tick. **409** at `maxNumbers`. **201** + GET body.
+- `PUT /connections/whatsapp/numbers/:numberId` — **admin only**. Body (all optional, strict) `{ label, ownerUserId (null clears;
+  must be an active user, 400), dailyCap (1–10000), minDelaySeconds (1–300), maxDelaySeconds (1–600, ≥ min), maxNewChatsPerDay
+  (0–1000) }`. 404 for a removed / other workspace's number.
+- `POST /connections/whatsapp/numbers/:numberId/pause|resume` — **admin only**. Pause = "Paused by <admin>."; resume sets
+  `resumed_at` (auto-pause signals count only after it). Auto-pause notifications name the number ("WhatsApp number #2 paused
+  automatically").
+- `POST /connections/whatsapp/numbers/:numberId/connect|restart|logout` — every CRM user (as before, now per number).
+- `DELETE /connections/whatsapp/numbers/:numberId` — **admin only**, rule 10. Body `{ leads?: "move" | "unassign",
+  moveToNumberId? }`. With queued (prepared) sends and no `leads` → **409** (`details.queuedSends`). `move` (needs
+  `moveToNumberId`, 400) moves each contact as `POST /contacts/:id/whatsapp-number` does (timeline event each); otherwise its
+  contacts are left without a number (they get one by the rule above at their next send). Soft delete (`removed_at`; history
+  keeps the id), auth state deleted, the worker logs it out. **409** for the workspace's last number.
+- `POST /contacts/:id/whatsapp-number` — **admin only**, rule 6. Body `{ numberId, reason (1–500) }`. 400 for a blank reason,
+  the same number or one not in this workspace. Moves the contact and its prepared WhatsApp rows; timeline "WhatsApp number
+  changed to <label>" (detail = reason, actor = the admin); audit `lead.whatsapp_number_changed`. Returns `{ whatsappNumber:
+  { id, label } }`.
+- `GET /contacts/:id` adds `whatsappNumber: { id, label } | null`.
+- `GET /analytics/funnel?groupBy=number` groups by `message_facts.whatsapp_number_id`, labelled by the number's label.
+- No WhatsApp test send exists (only the email test); the old `/connections/whatsapp/resume` and `/connect|restart|logout`
+  routes were replaced by the per-number ones.
 
 ## 8. Performance (B4 check)
 

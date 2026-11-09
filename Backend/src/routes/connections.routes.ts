@@ -126,23 +126,18 @@ connectionsRouter.get(
   "/whatsapp/settings",
   asyncHandler(async (req, res) => res.json(await connections.getWhatsAppConnection(req.workspaceId!))),
 );
+// E4a: workspace-level WhatsApp settings — the master switch for every number, the send window, max numbers.
 const whatsappSettingsSchema = z
   .object({
     enabled: z.boolean(),
-    dailyCap: z.number().int().min(1).max(10_000),
-    minDelaySeconds: z.number().int().min(1).max(300).optional(),
-    maxDelaySeconds: z.number().int().min(1).max(600).optional(),
-    maxNewChatsPerDay: z.number().int().min(0).max(1000).optional(),
+    maxNumbers: z.number().int().min(1).max(20).optional(),
     sendWindow: z
       .object({ days: z.array(z.number().int().min(1).max(7)).min(1).max(7), start: hhmm, end: hhmm })
       .refine((w) => w.start < w.end, { message: "The send window must start before it ends.", path: ["end"] })
       .optional(),
   })
-  .refine((s) => s.minDelaySeconds === undefined || s.maxDelaySeconds === undefined || s.minDelaySeconds <= s.maxDelaySeconds, {
-    message: "The minimum spacing can't be more than the maximum.",
-    path: ["maxDelaySeconds"],
-  });
-// E1: WhatsApp safety settings, the emergency switch and resume are admin-only; connect/restart/logout stay open.
+  .strict();
+// E1/E4a: WhatsApp settings, numbers, pause and resume are admin-only; connect/restart/logout of a number stay open.
 connectionsRouter.put(
   "/whatsapp/settings",
   requireAdmin,
@@ -150,16 +145,59 @@ connectionsRouter.put(
     res.json(await connections.updateWhatsAppSettings(req.actor!, req.workspaceId!, parseBody(whatsappSettingsSchema, req.body))),
   ),
 );
-connectionsRouter.post(
-  "/whatsapp/resume",
-  requireAdmin,
-  asyncHandler(async (req, res) => res.json(await connections.resumeWhatsApp(req.actor!, req.workspaceId!))),
-);
 
+connectionsRouter.param("numberId", uuidParam("WhatsApp number"));
+const numberLabel = z.string().trim().min(1, "The label can't be blank.").max(60);
+const addNumberSchema = z.object({ label: numberLabel.optional(), ownerUserId: z.string().uuid().nullable().optional() }).strict();
+const numberSettingsSchema = z
+  .object({
+    label: numberLabel.optional(),
+    ownerUserId: z.string().uuid().nullable().optional(),
+    dailyCap: z.number().int().min(1).max(10_000).optional(),
+    minDelaySeconds: z.number().int().min(1).max(300).optional(),
+    maxDelaySeconds: z.number().int().min(1).max(600).optional(),
+    maxNewChatsPerDay: z.number().int().min(0).max(1000).optional(),
+  })
+  .strict()
+  .refine((s) => s.minDelaySeconds === undefined || s.maxDelaySeconds === undefined || s.minDelaySeconds <= s.maxDelaySeconds, {
+    message: "The minimum spacing can't be more than the maximum.",
+    path: ["maxDelaySeconds"],
+  });
+const removeNumberSchema = z
+  .object({ leads: z.enum(["move", "unassign"]).optional(), moveToNumberId: z.string().uuid().optional() })
+  .strict()
+  .refine((s) => s.leads !== "move" || s.moveToNumberId, { message: "Choose the number to move the contacts to.", path: ["moveToNumberId"] });
+
+connectionsRouter.post(
+  "/whatsapp/numbers",
+  requireAdmin,
+  asyncHandler(async (req, res) => res.status(201).json(await connections.addWhatsAppNumber(req.actor!, req.workspaceId!, parseBody(addNumberSchema, req.body ?? {})))),
+);
+connectionsRouter.put(
+  "/whatsapp/numbers/:numberId",
+  requireAdmin,
+  asyncHandler(async (req, res) =>
+    res.json(await connections.updateWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, parseBody(numberSettingsSchema, req.body))),
+  ),
+);
+connectionsRouter.delete(
+  "/whatsapp/numbers/:numberId",
+  requireAdmin,
+  asyncHandler(async (req, res) =>
+    res.json(await connections.removeWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, parseBody(removeNumberSchema, req.body ?? {}))),
+  ),
+);
+for (const action of ["pause", "resume"] as const) {
+  connectionsRouter.post(
+    `/whatsapp/numbers/:numberId/${action}`,
+    requireAdmin,
+    asyncHandler(async (req, res) => res.json(await connections.pauseWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, action === "pause"))),
+  );
+}
 for (const command of ["connect", "restart", "logout"] as const) {
   connectionsRouter.post(
-    `/whatsapp/${command}`,
-    asyncHandler(async (req, res) => res.json(await connections.commandWhatsApp(req.actor!, req.workspaceId!, command))),
+    `/whatsapp/numbers/:numberId/${command}`,
+    asyncHandler(async (req, res) => res.json(await connections.commandWhatsApp(req.actor!, req.workspaceId!, req.params.numberId!, command))),
   );
 }
 

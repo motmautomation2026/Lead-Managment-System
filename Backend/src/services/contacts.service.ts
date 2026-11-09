@@ -30,6 +30,7 @@ import {
 import { getLeadRowOr404, leadToDto, loadNextActions, updateLead } from "./leads.service.js";
 import { getLeadNextAction } from "./tasks.service.js";
 import { getProfile } from "./profiles.service.js";
+import { leadNumber } from "./whatsappNumbers.service.js";
 import { enrollLeads } from "./agentStatus.service.js";
 
 const AGENT_STATUSES = ["none", "active", "paused", "handed_off", "stopped"] as const satisfies readonly AgentStatus[];
@@ -153,7 +154,7 @@ export const countContacts = (db: Queryable, actor: Actor, workspaceId: string, 
 /** The Lead DTO plus its company and deals (newest first). The DTO's company text moves to `companyText`. */
 export async function getContact(db: Queryable, workspaceId: string, id: string) {
   const row = await getLeadRowOr404(db, workspaceId, id);
-  const [nextAction, company, deals] = await Promise.all([
+  const [nextAction, company, deals, whatsappNumber] = await Promise.all([
     getLeadNextAction(db, id),
     row.company_id
       ? db.query<{ id: string; name: string; domain: string | null }>(`select id, name, domain from public.companies where id = $1`, [row.company_id])
@@ -163,9 +164,11 @@ export async function getContact(db: Queryable, workspaceId: string, id: string)
          from public.deals where lead_id = $1 and workspace_id = $2 order by updated_at desc, id desc`,
       [id, workspaceId],
     ),
+    leadNumber(db, id),
   ]);
   const dto = leadToDto(row, nextAction);
-  return { ...dto, companyText: dto.company, company: company?.rows[0] ?? null, deals: deals.rows };
+  // E4a: the contact's sticky WhatsApp number (null until the first send / inbound).
+  return { ...dto, companyText: dto.company, company: company?.rows[0] ?? null, deals: deals.rows, whatsappNumber };
 }
 
 export const contactBulkSchema = z
