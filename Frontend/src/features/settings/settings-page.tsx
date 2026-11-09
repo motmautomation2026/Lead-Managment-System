@@ -24,6 +24,7 @@ import { SETTINGS_TABS, settingsSearchSchema, type SettingsTab } from "./setting
 import { UsersPanel } from "./users-panel";
 import { ProfilePanel } from "./profile-panel";
 import { WhatsAppSafety } from "./whatsapp-safety";
+import { WhatsAppNumbers } from "./whatsapp-numbers";
 import { EmailPanel } from "./email-settings";
 
 /**
@@ -119,23 +120,10 @@ export function SettingsPage() {
 }
 
 function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
-  const client = useQueryClient();
   const query = useQuery({
     queryKey: keys.connection(workspaceId, "whatsapp"),
     queryFn: ({ signal }) => backend.connections.whatsapp.get(signal),
     refetchInterval: 5_000,
-  });
-  const [logoutOpen, setLogoutOpen] = useState(false);
-  const refresh = () =>
-    void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "whatsapp") });
-  const command = useMutation({
-    mutationFn: backend.connections.whatsapp.command,
-    onSuccess: () => {
-      setLogoutOpen(false);
-      refresh();
-      toast.success("WhatsApp command queued.");
-    },
-    onError: (error) => toast.error(messageFromError(error)),
   });
   const data = query.data;
   return (
@@ -145,8 +133,8 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
           <Bot /> WhatsApp · Baileys
         </CardTitle>
         <CardDescription>
-          Unofficial WhatsApp Web connection. Use an opted-in, dedicated business account for this
-          workspace.
+          Unofficial WhatsApp Web connection. Use opted-in, dedicated business accounts for this
+          workspace; each number is paired with its own QR code.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -165,52 +153,10 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
           )
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Metric label="Status" value={data.status.replaceAll("_", " ")} />
-              <Metric
-                label="Connected account"
-                value={data.displayName || data.connectedPhone || "Not paired"}
-              />
-              <Metric label="Pending" value={String(data.pendingCount)} />
-            </div>
-            {data.lastError && <Notice danger>{data.lastError}</Notice>}
-            {data.outboundRestricted && (
-              <Notice danger>
-                WhatsApp has reported account reachout or new-chat restrictions. New sends are
-                halted automatically.
-              </Notice>
-            )}
-            {data.qr && (
-              <div className="flex flex-col items-center rounded-lg border bg-white p-5 text-black">
-                <QRCodeSVG value={data.qr} size={220} level="M" />
-                <p className="mt-3 text-center text-xs">
-                  Scan from WhatsApp → Linked devices. This QR expires shortly.
-                </p>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => command.mutate("connect")}
-                disabled={command.isPending}
-              >
-                Connect / get QR
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => command.mutate("restart")}
-                disabled={command.isPending}
-              >
-                <RefreshCw /> Restart
-              </Button>
-              <Button variant="destructive" className="ml-auto" onClick={() => setLogoutOpen(true)}>
-                Log out session
-              </Button>
-            </div>
+            <WhatsAppNumbers workspaceId={workspaceId} data={data} />
             <div className="text-xs text-muted-foreground">
-              Worker heartbeat:{" "}
-              {data.workerHeartbeatAt ? new Date(data.workerHeartbeatAt).toLocaleString() : "Never"}{" "}
-              · Invalid existing phone values: {data.invalidPhoneCount}
+              Pending workflow messages: {data.pendingCount} · Invalid existing phone values:{" "}
+              {data.invalidPhoneCount}
             </div>
             <WhatsAppSafety workspaceId={workspaceId} data={data} />
             {data.inboundReview.length > 0 && (
@@ -233,15 +179,6 @@ function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
           </>
         )}
       </CardContent>
-      <ConfirmDialog
-        open={logoutOpen}
-        onOpenChange={setLogoutOpen}
-        title="Log out this workspace's WhatsApp session?"
-        description="The encrypted Baileys credentials and Signal keys will be removed. Pairing will be required again."
-        confirmLabel="Log out"
-        disabled={command.isPending}
-        onConfirm={() => command.mutate("logout")}
-      />
     </Card>
   );
 }

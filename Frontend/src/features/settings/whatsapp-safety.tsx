@@ -1,17 +1,14 @@
-import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldAlert } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { backend, type WhatsAppConnection, type WhatsAppSafetyInput } from "@/lib/backend-client";
+import { backend, type WhatsAppConnection, type WhatsAppSettingsInput } from "@/lib/backend-client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { keys, messageFromError, useIsAdmin } from "@/store";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -31,31 +28,21 @@ const whole = (min: number, max: number) =>
 const safetySchema = z
   .object({
     enabled: z.boolean(),
-    dailyCap: whole(1, 10_000),
-    minDelaySeconds: whole(1, 300),
-    maxDelaySeconds: whole(1, 600),
-    maxNewChatsPerDay: whole(0, 1000),
+    maxNumbers: whole(1, 20),
     sendWindow: z.object({
       days: z.array(z.number()).min(1, "Pick at least one day."),
       start: z.string().regex(/^\d{2}:\d{2}$/, "Pick a time."),
       end: z.string().regex(/^\d{2}:\d{2}$/, "Pick a time."),
     }),
   })
-  .refine((v) => v.minDelaySeconds <= v.maxDelaySeconds, {
-    message: "The minimum can't be more than the maximum.",
-    path: ["maxDelaySeconds"],
-  })
   .refine((v) => v.sendWindow.start < v.sendWindow.end, {
     message: "The window must start before it ends.",
     path: ["sendWindow", "end"],
   });
 
-const formValues = (data: WhatsAppConnection): WhatsAppSafetyInput => ({
+const formValues = (data: WhatsAppConnection): WhatsAppSettingsInput => ({
   enabled: data.enabled,
-  dailyCap: data.dailyCap,
-  minDelaySeconds: data.minDelaySeconds,
-  maxDelaySeconds: data.maxDelaySeconds,
-  maxNewChatsPerDay: data.maxNewChatsPerDay,
+  maxNumbers: data.maxNumbers,
   sendWindow: data.sendWindow,
 });
 
@@ -63,7 +50,10 @@ function windowText({ days, start, end }: WhatsAppConnection["sendWindow"]) {
   return `${days.map((d) => DAYS[d - 1]).join(", ")} · ${start}–${end} IST`;
 }
 
-/** Settings → Workspace → WhatsApp → Safety (E1): limits, pause/resume and monitoring. */
+/**
+ * Settings → Workspace → WhatsApp → Safety (E1, E4a): the workspace's master switch, send window
+ * and max numbers, and monitoring across its numbers. Per-number limits live on each number's card.
+ */
 export function WhatsAppSafety({
   workspaceId,
   data,
@@ -73,23 +63,8 @@ export function WhatsAppSafety({
 }) {
   const isAdmin = useIsAdmin();
   const client = useQueryClient();
-  const [resumeOpen, setResumeOpen] = useState(false);
   const store = (next: WhatsAppConnection) =>
     client.setQueryData(keys.connection(workspaceId, "whatsapp"), next);
-  const resume = useMutation({
-    mutationFn: backend.connections.whatsapp.resume,
-    onSuccess: (next) => {
-      setResumeOpen(false);
-      store(next);
-      toast.success("WhatsApp sending resumed.");
-    },
-    onError: (error) => toast.error(messageFromError(error)),
-  });
-
-  const capText =
-    data.warmupDay !== null && data.effectiveDailyCap < data.dailyCap
-      ? `${data.todayCount} / ${data.effectiveDailyCap} (warm-up day ${data.warmupDay})`
-      : `${data.todayCount} / ${data.effectiveDailyCap}`;
 
   return (
     <section aria-labelledby="whatsapp-safety" className="space-y-4 border-t pt-4">
@@ -98,40 +73,24 @@ export function WhatsAppSafety({
           Safety
         </h3>
         <p className="text-xs text-muted-foreground">
-          Slower, capped sending keeps this number from being restricted. Workflow messages go out
-          only inside the send window; a rep's proposal and meeting messages are not held by it.
+          Slower, capped sending keeps each number from being restricted. Workflow and AI messages
+          go out only inside the send window; a rep's proposal and meeting messages are not held by
+          it.
         </p>
       </div>
 
-      {data.pause && (
+      {!data.enabled && (
         <div
           role="alert"
-          className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
-          <div className="flex gap-2">
-            <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <div>
-              <div className="font-medium">WhatsApp sending is paused</div>
-              <div>{data.pause.reason ?? "Outbound sending is turned off."}</div>
-              {data.pause.at && (
-                <div className="text-xs">
-                  {new Date(data.pause.at).toLocaleString()}
-                  {data.pause.byName ? ` · by ${data.pause.byName}` : " · automatically"}
-                </div>
-              )}
-            </div>
-          </div>
-          {isAdmin && (
-            <Button size="sm" variant="outline" onClick={() => setResumeOpen(true)}>
-              Resume sending
-            </Button>
-          )}
+          WhatsApp outbound is switched off for this workspace: no number sends.
         </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Sent today" value={capText} />
-        <Stat label="New chats today" value={`${data.newChatsToday} / ${data.maxNewChatsPerDay}`} />
+        <Stat label="Sent today (all numbers)" value={String(data.todayCount)} />
+        <Stat label="New chats today" value={String(data.newChatsToday)} />
         <Stat label="Send failures (24 h)" value={String(data.failures24h)} />
         <Stat label="STOP replies (24 h)" value={String(data.stops24h)} />
       </div>
@@ -140,14 +99,9 @@ export function WhatsAppSafety({
         <SafetyForm key={workspaceId} data={data} onSaved={store} />
       ) : (
         <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-          <ReadOnly label="Outbound" value={data.enabled ? "On" : "Off"} />
-          <ReadOnly
-            label="Spacing between sends"
-            value={`${data.minDelaySeconds}–${data.maxDelaySeconds} s`}
-          />
-          <ReadOnly label="Daily cap (IST)" value={String(data.dailyCap)} />
-          <ReadOnly label="New chats per day" value={String(data.maxNewChatsPerDay)} />
+          <ReadOnly label="Outbound (all numbers)" value={data.enabled ? "On" : "Off"} />
           <ReadOnly label="Send window" value={windowText(data.sendWindow)} />
+          <ReadOnly label="Max numbers" value={String(data.maxNumbers)} />
           <p className="text-xs text-muted-foreground sm:col-span-2">
             Only admins can change these.
           </p>
@@ -160,10 +114,13 @@ export function WhatsAppSafety({
           <ul className="space-y-1">
             {data.safetyEvents.map((event) => (
               <li
-                key={`${event.at}-${event.kind}`}
+                key={`${event.at}-${event.kind}-${event.numberLabel ?? ""}`}
                 className="flex flex-wrap justify-between gap-x-2 border-t pt-1 text-xs"
               >
-                <span className="font-medium">{EVENT_LABELS[event.kind]}</span>
+                <span className="font-medium">
+                  {event.numberLabel ? `${event.numberLabel} · ` : ""}
+                  {EVENT_LABELS[event.kind]}
+                </span>
                 <span className="min-w-0 break-words text-muted-foreground">
                   {event.detail ? `${event.detail} · ` : ""}
                   {new Date(event.at).toLocaleString()}
@@ -195,16 +152,6 @@ export function WhatsAppSafety({
           ))}
         </tbody>
       </table>
-
-      <ConfirmDialog
-        open={resumeOpen}
-        onOpenChange={setResumeOpen}
-        title="Resume WhatsApp sending?"
-        description="Queued messages will start going out again, with the usual spacing, caps and send window. Check why it was paused first."
-        confirmLabel="Resume sending"
-        disabled={resume.isPending}
-        onConfirm={() => resume.mutate()}
-      />
     </section>
   );
 }
@@ -216,7 +163,7 @@ function SafetyForm({
   data: WhatsAppConnection;
   onSaved: (next: WhatsAppConnection) => void;
 }) {
-  const form = useForm<WhatsAppSafetyInput>({
+  const form = useForm<WhatsAppSettingsInput>({
     resolver: zodResolver(safetySchema),
     defaultValues: formValues(data),
   });
@@ -226,40 +173,32 @@ function SafetyForm({
       const next = await backend.connections.whatsapp.update(values);
       onSaved(next);
       form.reset(formValues(next));
-      toast.success("WhatsApp safety settings saved.");
+      toast.success("WhatsApp settings saved.");
     } catch (error) {
       toast.error(messageFromError(error));
     }
   });
-  const number = (
-    name: "dailyCap" | "minDelaySeconds" | "maxDelaySeconds" | "maxNewChatsPerDay",
-    label: string,
-  ) => (
-    <div className="space-y-1">
-      <Label htmlFor={`wa-${name}`} className="text-xs">
-        {label}
-      </Label>
-      <Input
-        id={`wa-${name}`}
-        type="number"
-        inputMode="numeric"
-        aria-invalid={Boolean(errors[name])}
-        {...form.register(name)}
-      />
-      {errors[name] && <p className="text-xs text-destructive">{errors[name]?.message}</p>}
-    </div>
-  );
-
   return (
     <form className="space-y-4" onSubmit={(e) => void save(e)} noValidate>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {number("minDelaySeconds", "Min spacing (seconds)")}
-        {number("maxDelaySeconds", "Max spacing (seconds)")}
-        {number("dailyCap", "Daily cap (IST)")}
-        {number("maxNewChatsPerDay", "New chats per day")}
+      <div className="max-w-xs space-y-1">
+        <Label htmlFor="wa-maxNumbers" className="text-xs">
+          Max WhatsApp numbers
+        </Label>
+        <Input
+          id="wa-maxNumbers"
+          type="number"
+          inputMode="numeric"
+          aria-invalid={Boolean(errors.maxNumbers)}
+          {...form.register("maxNumbers")}
+        />
+        {errors.maxNumbers && (
+          <p className="text-xs text-destructive">{errors.maxNumbers.message}</p>
+        )}
       </div>
       <fieldset className="space-y-2">
-        <legend className="text-xs font-medium">Send window for workflow messages (IST)</legend>
+        <legend className="text-xs font-medium">
+          Send window for workflow and AI messages (IST, all numbers)
+        </legend>
         <Controller
           control={form.control}
           name="sendWindow.days"
@@ -322,14 +261,14 @@ function SafetyForm({
               <Switch
                 checked={field.value}
                 onCheckedChange={field.onChange}
-                aria-label="Outbound enabled"
+                aria-label="Outbound enabled (all numbers)"
               />
-              Outbound enabled
+              Outbound enabled (all numbers)
             </label>
           )}
         />
         <Button type="submit" disabled={form.formState.isSubmitting}>
-          Save safety settings
+          Save WhatsApp settings
         </Button>
       </div>
     </form>

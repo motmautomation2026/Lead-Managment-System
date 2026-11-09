@@ -964,16 +964,29 @@ export interface WhatsAppSendWindow {
   end: string;
 }
 
-export interface WhatsAppSafetyInput {
+/** Workspace-level WhatsApp settings (E4a): master switch for all numbers, send window, max numbers. */
+export interface WhatsAppSettingsInput {
   enabled: boolean;
-  dailyCap: number;
-  minDelaySeconds: number;
-  maxDelaySeconds: number;
-  maxNewChatsPerDay: number;
+  maxNumbers: number;
   sendWindow: WhatsAppSendWindow;
 }
 
-export interface WhatsAppConnection {
+/** One number's admin settings (E4a). */
+export interface WhatsAppNumberInput {
+  label?: string;
+  ownerUserId?: string | null;
+  dailyCap?: number;
+  minDelaySeconds?: number;
+  maxDelaySeconds?: number;
+  maxNewChatsPerDay?: number;
+}
+
+/** E4a: one WhatsApp number of the workspace (own pairing, warm-up, caps, spacing and pause). */
+export interface WhatsAppNumber {
+  id: string;
+  label: string;
+  ownerUserId: string | null;
+  ownerName: string | null;
   enabled: boolean;
   desiredState: string;
   status: string;
@@ -982,27 +995,39 @@ export interface WhatsAppConnection {
   qr: string | null;
   qrExpiresAt: string | null;
   lastError: string | null;
-  reachoutLock: unknown;
-  newChatCap: unknown;
   workerHeartbeatAt: string | null;
   lastConnectedAt: string | null;
   lastDisconnectedAt: string | null;
-  dailyCap: number;
-  minDelaySeconds: number;
-  maxDelaySeconds: number;
-  todayCount: number;
-  pendingCount: number;
-  invalidPhoneCount: number;
   outboundRestricted: boolean;
-  /** E1 safety settings (admin-editable) and monitoring. */
   pairedAt: string | null;
   /** Day since pairing (1 = pairing day, IST); null = paired before E1, fully warmed up. */
   warmupDay: number | null;
+  dailyCap: number;
   effectiveDailyCap: number;
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
   maxNewChatsPerDay: number;
-  sendWindow: WhatsAppSendWindow;
-  /** Set while outbound is off (`enabled` false). */
+  sentToday: number;
+  newChatsToday: number;
+  /** Contacts whose sticky number this is. */
+  leadCount: number;
+  /** Prepared (claimed, not yet sent) messages on this number. */
+  queuedSends: number;
+  /** Set while this number's outbound is off (`enabled` false). */
   pause: { reason: string | null; at: string | null; byName: string | null } | null;
+}
+
+export interface WhatsAppConnection {
+  /** The workspace master switch for every number. */
+  enabled: boolean;
+  maxNumbers: number;
+  sendWindow: WhatsAppSendWindow;
+  numbers: WhatsAppNumber[];
+  /** Rule 12: numbers holding a session-pooler slot, across all workspaces, vs the headroom. */
+  sessionSlots: { numbers: number; headroom: number; overHeadroom: boolean };
+  todayCount: number;
+  pendingCount: number;
+  invalidPhoneCount: number;
   newChatsToday: number;
   failures24h: number;
   stops24h: number;
@@ -1010,6 +1035,7 @@ export interface WhatsAppConnection {
     kind: "send_failed" | "reconnect_failed" | "disconnected" | "restricted" | "paused" | "resumed";
     detail: string | null;
     at: string;
+    numberLabel: string | null;
   }[];
   /** Last 14 IST days, newest first. */
   daily: { date: string; sent: number; failed: number; stops: number }[];
@@ -1022,6 +1048,8 @@ export interface WhatsAppConnection {
     disposition: "unmatched" | "ambiguous";
   }[];
 }
+
+export type RemoveWhatsAppNumberInput = { leads?: "move" | "unassign"; moveToNumberId?: string };
 
 export interface GoogleCalendarConnection {
   configured: boolean;
@@ -1051,6 +1079,13 @@ export const backend = {
     count: (params: Omit<ContactListParams, "sort">, signal?: AbortSignal) =>
       get<{ count: number }>(listQuery("/contacts/count", params), signal),
     get: (id: string, signal?: AbortSignal) => get<ContactDetail>(`/contacts/${id}`, signal),
+    /** E4a rule 6 — admin only: move the contact to another WhatsApp number (reason required). */
+    changeWhatsAppNumber: (id: string, input: { numberId: string; reason: string }) =>
+      send<{ whatsappNumber: { id: string; label: string } }>(
+        "POST",
+        `/contacts/${id}/whatsapp-number`,
+        input,
+      ),
     /** At most 100 ids; `enrollAi` is admin only. */
     bulk: (input: { ids: string[]; action: "assignOwner" | "enrollAi"; ownerId?: string }) =>
       send<{ data: BulkResult[] }>("POST", "/contacts/bulk", input),
@@ -1237,11 +1272,24 @@ export const backend = {
     whatsapp: {
       get: (signal?: AbortSignal) =>
         get<WhatsAppConnection>("/connections/whatsapp/settings", signal),
-      update: (input: WhatsAppSafetyInput) =>
+      update: (input: WhatsAppSettingsInput) =>
         send<WhatsAppConnection>("PUT", "/connections/whatsapp/settings", input),
-      resume: () => send<WhatsAppConnection>("POST", "/connections/whatsapp/resume"),
-      command: (command: "connect" | "restart" | "logout") =>
-        send<WhatsAppConnection>("POST", `/connections/whatsapp/${command}`),
+      addNumber: (input: { label?: string; ownerUserId?: string | null } = {}) =>
+        send<WhatsAppConnection>("POST", "/connections/whatsapp/numbers", input),
+      updateNumber: (id: string, input: WhatsAppNumberInput) =>
+        send<WhatsAppConnection>("PUT", `/connections/whatsapp/numbers/${id}`, input),
+      pauseNumber: (id: string, pause: boolean) =>
+        send<WhatsAppConnection>(
+          "POST",
+          `/connections/whatsapp/numbers/${id}/${pause ? "pause" : "resume"}`,
+        ),
+      removeNumber: (id: string, input: RemoveWhatsAppNumberInput = {}) =>
+        request<WhatsAppConnection>(`/connections/whatsapp/numbers/${id}`, {
+          method: "DELETE",
+          body: JSON.stringify(input),
+        }),
+      command: (numberId: string, command: "connect" | "restart" | "logout") =>
+        send<WhatsAppConnection>("POST", `/connections/whatsapp/numbers/${numberId}/${command}`),
     },
     googleCalendar: {
       get: (signal?: AbortSignal) =>

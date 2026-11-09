@@ -62,6 +62,8 @@ export type ContactDetail = Omit<Lead, "company"> & {
   companyText: string;
   company: { id: string; name: string; domain: string | null } | null;
   deals: ContactDeal[];
+  /** E4a: the sticky WhatsApp number (null until the first message either way). */
+  whatsappNumber?: { id: string; label: string } | null;
 };
 
 /** List params exactly as the API takes them (saved views store this shape). */

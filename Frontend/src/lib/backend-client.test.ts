@@ -86,9 +86,9 @@ describe("backend client", () => {
     ],
     [
       "WhatsApp connect",
-      () => backend.connections.whatsapp.command("connect"),
+      () => backend.connections.whatsapp.command("n-1", "connect"),
       "POST",
-      "/api/v1/connections/whatsapp/connect",
+      "/api/v1/connections/whatsapp/numbers/n-1/connect",
     ],
     [
       "assignment rules replace",

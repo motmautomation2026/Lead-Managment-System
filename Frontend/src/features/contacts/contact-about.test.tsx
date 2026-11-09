@@ -93,3 +93,24 @@ describe("ContactAbout WhatsApp opt-out (E1 rule 8)", () => {
     expect(screen.queryByRole("button", { name: "Clear opt-out" })).not.toBeInTheDocument();
   });
 });
+
+describe("ContactAbout WhatsApp number (E4a)", () => {
+  it("shows the sticky number; only an admin gets Move", () => {
+    mocks.isAdmin = false;
+    render(
+      <ContactAbout
+        contact={{ ...contact, whatsappNumber: { id: "n-1", label: "#1" } }}
+        contactability={[]}
+      />,
+    );
+    expect(screen.getByText("#1")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Move to another number" }),
+    ).not.toBeInTheDocument();
+    cleanup();
+    mocks.isAdmin = true;
+    render(<ContactAbout contact={{ ...contact, whatsappNumber: null }} contactability={[]} />);
+    expect(screen.getByText("Set on the first WhatsApp message")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move to another number" })).toBeInTheDocument();
+  });
+});

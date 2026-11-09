@@ -24,6 +24,7 @@ import {
 } from "@/lib/lead-validation";
 import { messageFromError, useIsAdmin, useLeadMutations, useSession } from "@/store";
 import { ClearOptOutDialog } from "./clear-opt-out-dialog";
+import { MoveWhatsAppNumberDialog } from "./move-whatsapp-number-dialog";
 import { LEAD_SOURCES, PIPELINE_STAGES, type ContactDetail, type Contactability } from "@/types";
 import type { UpdateLeadInput } from "@/lib/backend-client";
 
@@ -189,6 +190,7 @@ export function ContactAbout({
   const isAdmin = useIsAdmin();
   const [clearOpen, setClearOpen] = useState(false);
   const [clearChannel, setClearChannel] = useState<"whatsapp" | "email">("whatsapp");
+  const [moveOpen, setMoveOpen] = useState(false);
   const text = ([field, name]: [TextField, string]): Property => ({
     id: field,
     label: name,
@@ -291,6 +293,20 @@ export function ContactAbout({
       };
     }),
     {
+      id: "whatsappNumber",
+      label: "WhatsApp number",
+      value: (
+        <div className="space-y-1">
+          <p>{contact.whatsappNumber?.label ?? "Set on the first WhatsApp message"}</p>
+          {isAdmin && (
+            <Button type="button" size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
+              Move to another number
+            </Button>
+          )}
+        </div>
+      ),
+    },
+    {
       id: "hotScore",
       label: "Hot-lead score",
       value:
@@ -330,6 +346,14 @@ export function ContactAbout({
           channel={clearChannel}
           open={clearOpen}
           onOpenChange={setClearOpen}
+        />
+      )}
+      {isAdmin && moveOpen && (
+        <MoveWhatsAppNumberDialog
+          contactId={contact.id}
+          currentNumberId={contact.whatsappNumber?.id ?? null}
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
         />
       )}
     </>
