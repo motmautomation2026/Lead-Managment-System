@@ -49,11 +49,12 @@ import { supabaseAdmin } from "../../src/supabaseAdmin.js";
 import { DisconnectReason } from "baileys";
 
 const WS = "ws-1";
+const NUM = "num-1";
 const PHONE = "+919876543210";
 const JID = "919876543210@s.whatsapp.net";
 
 const norm = (sql: string) => sql.replace(/\s+/g, " ").trim();
-const QUIET_STATS = { sent_today: 0, new_chats_today: 0, sends_24h: 0, stops_24h: 0, failures_30m: 0, reconnects_30m: 0, is_first: false };
+const QUIET_STATS = { sent_today: 0, new_chats_today: 0, sends_24h: 0, stops_24h: 0, failures_30m: 0, reconnects_30m: 0, is_first: false, is_new_chat: false };
 
 // Copied verbatim from performSend before the B1 refactor, to pin them.
 const SCHEDULED_ACTION_ELIGIBILITY_SQL = norm(`select l.phone_e164
@@ -84,11 +85,13 @@ function installFakeDb({ eligibility, registered = true }: FakeOptions) {
     if (s.startsWith("select message_id, remote_jid, status from public.whatsapp_outbound_messages")) {
       return { rows: [{ message_id: "MSG-1", remote_jid: JID, status: "prepared" }] };
     }
-    if (s.startsWith("select * from public.whatsapp_connection")) {
+    if (s.startsWith("select n.*, c.outbound_enabled")) {
       return {
         rows: [
           {
+            label: "#1",
             enabled: true,
+            outbound_enabled: true,
             status: "connected",
             daily_cap: 100,
             min_delay_seconds: 0,
@@ -128,7 +131,7 @@ function installFakeDb({ eligibility, registered = true }: FakeOptions) {
 }
 
 function connectedManager(socket: unknown) {
-  const manager = new BaileysManager(WS, async () => undefined);
+  const manager = new BaileysManager(WS, NUM, async () => undefined);
   Object.assign(manager as unknown as Record<string, unknown>, { socket, connected: true });
   return manager;
 }
@@ -344,14 +347,14 @@ describe("BaileysManager session lock (B18)", () => {
     FakeClient.instances.length = 0;
     FakeClient.locked = true;
     mocks.poolQuery.mockImplementation(async (sql: string) =>
-      sql.startsWith("select * from public.whatsapp_connection")
+      sql.startsWith("select n.*, c.outbound_enabled")
         ? { rows: [{ desired_state: "connected", command_version: "1" }] }
         : { rows: [] },
     );
   });
 
   async function startedManager() {
-    const manager = new BaileysManager(WS);
+    const manager = new BaileysManager(WS, NUM);
     await manager.start();
     return { manager, client: FakeClient.instances[0]! };
   }
@@ -361,15 +364,15 @@ describe("BaileysManager session lock (B18)", () => {
     expect(FakeClient.instances).toHaveLength(1);
     expect(client.options).toEqual({ connectionString: "postgres://test", application_name: "northbeam-worker-walock" });
     expect(client.connect).toHaveBeenCalledOnce();
-    expect(client.query).toHaveBeenCalledWith("select pg_try_advisory_lock(hashtextextended($1, 1)) as locked", [WS]);
+    expect(client.query).toHaveBeenCalledWith("select pg_try_advisory_lock(hashtextextended($1, 1)) as locked", [NUM]);
     expect(mocks.poolQuery.mock.calls.some(([sql]) => String(sql).includes("advisory"))).toBe(false);
     await manager.stop();
   });
 
   it("closes the client and throws when another worker holds the lock", async () => {
     FakeClient.locked = false;
-    const manager = new BaileysManager(WS);
-    await expect(manager.start()).rejects.toThrow("Another automation worker already owns this workspace's WhatsApp session");
+    const manager = new BaileysManager(WS, NUM);
+    await expect(manager.start()).rejects.toThrow("Another automation worker already owns this WhatsApp number's session");
     expect(FakeClient.instances[0]!.end).toHaveBeenCalledOnce();
     expect(manager.isStopped).toBe(true);
     expect(pgMocks.makeWASocket).not.toHaveBeenCalled();
@@ -389,7 +392,7 @@ describe("BaileysManager session lock (B18)", () => {
   it("unlocks and then closes the client on stop", async () => {
     const { manager, client } = await startedManager();
     await manager.stop();
-    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [WS]);
+    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [NUM]);
     expect(client.end).toHaveBeenCalledOnce();
     expect(client.query.mock.invocationCallOrder.at(-1)!).toBeLessThan(client.end.mock.invocationCallOrder[0]!);
     expect(manager.isStopped).toBe(true);
@@ -397,10 +400,10 @@ describe("BaileysManager session lock (B18)", () => {
 
   it("releases the lock if the first control sync fails, so a retry can take it", async () => {
     mocks.poolQuery.mockRejectedValueOnce(new Error("db blip"));
-    const manager = new BaileysManager(WS);
+    const manager = new BaileysManager(WS, NUM);
     await expect(manager.start()).rejects.toThrow("db blip");
     const client = FakeClient.instances[0]!;
-    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [WS]);
+    expect(client.query).toHaveBeenLastCalledWith("select pg_advisory_unlock(hashtextextended($1, 1))", [NUM]);
     expect(client.end).toHaveBeenCalledOnce();
   });
 });
@@ -411,7 +414,7 @@ describe("Baileys hygiene (E1 item 2b)", () => {
 
   it("B1: composing is resent every ≤ 8 s for a long typing time, then paused; never available", async () => {
     const waits: number[] = [];
-    const manager = new BaileysManager(WS, async (ms) => void waits.push(ms));
+    const manager = new BaileysManager(WS, NUM, async (ms) => void waits.push(ms));
     const socket = { sendPresenceUpdate: vi.fn(async (_type: string, _jid: string) => undefined) };
     await (manager as unknown as { showTyping: (s: unknown, j: string, ms: number) => Promise<void> }).showTyping(socket, JID, 20_000);
     expect(socket.sendPresenceUpdate.mock.calls).toEqual([
@@ -441,7 +444,7 @@ describe("Baileys hygiene (E1 item 2b)", () => {
   describe("B4: disconnect reasons", () => {
     function closingManager() {
       const socket = { ev: { on: vi.fn() }, end: vi.fn() };
-      const manager = new BaileysManager(WS, async () => undefined);
+      const manager = new BaileysManager(WS, NUM, async () => undefined);
       Object.assign(manager as unknown as Record<string, unknown>, { socket, connected: true });
       const reconnect = vi
         .spyOn(manager as unknown as { scheduleReconnect: (d?: number) => void }, "scheduleReconnect")
@@ -457,7 +460,7 @@ describe("Baileys hygiene (E1 item 2b)", () => {
     function fakeTx(reconnects30m = 0) {
       mocks.txQuery.mockImplementation(async (s: string) => {
         const q = norm(s);
-        if (q.startsWith("update public.whatsapp_connection set enabled = false")) return { rowCount: 1, rows: [{}] };
+        if (q.startsWith("update public.whatsapp_numbers set enabled = false")) return { rowCount: 1, rows: [{ label: "#1" }] };
         if (q.startsWith("select enabled, resumed_at")) return { rows: [{ enabled: true, resumed_at: null }] };
         if (q.startsWith("with since as")) return { rows: [{ ...QUIET_STATS, reconnects_30m: reconnects30m }] };
         return { rows: [] };
@@ -486,7 +489,7 @@ describe("Baileys hygiene (E1 item 2b)", () => {
       expect(reconnect).toHaveBeenCalledTimes(expected.reconnect ? 1 : 0);
       if (code === DisconnectReason.restartRequired) expect(reconnect).toHaveBeenCalledWith(0);
       expect(clearBaileysAuthState).toHaveBeenCalledTimes(expected.clearAuth ? 1 : 0);
-      expect(sql().some((q) => q.startsWith("update public.whatsapp_connection set enabled = false"))).toBe(expected.pause);
+      expect(sql().some((q) => q.startsWith("update public.whatsapp_numbers set enabled = false"))).toBe(expected.pause);
       expect(poolSql().some((q) => q.includes(expected.status === "reconnecting" ? "status = 'reconnecting'" : "desired_state = 'disconnected'"))).toBe(true);
       if (!expected.reconnect) {
         const status = mocks.poolQuery.mock.calls.find(([s]) => norm(String(s)).includes("desired_state = 'disconnected'"))!;
@@ -501,14 +504,14 @@ describe("Baileys hygiene (E1 item 2b)", () => {
       const { close } = closingManager();
       await close(DisconnectReason.connectionLost);
       expect(sql().some((q) => q.startsWith("insert into public.whatsapp_safety_events"))).toBe(true);
-      const pause = mocks.txQuery.mock.calls.find(([s]) => norm(String(s)).startsWith("update public.whatsapp_connection set enabled = false"));
-      expect(pause?.[1]).toEqual([WS, "5 failed reconnects in 30 minutes."]);
+      const pause = mocks.txQuery.mock.calls.find(([s]) => norm(String(s)).startsWith("update public.whatsapp_numbers set enabled = false"));
+      expect(pause?.[1]).toEqual([WS, NUM, "5 failed reconnects in 30 minutes."]);
     });
 
     it("a dropped connection below the storm limit does not pause", async () => {
       const { close } = closingManager();
       await close(DisconnectReason.connectionLost);
-      expect(sql().some((q) => q.startsWith("update public.whatsapp_connection set enabled = false"))).toBe(false);
+      expect(sql().some((q) => q.startsWith("update public.whatsapp_numbers set enabled = false"))).toBe(false);
     });
   });
 
@@ -524,10 +527,10 @@ describe("Baileys hygiene (E1 item 2b)", () => {
     }
 
     it("the retry-counter cache survives socket restarts (and manager replacement)", async () => {
-      const manager = new BaileysManager(WS);
+      const manager = new BaileysManager(WS, NUM);
       const first = await open(manager);
       const second = await open(manager);
-      const replacement = await open(new BaileysManager(WS));
+      const replacement = await open(new BaileysManager(WS, NUM));
       expect(first.msgRetryCounterCache).toBeDefined();
       expect(second.msgRetryCounterCache).toBe(first.msgRetryCounterCache);
       expect(replacement.msgRetryCounterCache).toBe(first.msgRetryCounterCache);
@@ -535,7 +538,7 @@ describe("Baileys hygiene (E1 item 2b)", () => {
     });
 
     it("keeps presence offline, no history, no link previews, no version fetch; wraps keys in a cache", async () => {
-      const options = await open(new BaileysManager(WS));
+      const options = await open(new BaileysManager(WS, NUM));
       expect(options).toMatchObject({ markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
       expect(options.version).toBeUndefined();
       expect(typeof (options.auth as { keys: { get: unknown } }).keys.get).toBe("function");
@@ -544,13 +547,13 @@ describe("Baileys hygiene (E1 item 2b)", () => {
     it("B7: a new pairing uses a standard Browsers preset; a number paired before E1 keeps its identity", async () => {
       const { loadBaileysAuthState } = await import("../../src/providers/baileys-auth.store.js");
       const paired = { state: { creds: { me: { id: "91999:1@s.whatsapp.net" } } }, saveCreds: vi.fn() } as never;
-      expect((await open(new BaileysManager(WS))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
+      expect((await open(new BaileysManager(WS, NUM))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
       vi.mocked(loadBaileysAuthState).mockResolvedValueOnce(paired);
-      expect((await open(new BaileysManager(WS))).browser).toEqual(["Northbeam CRM", "Chrome", "1.0.0"]);
+      expect((await open(new BaileysManager(WS, NUM))).browser).toEqual(["Northbeam CRM", "Chrome", "1.0.0"]);
       // Paired after E1 (paired_at set): the preset it was paired with.
       mocks.poolQuery.mockResolvedValue({ rows: [{ paired_at: new Date() }] });
       vi.mocked(loadBaileysAuthState).mockResolvedValueOnce(paired);
-      expect((await open(new BaileysManager(WS))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
+      expect((await open(new BaileysManager(WS, NUM))).browser).toEqual(["Mac OS", "Chrome", "14.4.1"]);
     });
   });
 });

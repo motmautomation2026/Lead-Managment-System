@@ -59,6 +59,9 @@ const NO_CASCADE_TABLES = [
 const CONNECTION_TABLES = [
   "integration_connections",
   "google_calendar_connection",
+  "whatsapp_number_auth_keys",
+  "whatsapp_number_auth_credentials",
+  "whatsapp_numbers",
   "whatsapp_connection",
   "whatsapp_auth_credentials",
   "whatsapp_auth_keys",

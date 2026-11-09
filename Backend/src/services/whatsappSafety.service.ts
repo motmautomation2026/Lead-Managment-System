@@ -10,24 +10,40 @@ import type { AutoPauseStats } from "../domain/whatsappSafety.js";
 
 export type SafetyEventKind = "send_failed" | "reconnect_failed" | "disconnected" | "restricted" | "paused" | "resumed";
 
-export async function recordSafetyEvent(db: Queryable, workspaceId: string, kind: SafetyEventKind, detail: string | null = null) {
-  await db.query(`insert into public.whatsapp_safety_events (workspace_id, kind, detail) values ($1, $2, $3)`, [workspaceId, kind, detail]);
+/** E4a: `numberId` = the number the signal belongs to (its auto-pause counts only its own signals). */
+export async function recordSafetyEvent(db: Queryable, workspaceId: string, numberId: string | null, kind: SafetyEventKind, detail: string | null = null) {
+  await db.query(`insert into public.whatsapp_safety_events (workspace_id, whatsapp_number_id, kind, detail) values ($1, $2, $3, $4)`, [
+    workspaceId,
+    numberId,
+    kind,
+    detail,
+  ]);
 }
 
 export interface SendStats extends AutoPauseStats {
   sentToday: number;
   newChatsToday: number;
+  /** The workspace never messaged / heard from this phone (link block + opt-out line, per lead as before). */
   isFirstMessage: boolean;
+  /** E4a: this number never messaged / heard from this phone (its new-chat limit). */
+  isNewChat: boolean;
 }
 
-const IST_MIDNIGHT = `date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'`;
+export const IST_MIDNIGHT = `date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'`;
 
 /**
- * Everything one send needs, in one query. Signals (failures, reconnects, STOPs,
- * the 24 h sends for the STOP rate) count only after `resumedAt`, so a resume
- * is not undone by the same signals that caused the pause.
+ * Everything one send needs, in one query, counted per NUMBER (E4a; indexes from 054) except
+ * `is_first`, which stays per workspace. Signals (failures, reconnects, STOPs, the 24 h sends for
+ * the STOP rate) count only after `resumedAt`, so a resume is not undone by the same signals.
  */
-export async function loadSendStats(db: Queryable, workspaceId: string, jid: string, phoneE164: string, resumedAt: Date | null): Promise<SendStats> {
+export async function loadSendStats(
+  db: Queryable,
+  workspaceId: string,
+  numberId: string,
+  jid: string,
+  phoneE164: string,
+  resumedAt: Date | null,
+): Promise<SendStats> {
   const result = await db.query<{
     sent_today: number;
     new_chats_today: number;
@@ -36,6 +52,7 @@ export async function loadSendStats(db: Queryable, workspaceId: string, jid: str
     failures_30m: number;
     reconnects_30m: number;
     is_first: boolean;
+    is_new_chat: boolean;
   }>(
     `with since as (
        select greatest(now() - interval '24 hours', coalesce($4::timestamptz, '-infinity')) as d1,
@@ -43,20 +60,22 @@ export async function loadSendStats(db: Queryable, workspaceId: string, jid: str
      )
      select
        (select count(*)::int from public.whatsapp_outbound_messages
-         where workspace_id = $1 and status = 'sent' and sent_at >= ${IST_MIDNIGHT}) as sent_today,
+         where whatsapp_number_id = $5 and status = 'sent' and sent_at >= ${IST_MIDNIGHT}) as sent_today,
        (select count(*)::int from public.whatsapp_outbound_messages
-         where workspace_id = $1 and status = 'sent' and new_chat and sent_at >= ${IST_MIDNIGHT}) as new_chats_today,
+         where whatsapp_number_id = $5 and status = 'sent' and new_chat and sent_at >= ${IST_MIDNIGHT}) as new_chats_today,
        (select count(*)::int from public.whatsapp_outbound_messages, since
-         where workspace_id = $1 and status = 'sent' and sent_at > since.d1) as sends_24h,
+         where whatsapp_number_id = $5 and status = 'sent' and sent_at > since.d1) as sends_24h,
        (select count(*)::int from public.whatsapp_inbound_events, since
-         where workspace_id = $1 and reply_label = 'asked_to_stop' and received_at > since.d1) as stops_24h,
+         where whatsapp_number_id = $5 and reply_label = 'asked_to_stop' and received_at > since.d1) as stops_24h,
        (select count(*)::int from public.whatsapp_safety_events, since
-         where workspace_id = $1 and kind = 'send_failed' and created_at > since.m30) as failures_30m,
+         where whatsapp_number_id = $5 and kind = 'send_failed' and created_at > since.m30) as failures_30m,
        (select count(*)::int from public.whatsapp_safety_events, since
-         where workspace_id = $1 and kind = 'reconnect_failed' and created_at > since.m30) as reconnects_30m,
+         where whatsapp_number_id = $5 and kind = 'reconnect_failed' and created_at > since.m30) as reconnects_30m,
        not exists (select 1 from public.whatsapp_outbound_messages where workspace_id = $1 and remote_jid = $2 and status = 'sent')
-         and not exists (select 1 from public.whatsapp_inbound_events where workspace_id = $1 and sender_phone_e164 = $3) as is_first`,
-    [workspaceId, jid, phoneE164, resumedAt],
+         and not exists (select 1 from public.whatsapp_inbound_events where workspace_id = $1 and sender_phone_e164 = $3) as is_first,
+       not exists (select 1 from public.whatsapp_outbound_messages where whatsapp_number_id = $5 and remote_jid = $2 and status = 'sent')
+         and not exists (select 1 from public.whatsapp_inbound_events where whatsapp_number_id = $5 and sender_phone_e164 = $3) as is_new_chat`,
+    [workspaceId, jid, phoneE164, resumedAt, numberId],
   );
   const row = result.rows[0]!;
   return {
@@ -67,25 +86,31 @@ export async function loadSendStats(db: Queryable, workspaceId: string, jid: str
     failures30m: row.failures_30m,
     reconnectFailures30m: row.reconnects_30m,
     isFirstMessage: row.is_first,
+    isNewChat: row.is_new_chat,
   };
 }
 
 /**
- * Turns outbound off (`enabled` = false) with a reason and notifies every active
- * admin — once: only the call that flips `enabled` does anything. Only an admin
- * resumes. Returns whether this call paused.
+ * Turns one number's outbound off (`enabled` = false) with a reason and notifies every active
+ * admin — once: only the call that flips `enabled` does anything. Only an admin resumes. The
+ * workspace's other numbers keep sending. Returns whether this call paused.
  */
-export async function autoPause(db: Queryable, workspaceId: string, reason: string): Promise<boolean> {
-  const paused = await db.query(
-    `update public.whatsapp_connection
-        set enabled = false, paused_reason = $2, paused_at = now(), paused_by = null
-      where workspace_id = $1 and enabled
-      returning workspace_id`,
-    [workspaceId, reason],
+export async function autoPause(db: Queryable, workspaceId: string, numberId: string, reason: string): Promise<boolean> {
+  const paused = await db.query<{ label: string }>(
+    `update public.whatsapp_numbers
+        set enabled = false, paused_reason = $3, paused_at = now(), paused_by = null, updated_at = now()
+      where id = $2 and workspace_id = $1 and enabled
+      returning label`,
+    [workspaceId, numberId, reason],
   );
   if (!paused.rowCount) return false;
-  await recordSafetyEvent(db, workspaceId, "paused", reason);
-  await notifyAdmins(db, workspaceId, "WhatsApp sending paused automatically", `${reason} An admin can resume it in Settings → Workspace → WhatsApp.`);
+  await recordSafetyEvent(db, workspaceId, numberId, "paused", reason);
+  await notifyAdmins(
+    db,
+    workspaceId,
+    `WhatsApp number ${paused.rows[0]!.label} paused automatically`,
+    `${reason} An admin can resume it in Settings → Workspace → WhatsApp.`,
+  );
   return true;
 }
 
@@ -99,34 +124,47 @@ export async function notifyAdmins(db: Queryable, workspaceId: string, title: st
   );
 }
 
-/** Admin only (route guard): turns outbound back on; signals before now no longer count. */
-export async function resumeSending(db: Queryable, actor: Actor, workspaceId: string) {
+/** Admin only (route guard): turns one number's outbound back on; its signals before now no longer count. */
+export async function resumeSending(db: Queryable, actor: Actor, workspaceId: string, numberId: string) {
   await db.query(
-    `update public.whatsapp_connection
-        set enabled = true, paused_reason = null, paused_at = null, paused_by = null, resumed_at = now(), updated_by = $2
-      where workspace_id = $1`,
-    [workspaceId, actor.id],
+    `update public.whatsapp_numbers
+        set enabled = true, paused_reason = null, paused_at = null, paused_by = null, resumed_at = now(), updated_by = $3, updated_at = now()
+      where id = $2 and workspace_id = $1`,
+    [workspaceId, numberId, actor.id],
   );
-  await recordSafetyEvent(db, workspaceId, "resumed", `Resumed by ${actor.fullName}`);
-  await recordAdminAudit(db, actor, "connection.whatsapp.resumed", "whatsapp_connection", workspaceId);
+  await recordSafetyEvent(db, workspaceId, numberId, "resumed", `Resumed by ${actor.fullName}`);
+  await recordAdminAudit(db, actor, "connection.whatsapp.resumed", "whatsapp_number", numberId);
+}
+
+/** Admin only (route guard): pauses one number by hand (only an admin resumes it). */
+export async function pauseSending(db: Queryable, actor: Actor, workspaceId: string, numberId: string) {
+  const reason = `Paused by ${actor.fullName}.`;
+  const paused = await db.query(
+    `update public.whatsapp_numbers set enabled = false, paused_reason = $3, paused_at = now(), paused_by = $4, updated_at = now()
+      where id = $2 and workspace_id = $1 and enabled`,
+    [workspaceId, numberId, reason, actor.id],
+  );
+  if (paused.rowCount) await recordSafetyEvent(db, workspaceId, numberId, "paused", reason);
+  await recordAdminAudit(db, actor, "connection.whatsapp.paused", "whatsapp_number", numberId);
 }
 
 /** Settings → WhatsApp → Safety: today's counts, 24 h signals, the last 20 events and a 14-day table. */
 export async function loadSafetyMonitoring(db: Queryable, workspaceId: string) {
   const [counts, events, days] = await Promise.all([
-    db.query<{ new_chats_today: number; failures_24h: number; stops_24h: number; paused_by_name: string | null }>(
+    db.query<{ new_chats_today: number; failures_24h: number; stops_24h: number }>(
       `select
          (select count(*)::int from public.whatsapp_outbound_messages
            where workspace_id = $1 and status = 'sent' and new_chat and sent_at >= ${IST_MIDNIGHT}) as new_chats_today,
          (select count(*)::int from public.whatsapp_safety_events
            where workspace_id = $1 and kind = 'send_failed' and created_at > now() - interval '24 hours') as failures_24h,
          (select count(*)::int from public.whatsapp_inbound_events
-           where workspace_id = $1 and reply_label = 'asked_to_stop' and received_at > now() - interval '24 hours') as stops_24h,
-         (select p.full_name from public.whatsapp_connection c join public.profiles p on p.id = c.paused_by where c.workspace_id = $1) as paused_by_name`,
+           where workspace_id = $1 and reply_label = 'asked_to_stop' and received_at > now() - interval '24 hours') as stops_24h`,
       [workspaceId],
     ),
-    db.query<{ kind: SafetyEventKind; detail: string | null; created_at: Date }>(
-      `select kind, detail, created_at from public.whatsapp_safety_events where workspace_id = $1 order by created_at desc limit 20`,
+    db.query<{ kind: SafetyEventKind; detail: string | null; created_at: Date; number_label: string | null }>(
+      `select e.kind, e.detail, e.created_at, n.label as number_label
+         from public.whatsapp_safety_events e left join public.whatsapp_numbers n on n.id = e.whatsapp_number_id
+        where e.workspace_id = $1 order by e.created_at desc limit 20`,
       [workspaceId],
     ),
     db.query<{ date: string; sent: number; failed: number; stops: number }>(
@@ -151,59 +189,78 @@ export async function loadSafetyMonitoring(db: Queryable, workspaceId: string) {
     newChatsToday: row.new_chats_today,
     failures24h: row.failures_24h,
     stops24h: row.stops_24h,
-    pausedByName: row.paused_by_name,
-    safetyEvents: events.rows.map((e) => ({ kind: e.kind, detail: e.detail, at: e.created_at.toISOString() })),
+    safetyEvents: events.rows.map((e) => ({ kind: e.kind, detail: e.detail, at: e.created_at.toISOString(), numberLabel: e.number_label })),
     daily: days.rows,
   };
 }
 
-export interface WhatsAppSafetySettings {
+/** Workspace-level WhatsApp settings (rule 1): the master switch, the send window, max numbers. */
+export interface WhatsAppWorkspaceSettings {
   enabled: boolean;
-  dailyCap: number;
-  minDelaySeconds?: number;
-  maxDelaySeconds?: number;
-  maxNewChatsPerDay?: number;
   sendWindow?: { days: number[]; start: string; end: string };
+  maxNumbers?: number;
 }
 
-/**
- * Admin only (route guard). Turning outbound off records a pause by this admin;
- * turning it back on is a resume.
- */
-export async function updateSafetySettings(db: Queryable, actor: Actor, workspaceId: string, input: WhatsAppSafetySettings) {
-  const current = await db.query<{ enabled: boolean }>(`select enabled from public.whatsapp_connection where workspace_id = $1 for update`, [workspaceId]);
-  const wasEnabled = current.rows[0]?.enabled ?? false;
+/** Admin only (route guard). `enabled` = the master switch for every number of the workspace. */
+export async function updateWorkspaceSettings(db: Queryable, actor: Actor, workspaceId: string, input: WhatsAppWorkspaceSettings) {
   await db.query(
     `update public.whatsapp_connection
-        set daily_cap = $2,
-            min_delay_seconds = coalesce($3, min_delay_seconds),
-            max_delay_seconds = coalesce($4, max_delay_seconds),
-            max_new_chats_per_day = coalesce($5, max_new_chats_per_day),
-            send_window_days = coalesce($6::smallint[], send_window_days),
-            send_window_start = coalesce($7::time, send_window_start),
-            send_window_end = coalesce($8::time, send_window_end),
-            updated_by = $9
+        set outbound_enabled = $2,
+            send_window_days = coalesce($3::smallint[], send_window_days),
+            send_window_start = coalesce($4::time, send_window_start),
+            send_window_end = coalesce($5::time, send_window_end),
+            max_numbers = coalesce($6, max_numbers),
+            updated_by = $7, updated_at = now()
       where workspace_id = $1`,
     [
       workspaceId,
-      input.dailyCap,
-      input.minDelaySeconds ?? null,
-      input.maxDelaySeconds ?? null,
-      input.maxNewChatsPerDay ?? null,
+      input.enabled,
       input.sendWindow ? [...new Set(input.sendWindow.days)].sort() : null,
       input.sendWindow?.start ?? null,
       input.sendWindow?.end ?? null,
+      input.maxNumbers ?? null,
       actor.id,
     ],
   );
-  if (input.enabled && !wasEnabled) await resumeSending(db, actor, workspaceId);
-  if (!input.enabled && wasEnabled) {
-    const reason = `Paused by ${actor.fullName}.`;
-    await db.query(
-      `update public.whatsapp_connection set enabled = false, paused_reason = $2, paused_at = now(), paused_by = $3 where workspace_id = $1`,
-      [workspaceId, reason, actor.id],
-    );
-    await recordSafetyEvent(db, workspaceId, "paused", reason);
-  }
   await recordAdminAudit(db, actor, "connection.whatsapp.settings_updated", "whatsapp_connection", workspaceId, { ...input });
+}
+
+/** One number's admin settings (rules 1, 2): label, owner, daily cap, spacing, new-chat limit. */
+export interface WhatsAppNumberSettings {
+  label?: string;
+  ownerUserId?: string | null;
+  dailyCap?: number;
+  minDelaySeconds?: number;
+  maxDelaySeconds?: number;
+  maxNewChatsPerDay?: number;
+}
+
+/** Admin only (route guard). Returns false when the number isn't in this workspace (or was removed). */
+export async function updateNumberSettings(db: Queryable, actor: Actor, workspaceId: string, numberId: string, input: WhatsAppNumberSettings): Promise<boolean> {
+  const updated = await db.query(
+    `update public.whatsapp_numbers
+        set label = coalesce($3, label),
+            owner_user_id = case when $4::boolean then $5::uuid else owner_user_id end,
+            daily_cap = coalesce($6, daily_cap),
+            min_delay_seconds = coalesce($7, min_delay_seconds),
+            max_delay_seconds = coalesce($8, max_delay_seconds),
+            max_new_chats_per_day = coalesce($9, max_new_chats_per_day),
+            updated_by = $10, updated_at = now()
+      where id = $2 and workspace_id = $1 and removed_at is null`,
+    [
+      workspaceId,
+      numberId,
+      input.label?.trim() ?? null,
+      input.ownerUserId !== undefined,
+      input.ownerUserId ?? null,
+      input.dailyCap ?? null,
+      input.minDelaySeconds ?? null,
+      input.maxDelaySeconds ?? null,
+      input.maxNewChatsPerDay ?? null,
+      actor.id,
+    ],
+  );
+  if (!updated.rowCount) return false;
+  await recordAdminAudit(db, actor, "connection.whatsapp.number_updated", "whatsapp_number", numberId, { ...input });
+  return true;
 }

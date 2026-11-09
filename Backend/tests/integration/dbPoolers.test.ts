@@ -64,19 +64,31 @@ describeIfDb("DB-3 transaction + session poolers (requires TEST_DATABASE_URL)", 
     const id = randomUUID();
     await createTestWorkspace(pool, "db-poolers-wa", { id });
     await pool.query(`insert into public.whatsapp_connection (workspace_id, desired_state, status) values ($1, 'disconnected', 'disconnected')`, [id]);
+    // E4a: one lock per number — two numbers of one workspace each get their own.
+    const numberIds = (
+      await pool.query<{ id: string }>(
+        `insert into public.whatsapp_numbers (workspace_id, label) values ($1, '#1'), ($1, '#2') returning id`,
+        [id],
+      )
+    ).rows.map((r) => r.id);
+    const [numberA, numberB] = numberIds as [string, string];
 
     const { BaileysManager } = await import("../../src/providers/baileys.manager.js");
-    const first = new BaileysManager(id);
-    const second = new BaileysManager(id);
+    const first = new BaileysManager(id, numberA);
+    const second = new BaileysManager(id, numberA);
+    const otherNumber = new BaileysManager(id, numberB);
     await first.start();
     try {
-      await expect(second.start()).rejects.toThrow(/already owns this workspace's WhatsApp session/);
+      await expect(second.start()).rejects.toThrow(/already owns this WhatsApp number's session/);
       expect(second.isStopped).toBe(true);
+      await otherNumber.start();
+      expect(otherNumber.isStopped).toBe(false);
     } finally {
       await first.stop();
+      await otherNumber.stop();
     }
     // Released on stop: a new manager can take it.
-    const third = new BaileysManager(id);
+    const third = new BaileysManager(id, numberA);
     await third.start();
     await third.stop();
   });

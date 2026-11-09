@@ -10,6 +10,7 @@ import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
@@ -19,6 +20,9 @@ import type { WhatsAppSender } from "../../src/services/agentSends.service.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
+
+/** E4a: each workspace's WhatsApp number #1. */
+const numbers = new Map<string, string>();
 const PRICES = { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } };
 const MODELS = { decision: "m-decide", grounding: "m-ground" };
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n");
@@ -62,11 +66,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
         where workspace_id = $1`,
       [ws],
     );
-    await pool.query(
-      `insert into public.whatsapp_connection (workspace_id, enabled, status, desired_state, send_window_days, send_window_start, send_window_end)
-       values ($1, true, 'connected', 'connected', '{1,2,3,4,5,6,7}', '00:00', '23:59:59')`,
-      [ws],
-    );
+    numbers.set(ws, await connectedNumber(pool, ws));
     const { encryptJson } = await import("../../src/security/encryption.js");
     const secret = encryptJson({ smtpUsername: "crm@motm.example", smtpPassword: "app-password" }, "integration:email");
     await pool.query(
@@ -139,7 +139,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
       sendMessage: vi.fn(async (_jid: string, content: { text?: string; caption?: string }) => ({ message: { conversation: content.text ?? content.caption ?? "" } })),
       sendPresenceUpdate: vi.fn(async (_type: string, _jid?: string) => undefined),
     };
-    const m = new Manager(ws, async () => undefined);
+    const m = new Manager(ws, numbers.get(ws)!, async () => undefined);
     Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
     const send: WhatsAppSender = (_ws, input) =>
       m.sendAction({ source: input.source, phoneE164: input.to, body: input.body, attachment: input.attachment, textMentionsAttachment: input.textMentionsAttachment });
@@ -367,7 +367,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await pool.query(`update public.agent_wakeups set status = 'cancelled' where lead_id = $1`, [mention.id]);
     await tick(ws, [whatsappWith([b.id], PLAIN_LINE)]);
     await removeFile(b.path);
-    await pool.query(`update public.whatsapp_connection set next_send_at = null where workspace_id = $1`, [ws]);
+    await pool.query(`update public.whatsapp_numbers set next_send_at = null where workspace_id = $1`, [ws]);
     const second = whatsapp(ws);
     await sendTick(ws, second.send);
     const content = second.socket.sendMessage.mock.calls[0]![1] as { text?: string; document?: Buffer };

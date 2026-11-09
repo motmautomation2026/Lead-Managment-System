@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool, type PoolClient } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { BaileysManager, WhatsAppSendSource } from "../../src/providers/baileys.manager.js";
 import { PermanentProviderError, ProviderDeferredError } from "../../src/providers/provider-errors.js";
@@ -15,7 +16,7 @@ import { PermanentProviderError, ProviderDeferredError } from "../../src/provide
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
 
-const PAUSE_TITLE = "WhatsApp sending paused automatically";
+const PAUSE_TITLE = "WhatsApp number #1 paused automatically";
 
 describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;
@@ -41,21 +42,14 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
   const randomPhone = () => `+9197${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
   const jidOf = (phone: string) => `${phone.slice(1)}@s.whatsapp.net`;
 
-  /** A connected, enabled workspace whose send window is always open unless `days` says otherwise. */
+  /** E4a: each workspace's one number (#1). */
+  const numbers = new Map<string, string>();
+  const numberOf = (ws: string) => numbers.get(ws)!;
+
+  /** A workspace with one connected, enabled number whose send window is always open unless `days` says otherwise. */
   async function workspace(label: string, settings: Record<string, unknown> = {}) {
     const ws = await createTestWorkspace(pool, `wa-safety-${label}`);
-    await pool.query(
-      `insert into public.whatsapp_connection (workspace_id, enabled, status, desired_state, send_window_days, send_window_start, send_window_end)
-       values ($1, true, 'connected', 'connected', '{1,2,3,4,5,6,7}', '00:00', '23:59:59')`,
-      [ws],
-    );
-    const entries = Object.entries(settings);
-    if (entries.length) {
-      await pool.query(
-        `update public.whatsapp_connection set ${entries.map(([key], i) => `${key} = $${i + 2}`).join(", ")} where workspace_id = $1`,
-        [ws, ...entries.map(([, value]) => value)],
-      );
-    }
+    numbers.set(ws, await connectedNumber(pool, ws, settings));
     return ws;
   }
 
@@ -103,9 +97,9 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
          insert into public.proposals (workspace_id, lead_id, title)
          select $1, $2, 'filler' from generate_series(1, $3) returning id
        )
-       insert into public.whatsapp_outbound_messages (workspace_id, proposal_id, message_id, remote_jid, status, sent_at, new_chat)
-       select $1, p.id, 'FILL-' || gen_random_uuid(), '910000000000@s.whatsapp.net', 'sent', now(), $4 from p`,
-      [ws, filler.id, count, newChat],
+       insert into public.whatsapp_outbound_messages (workspace_id, proposal_id, message_id, remote_jid, status, sent_at, new_chat, whatsapp_number_id)
+       select $1, p.id, 'FILL-' || gen_random_uuid(), '910000000000@s.whatsapp.net', 'sent', now(), $4, $5 from p`,
+      [ws, filler.id, count, newChat, numberOf(ws)],
     );
   }
 
@@ -124,7 +118,7 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
   }
 
   function manager(ws: string, socket: ReturnType<typeof fakeSocket>) {
-    const m = new Manager(ws, async () => undefined);
+    const m = new Manager(ws, numberOf(ws), async () => undefined);
     Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
     return m;
   }
@@ -136,7 +130,7 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     );
 
   async function connection(ws: string) {
-    return (await pool.query(`select enabled, paused_reason, paused_at, next_send_at from public.whatsapp_connection where workspace_id = $1`, [ws])).rows[0];
+    return (await pool.query(`select enabled, paused_reason, paused_at, next_send_at from public.whatsapp_numbers where id = $1`, [numberOf(ws)])).rows[0];
   }
 
   async function pauseNotifications(ws: string) {
@@ -187,9 +181,11 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     expect(socket.sendMessage).toHaveBeenCalledOnce();
 
     // E3b-2b rule 14: one fact for the message that really went out (with the connection's id), none for the deferred one.
-    const facts = (await pool.query(`select lead_id, source, channel, message_number, whatsapp_connection_id from public.message_facts where workspace_id = $1`, [ws])).rows;
+    const facts = (await pool.query(`select lead_id, source, channel, message_number, whatsapp_connection_id, whatsapp_number_id from public.message_facts where workspace_id = $1`, [ws])).rows;
     const connectionId = (await pool.query(`select id from public.whatsapp_connection where workspace_id = $1`, [ws])).rows[0].id;
-    expect(facts).toEqual([{ lead_id: repLead.id, source: "proposal", channel: "whatsapp", message_number: 1, whatsapp_connection_id: connectionId }]);
+    expect(facts).toEqual([
+      { lead_id: repLead.id, source: "proposal", channel: "whatsapp", message_number: 1, whatsapp_connection_id: connectionId, whatsapp_number_id: numberOf(ws) },
+    ]);
     // message_number counts across channels: an email sent to the same lead afterwards is message 2.
     const mail = await pool.query(
       `insert into public.email_outbound_messages (workspace_id, source, source_id, lead_id, to_address, subject, html, text_body, status, sent_at)
@@ -225,9 +221,9 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
 
     const known = await lead(ws);
     await pool.query(
-      `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition)
-       values ($1, $2, $3, $4, 'conversation', now() - interval '2 days', 'matched')`,
-      [ws, `E1-IN-${randomUUID()}`, jidOf(known.phone), known.phone],
+      `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, whatsapp_number_id)
+       values ($1, $2, $3, $4, 'conversation', now() - interval '2 days', 'matched', $5)`,
+      [ws, `E1-IN-${randomUUID()}`, jidOf(known.phone), known.phone, numberOf(ws)],
     );
     expect(await send(m, await proposalSource(ws, known.id), known.phone)).toMatchObject({ ok: true });
     const row = await pool.query(`select new_chat from public.whatsapp_outbound_messages where workspace_id = $1 and remote_jid = $2`, [ws, jidOf(known.phone)]);
@@ -262,9 +258,9 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     const a = await lead(ws);
     await send(m, await workflowSource(ws, a.id), a.phone, "Hi Asha");
     const b = await lead(ws);
-    await pool.query(`update public.whatsapp_connection set next_send_at = null where workspace_id = $1`, [ws]);
+    await pool.query(`update public.whatsapp_numbers set next_send_at = null where id = $1`, [numberOf(ws)]);
     await send(m, await workflowSource(ws, b.id), b.phone, "Hi Bo\n\nReply STOP to opt out.");
-    await pool.query(`update public.whatsapp_connection set next_send_at = null where workspace_id = $1`, [ws]);
+    await pool.query(`update public.whatsapp_numbers set next_send_at = null where id = $1`, [numberOf(ws)]);
     await send(m, await proposalSource(ws, a.id), a.phone, "Your proposal");
 
     const texts = socket.sendMessage.mock.calls.map(([, content]) => content.text);
@@ -310,8 +306,8 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     it("5 send failures within 30 min pause, notify admins once, and later sends defer", async () => {
       const ws = await workspace("failures");
       await pool.query(
-        `insert into public.whatsapp_safety_events (workspace_id, kind, detail) select $1, 'send_failed', 'earlier' from generate_series(1, 4)`,
-        [ws],
+        `insert into public.whatsapp_safety_events (workspace_id, whatsapp_number_id, kind, detail) select $1, $2, 'send_failed', 'earlier' from generate_series(1, 4)`,
+        [ws, numberOf(ws)],
       );
       const contact = await lead(ws);
       const failing = await send(manager(ws, fakeSocket({ sendError: new Error("rate-overlimit") })), await proposalSource(ws, contact.id), contact.phone);
@@ -342,10 +338,10 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     it("3 STOP replies in 24 h pause; an admin's resume lets sends go again", async () => {
       const ws = await workspace("stops");
       await pool.query(
-        `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, reply_label)
-         select $1, 'E1-STOP-' || gen_random_uuid(), '910000000001@s.whatsapp.net', '+910000000001', 'conversation', now() - interval '1 hour', 'matched', 'asked_to_stop'
+        `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, reply_label, whatsapp_number_id)
+         select $1, 'E1-STOP-' || gen_random_uuid(), '910000000001@s.whatsapp.net', '+910000000001', 'conversation', now() - interval '1 hour', 'matched', 'asked_to_stop', $2
            from generate_series(1, 3)`,
-        [ws],
+        [ws, numberOf(ws)],
       );
       const contact = await expectLaterSendsDefer(ws);
       await expectPausedOnce(ws, /3 contacts asked us to stop in 24 hours/);
@@ -353,7 +349,7 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
       await expectPausedOnce(ws, /3 contacts asked us to stop/);
 
       const { resumeSending } = await import("../../src/services/whatsappSafety.service.js");
-      await inTransaction((client) => resumeSending(client, admin, ws));
+      await inTransaction((client) => resumeSending(client, admin, ws, numberOf(ws)));
       const socket = fakeSocket();
       expect(await send(manager(ws, socket), await proposalSource(ws, contact.id), contact.phone)).toMatchObject({ ok: true });
       expect(await connection(ws)).toMatchObject({ enabled: true, paused_reason: null });
@@ -363,10 +359,10 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
       const ws = await workspace("stop-rate");
       await sentToday(ws, 40);
       await pool.query(
-        `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, reply_label)
-         select $1, 'E1-STOP-' || gen_random_uuid(), '910000000001@s.whatsapp.net', '+910000000001', 'conversation', now(), 'matched', 'asked_to_stop'
+        `insert into public.whatsapp_inbound_events (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, reply_label, whatsapp_number_id)
+         select $1, 'E1-STOP-' || gen_random_uuid(), '910000000001@s.whatsapp.net', '+910000000001', 'conversation', now(), 'matched', 'asked_to_stop', $2
            from generate_series(1, 2)`,
-        [ws],
+        [ws, numberOf(ws)],
       );
       await expectLaterSendsDefer(ws);
       await expectPausedOnce(ws, /2 of 40 contacts asked us to stop/);

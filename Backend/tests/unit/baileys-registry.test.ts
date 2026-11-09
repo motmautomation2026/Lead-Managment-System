@@ -12,8 +12,8 @@ vi.mock("../../src/db.js", async (importOriginal) => ({
 }));
 vi.mock("../../src/providers/baileys.manager.js", () => ({
   BaileysManager: class {
-    constructor(readonly workspaceId: string) {
-      mocks.constructed.push(workspaceId);
+    constructor(readonly workspaceId: string, readonly numberId: string) {
+      mocks.constructed.push(numberId);
     }
     isStopped = false;
     start = mocks.start;
@@ -33,6 +33,7 @@ beforeEach(() => {
   mocks.constructed.length = 0;
   mocks.poolQuery.mockResolvedValue({ rows: [{ id: WS }] });
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -50,10 +51,10 @@ describe("BaileysManagerRegistry start retries (B17)", () => {
   it("turns a failed start into ProviderDeferredError and logs the workspace", async () => {
     mocks.start.mockRejectedValueOnce(new Error("lock held"));
     const registry = new BaileysManagerRegistry();
-    const error = await registry.getOrCreateManager(WS).catch((e: unknown) => e);
+    const error = await registry.getOrCreateManager("w", WS).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ProviderDeferredError);
-    expect((error as Error).message).toBe("WhatsApp is starting up or recovering for this workspace.");
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`workspace ${WS} (attempt 1`), expect.any(Error));
+    expect((error as Error).message).toBe("WhatsApp is starting up or recovering for this number.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`number ${WS} of workspace w (attempt 1`), expect.any(Error));
   });
 
   it("retries a failed start on a later ensure cycle, respecting the backoff", async () => {
@@ -112,7 +113,7 @@ describe("BaileysManagerRegistry start retries (B17)", () => {
     let finish!: () => void;
     mocks.start.mockReturnValueOnce(new Promise<void>((resolve) => (finish = resolve)));
     const registry = new BaileysManagerRegistry();
-    const calls = [registry.getOrCreateManager(WS), registry.getOrCreateManager(WS), registry.ensureManagers()];
+    const calls = [registry.getOrCreateManager("w", WS), registry.getOrCreateManager("w", WS), registry.ensureManagers()];
     finish();
     const [a, b] = await Promise.all(calls);
     expect(a).toBe(b);
@@ -124,7 +125,7 @@ describe("BaileysManagerRegistry start retries (B17)", () => {
     let fail!: (e: Error) => void;
     mocks.start.mockReturnValueOnce(new Promise<void>((_resolve, reject) => (fail = reject)));
     const registry = new BaileysManagerRegistry();
-    const calls = [registry.getOrCreateManager(WS), registry.getOrCreateManager(WS)].map((p) => p.catch((e: unknown) => e));
+    const calls = [registry.getOrCreateManager("w", WS), registry.getOrCreateManager("w", WS)].map((p) => p.catch((e: unknown) => e));
     fail(new Error("boom"));
     const errors = await Promise.all(calls);
     expect(errors.every((e) => e instanceof ProviderDeferredError)).toBe(true);
@@ -134,10 +135,10 @@ describe("BaileysManagerRegistry start retries (B17)", () => {
   it("callers during backoff get ProviderDeferredError without a new start", async () => {
     mocks.start.mockRejectedValueOnce(new Error("lock held"));
     const registry = new BaileysManagerRegistry();
-    await registry.getOrCreateManager(WS).catch(() => undefined);
+    await registry.getOrCreateManager("w", WS).catch(() => undefined);
     vi.advanceTimersByTime(10_000);
 
-    const error = await registry.getOrCreateManager(WS).catch((e: unknown) => e);
+    const error = await registry.getOrCreateManager("w", WS).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ProviderDeferredError);
     expect((error as ProviderDeferredError).retryAfterMs).toBe(20_000);
     expect(mocks.start).toHaveBeenCalledTimes(1);
@@ -148,7 +149,7 @@ describe("BaileysManagerRegistry lock safety (B18)", () => {
   it("replaces a manager that stopped itself after losing its lock", async () => {
     mocks.start.mockResolvedValue(undefined);
     const registry = new BaileysManagerRegistry();
-    const first = await registry.getOrCreateManager(WS);
+    const first = await registry.getOrCreateManager("w", WS);
     (first as unknown as { isStopped: boolean }).isStopped = true;
 
     await registry.ensureManagers();
@@ -164,21 +165,22 @@ describe("BaileysManagerRegistry lock safety (B18)", () => {
     await registry.ensureManagers();
     expect(console.error).toHaveBeenCalledOnce();
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("port 6543"));
-    await expect(registry.getOrCreateManager(WS)).rejects.toBeInstanceOf(ProviderDeferredError);
+    await expect(registry.getOrCreateManager("w", WS)).rejects.toBeInstanceOf(ProviderDeferredError);
     expect(mocks.start).not.toHaveBeenCalled();
     expect(mocks.poolQuery).not.toHaveBeenCalled();
   });
 });
 
 describe("BaileysManagerRegistry.ensureManagers: only where needed, one at a time", () => {
-  it("starts only the workspaces the query returns (whatsapp_connection needs a socket)", async () => {
+  it("starts only the numbers the query returns (whatsapp_numbers that need a socket)", async () => {
     mocks.poolQuery.mockResolvedValue({ rows: [] });
     mocks.start.mockResolvedValue(undefined);
     const registry = new BaileysManagerRegistry();
     await registry.ensureManagers();
     expect(mocks.start).not.toHaveBeenCalled();
     const sql = String(mocks.poolQuery.mock.calls[0]![0]);
-    expect(sql).toMatch(/whatsapp_connection/);
+    expect(sql).toMatch(/whatsapp_numbers/);
+    expect(sql).toMatch(/removed_at is null/);
     expect(sql).toMatch(/w\.is_active/);
     expect(sql).toMatch(/desired_state in \('connected', 'restart'\)/);
   });
@@ -225,7 +227,29 @@ describe("BaileysManagerRegistry.ensureManagers: only where needed, one at a tim
     await registry.ensureManagers();
     expect(registry.getExistingManager(WS)).toBeDefined();
 
-    expect(await registry.getOrCreateManager("ws-2")).toBeDefined(); // on demand, outside the scan
+    expect(await registry.getOrCreateManager("w", "ws-2")).toBeDefined(); // on demand, outside the scan
     expect(mocks.constructed).toEqual([WS, "ws-2"]);
+  });
+});
+
+describe("E4a rule 12: the startup / change log", () => {
+  it("names the numbers per workspace and the session-pooler slots they use", async () => {
+    const { describeNeededNumbers } = await import("../../src/providers/baileys-registry.js");
+    const rows = [
+      { id: "1", workspace_id: "a", workspace_name: "MOTM" },
+      { id: "2", workspace_id: "a", workspace_name: "MOTM" },
+      { id: "3", workspace_id: "b", workspace_name: "MOTM Tech" },
+    ];
+    expect(describeNeededNumbers(rows)).toBe("WhatsApp numbers with a session: MOTM: 2, MOTM Tech: 1 → 3 session-pooler slot(s) (one lock client per number).");
+    expect(describeNeededNumbers([])).toMatch(/none → 0 session-pooler slot/);
+  });
+
+  it("two numbers of one workspace start two managers", async () => {
+    mocks.poolQuery.mockResolvedValue({ rows: [{ id: "n1", workspace_id: "w" }, { id: "n2", workspace_id: "w" }] });
+    mocks.start.mockResolvedValue(undefined);
+    const registry = new BaileysManagerRegistry();
+    await registry.ensureManagers();
+    expect(mocks.constructed).toEqual(["n1", "n2"]);
+    expect(registry.getExistingManager("n1")).not.toBe(registry.getExistingManager("n2"));
   });
 });
