@@ -763,5 +763,32 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   apply 055 (the backfill keeps today's access), set `SESSION_POOLER_MAX_CLIENTS` to the production session pooler size, make the
   super-admin by SQL in the Supabase SQL editor (the script refuses production):
   `update public.profiles set is_super_admin = true where lower(email) = lower('<email>');`, then apply management's member lists
-  in Settings → All workspaces. Open: the 001-era RLS policies (`is_active_salesperson()`) still let any signed-in active user read
-  every workspace through PostgREST (the app doesn't use it); removing them needs a non-additive migration (decision pending).
+  in Settings → All workspaces. ~~Open: the 001-era RLS policies (`is_active_salesperson()`) still let any signed-in active user read
+  every workspace through PostgREST (the app doesn't use it); removing them needs a non-additive migration (decision pending).~~
+  **Closed in SEC-1** (migration 056).
+- **SEC-1 (no direct database access from the browser; migration 056; no OpenAI call, nothing sent, no change in what the AI
+  writes):** Item 0 found: the backend/worker connect as `postgres` (BYPASSRLS) and use the service-role key for Storage + Auth; the
+  frontend uses Supabase only for login (`signInWithPassword`, `getSession`, `onAuthStateChange`, `signOut`); no browser path reads a
+  table, calls an RPC or touches Storage. Staging before: 57 policies on 21 `public` tables (all `authenticated`, `is_active_salesperson()`),
+  0 RLS-off tables, anon + authenticated held every privilege on 55 tables + 4 views (826 grants; the views run as their owner, so
+  they bypassed RLS), EXECUTE on all 12 `public` functions, the same through `postgres`'s default privileges; 0 Storage policies (4
+  private buckets). A signed-in active salesperson with the anon key read real leads via `/rest/v1/leads`. Migration 056 (the one
+  allowed non-additive change: policies and privileges only; re-runnable): drops every policy on `public` tables, enables RLS where
+  off, revokes table/view/sequence/function privileges from anon, authenticated and PUBLIC in `public` and the matching default
+  privileges of `postgres` (PUBLIC's EXECUTE default globally for `postgres`), drops Storage policies for the browser that name a
+  private bucket or no bucket. Functions stay (5 are trigger functions incl. `handle_new_user` on `auth.users`; triggers don't check
+  EXECUTE); none is needed by Supabase Auth. After (staging, run twice, second run no change): 0 policies, 0 RLS-off, 0 grants, 0
+  EXECUTE; 12 functions and 43 triggers unchanged. Not changeable as `postgres`: `supabase_admin`'s default privileges (objects
+  created by `supabase_admin` only — none of ours). Guard: `npm run db:security-check` (`scripts/db-security-check.ts`, read-only,
+  refuses production) + integration test `dbSecurity` (also the proof: anon key alone and a signed-in active salesperson get 401/403
+  on `/rest/v1/leads`, `/rest/v1/tasks`, an insert and `rpc/is_active_salesperson`, a private bucket lists nothing; password login
+  still works); the staging runner passes the public anon key (`TEST_SUPABASE_ANON_KEY`, from `Frontend/.env`). CLAUDE.md rule:
+  never add policies or grants for anon/authenticated. Leftover on staging: two `agent3b2_fail_*` functions from an old interrupted
+  `agentEvents` run (now not executable by the browser). Production: apply 056 with the other migrations (no app change needed);
+  before release run this read-only query in the production SQL editor; every row must be a `public` policy, `rls_off`, or a
+  `storage` policy that 056 drops (names a private bucket or none) — anything else, review before applying:
+  `select 'policy' as kind, schemaname, tablename, policyname, roles::text, cmd from pg_policies where schemaname in ('public',
+  'storage') union all select 'rls_off', 'public', c.relname, null, null, null from pg_class c join pg_namespace n on n.oid =
+  c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity order by 1, 2, 3, 4;`
+  After 056: `npm run db:security-check` cannot target production (it refuses); re-run the query instead (expect only storage
+  rows for other buckets, if any).
