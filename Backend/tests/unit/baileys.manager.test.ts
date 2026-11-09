@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../src/db.js", () => ({
   pool: { query: mocks.poolQuery },
   withTransaction: async (fn: (db: { query: typeof mocks.txQuery }) => Promise<unknown>) => fn({ query: mocks.txQuery }),
-  pgConnectionOptions: { connectionString: "postgres://test" },
+  sessionConnectionOptions: { connectionString: "postgres://test" },
   WA_LOCK_APPLICATION_NAME: "northbeam-worker-walock",
 }));
 vi.mock("../../src/providers/baileys-auth.store.js", () => ({

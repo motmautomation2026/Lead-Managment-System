@@ -1,5 +1,4 @@
-import { pool, sessionLockUnsupportedReason } from "../db.js";
-import { env } from "../env.js";
+import { databaseUrls, pool, sessionLockUnsupportedReason } from "../db.js";
 import { BaileysManager } from "./baileys.manager.js";
 import { ProviderDeferredError } from "./provider-errors.js";
 
@@ -44,7 +43,7 @@ export class BaileysManagerRegistry {
   private readonly lockUnsupportedReason: string | null;
   private lockUnsupportedLogged = false;
 
-  constructor(databaseUrl: string = env.DATABASE_URL) {
+  constructor(databaseUrl: string = databaseUrls.session) {
     this.lockUnsupportedReason = sessionLockUnsupportedReason(databaseUrl);
   }
 

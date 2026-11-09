@@ -8,6 +8,12 @@ if (testDatabaseUrl) {
     throw new Error("TEST_DATABASE_URL points at the production project; refusing to run tests against it.");
   }
   process.env.DATABASE_URL = testDatabaseUrl;
+  // DB-3: TEST_DATABASE_URL = transaction pooler; TEST_DATABASE_SESSION_URL = session pooler (WhatsApp locks).
+  const testSessionUrl = process.env.TEST_DATABASE_SESSION_URL?.trim() || testDatabaseUrl;
+  if (testSessionUrl.includes("jorxltfwboabyjiydyhu")) {
+    throw new Error("TEST_DATABASE_SESSION_URL points at the production project; refusing to run tests against it.");
+  }
+  process.env.DATABASE_SESSION_URL = testSessionUrl;
   // The app's pool is named northbeam-test; PGAPPNAME names the tests' own pg Pools too.
   process.env.NORTHBEAM_DB_ROLE = "test";
   process.env.PGAPPNAME = "northbeam-test";
@@ -21,11 +27,11 @@ if (testDatabaseUrl) {
     const { pool } = await import("../src/db.js");
     fileStartedAt = (await pool.query<{ now: Date }>("select now()")).rows[0]!.now;
   });
-  // Each file gets a fresh src/db.ts pool; close it so idle connections don't
+  // Each file gets fresh src/db.ts pools; close them so idle connections don't
   // hold session-pooler slots (15 on Supabase) into the next file.
   // Registered first, so it runs after the file's own afterAll (cleanup).
   afterAll(async () => {
-    const { pool } = await import("../src/db.js");
+    const { pool, closePools } = await import("../src/db.js");
     try {
       if (!fileStartedAt) return;
       // D3 8c: no test user stays active (some can't be deleted: append-only admin audit rows).
@@ -48,12 +54,14 @@ if (testDatabaseUrl) {
         );
       }
     } finally {
-      await pool.end();
+      await closePools();
     }
   });
 }
 
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+// Set before src/env.ts loads Backend/.env, so unit tests never get a real session URL.
+process.env.DATABASE_SESSION_URL ??= process.env.DATABASE_URL;
 process.env.SUPABASE_URL ??= "https://example.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 process.env.INTEGRATION_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString("base64");

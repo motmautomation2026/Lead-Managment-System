@@ -20,12 +20,17 @@ export const DbEnvSchema = z.object({
   DB_IDLE_TIMEOUT_MS: blankToUndefined(z.coerce.number().int().min(0).default(10_000)),
   // How long a query waits for a free pool connection (or a new one) before failing. 0 = forever.
   DB_CONNECTION_TIMEOUT_MS: blankToUndefined(z.coerce.number().int().min(0).default(15_000)),
+  // DB-3: max connections in the session-pooler pool (only code that needs a real session uses it).
+  DB_SESSION_POOL_MAX: blankToUndefined(z.coerce.number().int().min(1).max(100).default(2)),
 });
 
 const EnvSchema = DbEnvSchema.extend({
   PORT: z.coerce.number().int().positive().default(8787),
   CORS_ORIGINS: z.string().default("http://localhost:8080,http://127.0.0.1:8080"),
+  // DB-3: DATABASE_URL = Supabase TRANSACTION pooler (port 6543); DATABASE_SESSION_URL = SESSION pooler
+  // (port 5432), only for session-level state (the WhatsApp session locks). Unset → DATABASE_URL (warned).
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  DATABASE_SESSION_URL: blankToUndefined(z.string().optional()),
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
   INTEGRATION_ENCRYPTION_KEY: z.string().refine(
