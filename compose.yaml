@@ -10,7 +10,9 @@ services:
       PORT: 8787
       NODE_ENV: production
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      # DB-3: transaction pooler (6543); session pooler (5432), blank = DATABASE_URL (warned).
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SESSION_URL: ${DATABASE_SESSION_URL:-}
       SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
@@ -39,7 +41,9 @@ services:
       disable: true
     environment:
       NODE_ENV: production
+      # DB-3: the WhatsApp session locks need the session pooler (5432).
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SESSION_URL: ${DATABASE_SESSION_URL:-}
       SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}

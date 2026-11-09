@@ -47,18 +47,30 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Run them with `npm run test:integration:staging` in `Backend/`. It loads
   `TEST_DATABASE_URL` (plus the staging `SUPABASE_URL` / service key, for Storage) from
   `Backend/.env`, refuses the prod ref, and runs `tests/integration`. Run it after every backend change.
-- Stop any local `npm run dev` / `npm run worker:dev` that points at staging first. They
-  share the 15-slot session pooler (tests then fail with `EMAXCONNSESSION`). A live worker
-  also claims queued proposal/meeting rows that the tests create.
+- Stop any local `npm run dev` / `npm run worker:dev` that points at staging first: a live worker
+  claims queued proposal/meeting rows that the tests create. `TEST_DATABASE_URL` is the transaction
+  pooler (6543), `TEST_DATABASE_SESSION_URL` the session pooler (5432, the WhatsApp lock tests).
 
 ## DB connections
 
-- The staging session pooler allows **15 client connections in total** (API, worker, WhatsApp lock
-  clients, tests, scripts, the Supabase dashboard). Every pooled connection counts while open, even idle.
-- Env (backend + worker): `DB_POOL_MAX` (API) and `WORKER_DB_POOL_MAX` (worker), default 10 each;
-  `DB_IDLE_TIMEOUT_MS` (10000); `DB_CONNECTION_TIMEOUT_MS` (15000, how long a query waits for a
-  connection). Local staging `.env`: `DB_POOL_MAX=5`, `WORKER_DB_POOL_MAX=4`.
-- The worker also holds one dedicated connection per running WhatsApp manager (lock client). It starts
+- DB-3: two connection strings. `DATABASE_URL` = Supabase **transaction** pooler (port 6543): API requests
+  (incl. `/t/o/…`), every worker query/tick/transaction, scripts, integration tests. `DATABASE_SESSION_URL` =
+  **session** pooler (port 5432), used ONLY by code that needs a real session: the WhatsApp session-lock
+  clients and `sessionPool` (`src/db.ts`, lazy, unused today). Unset → falls back to `DATABASE_URL` with one
+  startup warning (WhatsApp then refuses to start if that is port 6543).
+- Transaction-pooler safety: on `pool` never use session `SET` (use `SET LOCAL` / `set_config(…, true)` inside a
+  transaction), named prepared statements (`name:`), temp tables, `LISTEN/NOTIFY`, cursors across transactions or
+  session advisory locks (use `pg_advisory_xact_lock`); anything that truly needs a session goes on the session URL.
+- The staging session pooler allows **15 client connections in total** (session pools, WhatsApp lock clients,
+  the Supabase dashboard). Every session connection counts while open, even idle.
+- Env (backend + worker): `DB_POOL_MAX` (API) and `WORKER_DB_POOL_MAX` (worker), default 10 each (transaction pool);
+  `DB_SESSION_POOL_MAX` (default 2, session pool); `DB_IDLE_TIMEOUT_MS` (10000); `DB_CONNECTION_TIMEOUT_MS`
+  (15000, how long a query waits for a connection). Every pool and lock client has TCP keepalive (10 s).
+  Local staging `.env`: `DB_POOL_MAX=5`, `WORKER_DB_POOL_MAX=4`, `DB_SESSION_POOL_MAX=2`.
+- Clean shutdown (`src/shutdown.ts`): API, worker and scripts close their pools (worker: also WhatsApp
+  sockets + lock clients and SMTP transports) on SIGINT / SIGTERM / SIGBREAK, 10 s hard timeout. The API
+  and worker log which pooler each pool uses (host:port) at startup.
+- The worker also holds one dedicated session connection per running WhatsApp manager (lock client). It starts
   managers (every tick, one at a time) only for active workspaces whose `whatsapp_connection` has
   `desired_state` connected/restart, or a live status while disconnecting; unneeded managers are
   stopped (lock client closed). No row = no manager.
@@ -68,10 +80,12 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Leftovers on staging: `npm run staging:cleanup-test-workspaces` (dry run; `-- --confirm` deletes;
   staging ref only; never MOTM / Quick ICP / workspaces with a `whatsapp_connection` row).
 - On EMAXCONNSESSION run `npm run db:connections -- --probe` (Backend). Behind the pooler every
-  connection shows as `Supavisor` in `pg_stat_activity`; `--probe` counts free client slots.
+  connection shows as `Supavisor` in `pg_stat_activity`; `--probe` counts free client slots of both poolers.
 - Stop the local API/worker before integration tests.
-- Production: `DB_POOL_MAX` + `WORKER_DB_POOL_MAX` + WhatsApp lock clients must stay below the
-  production pooler size (Supabase → Database → Connection pooling); check it before deploying.
+- Production: set `DATABASE_URL` (6543) and `DATABASE_SESSION_URL` (5432) on the API and the worker; the
+  session pools (2 each) + WhatsApp lock clients must stay below the production session pooler size, and
+  the transaction pools below its transaction client limit (Supabase → Database → Connection pooling); check
+  both before deploying.
 
 ## Migrations
 

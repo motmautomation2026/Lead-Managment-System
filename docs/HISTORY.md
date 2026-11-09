@@ -682,3 +682,20 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   (`features/analytics/funnel.tsx`). Frontend `testTimeout` 15 s. Migration 053 (re-runnable) applied to staging. Tests:
   `emailTracking`, `leadScore` (unit), `emailOpens`, `messageFacts`, `leadScore`, `funnel` (integration) + updates in `replyDrafts`,
   `seedReplyDraft`, `emailOutbound`, `whatsappSafety`, `emailSettingsApi`, `agentAssets`, `agentDraft`, `agentPolish`.
+
+- **DB-3 (transaction pooler, session pooler only where needed, keepalive + clean shutdown; no migration; no OpenAI call):**
+  `DATABASE_URL` = Supabase transaction pooler (6543) for the API (incl. `/t/o/…`), every worker query/tick, scripts and
+  integration tests; new `DATABASE_SESSION_URL` = session pooler (5432) for the WhatsApp session-lock clients
+  (`sessionConnectionOptions`) and `sessionPool` (`DB_SESSION_POOL_MAX` default 2, lazy, unused today); unset → `DATABASE_URL`
+  with one startup warning (`resolveDatabaseUrls`, `logPoolTargets` prints host:port of each pool). Inventory: the only
+  session-dependent use was the WhatsApp manager's `pg_try_advisory_lock`/`pg_advisory_unlock` (moved to the session URL); every
+  other lock is `pg_advisory_xact_lock` (performSend, WhatsApp inbound per phone, lead ingest, saved views), `hnsw.iterative_scan`
+  is `set_config(…, true)` inside a transaction, no session `SET`, named statements, temp tables, `LISTEN` or cursors. TCP
+  keepalive (10 s) on every pool and lock client. `src/shutdown.ts` `installShutdown` (SIGINT, SIGTERM, SIGBREAK; once; 10 s hard
+  timeout): API (server close + both pools), worker (loop, WhatsApp managers + lock clients, pooled SMTP transports, both pools),
+  scripts (installed by `db.ts` for role `script`). `db:connections --probe` probes both poolers. Staging `.env`: `DATABASE_URL` and
+  `TEST_DATABASE_URL` on 6543, `DATABASE_SESSION_URL` / `TEST_DATABASE_SESSION_URL` on 5432, `DB_SESSION_POOL_MAX=2`; the staging
+  runner passes `TEST_DATABASE_SESSION_URL`. Production deploy: set both URLs on API and worker, check the transaction pooler is
+  enabled and both pool sizes (CLAUDE.md "DB connections"). Tests: `db`, `shutdown` (unit), `dbPoolers` (integration: 30 parallel
+  queries on the transaction pooler while the session pool is held, the WhatsApp lock still excludes a second manager, the hot-score
+  sweeper on the transaction pool), `whatsappManagers` uses the session URL.
