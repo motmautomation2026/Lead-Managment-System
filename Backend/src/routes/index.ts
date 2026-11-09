@@ -37,9 +37,8 @@ apiRouter.use("/me", meRouter);
 // see connections.service.ts's completeGoogleCalendarOAuth.
 apiRouter.use("/connections/google-calendar", googleCalendarOAuthRouter);
 
-// Public website-form lead intake. Must be mounted before profilesAccessRouter
-// and crmRouter below: both attach requireAuth at the router root, so anything
-// reaching them unauthenticated would be rejected. Authenticates with its own
+// Public website-form lead intake. Must be mounted before crmRouter below: it
+// attaches requireAuth at the router root, so anything reaching it unauthenticated would be rejected. Authenticates with its own
 // shared-secret header instead, and only exists when explicitly configured.
 if (env.INGEST_API_KEY && env.INGEST_WORKSPACE_ID) {
   apiRouter.use("/public", createPublicLeadsRouter({ apiKey: env.INGEST_API_KEY, workspaceId: env.INGEST_WORKSPACE_ID }));
@@ -52,17 +51,10 @@ apiRouter.use("/admin", adminRouter);
 // to send as X-Workspace-Id.
 apiRouter.use("/workspaces", workspacesRouter);
 
-// /profiles is CRM-user-gated but intentionally NOT workspace-gated: the
-// user directory is the same across every workspace (there is no
-// per-workspace membership), and the frontend fetches it alongside the
-// workspace list itself, before a workspace is necessarily selected yet.
-const profilesAccessRouter = Router();
-profilesAccessRouter.use(requireAuth, requireCrmUser);
-profilesAccessRouter.use("/profiles", profilesRouter);
-apiRouter.use(profilesAccessRouter);
-
+// E4b rule 3: requireWorkspace is the one membership check for everything below.
 const crmRouter = Router();
 crmRouter.use(requireAuth, requireCrmUser, requireWorkspace);
+crmRouter.use("/profiles", profilesRouter);
 crmRouter.use("/leads", leadsRouter);
 crmRouter.use("/tasks", tasksRouter);
 crmRouter.use("/meetings", meetingsRouter);

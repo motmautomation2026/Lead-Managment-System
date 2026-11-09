@@ -11,13 +11,18 @@ import type { Server } from "node:http";
 import type { Pool } from "pg";
 import { expect } from "vitest";
 import type { Actor } from "../../src/authMiddleware.js";
+import { addTestMember } from "./testWorkspaces.js";
 
 // Response bodies are JSON checked by expect(); typing every shape adds nothing here.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type JsonBody = any;
 
 export interface TestApi {
-  newUser(role: "admin" | "salesperson", options?: { isActive?: boolean; name?: string }): Promise<Actor>;
+  /**
+   * A test user. E4b: `call()` makes it a member (its `role`) of the [test] workspace it calls, unless
+   * `member: false` (then add memberships with addTestMember). `superAdmin` sets profiles.is_super_admin.
+   */
+  newUser(role: "admin" | "salesperson", options?: { isActive?: boolean; name?: string; member?: false; superAdmin?: boolean }): Promise<Actor>;
   call(as: Actor, workspaceId: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: JsonBody; headers: Headers }>;
   close(): Promise<void>;
   /** The server's origin (routes outside /api/v1, e.g. the open pixel). */
@@ -26,6 +31,7 @@ export interface TestApi {
 
 export async function startTestApi(pool: Pool, label: string): Promise<TestApi> {
   const authUserIds: string[] = [];
+  const noAutoJoin = new Set<string>();
   let actor: Actor | undefined;
   const { createApp } = await import("../../src/app.js");
   const app = express();
@@ -45,14 +51,17 @@ export async function startTestApi(pool: Pool, label: string): Promise<TestApi> 
       const isActive = options.isActive ?? true;
       const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`${label}-${role}-${randomUUID()}@example.com`]);
       authUserIds.push(auth.rows[0].id);
+      const superAdmin = options.superAdmin === true;
       const profile = await pool.query(
-        `update public.profiles set role = $2, is_active = $3, full_name = coalesce($4, full_name) where id = $1 returning id, full_name, email`,
-        [auth.rows[0].id, role, isActive, options.name ?? null],
+        `update public.profiles set role = $2, is_active = $3, full_name = coalesce($4, full_name), is_super_admin = $5 where id = $1 returning id, full_name, email`,
+        [auth.rows[0].id, role, isActive, options.name ?? null, superAdmin],
       );
-      return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive, role };
+      if (options.member === false || superAdmin) noAutoJoin.add(profile.rows[0].id);
+      return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive, role, isSuperAdmin: superAdmin };
     },
     async call(as, workspaceId, method, path, body) {
       actor = as;
+      if (!noAutoJoin.has(as.id)) await addTestMember(pool, workspaceId, as.id, as.role).catch(() => undefined);
       const res = await fetch(`${base}${path}`, {
         method,
         headers: { "Content-Type": "application/json", "X-Workspace-Id": workspaceId },

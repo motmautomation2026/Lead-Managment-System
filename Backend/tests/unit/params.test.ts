@@ -40,7 +40,15 @@ describe("uuid route params and the workspace header", () => {
 
     const app = express();
     app.use("/templates", templates);
-    app.get("/ws", requireWorkspace, (req, res) => res.json({ workspaceId: req.workspaceId }));
+    app.get(
+      "/ws",
+      (req, _res, next) => {
+        req.actor = { id: ID, fullName: "U", email: "u@example.com", isActive: true, role: "admin" };
+        next();
+      },
+      requireWorkspace,
+      (req, res) => res.json({ workspaceId: req.workspaceId, role: req.actor!.role }),
+    );
     app.use(errorMiddleware);
     await new Promise<void>((resolve) => {
       server = app.listen(0, "127.0.0.1", resolve);
@@ -76,10 +84,17 @@ describe("uuid route params and the workspace header", () => {
     expect(poolQuery).not.toHaveBeenCalled();
   });
 
-  it("still looks up a well-formed X-Workspace-Id", async () => {
-    poolQuery.mockResolvedValueOnce({ rows: [{ id: ID }] });
+  it("still looks up a well-formed X-Workspace-Id; the role becomes the membership role (E4b)", async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ id: ID, role: "salesperson" }] });
     const res = await fetch(`${base}/ws`, { headers: { "X-Workspace-Id": ID } });
-    expect(await res.json()).toEqual({ workspaceId: ID });
+    expect(await res.json()).toEqual({ workspaceId: ID, role: "salesperson" });
+  });
+
+  it("E4b: a non-member gets 403, whatever the global role", async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ id: ID, role: null }] });
+    const res = await fetch(`${base}/ws`, { headers: { "X-Workspace-Id": ID } });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { message: string } }).error.message).toBe("You don't have access to this workspace");
   });
 });
 

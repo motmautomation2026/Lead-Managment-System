@@ -28,6 +28,20 @@ export async function createTestWorkspace(
   return id;
 }
 
+/**
+ * E4b rule 8: makes a test user a member of a `[test]` workspace (role in that workspace; an existing
+ * membership gets the new role). Refuses any other workspace.
+ */
+export async function addTestMember(db: Pool | PoolClient, workspaceId: string, userId: string, role: "admin" | "salesperson"): Promise<void> {
+  const added = await db.query(
+    `insert into public.workspace_members (workspace_id, user_id, role)
+     select w.id, $2, $3 from public.workspaces w where w.id = $1 and w.name like '[test] %'
+     on conflict (workspace_id, user_id) do update set role = excluded.role, updated_at = now()`,
+    [workspaceId, userId, role],
+  );
+  if (added.rowCount !== 1) throw new Error(`addTestMember: ${workspaceId} is not a [test] workspace.`);
+}
+
 /** afterAll: deletes every workspace this file created (before its test users). Throws on the first failure. */
 export async function deleteCreatedTestWorkspaces(pool: Pool): Promise<void> {
   for (const id of created) {

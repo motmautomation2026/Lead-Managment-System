@@ -9,7 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { addTestMember, createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -55,6 +55,9 @@ describeIfDb("roles (requires TEST_DATABASE_URL)", () => {
     inactiveId = (await newUser("salesperson", false)).id;
     WORKSPACE_ID = randomUUID();
     await createTestWorkspace(pool, "roles-test", { id: WORKSPACE_ID });
+    // E4b: roles are per workspace; both are members of this one with their role.
+    await addTestMember(pool, WORKSPACE_ID, admin.id, "admin");
+    await addTestMember(pool, WORKSPACE_ID, salesperson.id, "salesperson");
 
     const { createApp } = await import("../../src/app.js");
     const { requireAdmin, requireAuth, requireCrmUser, requireWorkspace } = await import("../../src/authMiddleware.js");

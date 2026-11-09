@@ -1,15 +1,54 @@
 import { z } from "zod";
 import type { Queryable } from "../dto.js";
+import { ValidationError } from "../errors.js";
 
-/** Active CRM users (salespeople and admins): the owner pickers' directory. */
-export async function listProfiles(db: Queryable) {
-  const result = await db.query<{ id: string; full_name: string; email: string; initials: string; role: "admin" | "salesperson" }>(
-    `select id, full_name, email, initials, role
-       from public.profiles
-      where is_active
-      order by full_name asc`,
+/**
+ * The owner pickers' directory for one workspace (E4b rule 5): its active members with their role there
+ * (`member: true`, the only ones a picker offers), plus active non-members who still own contacts,
+ * companies, deals, tasks or meetings there (`member: false`, shown "(not in this workspace)").
+ */
+export async function listProfiles(db: Queryable, workspaceId: string) {
+  const result = await db.query<{ id: string; full_name: string; email: string; initials: string; role: "admin" | "salesperson" | null }>(
+    `with owners as (
+       select owner_id from public.leads where workspace_id = $1 and owner_id is not null
+       union select owner_id from public.companies where workspace_id = $1 and owner_id is not null
+       union select owner_id from public.deals where workspace_id = $1 and owner_id is not null
+       union select owner_id from public.tasks where workspace_id = $1 and owner_id is not null
+       union select owner_id from public.meetings where workspace_id = $1 and owner_id is not null
+     )
+     select p.id, p.full_name, p.email, p.initials, m.role
+       from public.profiles p
+       left join public.workspace_members m on m.user_id = p.id and m.workspace_id = $1
+      where p.is_active and (m.user_id is not null or p.id in (select owner_id from owners))
+      order by p.full_name asc`,
+    [workspaceId],
   );
-  return result.rows.map((r) => ({ id: r.id, name: r.full_name, email: r.email, initials: r.initials, active: true, role: r.role }));
+  return result.rows.map((r) => ({
+    id: r.id,
+    name: r.full_name,
+    email: r.email,
+    initials: r.initials,
+    active: true,
+    role: r.role ?? "salesperson",
+    member: r.role !== null,
+  }));
+}
+
+/**
+ * E4b rule 5: a new owner / assignee must be an active member of the workspace. Every assignment path
+ * (contacts, bulk assign, companies, deals, tasks, meetings, revenue rules, website owner, number owner)
+ * calls this; existing data owned by a non-member stays as it is.
+ */
+export async function assertAssignableUser(db: Queryable, workspaceId: string, userId: string, field = "ownerId"): Promise<{ id: string; name: string }> {
+  const result = await db.query<{ id: string; full_name: string }>(
+    `select p.id, p.full_name from public.profiles p
+       join public.workspace_members m on m.user_id = p.id and m.workspace_id = $1
+      where p.id = $2 and p.is_active`,
+    [workspaceId, userId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new ValidationError("The owner must be an active member of this workspace.", { field });
+  return { id: row.id, name: row.full_name };
 }
 
 export async function getProfile(db: Queryable, id: string) {

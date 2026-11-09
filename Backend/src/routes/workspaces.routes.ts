@@ -1,17 +1,15 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
-import { requireAuth, requireCrmUser } from "../authMiddleware.js";
+import { requireAuth, requireCrmUser, requireSuperAdmin } from "../authMiddleware.js";
 import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
 import * as workspacesService from "../services/workspaces.service.js";
 
 /**
  * Deliberately NOT gated by requireWorkspace: a workspace must be listable
  * (and creatable) before the frontend has one selected to send as
- * X-Workspace-Id. Any active CRM user (salesperson or admin) can list/create/rename workspaces —
- * see the multi-workspace architecture plan: there is no per-workspace
- * membership, and workspace administration is intentionally NOT limited to
- * the admin role (Admin stays scoped to user management only).
+ * X-Workspace-Id. E4b: the list holds only the user's workspaces (super-admin: all); any CRM user
+ * may create one and becomes its admin (rule 11); renaming is super-admin only.
  */
 export const workspacesRouter = Router();
 workspacesRouter.use(requireAuth, requireCrmUser);
@@ -19,8 +17,8 @@ workspacesRouter.param("id", uuidParam("workspace"));
 
 workspacesRouter.get(
   "/",
-  asyncHandler(async (_req, res) => {
-    res.json({ data: await workspacesService.listWorkspaces() });
+  asyncHandler(async (req, res) => {
+    res.json({ data: await workspacesService.listWorkspaces(req.actor!) });
   }),
 );
 
@@ -40,6 +38,7 @@ const renameWorkspaceSchema = z.object({ name: z.string().min(1) });
 
 workspacesRouter.patch(
   "/:id",
+  requireSuperAdmin,
   asyncHandler(async (req, res) => {
     const { id } = parseParams(workspaceIdParamsSchema, req.params);
     const input = parseBody(renameWorkspaceSchema, req.body);
