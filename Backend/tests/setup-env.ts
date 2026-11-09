@@ -66,3 +66,5 @@ process.env.SUPABASE_URL ??= "https://example.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 process.env.INTEGRATION_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString("base64");
 process.env.NODE_ENV = "test";
+// Tests run without open tracking unless they inject an address (a local .env may set one; blank = unset, and dotenv won't overwrite it).
+process.env.PUBLIC_API_BASE_URL = "";
