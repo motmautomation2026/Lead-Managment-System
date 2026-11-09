@@ -75,7 +75,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   workspaces) with `desired_state` connected/restart and not removed, or a live status while disconnecting / being
   removed; unneeded managers are stopped (lock client closed). No number = no manager. It logs "WhatsApp numbers with a
   session: <ws>: n → N session-pooler slot(s)" whenever that set changes. Session slots needed = 2 × DB_SESSION_POOL_MAX
-  + connected numbers (all workspaces); Settings → WhatsApp warns above 15 − 2 × DB_SESSION_POOL_MAX − 3.
+  + connected numbers (all workspaces); Settings → WhatsApp warns above SESSION_POOLER_MAX_CLIENTS (15) − 2 × DB_SESSION_POOL_MAX − 3.
 - Integration tests create workspaces with `createTestWorkspace` (`tests/helpers/testWorkspaces.ts`,
   name `[test] <label> <uuid>`) and delete them in `afterAll` with `deleteCreatedTestWorkspaces`
   (FK-safe, throws on failure). Never insert/delete workspaces directly in tests.
@@ -92,7 +92,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `054`).
+  (currently `055`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -118,7 +118,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `054`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `055`).
 
 ## Way of working
 
@@ -129,6 +129,25 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Completed so far
 
 Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it for details of a past phase.
+
+## Workspace access (E4b)
+
+- Users belong to workspaces (`workspace_members`, role `admin` | `salesperson` **per workspace**). `requireWorkspace`
+  (`authMiddleware.ts`) is the ONE access check: `X-Workspace-Id` must be a workspace the user is a member of, or the user is a
+  super-admin (`profiles.is_super_admin`, admin everywhere); else 403 "You don't have access to this workspace". It replaces
+  `req.actor.role` with the role in that workspace, so `requireAdmin` and every `actor.role` check are per workspace. Never add a
+  route-level copy of these rules; pure rules live in `domain/workspaceAccess.ts`.
+- The global `profiles.role` only gates `/admin` user accounts (global admin or super-admin) and was the 055 backfill default.
+- New owners / assignees must be active members (`assertAssignableUser`, `profiles.service.ts`); admin notifications go to
+  `WORKSPACE_ADMIN_IDS_SQL` (admins of that workspace; super-admins only if members). Pickers use `/profiles` (workspace-scoped).
+- Super-admin: only `npm run admin:set-super-admin -- --email <email> [--remove] [--confirm]` (staging; dry run by default; refuses
+  production — production uses SQL in the Supabase editor). No UI makes a super-admin.
+- Team: Settings → Team (`/team/members`, admins); every workspace × user: Settings → All workspaces (`/super-admin/memberships`).
+  Removing is blocked while the user owns active contacts / open deals / open tasks there; never remove or demote the last admin;
+  every change is in `workspace_member_events`. A new workspace's creator becomes its admin.
+- Tests: `startTestApi().call()` makes the caller a member of the `[test]` workspace with its role unless `newUser(..., { member:
+  false })`; otherwise `addTestMember` (`tests/helpers/testWorkspaces.ts`, refuses non-`[test]` workspaces).
+- `SESSION_POOLER_MAX_CLIENTS` (API + worker, default 15): the session pooler's client limit for the WhatsApp slot warning.
 
 ## WhatsApp numbers (E4a)
 

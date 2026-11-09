@@ -199,7 +199,7 @@ Severity: **High** means business behaviour is broken or the integrity of tenant
 
 ## D. Missing validation and risky areas
 
-- **No workspace membership.** Any active salesperson can read and modify every workspace, including its connections and secrets configuration (by design, per the code comments). `requireWorkspace` only checks that the workspace exists.
+- ~~**No workspace membership.** Any active salesperson can read and modify every workspace, including its connections and secrets configuration (by design, per the code comments). `requireWorkspace` only checks that the workspace exists.~~ **Closed in E4b** (migration 055): `requireWorkspace` requires membership (or super-admin) and roles are per workspace. The RLS item below is still open.
 - **RLS is not workspace-aware.** Policies only check `is_active_salesperson()`. A salesperson using the anon key directly against PostgREST could read every workspace's CRM tables. Integration and secret tables are denied, which is correct.
 - **No DB-level tenant consistency.** Nothing enforces that child rows share their parent's `workspace_id` (tasks, runs, calls vs leads). Enforcement depends on every service pre-checking. B15 shows one place where it does not.
 - **AES-GCM AAD is not workspace-namespaced** (deliberate, for backward compatibility). A ciphertext copied between workspace rows would decrypt.

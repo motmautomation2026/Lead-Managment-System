@@ -730,3 +730,38 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   `dbPoolers` (one lock per number), `whatsappManagers` (two numbers → two managers, removed → none), registry / manager / auth
   store unit tests; frontend `whatsapp-numbers`, `whatsapp-safety`, `move-whatsapp-number-dialog`, `contact-about`. Production: stop
   the worker, apply 054 (MOTM and MOTM Tech: their number becomes #1, no re-pairing), deploy API + worker; env unchanged.
+- **E4b (users assigned to workspaces: membership, per-workspace role, super-admin; migration 055; no OpenAI call, nothing sent):**
+  New `workspace_members` (workspace, user, role `admin` | `salesperson` — the profile role values, per workspace; unique pair;
+  indexes both ways; RLS on, no policies), `profiles.is_super_admin`, `workspace_member_events` (audit: added / role_changed /
+  removed / workspace_created, actor). Backfill (rule 8, only while the table is empty): every active user × every non-`[test]`
+  workspace with the global role — staging: 1 admin + 1 salesperson in MOTM. Access: `requireWorkspace` is the ONE check
+  (non-member → 403 "You don't have access to this workspace"; super-admin opens everything as admin) and replaces
+  `req.actor.role` with the role in that workspace, so every `requireAdmin` / `actor.role` check (agent, knowledge, connections,
+  assignment rules, duplicates, contacts enrol AI, opt-out/bounce clearing, saved views, reply reads, ratings) is per workspace. The
+  global role remains only for `/admin` user accounts (global admin or super-admin) and the backfill; `requireCrmUser` still
+  validates it. `domain/workspaceAccess.ts` (effective role, last admin, removable). `/me` → `isSuperAdmin` + `workspaces` with
+  roles; `/workspaces` lists only the user's (super-admin: all), the creator becomes admin, rename is super-admin only; `/profiles` is
+  workspace-scoped (members + non-member owners `member: false`). Assignment (rule 5, `assertAssignableUser`): lead create/edit,
+  bulk assign, companies, deals, manual tasks, meetings, revenue rules + fallback, website owner, number owner accept only active
+  members; an unchanged non-member owner is kept. Notifications (rule 6, `WORKSPACE_ADMIN_IDS_SQL`): auto-pause (WhatsApp / email),
+  IMAP alert, budget / daily cap, AI report, reply escalation → admins of that workspace; unassigned website lead → members of that
+  workspace; owner notifications unchanged. Worker (rule 7): revenue rules / fallback skip non-members; escalation, budget, auto-pause,
+  IMAP use membership; the meeting-outcome task still goes to the meeting/lead owner (owner rule). Team API `/team/members`
+  (admin: add by email, role, remove — 409 with counts of active contacts / open deals / open tasks, last-admin guard), super-admin
+  `/super-admin/memberships` (paged matrix, set/remove) (B4 §7t). Script `npm run admin:set-super-admin -- --email <e> [--remove]
+  [--confirm]` (staging only, refuses production, dry run by default, admin audit row). UI: the switcher lists only allowed workspaces
+  (stale selection → first allowed), `?workspace=<id>` opens that workspace or shows "You don't have access to this workspace", no
+  workspace → "You haven't been added to a workspace yet. Ask your admin."; Settings → Team (`team-panel.tsx`, lazy), Settings → All
+  workspaces (super-admins, `super-admin-panel.tsx`, lazy, also creates workspaces); pickers offer members only, non-member owners
+  are shown "(not in this workspace)"; admin UI follows the role in the current workspace. Small fixes: env
+  `SESSION_POOLER_MAX_CLIENTS` (default 15, validated, API + worker) replaces the hard-coded rule-12 pooler size; unused `yesNo`
+  removed. Tests: unit `workspaceAccess`, `roleGuards`, `params` (403), `setSuperAdmin`, `db` (env); integration
+  `workspaceAccess` (non-member 403 across contacts/deals/settings/AI/WhatsApp/funnel/knowledge/directory, admin in A + sales in B,
+  super-admin, pixel public), `workspaceMembership` (auto-pause to that workspace's admins, revenue assignment never a non-member,
+  pickers), `team`, escalation in `replyDrafts`; test helpers `addTestMember` + testApi auto-membership (`member: false` opts out);
+  frontend `team-panel`, `super-admin-panel`, `session-hooks`, `auth-gate`, `settings-page`. First load 296.8 kB. Production:
+  apply 055 (the backfill keeps today's access), set `SESSION_POOLER_MAX_CLIENTS` to the production session pooler size, make the
+  super-admin by SQL in the Supabase SQL editor (the script refuses production):
+  `update public.profiles set is_super_admin = true where lower(email) = lower('<email>');`, then apply management's member lists
+  in Settings → All workspaces. Open: the 001-era RLS policies (`is_active_salesperson()`) still let any signed-in active user read
+  every workspace through PostgREST (the app doesn't use it); removing them needs a non-additive migration (decision pending).
