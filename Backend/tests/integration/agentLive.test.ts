@@ -9,6 +9,7 @@ import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
@@ -18,6 +19,9 @@ import type { WhatsAppSender } from "../../src/services/agentSends.service.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
+
+/** E4a: each workspace's WhatsApp number #1. */
+const numbers = new Map<string, string>();
 const PRICES = { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } };
 const MODELS = { decision: "m-decide", grounding: "m-ground" };
 
@@ -43,11 +47,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
         where workspace_id = $1`,
       [ws],
     );
-    await pool.query(
-      `insert into public.whatsapp_connection (workspace_id, enabled, status, desired_state, send_window_days, send_window_start, send_window_end)
-       values ($1, true, 'connected', 'connected', '{1,2,3,4,5,6,7}', '00:00', '23:59:59')`,
-      [ws],
-    );
+    numbers.set(ws, await connectedNumber(pool, ws));
     const { encryptJson } = await import("../../src/security/encryption.js");
     const secret = encryptJson({ smtpUsername: "crm@motm.example", smtpPassword: "app-password" }, "integration:email");
     await pool.query(
@@ -98,7 +98,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
 
   function whatsapp(ws: string) {
     const socket = fakeSocket();
-    const m = new Manager(ws, async () => undefined);
+    const m = new Manager(ws, numbers.get(ws)!, async () => undefined);
     Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
     const send: WhatsAppSender = (_ws, input) => m.sendAction({ source: input.source, phoneE164: input.to, body: input.body });
     return { socket, send };
@@ -547,5 +547,73 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     const live = (await decisionsOf(l.id)).at(-1);
     expect(live).toMatchObject({ mode: "live", send_status: "queued" });
     expect(live.send_next_at.getTime()).toBeLessThan(Date.now() + 60_000);
+  });
+
+  it("E4a: one sticky number across agent → proposal → reply_draft; a reply on the other number is flagged, sticky unchanged", async () => {
+    const ws = await workspace("e4a-sticky");
+    const a = numbers.get(ws)!;
+    // Number #2 belongs to the lead owner (rule 4a), so the AI's first message picks it.
+    const b = await connectedNumber(pool, ws, { owner_user_id: adminId }, "#2");
+    const { baileysRegistry } = await import("../../src/providers/baileys-registry.js");
+    const managers = (baileysRegistry as unknown as { managers: Map<string, BaileysManager> }).managers;
+    const sockets = new Map<string, ReturnType<typeof fakeSocket>>();
+    for (const id of [a, b]) {
+      const socket = fakeSocket();
+      const m = new Manager(ws, id, async () => undefined);
+      Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
+      managers.set(id, m);
+      sockets.set(id, socket);
+    }
+    const sticky = async (leadId: string) => (await leadRow(leadId)).whatsapp_number_id;
+    try {
+      const l = await lead(ws);
+      await wakeup(ws, l.id);
+      await tick(ws, [WHATSAPP]);
+      const { runAgentSends } = await import("../../src/services/agentSends.service.js");
+      expect((await runAgentSends(true, { workspaceIds: [ws] })).map((r) => r.result)).toEqual(["sent"]);
+      expect(await sticky(l.id)).toBe(b);
+
+      // A has more room now, but the lead stays on B: the rep's proposal goes out on B.
+      await pool.query(`update public.whatsapp_numbers set next_send_at = null where workspace_id = $1`, [ws]);
+      const proposal = await pool.query<{ id: string }>(
+        `insert into public.proposals (workspace_id, lead_id, title, whatsapp_send_status) values ($1, $2, 'E4a', 'sending') returning id`,
+        [ws, l.id],
+      );
+      const { sendWhatsApp } = await import("../../src/providers/whatsapp.provider.js");
+      await sendWhatsApp(ws, { source: { type: "proposal", id: proposal.rows[0]!.id }, to: l.phone!, body: "Your proposal" });
+
+      // The lead replies on A (e.g. saved the other number): recorded, flagged, handled; sticky stays B.
+      const { processInboundUpsert } = await import("../../src/services/whatsapp-inbound.service.js");
+      const replyId = `E4A-${randomUUID()}`;
+      await processInboundUpsert(
+        ws,
+        { type: "notify", messages: [{ key: { id: replyId, remoteJid: `${l.phone!.slice(1)}@s.whatsapp.net`, fromMe: false }, message: { conversation: "Tuesday works" }, messageTimestamp: Math.floor(Date.now() / 1000) }] as never },
+        a,
+      );
+      const event = (await pool.query(`select disposition, whatsapp_number_id, other_number from public.whatsapp_inbound_events where message_id = $1`, [replyId])).rows[0];
+      expect(event).toEqual({ disposition: "matched", whatsapp_number_id: a, other_number: true });
+      expect(await sticky(l.id)).toBe(b);
+
+      // The owner's Send of a suggested reply goes out on B too.
+      await pool.query(`update public.whatsapp_numbers set next_send_at = null where workspace_id = $1`, [ws]);
+      const draft = await pool.query<{ id: string }>(
+        `insert into public.reply_drafts (workspace_id, lead_id, channel, whatsapp_message_id, body, sent_body, status, send_status, send_next_at, model)
+         values ($1, $2, 'whatsapp', $3, 'Great, Tuesday it is.', 'Great, Tuesday it is.', 'sent', 'queued', now(), 'm-decide') returning id`,
+        [ws, l.id, replyId],
+      );
+      const { runReplyDraftSends } = await import("../../src/services/replyDrafts.service.js");
+      expect(await runReplyDraftSends({ workspaceIds: [ws] })).toEqual([{ id: draft.rows[0]!.id, result: "sent" }]);
+
+      expect(sockets.get(b)!.sendMessage).toHaveBeenCalledTimes(3);
+      expect(sockets.get(a)!.sendMessage).not.toHaveBeenCalled();
+      const facts = (await pool.query(`select source, whatsapp_number_id from public.message_facts where lead_id = $1 order by sent_at`, [l.id])).rows;
+      expect(facts).toEqual([
+        { source: "agent", whatsapp_number_id: b },
+        { source: "proposal", whatsapp_number_id: b },
+        { source: "reply_draft", whatsapp_number_id: b },
+      ]);
+    } finally {
+      managers.clear();
+    }
   });
 });

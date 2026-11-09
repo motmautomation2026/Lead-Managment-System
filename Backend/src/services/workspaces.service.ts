@@ -77,6 +77,8 @@ export async function createWorkspace(actor: Actor, input: { name: string }) {
 
     await db.query(`insert into public.integration_connections (workspace_id, id) values ($1, 'email')`, [workspace.id]);
     await db.query(`insert into public.whatsapp_connection (workspace_id) values ($1)`, [workspace.id]);
+    // E4a: every workspace starts with WhatsApp number #1 (not paired).
+    await db.query(`insert into public.whatsapp_numbers (workspace_id, label) values ($1, '#1')`, [workspace.id]);
     await db.query(`insert into public.google_calendar_connection (workspace_id) values ($1)`, [workspace.id]);
 
     await recordAdminAudit(db, actor, "workspace.created", "workspace", workspace.id, { name: workspace.name });

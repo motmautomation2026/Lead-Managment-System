@@ -13,6 +13,7 @@ import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClass
 import { applyReplyLabel } from "./replyLabels.service.js";
 import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
 import { attributeOutcome } from "./messageFacts.service.js";
+import { numberPhoneLockKey } from "../domain/whatsappNumbers.js";
 
 export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
 const IST_OFFSET_MS = 330 * 60_000;
@@ -79,8 +80,11 @@ function messageTime(message: WAMessage) {
  * lead matching is scoped to that workspace's leads only: a phone number
  * that happens to match a lead in a different workspace must never stop
  * that other workspace's automation or notify that other workspace's owner.
+ * E4a rule 7: `numberId` = the number whose socket received it (null only in tests without numbers):
+ * the event carries it, the lock is per (number, phone), a matched lead without a sticky number gets
+ * this one, and a reply on another number than the lead's is flagged `other_number` (sticky unchanged).
  */
-export async function processInboundUpsert(workspaceId: string, event: { messages: WAMessage[]; type: string; requestId?: string }) {
+export async function processInboundUpsert(workspaceId: string, event: { messages: WAMessage[]; type: string; requestId?: string }, numberId: string | null = null) {
   if (event.type !== "notify" || event.requestId) return;
   for (const message of event.messages) {
     const id = message.key.id;
@@ -93,19 +97,19 @@ export async function processInboundUpsert(workspaceId: string, event: { message
     const type = getContentType(message.message) ?? "unknown";
 
     await withTransaction(async (db) => {
-      await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [phone]);
+      await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [numberId ? numberPhoneLockKey(numberId, phone) : phone]);
       const inserted = await db.query(
         `insert into public.whatsapp_inbound_events
-          (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition)
-         values ($1,$2,$3,$4,$5,$6,'unmatched')
+          (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, whatsapp_number_id)
+         values ($1,$2,$3,$4,$5,$6,'unmatched',$7)
          on conflict (message_id) do nothing
          returning message_id`,
-        [workspaceId, id, directJid, phone, type, messageTime(message).toISOString()],
+        [workspaceId, id, directJid, phone, type, messageTime(message).toISOString(), numberId],
       );
       if (inserted.rowCount === 0) return;
 
-      const matches = await db.query<{ id: string; owner_id: string | null; owner_name: string | null; agent_status: AgentStatus }>(
-        `select id, owner_id, agent_status, (select full_name from public.profiles p where p.id = leads.owner_id) as owner_name
+      const matches = await db.query<{ id: string; owner_id: string | null; owner_name: string | null; agent_status: AgentStatus; whatsapp_number_id: string | null }>(
+        `select id, owner_id, agent_status, whatsapp_number_id, (select full_name from public.profiles p where p.id = leads.owner_id) as owner_name
            from public.leads
           where phone_e164 = $1 and workspace_id = $2 and lifecycle_state = 'active' and merged_into_lead_id is null
           for update`,
@@ -124,7 +128,14 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         const { text, truncated } = extractInboundText(message.message);
         hasText = Boolean(text);
         keyword = matchReplyKeyword(text);
-        await db.query(`update public.whatsapp_inbound_events set lead_id = $2 where message_id = $1`, [id, matches.rows[0]!.id]);
+        const matched = matches.rows[0]!;
+        await db.query(`update public.whatsapp_inbound_events set lead_id = $2 where message_id = $1`, [id, matched.id]);
+        // E4a rules 3/7: the first inbound sets the sticky number; another number is only flagged.
+        if (numberId && !matched.whatsapp_number_id) {
+          await db.query(`update public.leads set whatsapp_number_id = $2 where id = $1 and whatsapp_number_id is null`, [matched.id, numberId]);
+        } else if (numberId && matched.whatsapp_number_id !== numberId) {
+          await db.query(`update public.whatsapp_inbound_events set other_number = true where message_id = $1`, [id]);
+        }
         if (text) {
           const body = encryptText(text, `whatsapp:inbound:${id}`);
           await db.query(

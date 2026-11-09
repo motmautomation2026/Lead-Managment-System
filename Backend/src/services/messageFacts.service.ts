@@ -33,9 +33,9 @@ export async function recordEmailFact(db: Queryable, emailOutboundId: string): P
 /** Inside performSend's transaction, right after the row became `sent` (every WhatsApp source). */
 export async function recordWhatsAppFact(db: Queryable, whatsappOutboundId: string): Promise<void> {
   await db.query(
-    `insert into public.message_facts (workspace_id, lead_id, source, channel, agent_decision_id, whatsapp_outbound_id, stage_key, angle, message_number, whatsapp_connection_id, sent_at)
-     select x.workspace_id, x.lead_id, x.source, 'whatsapp', x.agent_decision_id, x.id, d.stage_key, d.angle, ${MESSAGE_NUMBER}, c.id, x.sent_at
-       from (select o.id, o.workspace_id, o.agent_decision_id, o.sent_at,
+    `insert into public.message_facts (workspace_id, lead_id, source, channel, agent_decision_id, whatsapp_outbound_id, stage_key, angle, message_number, whatsapp_connection_id, whatsapp_number_id, sent_at)
+     select x.workspace_id, x.lead_id, x.source, 'whatsapp', x.agent_decision_id, x.id, d.stage_key, d.angle, ${MESSAGE_NUMBER}, c.id, x.whatsapp_number_id, x.sent_at
+       from (select o.id, o.workspace_id, o.agent_decision_id, o.sent_at, o.whatsapp_number_id,
                     coalesce(sa.lead_id, p.lead_id, m.lead_id, ad.lead_id, r.lead_id) as lead_id,
                     case when o.scheduled_action_id is not null then 'workflow' when o.proposal_id is not null then 'proposal'
                          when o.meeting_id is not null then 'meeting' when o.agent_decision_id is not null then 'agent' else 'reply_draft' end as source

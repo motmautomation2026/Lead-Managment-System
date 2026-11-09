@@ -1,9 +1,16 @@
+import { pool } from "../db.js";
 import type { Queryable } from "../dto.js";
+import { resolveSendNumber } from "../services/whatsappNumbers.service.js";
 import { baileysRegistry } from "./baileys-registry.js";
-import { sourceColumn, type WhatsAppAttachment, type WhatsAppSendSource } from "./baileys.manager.js";
+import { resolveLeadIdForSource, sourceColumn, type WhatsAppAttachment, type WhatsAppSendSource } from "./baileys.manager.js";
 
+/**
+ * E4a rule 8: every WhatsApp send (agent, workflow, reply_draft, proposal, meeting) goes out on
+ * the lead's sticky number — assigned by rule 4 when it has none — through that number's manager.
+ */
 export async function sendWhatsApp(workspaceId: string, input: { source: WhatsAppSendSource; to: string; body: string; attachment?: WhatsAppAttachment; textMentionsAttachment?: boolean }) {
-  const manager = await baileysRegistry.getOrCreateManager(workspaceId);
+  const numberId = await resolveSendNumber(workspaceId, await resolveLeadIdForSource(pool, input.source));
+  const manager = await baileysRegistry.getOrCreateManager(workspaceId, numberId);
   return manager.sendAction({ source: input.source, phoneE164: input.to, body: input.body, attachment: input.attachment, textMentionsAttachment: input.textMentionsAttachment });
 }
 

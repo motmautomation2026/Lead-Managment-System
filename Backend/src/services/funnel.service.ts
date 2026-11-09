@@ -117,8 +117,8 @@ const LEAD_SQL = (groupColumn: string | null) => `
 
 const MESSAGE_KEY: Record<"channel" | "number" | "angle", { key: string; label: string; where: string }> = {
   channel: { key: "f.channel", label: "null::text", where: "" },
-  // Each WhatsApp connection (one per workspace today; several with E4a), labelled by its paired number.
-  number: { key: "f.whatsapp_connection_id::text", label: "max(nullif(split_part(split_part(c.connected_jid, '@', 1), ':', 1), ''))", where: "and f.channel = 'whatsapp'" },
+  // E4a: each WhatsApp number, labelled by its label (Settings → WhatsApp), e.g. "#1".
+  number: { key: "f.whatsapp_number_id::text", label: "max(n.label)", where: "and f.channel = 'whatsapp'" },
   angle: { key: "f.angle", label: "null::text", where: "" },
 };
 
@@ -141,7 +141,7 @@ export async function getFunnel(db: Queryable, workspaceId: string, query: Funne
                 count(f.replied_at)::int as replies, count(*) filter (where f.reply_label = 'positive')::int as positive_replies,
                 count(f.meeting_booked_at)::int as meetings_booked, count(f.deal_created_at)::int as deals_created, count(f.deal_won_at)::int as won
            from public.message_facts f
-           left join public.whatsapp_connection c on c.id = f.whatsapp_connection_id
+           left join public.whatsapp_numbers n on n.id = f.whatsapp_number_id
           where f.workspace_id = $1 and f.sent_at >= $2 and f.sent_at < $3 ${g.where}
           group by 1
           order by messages_sent desc`,

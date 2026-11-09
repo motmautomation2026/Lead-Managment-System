@@ -70,6 +70,11 @@ export function pickNumber(stickyId: string | null, candidates: NumberCandidate[
   return chosen ? { numberId: chosen, assign: true } : { wait: NO_NUMBER_REASON, retryAfterMs: NUMBER_WAIT_MS };
 }
 
+/** Rule 7: the per-(number, phone) advisory-lock key (salt 0), shared by sends and inbound processing. */
+export function numberPhoneLockKey(numberId: string, phoneE164: string): string {
+  return `${numberId}:${phoneE164}`;
+}
+
 /** Rule 6: an admin moves a lead to another number, with a reason. Returns the problem, or null. */
 export function moveProblem(currentId: string | null, target: NumberCandidate | undefined, reason: string): string | null {
   if (!reason.trim()) return "A reason is required.";
