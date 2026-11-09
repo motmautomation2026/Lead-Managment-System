@@ -192,7 +192,7 @@ describeIfDb("deals API (requires TEST_DATABASE_URL)", () => {
     for (const ownerId of [inactive.id, "00000000-0000-4000-8000-000000000000"]) {
       const res = await call("POST", "/deals", { leadId: contactB, ownerId });
       expect(res.status).toBe(400);
-      expect(res.body.error.message).toContain("active user");
+      expect(res.body.error.message).toContain("active member");
     }
     expect((await call("POST", "/deals", { leadId: contactB, ownerId: "me" })).status).toBe(400);
     expect((await pool.query(`select count(*)::int as n from public.deals where workspace_id = $1`, [ws])).rows[0].n).toBe(before);

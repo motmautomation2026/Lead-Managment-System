@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import type { DecisionModel } from "../../src/providers/openai.provider.js";
@@ -90,6 +90,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`runner-admin-${randomUUID()}@example.com`]);
     adminId = auth.rows[0].id;
     await pool.query(`update public.profiles set role = 'admin', is_active = true, full_name = 'Runner Admin' where id = $1`, [adminId]);
+    await trackTestMember(pool, adminId, "admin");
   });
 
   afterAll(async () => {

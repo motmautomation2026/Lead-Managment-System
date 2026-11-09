@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -86,6 +86,7 @@ describeIfDb("internal action failures (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`b7-${randomUUID()}@example.com`]);
     authUserId = auth.rows[0].id as string;
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [authUserId]);
+    await trackTestMember(pool, profile.rows[0].id, "salesperson");
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = randomUUID();
     await createTestWorkspace(pool, "b7-test", { id: WORKSPACE_ID });

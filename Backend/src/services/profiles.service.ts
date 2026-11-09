@@ -3,6 +3,14 @@ import type { Queryable } from "../dto.js";
 import { ValidationError } from "../errors.js";
 
 /**
+ * E4b rule 6: the active admins of workspace `$1` (super-admins only when they are members too).
+ * Every admin notification selects its recipients from this: `select $1, a.user_id, … from (${WORKSPACE_ADMIN_IDS_SQL}) a`.
+ */
+export const WORKSPACE_ADMIN_IDS_SQL = `select m.user_id from public.workspace_members m
+  join public.profiles p on p.id = m.user_id and p.is_active
+  where m.workspace_id = $1 and m.role = 'admin'`;
+
+/**
  * The owner pickers' directory for one workspace (E4b rule 5): its active members with their role there
  * (`member: true`, the only ones a picker offers), plus active non-members who still own contacts,
  * companies, deals, tasks or meetings there (`member: false`, shown "(not in this workspace)").

@@ -25,7 +25,7 @@ import {
   SqlBuilder,
   strictBoolean,
 } from "../lists/listQuery.js";
-import { getProfile } from "./profiles.service.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { openSimilarNameCandidates } from "./companies.service.js";
 
 export const COMPANY_SORTS = defineSorts({
@@ -179,10 +179,9 @@ function checkDomain(input: string | null): string | null {
   return domain;
 }
 
-async function checkOwner(db: Queryable, ownerId: string | null | undefined) {
-  if (!ownerId) return;
-  const owner = await getProfile(db, ownerId);
-  if (!owner?.active) throw new ValidationError("The owner must be an active user.", { field: "ownerId" });
+/** E4b rule 5: a new owner must be an active member of the workspace. */
+async function checkOwner(db: Queryable, workspaceId: string, ownerId: string | null | undefined) {
+  if (ownerId) await assertAssignableUser(db, workspaceId, ownerId);
 }
 
 /** 409 with the existing company's id when another live company has this normalized name or domain. */
@@ -206,7 +205,7 @@ async function assertNoDuplicate(db: Queryable, workspaceId: string, exceptId: s
 export async function createCompany(db: Queryable, actor: Actor, workspaceId: string, input: z.infer<typeof createCompanySchema>) {
   const normalizedName = checkName(input.name);
   const domain = checkDomain(input.domain ?? null);
-  await checkOwner(db, input.ownerId);
+  await checkOwner(db, workspaceId, input.ownerId);
   await assertNoDuplicate(db, workspaceId, null, normalizedName, domain);
   const revenue = parseRevenueRange(input.revenueRange);
   const { rows } = await db.query<{ id: string }>(
@@ -229,8 +228,8 @@ export async function createCompany(db: Queryable, actor: Actor, workspaceId: st
 /** Edits a live company. A rename re-normalizes and syncs the linked contacts' company text in the same transaction. */
 export async function updateCompany(db: Queryable, workspaceId: string, id: string, patch: CompanyInput) {
   const current = (
-    await db.query<{ name: string; normalized_name: string; merged_into_company_id: string | null }>(
-      `select name, normalized_name, merged_into_company_id from public.companies where id = $1 and workspace_id = $2 for update`,
+    await db.query<{ name: string; normalized_name: string; merged_into_company_id: string | null; owner_id: string | null }>(
+      `select name, normalized_name, merged_into_company_id, owner_id from public.companies where id = $1 and workspace_id = $2 for update`,
       [id, workspaceId],
     )
   ).rows[0];
@@ -244,7 +243,7 @@ export async function updateCompany(db: Queryable, workspaceId: string, id: stri
   const normalizedName = renamed ? checkName(patch.name!) : null;
   const domain = patch.domain === undefined ? undefined : checkDomain(patch.domain);
   if (normalizedName !== null || domain) await assertNoDuplicate(db, workspaceId, id, normalizedName, domain ?? null);
-  if (patch.ownerId !== undefined) await checkOwner(db, patch.ownerId);
+  if (patch.ownerId !== undefined && patch.ownerId !== current.owner_id) await checkOwner(db, workspaceId, patch.ownerId);
 
   if (renamed) {
     set("name", patch.name);

@@ -6,7 +6,7 @@
 import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, NotFoundError } from "../errors.js";
 import { DEAL_STAGES, LEAD_LOSS_REASONS, type DealStage } from "../domain/enums.js";
 import {
   addOwnerFilter,
@@ -30,7 +30,7 @@ import {
   type ListSort,
 } from "../lists/listQuery.js";
 import { createDeal, moveDealStage } from "./deals.service.js";
-import { getProfile } from "./profiles.service.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { assertCompanyUsable } from "./companyRecords.service.js";
 import { markLost, moveToLongTermNurture } from "./leads.service.js";
 
@@ -238,21 +238,17 @@ export const moveStageSchema = z
 
 /** Manual deal for a contact (stage default qualified). */
 export async function createManualDeal(db: Queryable, actor: Actor, workspaceId: string, input: z.infer<typeof createDealSchema>) {
-  if (input.ownerId) await assertActiveOwner(db, input.ownerId);
+  if (input.ownerId) await assertAssignableUser(db, workspaceId, input.ownerId);
   const deal = await createDeal(db, actor, workspaceId, { ...input, source: "manual" });
   return getDeal(db, workspaceId, deal.id);
 }
 
-async function assertActiveOwner(db: Queryable, ownerId: string) {
-  const owner = await getProfile(db, ownerId);
-  if (!owner?.active) throw new ValidationError("The owner must be an active user.", { field: "ownerId" });
-}
-
 /** Edits a deal's fields; stage moves go through moveDeal (POST /deals/:id/stage). */
 export async function updateDeal(db: Queryable, workspaceId: string, id: string, patch: z.infer<typeof updateDealSchema>) {
-  const exists = await db.query(`select 1 from public.deals where id = $1 and workspace_id = $2 for update`, [id, workspaceId]);
+  const exists = await db.query<{ owner_id: string | null }>(`select owner_id from public.deals where id = $1 and workspace_id = $2 for update`, [id, workspaceId]);
   if (!exists.rowCount) throw new NotFoundError("Deal");
-  if (patch.ownerId) await assertActiveOwner(db, patch.ownerId);
+  // E4b rule 5: a new owner must be a member (an unchanged owner is kept as it is).
+  if (patch.ownerId && patch.ownerId !== exists.rows[0]!.owner_id) await assertAssignableUser(db, workspaceId, patch.ownerId);
   if (patch.companyId) await assertCompanyUsable(db, workspaceId, patch.companyId);
 
   const b = new SqlBuilder();

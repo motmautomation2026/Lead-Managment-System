@@ -10,7 +10,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { Embedder } from "../../src/providers/openai.provider.js";
@@ -40,6 +40,7 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`kb-${role}-${randomUUID()}@example.com`]);
     authUserIds.push(auth.rows[0].id);
     const profile = await pool.query(`update public.profiles set role = $2 where id = $1 returning id, full_name, email`, [auth.rows[0].id, role]);
+    await trackTestMember(pool, profile.rows[0].id, role);
     return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role };
   }
 

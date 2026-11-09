@@ -1,5 +1,6 @@
 import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
+import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { env } from "../env.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "../agent/decisionSchema.js";
@@ -680,8 +681,8 @@ async function alertAdminsOnce(
     if (!claimed.rowCount) return;
     await client.query(
       `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, href)
-       select $1, p.id, $2, $3, 'warning', '/settings'
-         from public.profiles p where p.role = 'admin' and p.is_active`,
+       select $1, a.user_id, $2, $3, 'warning', '/settings'
+         from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
       [workspaceId, title, detail],
     );
   });

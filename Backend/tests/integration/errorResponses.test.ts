@@ -11,7 +11,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -48,6 +48,7 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`errors-${randomUUID()}@example.com`]);
     authUserId = auth.rows[0].id as string;
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [authUserId]);
+    await trackTestMember(pool, profile.rows[0].id, "salesperson");
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = randomUUID();
     await createTestWorkspace(pool, "errors-test", { id: WORKSPACE_ID });
@@ -179,6 +180,7 @@ describeIfDb("HTTP error responses (requires TEST_DATABASE_URL)", () => {
     const lead = await newLead();
     const res = await api("PATCH", `/leads/${lead.id}`, { ownerId: randomUUID() });
     expect(res.status).toBe(400);
-    expect(res.body.error.message).toBe("The selected owner doesn't exist.");
+    // E4b rule 5: an unknown owner is not an active member of this workspace.
+    expect(res.body.error.message).toBe("The owner must be an active member of this workspace.");
   });
 });

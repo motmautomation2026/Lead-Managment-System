@@ -73,7 +73,7 @@ async function findExistingLead(db: Queryable, workspaceId: string, form: Normal
 
 /**
  * Notifies the lead's owner when it has one (and is active), otherwise every
- * active CRM user (salespeople and admins) so an unassigned lead is still seen.
+ * active member of the workspace (E4b rule 6) so an unassigned lead is still seen.
  */
 async function notifyAboutLead(db: Queryable, workspaceId: string, leadId: string, ownerId: string | null, title: string, detail: string) {
   const result = await db.query(
@@ -81,7 +81,9 @@ async function notifyAboutLead(db: Queryable, workspaceId: string, leadId: strin
      select $1, p.id, $2, $3, 'info'::public.notification_kind, $4, $5
        from public.profiles p
       where p.is_active = true
-        and ($6::uuid is null or p.id = $6::uuid)`,
+        and (case when $6::uuid is null
+                  then exists (select 1 from public.workspace_members m where m.workspace_id = $1 and m.user_id = p.id)
+                  else p.id = $6::uuid end)`,
     [workspaceId, title, detail, leadId, `/leads/${leadId}`, ownerId],
   );
   // The owner was deactivated: tell everyone instead.

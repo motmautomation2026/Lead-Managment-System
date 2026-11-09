@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import type { Actor } from "../../src/authMiddleware.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -60,6 +60,7 @@ describeIfDb("companies (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`companies-${randomUUID()}@example.com`]);
     authUserId = auth.rows[0].id;
     const profile = await pool.query(`update public.profiles set full_name = 'Companies Rep' where id = $1 returning id, full_name, email`, [authUserId]);
+    await trackTestMember(pool, profile.rows[0].id, "salesperson");
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     leads = await import("../../src/services/leads.service.js");
     companies = await import("../../src/services/companies.service.js");

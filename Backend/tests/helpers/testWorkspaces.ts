@@ -10,6 +10,14 @@ export const TEST_WORKSPACE_PREFIX = "[test] ";
 
 // Workspaces created by this test file (vitest isolates modules per file).
 const created = new Set<string>();
+// E4b rule 8: test users of this file that join every [test] workspace it creates (their role there = their test role).
+const trackedMembers = new Map<string, "admin" | "salesperson">();
+
+/** E4b rule 8: makes a test user a member of every [test] workspace this file created or will create. */
+export async function trackTestMember(db: Pool | PoolClient, userId: string, role: "admin" | "salesperson"): Promise<void> {
+  trackedMembers.set(userId, role);
+  for (const id of created) await addTestMember(db, id, userId, role);
+}
 
 export async function createTestWorkspace(
   db: Pool | PoolClient,
@@ -25,6 +33,7 @@ export async function createTestWorkspace(
     options.defaultLeadOwnerId ?? null,
   ]);
   created.add(id);
+  for (const [userId, role] of trackedMembers) await addTestMember(db, id, userId, role);
   return id;
 }
 

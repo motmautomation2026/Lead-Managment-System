@@ -8,7 +8,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -33,6 +33,7 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
       role,
       `Agent3B ${name}`,
     ]);
+    await trackTestMember(pool, profile.rows[0].id, role);
     return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role };
   }
 

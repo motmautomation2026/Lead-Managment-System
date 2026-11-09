@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { withTransaction } from "../db.js";
-import { AppError, ValidationError } from "../errors.js";
+import { AppError } from "../errors.js";
 import { LEAD_SOURCES, LIFECYCLE_STATES, PIPELINE_STAGES } from "../domain/enums.js";
 import type { AgentStatus } from "../agent/rules.js";
 import {
@@ -29,7 +29,7 @@ import {
 } from "../lists/listQuery.js";
 import { getLeadRowOr404, leadToDto, loadNextActions, updateLead } from "./leads.service.js";
 import { getLeadNextAction } from "./tasks.service.js";
-import { getProfile } from "./profiles.service.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { leadNumber } from "./whatsappNumbers.service.js";
 import { enrollLeads } from "./agentStatus.service.js";
 
@@ -203,8 +203,7 @@ export async function bulkContacts(db: Queryable, actor: Actor, workspaceId: str
       r.result === "enrolled" ? { id: r.leadId, ok: true } : { id: r.leadId, ok: false, error: r.result === "failed" ? r.message : ENROLL_SKIP_MESSAGES[r.reason] },
     );
   }
-  const owner = await getProfile(db, input.ownerId!);
-  if (!owner?.active) throw new ValidationError("The new owner must be an active user.", { field: "ownerId" });
+  const owner = await assertAssignableUser(db, workspaceId, input.ownerId!);
   const results: BulkResult[] = [];
   for (const id of ids) {
     try {

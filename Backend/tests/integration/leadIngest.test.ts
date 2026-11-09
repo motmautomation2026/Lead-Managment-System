@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -56,6 +56,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`ingest-rep-${randomUUID()}@example.com`]);
     authUserIds.push(auth.rows[0].id);
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [auth.rows[0].id]);
+    await trackTestMember(pool, profile.rows[0].id, "salesperson");
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = await newWorkspace();
   });
@@ -173,7 +174,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const saved = await updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: actor.id });
     expect(saved).toEqual({ defaultOwnerId: actor.id, defaultOwnerName: actor.fullName, ownerAvailable: true });
 
-    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("Choose an active user.");
+    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("The owner must be an active member of this workspace.");
     expect((await getWebsiteLeadSettings(workspace, pool)).defaultOwnerId).toBe(actor.id);
 
     await pool.query(`update public.profiles set is_active = false where id = $1`, [actor.id]);

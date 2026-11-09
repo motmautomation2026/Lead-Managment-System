@@ -5,6 +5,7 @@ import type { Queryable } from "../dto.js";
 import { env } from "../env.js";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { decryptText, encryptText } from "../security/encryption.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import { exchangeCodeForTokens, getAuthorizationUrl, type GoogleOAuthClientConfig } from "../providers/google-calendar.provider.js";
 import { warmupCap, warmupDayFor } from "../domain/whatsappSafety.js";
@@ -211,13 +212,17 @@ async function requireNumber(db: Queryable, workspaceId: string, numberId: strin
 }
 
 export async function addWhatsAppNumber(actor: Actor, workspaceId: string, input: { label?: string; ownerUserId?: string | null }) {
-  if (input.ownerUserId) await requireActiveUser(input.ownerUserId);
+  if (input.ownerUserId) await assertAssignableUser(pool, workspaceId, input.ownerUserId, "ownerUserId");
   await addNumber(actor, workspaceId, input);
   return getWhatsAppConnection(workspaceId);
 }
 
 export async function updateWhatsAppNumber(actor: Actor, workspaceId: string, numberId: string, input: WhatsAppNumberSettings) {
-  if (input.ownerUserId) await requireActiveUser(input.ownerUserId);
+  if (input.ownerUserId) {
+    // E4b rule 5: a new owner must be a member; an unchanged one is kept as it is.
+    const current = await pool.query<{ owner_user_id: string | null }>(`select owner_user_id from public.whatsapp_numbers where id = $1 and workspace_id = $2`, [numberId, workspaceId]);
+    if (current.rows[0]?.owner_user_id !== input.ownerUserId) await assertAssignableUser(pool, workspaceId, input.ownerUserId, "ownerUserId");
+  }
   const updated = await withTransaction((db) => updateNumberSettings(db, actor, workspaceId, numberId, input));
   if (!updated) throw new NotFoundError("WhatsApp number");
   return getWhatsAppConnection(workspaceId);
@@ -250,12 +255,6 @@ export async function commandWhatsApp(actor: Actor, workspaceId: string, numberI
     await recordAdminAudit(db, actor, `connection.whatsapp.${command}`, "whatsapp_number", numberId);
   });
   return getWhatsAppConnection(workspaceId);
-}
-
-/** A number's owner must be an active CRM user (rule 2; users are not workspace-scoped). */
-async function requireActiveUser(userId: string) {
-  const found = await pool.query(`select 1 from public.profiles where id = $1 and is_active`, [userId]);
-  if (!found.rowCount) throw new ValidationError("The owner must be an active CRM user.");
 }
 
 interface GoogleCalendarRow {

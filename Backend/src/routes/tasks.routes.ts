@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
+import { assertAssignableUser } from "../services/profiles.service.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { parseBody, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
@@ -56,6 +57,8 @@ tasksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     const input = parseBody(createSchema, req.body);
+    // E4b rule 5: a rep's chosen assignee must be a member (automatic tasks keep going to the lead's owner).
+    if (input.ownerId) await assertAssignableUser(pool, req.workspaceId!, input.ownerId);
     const task = await withTransaction((client) => createTask(client, req.actor!, req.workspaceId!, { ...input, origin: "manual" }));
     res.status(201).json(taskToDto(task));
   }),

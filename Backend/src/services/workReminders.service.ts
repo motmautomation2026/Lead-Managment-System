@@ -8,6 +8,7 @@
  * (migration 052's apply time), so a deploy never floods admins and owners about old work.
  */
 import { pool, withTransaction } from "../db.js";
+import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { escalationDue } from "../domain/replyDrafts.js";
 import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.js";
@@ -66,7 +67,7 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
       if (!claimed.rowCount) return false;
       await db.query(
         `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-         select $1, p.id, $2, $3, 'warning', $4, $5 from public.profiles p where p.role = 'admin' and p.is_active`,
+         select $1, a.user_id, $2, $3, 'warning', $4, $5 from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
         [c.workspace_id, `${c.rep_name ?? "The owner"} hasn't answered ${name}'s reply yet (2 h)`, "The reply task is still open 2 working hours after the reply.", c.lead_id, `/contacts/${c.lead_id}`],
       );
       return true;

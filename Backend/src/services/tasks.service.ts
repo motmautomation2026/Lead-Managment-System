@@ -1,6 +1,7 @@
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import type { TaskOrigin, TaskType } from "../domain/enums.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
@@ -153,7 +154,10 @@ export async function updateTask(db: Queryable, actor: Actor, workspaceId: strin
   const params: unknown[] = [];
   let i = 1;
   const push = (column: string, value: unknown) => { sets.push(`${column} = $${i++}`); params.push(value); };
-  if (patch.ownerId !== undefined) push("owner_id", patch.ownerId);
+  if (patch.ownerId !== undefined) {
+    if (patch.ownerId !== current.owner_id) await assertAssignableUser(db, workspaceId, patch.ownerId);
+    push("owner_id", patch.ownerId);
+  }
   if (patch.type !== undefined) push("task_type", patch.type);
   if (patch.title !== undefined) push("title", patch.title.trim());
   if (patch.dueAt !== undefined) push("due_at", patch.dueAt);

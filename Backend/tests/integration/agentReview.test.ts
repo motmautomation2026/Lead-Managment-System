@@ -9,7 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -35,6 +35,7 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
       role,
       `Agent3D ${name}`,
     ]);
+    await trackTestMember(pool, profile.rows[0].id, role);
     return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role };
   }
 
@@ -295,7 +296,8 @@ describeIfDb("agent decision review (requires TEST_DATABASE_URL)", () => {
     expect(report.body).toMatchObject({ decisionId: id, reportedBy: otherRep.id, reportedByName: otherRep.fullName, note: "It promised a discount.", resolvedAt: null });
 
     const notes = (await pool.query(`select recipient_id, title, kind, lead_id, href, detail from public.notifications where workspace_id = $1`, [ws])).rows;
-    const admins = (await pool.query(`select id from public.profiles where role = 'admin' and is_active`)).rows.map((r) => r.id);
+    // E4b rule 6: the admins of THIS workspace.
+    const admins = (await pool.query(`select m.user_id as id from public.workspace_members m join public.profiles p on p.id = m.user_id and p.is_active where m.workspace_id = $1 and m.role = 'admin'`, [ws])).rows.map((r) => r.id);
     expect(notes.map((n) => n.recipient_id).sort()).toEqual(admins.sort());
     expect(notes.find((n) => n.recipient_id === admin.id)).toMatchObject({
       title: "AI message reported on Asha Rao",

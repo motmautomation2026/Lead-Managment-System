@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -62,6 +62,7 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
       `select id, full_name, email from public.profiles where id = $1`,
       [userId],
     );
+    await trackTestMember(pool, userId, "salesperson");
     actor = {
       id: profile.rows[0].id,
       fullName: profile.rows[0].full_name,

@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, addTestMember } from "../helpers/testWorkspaces.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { startTestApi, type TestApi } from "../helpers/testApi.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
@@ -416,8 +416,11 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(await openTasks(leadId)).toHaveLength(1);
   });
 
-  it("escalation: once, only after 2 working hours (send window, IST), to admins", async () => {
+  it("escalation: once, only after 2 working hours (send window, IST), to that workspace's admins (E4b)", async () => {
     const { ws, leadId } = await scenario();
+    // E4b rule 6: only admins who are members of this workspace; a global admin elsewhere hears nothing.
+    await addTestMember(pool, ws, admin.id, "admin");
+    const outsideAdmin = await api.newUser("admin", { member: false });
     const created = ist("2026-10-28T18:00"); // a Wednesday, 1 working hour before closing
     // E3b-2a-2 rule 2: only tasks created at or after reminders_since (here: before this test's dates).
     await pool.query(`update public.agent_settings set reminders_since = $2 where workspace_id = $1`, [ws, ist("2026-10-01T00:00")]);
@@ -434,6 +437,7 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     const notes = await pool.query(`select recipient_id, title from public.notifications where lead_id = $1 and title like '%hasn''t answered%'`, [leadId]);
     expect(notes.rows.map((n) => n.recipient_id)).toContain(admin.id);
     expect(notes.rows.map((n) => n.recipient_id)).not.toContain(owner.id);
+    expect(notes.rows.map((n) => n.recipient_id)).not.toContain(outsideAdmin.id);
     expect(new Set(notes.rows.map((n) => n.title))).toEqual(new Set(["E3b2a Owner hasn't answered Asha Rao's reply yet (2 h)"]));
   });
 

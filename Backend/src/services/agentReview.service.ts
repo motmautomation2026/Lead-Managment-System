@@ -1,5 +1,6 @@
 import type { Actor } from "../authMiddleware.js";
 import type { Queryable } from "../dto.js";
+import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { ConflictError, ForbiddenError, InvalidTransitionError, NotFoundError, ValidationError } from "../errors.js";
 import { composeOutgoing, type OutgoingMessage } from "../agent/composeMessage.js";
 import type { AgentAction, SendDecision } from "../agent/decisionSchema.js";
@@ -282,7 +283,7 @@ export async function reportProblem(db: Queryable, workspaceId: string, id: stri
   ).rows[0];
   await db.query(
     `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-     select $1, p.id, $2, $3, 'warning', $4, $5 from public.profiles p where p.role = 'admin' and p.is_active`,
+     select $1, a.user_id, $2, $3, 'warning', $4, $5 from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
     [workspaceId, `AI message reported on ${decision.lead_name}`.slice(0, 300), `${actor.fullName}: ${note}`.slice(0, REPORT_DETAIL_CHARS), decision.lead_id, `/leads/${decision.lead_id}`],
   );
   return report;

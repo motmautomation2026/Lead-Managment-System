@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { addTestMember, createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import type { BaileysManager } from "../../src/providers/baileys.manager.js";
 import { PermanentProviderError, ProviderDeferredError } from "../../src/providers/provider-errors.js";
@@ -169,6 +169,11 @@ describeIfDb("E4a several WhatsApp numbers (requires TEST_DATABASE_URL)", () => 
 
   it("pausing one number: its leads wait (never moved), the other number keeps sending; admins are told which number", async () => {
     const { ws, a, b, sockets } = await workspace("pause");
+    // E4b rule 6: the alert goes to this workspace's admins, so it needs one.
+    const auth = await pool.query<{ id: string }>(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`e4a-admin-${randomUUID()}@example.com`]);
+    const adminId = auth.rows[0]!.id;
+    await pool.query(`update public.profiles set role = 'admin', is_active = true where id = $1`, [adminId]);
+    await addTestMember(pool, ws, adminId, "admin");
     const onA = await lead(ws);
     const onB = await lead(ws);
     await pool.query(`update public.leads set whatsapp_number_id = $2 where id = $1`, [onA.id, a]);
@@ -186,6 +191,9 @@ describeIfDb("E4a several WhatsApp numbers (requires TEST_DATABASE_URL)", () => 
 
     const titles = (await pool.query(`select distinct title from public.notifications where workspace_id = $1`, [ws])).rows.map((r) => r.title);
     expect(titles).toEqual(["WhatsApp number #1 paused automatically"]);
+    const recipients = (await pool.query(`select recipient_id from public.notifications where workspace_id = $1`, [ws])).rows.map((r) => r.recipient_id);
+    expect(recipients).toEqual([adminId]);
+    await pool.query(`update public.profiles set is_active = false where id = $1`, [adminId]);
     // A new lead never lands on the paused number.
     const fresh = await lead(ws);
     expect(await proposalSend(ws, fresh)).toMatchObject({ ok: true });

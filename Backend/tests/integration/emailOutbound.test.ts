@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { EmailTransport, OutgoingMail, TransportCache as TransportCacheType } from "../../src/providers/email.provider.js";
 import type * as Outbound from "../../src/services/emailOutbound.service.js";
@@ -146,7 +146,8 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     (await pool.query(`select enabled, paused_reason, paused_at from public.integration_connections where workspace_id = $1 and id = 'email'`, [ws])).rows[0];
   const pauseNotifications = async (ws: string) =>
     (await pool.query<{ n: number }>(`select count(*)::int as n from public.notifications where workspace_id = $1 and title = $2`, [ws, PAUSE_TITLE])).rows[0]!.n;
-  const activeAdmins = async () => (await pool.query<{ n: number }>(`select count(*)::int as n from public.profiles where role = 'admin' and is_active`)).rows[0]!.n;
+  // E4b rule 6: the admins of THIS workspace.
+  const activeAdmins = async (ws: string) => (await pool.query<{ n: number }>(`select count(*)::int as n from public.workspace_members m join public.profiles p on p.id = m.user_id and p.is_active where m.workspace_id = $1 and m.role = 'admin'`, [ws])).rows[0]!.n;
   const makeDue = (ws: string) => pool.query(`update public.email_outbound_messages set next_attempt_at = now() where workspace_id = $1 and status = 'queued'`, [ws]);
 
   beforeAll(async () => {
@@ -159,6 +160,7 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
       `update public.profiles set role = 'admin', is_active = true, full_name = 'E1b Admin' where id = $1 returning id, full_name, email`,
       [auth.rows[0].id],
     );
+    await trackTestMember(pool, profile.rows[0].id, "admin");
     admin = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "admin" };
   });
 
@@ -364,7 +366,7 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     smtp.errors.push(smtpError(535, "535 5.7.8 Username and Password not accepted"));
     expect(await run(ws, smtp)).toEqual(["queued"]);
     expect(await connection(ws)).toMatchObject({ enabled: false, paused_reason: "SMTP login rejected — check the password." });
-    expect(await pauseNotifications(ws)).toBe(await activeAdmins());
+    expect(await pauseNotifications(ws)).toBe(await activeAdmins(ws));
     expect(await email(first.row.id)).toMatchObject({ status: "queued", attempts: 0 });
 
     const second = await proposalEmail(ws, contact.id, contact.email);
@@ -372,7 +374,7 @@ describeIfDb("E1b email outbound queue (requires TEST_DATABASE_URL)", () => {
     expect(await run(ws, smtp)).toEqual(["queued"]);
     expect(await run(ws, smtp)).toEqual(["queued"]);
     expect((await email(second.row.id)).last_error).toBe("Email sending is paused.");
-    expect(await pauseNotifications(ws)).toBe(await activeAdmins());
+    expect(await pauseNotifications(ws)).toBe(await activeAdmins(ws));
 
     const { resumeEmail } = await import("../../src/services/emailConnection.service.js");
     await resumeEmail(admin, ws);

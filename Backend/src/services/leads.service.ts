@@ -2,6 +2,7 @@ import type { Queryable } from "../dto.js";
 import { addDaysIso } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, DoNotContactError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { assertPipelineStageEditable, assertValidLifecycleState, assertValidPipelineStage, isTerminalLifecycle } from "../domain/pipeline.js";
 import type {
   AutomationMode,
@@ -227,6 +228,7 @@ export function validateLeadFields(input: LeadFieldsInput): ValidatedLeadFields 
 
 export async function createLead(db: Queryable, actor: Actor, workspaceId: string, input: CreateLeadInput): Promise<LeadRow> {
   const fields = validateLeadFields(input);
+  if (input.ownerId) await assertAssignableUser(db, workspaceId, input.ownerId);
 
   // An explicit owner is kept; otherwise the workspace's revenue rules decide (possibly unassigned).
   const assignment: LeadAssignment = input.ownerId
@@ -579,6 +581,8 @@ export async function updateLead(
   patch: UpdateLeadInput,
 ): Promise<LeadRow> {
   const current = await getLeadRowOr404(db, workspaceId, id);
+  // E4b rule 5: a new owner must be a member of this workspace (an unchanged owner is kept as it is).
+  if (patch.ownerId && patch.ownerId !== current.owner_id) await assertAssignableUser(db, workspaceId, patch.ownerId);
 
   if (patch.pipelineStage) {
     assertValidPipelineStage(patch.pipelineStage);

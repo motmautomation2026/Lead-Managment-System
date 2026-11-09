@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool, type PoolClient } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { BaileysManager, WhatsAppSendSource } from "../../src/providers/baileys.manager.js";
@@ -137,8 +137,9 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     return (await pool.query<{ n: number }>(`select count(*)::int as n from public.notifications where workspace_id = $1 and title = $2`, [ws, PAUSE_TITLE])).rows[0]!.n;
   }
 
-  async function activeAdmins() {
-    return (await pool.query<{ n: number }>(`select count(*)::int as n from public.profiles where role = 'admin' and is_active`)).rows[0]!.n;
+  /** E4b rule 6: the admins of THIS workspace. */
+  async function activeAdmins(ws: string) {
+    return (await pool.query<{ n: number }>(`select count(*)::int as n from public.workspace_members m join public.profiles p on p.id = m.user_id and p.is_active where m.workspace_id = $1 and m.role = 'admin'`, [ws])).rows[0]!.n;
   }
 
   beforeAll(async () => {
@@ -150,6 +151,7 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
       `update public.profiles set role = 'admin', is_active = true, full_name = 'E1 Admin' where id = $1 returning id, full_name, email`,
       [auth.rows[0].id],
     );
+    await trackTestMember(pool, profile.rows[0].id, "admin");
     admin = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "admin" };
   });
 
@@ -288,7 +290,7 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
       const state = await connection(ws);
       expect(state.enabled).toBe(false);
       expect(state.paused_reason).toMatch(reason);
-      expect(await pauseNotifications(ws)).toBe(await activeAdmins());
+      expect(await pauseNotifications(ws)).toBe(await activeAdmins(ws));
       const events = await pool.query(`select count(*)::int as n from public.whatsapp_safety_events where workspace_id = $1 and kind = 'paused'`, [ws]);
       expect(events.rows[0].n).toBe(1);
     }

@@ -17,14 +17,16 @@ const num = (value: string | null) => (value === null ? null : Number(value));
 
 /**
  * The workspace's active rules (skipping any whose owner has since been
- * deactivated) and its fallback owner (workspaces.default_lead_owner_id, only
- * while that user is active). Load once and reuse for a whole CSV import.
+ * deactivated or is no longer a member of the workspace, E4b rule 7) and its fallback owner
+ * (workspaces.default_lead_owner_id, only while that user is an active member). Load once and reuse
+ * for a whole CSV import.
  */
 export async function loadAssignmentContext(db: Queryable, workspaceId: string) {
   const rules = await db.query<{ position: number; min_cr: string | null; max_cr: string | null; owner_id: string; full_name: string }>(
     `select r.position, r.min_cr, r.max_cr, r.owner_id, p.full_name
        from public.lead_assignment_rules r
        join public.profiles p on p.id = r.owner_id and p.is_active
+       join public.workspace_members m on m.workspace_id = r.workspace_id and m.user_id = r.owner_id
       where r.workspace_id = $1 and r.is_active
       order by r.position`,
     [workspaceId],
@@ -33,6 +35,7 @@ export async function loadAssignmentContext(db: Queryable, workspaceId: string) 
     `select p.id, p.full_name
        from public.workspaces w
        left join public.profiles p on p.id = w.default_lead_owner_id and p.is_active
+        and exists (select 1 from public.workspace_members m where m.workspace_id = w.id and m.user_id = p.id)
       where w.id = $1`,
     [workspaceId],
   );
@@ -95,7 +98,8 @@ export interface AssignmentRuleInput {
 
 export async function getAssignmentRules(workspaceId: string, db: Queryable = pool) {
   const workspace = await db.query<{ owner_id: string | null; full_name: string | null; is_active: boolean | null }>(
-    `select w.default_lead_owner_id as owner_id, p.full_name, p.is_active
+    `select w.default_lead_owner_id as owner_id, p.full_name,
+            p.is_active and exists (select 1 from public.workspace_members m where m.workspace_id = w.id and m.user_id = p.id) as is_active
        from public.workspaces w
        left join public.profiles p on p.id = w.default_lead_owner_id
       where w.id = $1`,
@@ -104,7 +108,8 @@ export async function getAssignmentRules(workspaceId: string, db: Queryable = po
   const fallback = workspace.rows[0];
   if (!fallback) throw new NotFoundError("Workspace");
   const rules = await db.query<{ id: string; position: number; min_cr: string | null; max_cr: string | null; owner_id: string; full_name: string; is_active: boolean }>(
-    `select r.id, r.position, r.min_cr, r.max_cr, r.owner_id, p.full_name, p.is_active
+    `select r.id, r.position, r.min_cr, r.max_cr, r.owner_id, p.full_name,
+            p.is_active and exists (select 1 from public.workspace_members m where m.workspace_id = r.workspace_id and m.user_id = p.id) as is_active
        from public.lead_assignment_rules r
        join public.profiles p on p.id = r.owner_id
       where r.workspace_id = $1
@@ -135,8 +140,13 @@ export async function replaceAssignmentRules(actor: Actor, workspaceId: string, 
 
   await withTransaction(async (db) => {
     const ownerIds = [...new Set([...input.rules.map((rule) => rule.ownerId), ...(input.fallbackOwnerId ? [input.fallbackOwnerId] : [])])];
-    const active = await db.query(`select 1 from public.profiles where id = any($1::uuid[]) and is_active`, [ownerIds]);
-    if (active.rowCount !== ownerIds.length) throw new ValidationError("Every owner must be an active user.", { field: "ownerId" });
+    // E4b rule 5: every owner must be an active member of this workspace.
+    const active = await db.query(
+      `select 1 from public.profiles p join public.workspace_members m on m.user_id = p.id and m.workspace_id = $2
+        where p.id = any($1::uuid[]) and p.is_active`,
+      [ownerIds, workspaceId],
+    );
+    if (active.rowCount !== ownerIds.length) throw new ValidationError("Every owner must be an active member of this workspace.", { field: "ownerId" });
 
     // Updating the workspace row first also serialises concurrent saves.
     const updated = await db.query(`update public.workspaces set default_lead_owner_id = $2 where id = $1`, [workspaceId, input.fallbackOwnerId]);

@@ -11,7 +11,7 @@ import type { Server } from "node:http";
 import type { Pool } from "pg";
 import { expect } from "vitest";
 import type { Actor } from "../../src/authMiddleware.js";
-import { addTestMember } from "./testWorkspaces.js";
+import { addTestMember, trackTestMember } from "./testWorkspaces.js";
 
 // Response bodies are JSON checked by expect(); typing every shape adds nothing here.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,6 +57,7 @@ export async function startTestApi(pool: Pool, label: string): Promise<TestApi> 
         [auth.rows[0].id, role, isActive, options.name ?? null, superAdmin],
       );
       if (options.member === false || superAdmin) noAutoJoin.add(profile.rows[0].id);
+      else await trackTestMember(pool, profile.rows[0].id, role);
       return { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive, role, isSuperAdmin: superAdmin };
     },
     async call(as, workspaceId, method, path, body) {

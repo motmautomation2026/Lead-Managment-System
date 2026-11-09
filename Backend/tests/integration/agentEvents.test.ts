@@ -9,7 +9,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 
@@ -122,6 +122,7 @@ describeIfDb("agent events and automatic status changes (requires TEST_DATABASE_
     const profile = await pool.query(`update public.profiles set role = 'admin', is_active = true, full_name = 'Agent3B2 Admin' where id = $1 returning id, full_name, email`, [
       auth.rows[0].id,
     ]);
+    await trackTestMember(pool, profile.rows[0].id, "admin");
     admin = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "admin" };
 
     const { createApp } = await import("../../src/app.js");

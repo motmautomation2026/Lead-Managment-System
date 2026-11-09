@@ -244,7 +244,8 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     expect(await poll(ws, box)).toMatchObject({ outcome: "error" });
     expect((await state(ws)).last_error).toBe("IMAP login rejected — check the IMAP username and password in Settings → Email.");
     const n = await pool.query(`select count(*)::int as n from public.notifications where workspace_id = $1 and title = 'Email replies can''t be read'`, [ws]);
-    const admins = (await pool.query(`select count(*)::int as n from public.profiles where role = 'admin' and is_active`)).rows[0].n;
+    // E4b rule 6: the admins of THIS workspace.
+    const admins = (await pool.query(`select count(*)::int as n from public.workspace_members m join public.profiles p on p.id = m.user_id and p.is_active where m.workspace_id = $1 and m.role = 'admin'`, [ws])).rows[0].n;
     expect(n.rows[0].n).toBe(admins);
     expect((await pool.query(`select enabled from public.integration_connections where workspace_id = $1 and id = 'email'`, [ws])).rows[0].enabled).toBe(true);
     box.failLogin(null);

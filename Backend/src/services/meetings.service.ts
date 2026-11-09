@@ -2,6 +2,7 @@ import type { Queryable } from "../dto.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import type { MeetingOutcome, MeetingStatus } from "../domain/enums.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
 import { routeMeetingOutcome } from "../domain/meetingRouting.js";
@@ -103,6 +104,8 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
   const lead = await getLeadRowOr404(db, workspaceId, input.leadId);
   if (lead.lifecycle_state === "do_not_contact") throw new DoNotContactError();
 
+  // E4b rule 5: an explicitly chosen owner must be a member (the lead's existing owner is kept as it is).
+  if (input.ownerId && input.ownerId !== lead.owner_id) await assertAssignableUser(db, workspaceId, input.ownerId);
   const ownerId = input.ownerId ?? lead.owner_id ?? actor.id;
   const ownerName = await resolveOwnerName(db, ownerId, lead, actor);
 

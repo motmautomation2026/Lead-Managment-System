@@ -1,5 +1,6 @@
 import type { Actor } from "../authMiddleware.js";
 import type { Queryable } from "../dto.js";
+import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
 import type { AutoPauseStats } from "../domain/whatsappSafety.js";
 
@@ -92,7 +93,7 @@ export async function loadSendStats(
 
 /**
  * Turns one number's outbound off (`enabled` = false) with a reason and notifies every active
- * admin — once: only the call that flips `enabled` does anything. Only an admin resumes. The
+ * admin of that workspace (E4b) — once: only the call that flips `enabled` does anything. Only an admin resumes. The
  * workspace's other numbers keep sending. Returns whether this call paused.
  */
 export async function autoPause(db: Queryable, workspaceId: string, numberId: string, reason: string): Promise<boolean> {
@@ -118,8 +119,8 @@ export async function autoPause(db: Queryable, workspaceId: string, numberId: st
 export async function notifyAdmins(db: Queryable, workspaceId: string, title: string, detail: string) {
   await db.query(
     `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, href)
-     select $1, p.id, $2, $3, 'warning', '/settings'
-       from public.profiles p where p.role = 'admin' and p.is_active`,
+     select $1, a.user_id, $2, $3, 'warning', '/settings'
+       from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
     [workspaceId, title, detail],
   );
 }
