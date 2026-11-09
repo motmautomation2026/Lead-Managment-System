@@ -51,21 +51,31 @@ import type {
 import { keys, refreshCompany, refreshContact, refreshDeal } from "./query";
 import { useWorkspace } from "./workspace-context";
 
+/** E4b rule 5: a non-member who still owns records here is labelled, never offered in pickers. */
+export const NOT_IN_WORKSPACE = "(not in this workspace)";
+
 export function useSession() {
+  const { currentWorkspace, currentWorkspaceId } = useWorkspace();
   const me = useQuery({
     queryKey: keys.session,
     queryFn: ({ signal }) => backend.me(signal),
     staleTime: 60_000,
   });
   const profiles = useQuery({
-    queryKey: keys.profiles,
+    queryKey: keys.profiles(currentWorkspaceId),
     queryFn: ({ signal }) => backend.profiles(signal),
     staleTime: 60_000,
+    enabled: currentWorkspaceId !== null,
   });
-  const users: User[] = (profiles.data?.data ?? []).map((user) => ({
+  // Pickers already offer only `active` users (plus a record's current owner): a non-member is
+  // `active: false` and named "(not in this workspace)".
+  const users: User[] = (profiles.data?.data ?? []).map(({ member, ...user }) => ({
     ...user,
+    name: member ? user.name : `${user.name} ${NOT_IN_WORKSPACE}`,
+    active: member,
     role: user.role === "admin" ? "Admin" : "Salesperson",
   }));
+  // E4b: the role in the CURRENT workspace (a super-admin is admin everywhere).
   const currentUser: User | null = me.data
     ? {
         id: me.data.id,
@@ -73,12 +83,15 @@ export function useSession() {
         email: me.data.email,
         initials: initials(me.data.name),
         active: true,
-        role: me.data.role === "admin" ? "Admin" : "Salesperson",
+        role: currentWorkspace?.role === "admin" || me.data.isSuperAdmin ? "Admin" : "Salesperson",
       }
     : null;
   return {
     users,
     currentUser,
+    isSuperAdmin: me.data?.isSuperAdmin === true,
+    /** /admin user management (global admin or super-admin), not a workspace role. */
+    canManageUsers: me.data?.role === "admin" || me.data?.isSuperAdmin === true,
     userName: (id?: string) => users.find((user) => user.id === id)?.name ?? "Unassigned",
     isLoading: me.isLoading || profiles.isLoading,
     error: me.error ?? profiles.error,

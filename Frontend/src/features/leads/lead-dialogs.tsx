@@ -231,7 +231,7 @@ export function NextActionDialog({
           <SelectField
             label="Owner"
             value={owner}
-            options={users.map((user) => user.id)}
+            options={users.filter((user) => user.active).map((user) => user.id)}
             optionLabel={(id) => users.find((user) => user.id === id)?.name ?? "Unassigned"}
             onChange={setOwner}
           />

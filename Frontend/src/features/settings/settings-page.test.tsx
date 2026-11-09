@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   isAdmin: true,
+  isSuperAdmin: false,
   usersCreate: vi.fn(),
   usersUpdate: vi.fn(),
   setTheme: vi.fn(),
@@ -42,6 +43,8 @@ vi.mock("@/app/theme-context", () => ({
 vi.mock("./profile-panel", () => ({ ProfilePanel: () => <div>profile panel</div> }));
 vi.mock("./agent-panel", () => ({ AgentPanel: () => <div>agent panel</div> }));
 vi.mock("./email-settings", () => ({ EmailPanel: () => <div>email panel</div> }));
+vi.mock("./team-panel", () => ({ TeamPanel: () => <div>team panel</div> }));
+vi.mock("./super-admin-panel", () => ({ SuperAdminPanel: () => <div>super-admin panel</div> }));
 vi.mock("./lead-assignment-panel", () => ({
   LeadAssignmentPanel: () => <div>assignment panel</div>,
 }));
@@ -68,7 +71,12 @@ vi.mock("@/store", async () => {
     keys,
     messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
     useIsAdmin: () => mocks.isAdmin,
-    useSession: () => ({ users: [], userName: () => "-" }),
+    useSession: () => ({
+      users: [],
+      userName: () => "-",
+      canManageUsers: mocks.isAdmin,
+      isSuperAdmin: mocks.isSuperAdmin,
+    }),
   };
 });
 
@@ -108,6 +116,7 @@ const sections = () =>
 
 beforeEach(() => {
   mocks.isAdmin = true;
+  mocks.isSuperAdmin = false;
 });
 afterEach(() => {
   cleanup();
@@ -121,6 +130,7 @@ describe("SettingsPage (C6b)", () => {
       "Workspace",
       "Lead assignment",
       "AI agent",
+      "Team",
       "Users",
       "Profile",
       "Appearance",
@@ -141,6 +151,22 @@ describe("SettingsPage (C6b)", () => {
     expect(sections()).toEqual(["Workspace", "AI agent", "Profile", "Appearance"]);
     expect(screen.getByText("Admins only")).toBeTruthy();
     expect(screen.queryByText("Create salesperson")).toBeNull();
+  });
+
+  it("E4b: Team for this workspace's admins; All workspaces only for super-admins", async () => {
+    await renderPage({ tab: "team" });
+    expect(await screen.findByText("team panel")).toBeTruthy();
+    expect(sections()).not.toContain("All workspaces");
+    cleanup();
+    mocks.isSuperAdmin = true;
+    await renderPage({ tab: "workspaces" });
+    expect(sections()).toContain("All workspaces");
+    expect(await screen.findByText("super-admin panel")).toBeTruthy();
+    cleanup();
+    mocks.isAdmin = false;
+    mocks.isSuperAdmin = false;
+    await renderPage({ tab: "workspaces" });
+    expect(screen.getByText("Admins only")).toBeTruthy();
   });
 
   it("the Google Calendar return (?calendar=connected) shows its toast on the Workspace tab", async () => {

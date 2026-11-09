@@ -372,6 +372,8 @@ export interface AdminUser {
   bookingUrl: string | null;
 }
 
+export type WorkspaceRole = "admin" | "salesperson";
+
 export interface Workspace {
   id: string;
   name: string;
@@ -379,6 +381,31 @@ export interface Workspace {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  /** E4b: the user's role in this workspace (a super-admin: admin everywhere). */
+  role: WorkspaceRole;
+}
+
+/** E4b: Settings → Team. */
+export interface TeamMember {
+  userId: string;
+  name: string;
+  email: string;
+  active: boolean;
+  role: WorkspaceRole;
+  since: string;
+}
+
+/** E4b: the super-admin page (every workspace × active users). */
+export interface MembershipPage {
+  workspaces: { id: string; name: string }[];
+  data: {
+    id: string;
+    name: string;
+    email: string;
+    isSuperAdmin: boolean;
+    roles: Record<string, WorkspaceRole>;
+  }[];
+  nextCursor: string | null;
 }
 
 export type KnowledgeStatus = "pending" | "processing" | "ready" | "failed";
@@ -1218,15 +1245,40 @@ export const backend = {
       id: string;
       name: string;
       email: string;
+      /** The global role: only /admin user management uses it (E4b); workspace roles are on Workspace. */
       role: "admin" | "salesperson";
       /** E3b-1: the user's booking page; null = none. */
       bookingUrl?: string | null;
+      /** E4b: opens every workspace as admin; sees the super-admin page. */
+      isSuperAdmin?: boolean;
+      workspaces?: Workspace[];
     }>("/me", signal),
   /** E3b-1 rule 5: the signed-in user's own booking link. */
   updateMe: (input: { bookingUrl: string | null }) =>
     send<{ bookingUrl: string | null }>("PATCH", "/me", input),
+  /** E4b: the current workspace's directory: members + non-member owners (`member: false`). */
   profiles: (signal?: AbortSignal) =>
-    get<{ data: (Omit<User, "role"> & { role: "admin" | "salesperson" })[] }>("/profiles", signal),
+    get<{ data: (Omit<User, "role"> & { role: WorkspaceRole; member: boolean })[] }>(
+      "/profiles",
+      signal,
+    ),
+  team: {
+    list: (signal?: AbortSignal) => get<{ data: TeamMember[] }>("/team/members", signal),
+    add: (input: { email: string; role: WorkspaceRole }) =>
+      send<{ data: TeamMember[] }>("POST", "/team/members", input),
+    setRole: (userId: string, role: WorkspaceRole) =>
+      send<{ data: TeamMember[] }>("PATCH", `/team/members/${userId}`, { role }),
+    remove: (userId: string) =>
+      request<{ data: TeamMember[] }>(`/team/members/${userId}`, { method: "DELETE" }),
+  },
+  superAdmin: {
+    memberships: (
+      params: { cursor?: string | undefined; q?: string | undefined },
+      signal?: AbortSignal,
+    ) => get<MembershipPage>(listQuery("/super-admin/memberships", params), signal),
+    setMembership: (input: { workspaceId: string; userId: string; role: WorkspaceRole | null }) =>
+      send<{ data: TeamMember[] }>("PUT", "/super-admin/memberships", input),
+  },
   admin: {
     users: {
       list: (signal?: AbortSignal) => get<{ data: AdminUser[] }>("/admin/users", signal),

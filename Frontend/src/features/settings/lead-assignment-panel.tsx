@@ -150,11 +150,13 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
                       onChange={(e) => update(index, { ownerId: e.target.value })}
                     >
                       <option value="">Choose…</option>
-                      {users.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.name}
-                        </option>
-                      ))}
+                      {users
+                        .filter((user) => user.active || user.id === row.ownerId)
+                        .map((user) => (
+                          <option key={user.id} value={user.id}>
+                            {user.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                   <div className="flex gap-1">
@@ -208,11 +210,13 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
                 onChange={(e) => setFallbackOwnerId(e.target.value)}
               >
                 <option value={UNASSIGNED}>Unassigned (notify everyone for website leads)</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name}
-                  </option>
-                ))}
+                {users
+                  .filter((user) => user.active || user.id === fallbackOwnerId)
+                  .map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
               </select>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">

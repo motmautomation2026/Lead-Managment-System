@@ -11,17 +11,30 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ role: "salesperson" as "admin" | "salesperson" }));
+const mocks = vi.hoisted(() => ({
+  role: "salesperson" as "admin" | "salesperson",
+  workspaces: [{ id: "ws-1", name: "MOTM", role: "salesperson" }] as {
+    id: string;
+    name: string;
+    role: string;
+  }[],
+}));
 
 vi.mock("@/lib/use-supabase-session", () => ({
   useSupabaseSession: () => ({ loading: false, session: { user: { id: "user-1" } } }),
 }));
-vi.mock("@/lib/supabase-client", () => ({ configurationError: null }));
+vi.mock("@/lib/supabase-client", () => ({ configurationError: null, supabase: null }));
 vi.mock("@/features/auth/login-page", () => ({ LoginPage: () => <div>login</div> }));
 vi.mock("@/lib/backend-client", () => ({
   BackendError: class extends Error {},
   backend: {
-    me: async () => ({ id: "user-1", name: "U", email: "u@example.com", role: mocks.role }),
+    me: async () => ({
+      id: "user-1",
+      name: "U",
+      email: "u@example.com",
+      role: mocks.role,
+      workspaces: mocks.workspaces,
+    }),
   },
 }));
 vi.mock("@/store", () => ({ StoreProvider: ({ children }: { children: ReactNode }) => children }));
@@ -36,6 +49,8 @@ import { validateSettingsSearch } from "@/features/settings/settings-search";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  mocks.workspaces = [{ id: "ws-1", name: "MOTM", role: "salesperson" }];
+  window.history.replaceState({}, "", "/");
 });
 
 async function renderAt(path: string) {
@@ -109,4 +124,30 @@ describe("AuthGate", () => {
       });
     },
   );
+
+  it("E4b: a user with no workspace gets the plain message, not the app", async () => {
+    mocks.workspaces = [];
+    await renderAt("/");
+    expect(
+      await screen.findByRole("heading", {
+        name: "You haven't been added to a workspace yet. Ask your admin.",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("E4b: a workspace link the user may not open says so; an allowed one opens the app", async () => {
+    window.history.replaceState({}, "", "/?workspace=ws-other");
+    await renderAt("/");
+    expect(
+      await screen.findByRole("heading", { name: "You don't have access to this workspace" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Go to my workspaces" }).getAttribute("href")).toBe(
+      "/",
+    );
+    cleanup();
+    window.history.replaceState({}, "", "/?workspace=ws-1");
+    await renderAt("/");
+    expect(await screen.findByTestId("shell")).toBeTruthy();
+  });
 });

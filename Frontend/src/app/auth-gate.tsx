@@ -4,11 +4,13 @@ import { Navigate, useRouterState } from "@tanstack/react-router";
 import { AppShell } from "@/app/app-shell";
 import { StoreProvider } from "@/store";
 import { keys } from "@/store/query";
-import { configurationError } from "@/lib/supabase-client";
+import { configurationError, supabase } from "@/lib/supabase-client";
 import { useSupabaseSession } from "@/lib/use-supabase-session";
 import { LoginPage } from "@/features/auth/login-page";
 import { backend, BackendError } from "@/lib/backend-client";
 import { BrandLogo } from "@/components/common/brand-logo";
+import { Button } from "@/components/ui/button";
+import { requestedWorkspaceId } from "@/store/workspace-context";
 
 /** Routes served without authentication — must also render without a session or backend. */
 const PUBLIC_PATHS = ["/privacy"];
@@ -93,12 +95,48 @@ export function AuthGate({
   if (me.isError || !me.data) throw me.error;
   // /admin redirects into Settings (routes/admin.tsx). The Google Calendar OAuth landing
   // (A5: always /admin?calendar=…) goes there for every role; other /admin visits are admins-only.
-  if (adminPath && me.data.role !== "admin" && !window.location.search.includes("calendar=")) {
+  if (
+    adminPath &&
+    me.data.role !== "admin" &&
+    !me.data.isSuperAdmin &&
+    !window.location.search.includes("calendar=")
+  ) {
     return <Navigate to="/" replace />;
+  }
+  // E4b rule 4: no workspace yet, or a workspace link (?workspace=<id>) the user may not open.
+  const workspaces = me.data.workspaces ?? [];
+  if (workspaces.length === 0) {
+    return <AccessMessage title="You haven't been added to a workspace yet. Ask your admin." />;
+  }
+  const requested = requestedWorkspaceId();
+  if (requested && !workspaces.some((workspace) => workspace.id === requested)) {
+    return <AccessMessage title="You don't have access to this workspace" action />;
   }
   return (
     <StoreProvider>
       <AppShell>{children}</AppShell>
     </StoreProvider>
+  );
+}
+
+/** A plain full-page message (E4b): no workspace, or a workspace the user may not open. */
+function AccessMessage({ title, action = false }: { title: string; action?: boolean }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
+        <BrandLogo variant="mark" className="mx-auto mb-5 size-14" />
+        <h1 className="text-lg font-semibold">{title}</h1>
+        <div className="mt-4 flex justify-center gap-2">
+          {action && (
+            <Button asChild>
+              <a href="/">Go to my workspaces</a>
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => void supabase?.auth.signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

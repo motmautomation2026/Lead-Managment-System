@@ -7,12 +7,14 @@ type WorkObject = "tasks" | "meetings" | "proposals";
 // argument and fold it into the key so TanStack Query's cache naturally
 // separates data per workspace — switching workspaces changes the key,
 // which triggers a fresh fetch instead of momentarily showing the previous
-// workspace's cached data. `session`/`profiles`/`workspaces` are
-// workspace-agnostic (you need them before a workspace is even selected) and
-// stay plain keys.
+// workspace's cached data. `session`/`workspaces` are workspace-agnostic
+// (you need them before a workspace is even selected) and stay plain keys.
 export const keys = {
   session: ["session"] as const,
-  profiles: ["profiles"] as const,
+  /** E4b: the directory is per workspace (members + non-member owners). */
+  profiles: (workspaceId: string | null) => ["profiles", workspaceId] as const,
+  team: (workspaceId: string | null) => ["team", workspaceId] as const,
+  memberships: (q: string) => ["memberships", q] as const,
   workspaces: ["workspaces"] as const,
   search: (workspaceId: string | null, q: string) => ["search", workspaceId, q] as const,
   lead: (workspaceId: string | null, id: string) => ["lead", workspaceId, id] as const,

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import { Bot, CalendarDays, Globe, Mail, RefreshCw, ShieldCheck } from "lucide-react";
@@ -15,13 +15,25 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import { LoadingBlock } from "@/components/common/server-state";
 import { keys, messageFromError, useIsAdmin, useSession } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { LeadAssignmentPanel } from "./lead-assignment-panel";
 import { AgentPanel } from "./agent-panel";
 import { AppearancePanel } from "./appearance-panel";
-import { SETTINGS_TABS, settingsSearchSchema, type SettingsTab } from "./settings-search";
+import {
+  SETTINGS_TABS,
+  settingsSearchSchema,
+  type SettingsAccess,
+  type SettingsTab,
+} from "./settings-search";
 import { UsersPanel } from "./users-panel";
+
+// E4b: loaded only when opened (first-load budget).
+const TeamPanel = lazy(() => import("./team-panel").then((m) => ({ default: m.TeamPanel })));
+const SuperAdminPanel = lazy(() =>
+  import("./super-admin-panel").then((m) => ({ default: m.SuperAdminPanel })),
+);
 import { ProfilePanel } from "./profile-panel";
 import { WhatsAppSafety } from "./whatsapp-safety";
 import { WhatsAppNumbers } from "./whatsapp-numbers";
@@ -35,10 +47,16 @@ import { EmailPanel } from "./email-settings";
 export function SettingsPage() {
   const [state, set] = useListUrlState(settingsSearchSchema);
   const isAdmin = useIsAdmin();
+  const { canManageUsers, isSuperAdmin } = useSession();
   const { currentWorkspace, isLoading } = useWorkspace();
   const tab: SettingsTab = state.tab ?? "workspace";
-  const tabs = SETTINGS_TABS.filter((t) => isAdmin || !t.admin);
-  const adminOnly = SETTINGS_TABS.find((t) => t.id === tab)?.admin ?? false;
+  const allowed = (access: SettingsAccess) =>
+    access === "all" ||
+    (access === "admin" && isAdmin) ||
+    (access === "users" && canManageUsers) ||
+    (access === "super" && isSuperAdmin);
+  const tabs = SETTINGS_TABS.filter((t) => allowed(t.access));
+  const adminOnly = !allowed(SETTINGS_TABS.find((t) => t.id === tab)?.access ?? "all");
 
   const needsWorkspace = (panel: ReactNode) =>
     currentWorkspace ? (
@@ -106,8 +124,18 @@ export function SettingsPage() {
             )
           ) : tab === "agent" ? (
             needsWorkspace(<AgentPanel />)
+          ) : tab === "team" ? (
+            needsWorkspace(
+              <Suspense fallback={<LoadingBlock />}>
+                <TeamPanel />
+              </Suspense>,
+            )
           ) : tab === "users" ? (
             <UsersPanel />
+          ) : tab === "workspaces" ? (
+            <Suspense fallback={<LoadingBlock />}>
+              <SuperAdminPanel />
+            </Suspense>
           ) : tab === "profile" ? (
             <ProfilePanel />
           ) : (
