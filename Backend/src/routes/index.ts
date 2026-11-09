@@ -21,6 +21,7 @@ import { savedViewsRouter, searchRouter } from "./search.routes.js";
 import { googleCalendarOAuthRouter } from "./googleCalendarOAuth.routes.js";
 import { analyticsRouter } from "./analytics.routes.js";
 import { createPublicLeadsRouter } from "./publicLeads.routes.js";
+import { superAdminRouter, teamRouter } from "./team.routes.js";
 import { env } from "../env.js";
 import { requireAuth, requireCrmUser, requireWorkspace } from "../authMiddleware.js";
 
@@ -50,6 +51,8 @@ apiRouter.use("/admin", adminRouter);
 // the workspace list must be fetchable before the frontend has one selected
 // to send as X-Workspace-Id.
 apiRouter.use("/workspaces", workspacesRouter);
+// E4b rule 10: super-admin only, across workspaces (no X-Workspace-Id).
+apiRouter.use("/super-admin", superAdminRouter);
 
 // E4b rule 3: requireWorkspace is the one membership check for everything below.
 const crmRouter = Router();
@@ -77,4 +80,5 @@ crmRouter.use("/deals", dealsRouter);
 crmRouter.use("/search", searchRouter);
 crmRouter.use("/saved-views", savedViewsRouter);
 crmRouter.use("/analytics", analyticsRouter);
+crmRouter.use("/team", teamRouter);
 apiRouter.use(crmRouter);

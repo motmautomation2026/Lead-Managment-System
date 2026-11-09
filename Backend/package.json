@@ -30,7 +30,8 @@
     "staging:seed-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts",
     "staging:remove-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts --remove",
     "staging:repair-ai-test-contacts": "tsx scripts/seed-ai-test-contacts.ts --repair",
-    "staging:seed-reply-draft": "tsx scripts/seed-reply-draft.ts"
+    "staging:seed-reply-draft": "tsx scripts/seed-reply-draft.ts",
+    "admin:set-super-admin": "tsx scripts/set-super-admin.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

@@ -544,6 +544,32 @@ its contacts' sends wait. Inbound on another number is recorded and handled as u
 - No WhatsApp test send exists (only the email test); the old `/connections/whatsapp/resume` and `/connect|restart|logout`
   routes were replaced by the per-number ones.
 
+## 7t. Workspace access — E4b
+
+Every workspace-scoped route checks membership in ONE middleware (`requireWorkspace`): `X-Workspace-Id` must name an
+active workspace the user is a member of (`workspace_members`), or the user is a super-admin (`profiles.is_super_admin`);
+otherwise **403** `You don't have access to this workspace` (unknown / inactive workspace: 404 as before). The middleware
+replaces `req.actor.role` with the role in that workspace (super-admin = admin), so every admin-only route is per workspace.
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/me` | any user | adds `isSuperAdmin` and `workspaces: [{id, name, …, role}]` (super-admin: all, role admin). `role` stays the global role (only `/admin` user management uses it). |
+| GET | `/workspaces` | any user | only the user's workspaces, each with `role` (super-admin: all). |
+| POST | `/workspaces` | any user | `{name}`; the creator becomes its admin (audited); super-admins are never auto-added. Response has `role: "admin"`. |
+| PATCH | `/workspaces/:id` | super-admin | rename. |
+| GET | `/profiles` | member | now workspace-scoped: active members (`member: true`, `role` in this workspace) + active non-members who still own contacts/companies/deals/tasks/meetings here (`member: false`, shown "(not in this workspace)"; never offered in pickers). |
+| GET | `/team/members` | admin | `{data: [{userId, name, email, active, role, since}]}` |
+| POST | `/team/members` | admin | `{email, role}` an existing ACTIVE user → 201 with the list; unknown → 404; already a member → 409. |
+| PATCH | `/team/members/:userId` | admin | `{role}`; demoting the last admin → 409. |
+| DELETE | `/team/members/:userId` | admin | 409 while they own active contacts / open deals / open tasks here ("still owns N active contact(s), N open deal(s) and N open task(s)…"), or for the last admin. |
+| GET | `/super-admin/memberships` | super-admin | `{workspaces: [{id, name}], data: [{id, name, email, isSuperAdmin, roles: {<workspaceId>: role}}], nextCursor}`; active users, keyset by `sort=name:asc|desc`, `limit` 1–100, `q` ≥ 2 chars (name/email). No X-Workspace-Id. |
+| PUT | `/super-admin/memberships` | super-admin | `{workspaceId, userId, role: "admin"|"salesperson"|null}` adds / changes / removes (null) with the same guards as Team. |
+
+Assignment (rule 5): every new owner / assignee (contacts create/edit/bulk assign, companies, deals, manual tasks, meetings,
+revenue rules + fallback, website default owner, WhatsApp number owner) must be an active member → 400 `The owner must be an
+active member of this workspace.` (rules: `Every owner must be an active member of this workspace.`). An unchanged owner who
+is no longer a member is kept. Every membership change is a row in `workspace_member_events`.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
