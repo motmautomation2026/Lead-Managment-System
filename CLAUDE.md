@@ -101,6 +101,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 - Do not reintroduce frontend fixture/demo data for production CRM flows.
 - Do not bypass Supabase Auth or trust client-supplied user IDs.
+- SEC-1 (056): Never add RLS policies or grants for anon/authenticated; the browser talks only to the backend (Supabase only for
+  login). Every new `public` table keeps RLS on with no policies. `npm run db:security-check` (Backend, staging) and the
+  integration test `dbSecurity` fail otherwise.
 - Do not put service-role keys, provider secrets, encryption keys, or SMTP credentials in the frontend.
 - Do not duplicate business routing tables in React.
 - Sends come only from workflows, the AI agent, rep proposal/meeting messages and (E3b-2a) a rep's deliberate Send of an AI
