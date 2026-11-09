@@ -21,9 +21,15 @@ describe("sessionLockUnsupportedReason", () => {
 
 describe("DB pool env", () => {
   it("defaults: pools of 10 (the old size), idle 10 s, wait up to 15 s for a connection", () => {
-    expect(DbEnvSchema.parse({})).toEqual({ DB_POOL_MAX: 10, WORKER_DB_POOL_MAX: 10, DB_IDLE_TIMEOUT_MS: 10_000, DB_CONNECTION_TIMEOUT_MS: 15_000, DB_SESSION_POOL_MAX: 2 });
+    expect(DbEnvSchema.parse({})).toEqual({ DB_POOL_MAX: 10, WORKER_DB_POOL_MAX: 10, DB_IDLE_TIMEOUT_MS: 10_000, DB_CONNECTION_TIMEOUT_MS: 15_000, DB_SESSION_POOL_MAX: 2, SESSION_POOLER_MAX_CLIENTS: 15 });
     // A blank KEY= line means "not set".
     expect(DbEnvSchema.parse({ DB_POOL_MAX: "", WORKER_DB_POOL_MAX: "" })).toMatchObject({ DB_POOL_MAX: 10, WORKER_DB_POOL_MAX: 10 });
+  });
+
+  it("E4b: SESSION_POOLER_MAX_CLIENTS is validated (an int ≥ 5)", () => {
+    expect(DbEnvSchema.parse({ SESSION_POOLER_MAX_CLIENTS: "60" }).SESSION_POOLER_MAX_CLIENTS).toBe(60);
+    expect(() => DbEnvSchema.parse({ SESSION_POOLER_MAX_CLIENTS: "3" })).toThrow();
+    expect(() => DbEnvSchema.parse({ SESSION_POOLER_MAX_CLIENTS: "many" })).toThrow();
   });
 
   it("parses the staging values from strings", () => {
@@ -33,6 +39,7 @@ describe("DB pool env", () => {
       DB_IDLE_TIMEOUT_MS: 0,
       DB_CONNECTION_TIMEOUT_MS: 30_000,
       DB_SESSION_POOL_MAX: 2,
+      SESSION_POOLER_MAX_CLIENTS: 15,
     });
   });
 

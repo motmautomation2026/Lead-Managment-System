@@ -59,13 +59,11 @@ interface WhatsAppNumberRow {
  * E4a rule 12: session-pooler client slots. Every connected number holds one session-lock client;
  * the API and the worker each keep a session pool of DB_SESSION_POOL_MAX; a few slots stay free for
  * the Supabase dashboard, scripts and `db:connections --probe`.
- * headroom = SESSION_POOLER_CLIENTS − 2 × DB_SESSION_POOL_MAX − SESSION_SLOT_RESERVE (defaults: 15 − 4 − 3 = 8).
- * shortcut: the pooler size is the staging value from CLAUDE.md, not read from Supabase; make it an env var if production differs.
+ * headroom = SESSION_POOLER_MAX_CLIENTS − 2 × DB_SESSION_POOL_MAX − SESSION_SLOT_RESERVE (defaults: 15 − 4 − 3 = 8).
  */
-export const SESSION_POOLER_CLIENTS = 15;
 export const SESSION_SLOT_RESERVE = 3;
-export function sessionSlotHeadroom(sessionPoolMax: number = env.DB_SESSION_POOL_MAX): number {
-  return SESSION_POOLER_CLIENTS - 2 * sessionPoolMax - SESSION_SLOT_RESERVE;
+export function sessionSlotHeadroom(sessionPoolMax: number = env.DB_SESSION_POOL_MAX, poolerClients: number = env.SESSION_POOLER_MAX_CLIENTS): number {
+  return poolerClients - 2 * sessionPoolMax - SESSION_SLOT_RESERVE;
 }
 
 function decryptQr(row: WhatsAppNumberRow): string | null {

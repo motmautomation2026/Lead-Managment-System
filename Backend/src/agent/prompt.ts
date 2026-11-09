@@ -367,8 +367,6 @@ export function parseGroundingOutput(json: unknown): GroundingResult {
   return groundingSchema.parse(typeof json === "string" ? JSON.parse(json) : json);
 }
 
-const yesNo = (value: boolean) => (value ? "yes" : "no");
-
 export const LISTED_EXPERIENCE_EXAMPLE = "We have worked with an industrial steel trader where structured calling, field visits and steady follow-up were part of the support";
 
 // E3b-1b rule 3: the model-test messages that were wrongly flagged (Harish, Ajay, Pooja, Karthik).

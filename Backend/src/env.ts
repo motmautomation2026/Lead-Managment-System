@@ -22,6 +22,8 @@ export const DbEnvSchema = z.object({
   DB_CONNECTION_TIMEOUT_MS: blankToUndefined(z.coerce.number().int().min(0).default(15_000)),
   // DB-3: max connections in the session-pooler pool (only code that needs a real session uses it).
   DB_SESSION_POOL_MAX: blankToUndefined(z.coerce.number().int().min(1).max(100).default(2)),
+  // E4b: the session pooler's client limit (Supabase → Database → Connection pooling; 15 on staging), API + worker.
+  SESSION_POOLER_MAX_CLIENTS: blankToUndefined(z.coerce.number().int().min(5).max(10_000).default(15)),
 });
 
 const EnvSchema = DbEnvSchema.extend({
