@@ -37,8 +37,10 @@ export interface SafetyInput {
   sentToday: number;
   maxNewChatsPerDay: number;
   newChatsToday: number;
-  /** This workspace never messaged this phone and never received a message from it. */
+  /** This workspace never messaged this phone and never received a message from it (link block + opt-out line). */
   isFirstMessage: boolean;
+  /** E4a: this NUMBER never messaged / heard from the phone (its new-chat limit); default isFirstMessage. */
+  isNewChat?: boolean;
   text: string;
   paused: boolean;
   /** Spacing: the earliest time the next send may go out. */
@@ -150,7 +152,7 @@ export function decideSend(input: SafetyInput): SafetyDecision {
     const reason = cap < input.dailyCap ? `Warm-up daily cap (${cap}) reached.` : `Daily cap (${cap}) reached.`;
     return { defer: nextDayWindowTime(now, input.window, random), reason };
   }
-  if (input.isFirstMessage && input.newChatsToday >= input.maxNewChatsPerDay) {
+  if ((input.isNewChat ?? input.isFirstMessage) && input.newChatsToday >= input.maxNewChatsPerDay) {
     return { defer: nextDayWindowTime(now, input.window, random), reason: `New-chat limit (${input.maxNewChatsPerDay} per day) reached.` };
   }
 
