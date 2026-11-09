@@ -1,5 +1,7 @@
 import "./workerRole.js"; // must stay first: sets the pool role before db.js loads
-import { pool, withTransaction } from "./db.js";
+import { closePools, logPoolTargets, withTransaction } from "./db.js";
+import { installShutdown } from "./shutdown.js";
+import { defaultTransportCache } from "./providers/email.provider.js";
 import { workerEnv as env } from "./workerEnv.js";
 import * as automationService from "./services/automation.service.js";
 import { claimQueuedProposalWhatsappSends, processQueuedProposalWhatsappSend } from "./services/proposalSending.service.js";
@@ -280,6 +282,7 @@ async function loop(): Promise<void> {
   }
 }
 
+logPoolTargets();
 console.log(
   `Northbeam CRM automation worker starting (poll interval ${env.WORKER_POLL_INTERVAL_MS}ms, batch size ${env.WORKER_BATCH_SIZE}, dry run ${env.WORKER_DRY_RUN}, AI agent runner ${env.AGENT_RUNNER_ENABLED ? "on" : "off"}).`,
 );
@@ -289,21 +292,16 @@ void baileysRegistry
   .catch(async (error) => {
     console.error("Automation worker failed to initialize per-workspace WhatsApp sessions:", error);
     await baileysRegistry.stopAll().catch(() => undefined);
-    await pool.end().catch(() => undefined);
+    await closePools();
     process.exit(1);
   });
 
-async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down worker...`);
+// Ctrl+C / Ctrl+Break / SIGTERM: stop the loop, close the WhatsApp sockets and their session-lock
+// clients, the pooled SMTP transports, then both pools (IMAP sessions are per poll and logged out
+// by it; a tick still running is cut off by the helper's 10 s hard timeout).
+installShutdown(async () => {
   stopped = true;
-  try {
-    await baileysRegistry.stopAll();
-    await pool.end();
-  } catch (err) {
-    console.error("[worker] Error closing database pool during shutdown:", err);
-  }
-  process.exit(0);
-}
-
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+  await baileysRegistry.stopAll().catch((err) => console.error("[worker] Error stopping WhatsApp managers during shutdown:", err));
+  defaultTransportCache.closeAll();
+  await closePools();
+});

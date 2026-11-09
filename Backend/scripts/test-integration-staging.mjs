@@ -12,6 +12,9 @@ const dotEnv = dotenv.parse(readFileSync(new URL("../.env", import.meta.url)));
 const url = dotEnv.TEST_DATABASE_URL?.trim();
 if (!url) throw new Error("TEST_DATABASE_URL is not set in Backend/.env.");
 if (url.includes(PRODUCTION_REF)) throw new Error("TEST_DATABASE_URL points at the production project; refusing to run.");
+// DB-3: TEST_DATABASE_URL is the transaction pooler; TEST_DATABASE_SESSION_URL the session pooler (WhatsApp lock tests).
+const sessionUrl = dotEnv.TEST_DATABASE_SESSION_URL?.trim();
+if (sessionUrl?.includes(PRODUCTION_REF)) throw new Error("TEST_DATABASE_SESSION_URL points at the production project; refusing to run.");
 // Staging Storage for the knowledge-base tests (uploads are cleaned up). Without these the
 // tests' setup substitutes a fake Supabase URL.
 const supabaseUrl = dotEnv.SUPABASE_URL?.trim();
@@ -23,6 +26,6 @@ const result = spawnSync("npx", ["vitest", "run", ...(process.argv.length > 2 ? 
   cwd: backendDir,
   stdio: "inherit",
   shell: process.platform === "win32",
-  env: { ...process.env, ...supabase, TEST_DATABASE_URL: url },
+  env: { ...process.env, ...supabase, TEST_DATABASE_URL: url, ...(sessionUrl ? { TEST_DATABASE_SESSION_URL: sessionUrl } : {}) },
 });
 process.exit(result.status ?? 1);

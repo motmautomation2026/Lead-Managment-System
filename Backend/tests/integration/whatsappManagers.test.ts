@@ -57,7 +57,7 @@ describeIfDb("WhatsApp manager scan (requires TEST_DATABASE_URL)", () => {
     const inactive = await workspace({ desired: "connected", status: "connected" }, false);
 
     const { BaileysManagerRegistry } = await import("../../src/providers/baileys-registry.js");
-    const registry = new BaileysManagerRegistry(DATABASE_URL);
+    const registry = new BaileysManagerRegistry() /* the session URL */;
     await registry.ensureManagers();
 
     const ours = mocks.started.filter((id) => workspaceIds.includes(id));
