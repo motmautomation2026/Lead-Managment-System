@@ -70,10 +70,12 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Clean shutdown (`src/shutdown.ts`): API, worker and scripts close their pools (worker: also WhatsApp
   sockets + lock clients and SMTP transports) on SIGINT / SIGTERM / SIGBREAK, 10 s hard timeout. The API
   and worker log which pooler each pool uses (host:port) at startup.
-- The worker also holds one dedicated session connection per running WhatsApp manager (lock client). It starts
-  managers (every tick, one at a time) only for active workspaces whose `whatsapp_connection` has
-  `desired_state` connected/restart, or a live status while disconnecting; unneeded managers are
-  stopped (lock client closed). No row = no manager.
+- The worker also holds one dedicated session connection per running WhatsApp manager (lock client) — E4a: one manager
+  per **number**. It starts managers (every tick, one at a time) only for numbers (`whatsapp_numbers`, active
+  workspaces) with `desired_state` connected/restart and not removed, or a live status while disconnecting / being
+  removed; unneeded managers are stopped (lock client closed). No number = no manager. It logs "WhatsApp numbers with a
+  session: <ws>: n → N session-pooler slot(s)" whenever that set changes. Session slots needed = 2 × DB_SESSION_POOL_MAX
+  + connected numbers (all workspaces); Settings → WhatsApp warns above 15 − 2 × DB_SESSION_POOL_MAX − 3.
 - Integration tests create workspaces with `createTestWorkspace` (`tests/helpers/testWorkspaces.ts`,
   name `[test] <label> <uuid>`) and delete them in `afterAll` with `deleteCreatedTestWorkspaces`
   (FK-safe, throws on failure). Never insert/delete workspaces directly in tests.
@@ -90,7 +92,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `053`).
+  (currently `054`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -116,7 +118,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `053`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `054`).
 
 ## Way of working
 
@@ -127,6 +129,28 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Completed so far
 
 Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it for details of a past phase.
+
+## WhatsApp numbers (E4a)
+
+- A workspace has 1…`max_numbers` (default 5, admin) WhatsApp numbers: rows in `whatsapp_numbers` (own QR pairing, Baileys
+  auth in `whatsapp_number_auth_*`, socket, session-lock client keyed by the number id, `paired_at` / warm-up, daily cap,
+  spacing, new-chat limit, `enabled` + pause, optional `owner_user_id`, soft delete `removed_at`). `whatsapp_connection` is
+  the workspace row: send window, `outbound_enabled` (master switch for every number), `max_numbers`; its old per-number
+  columns are legacy (copied to number #1 by migration 054) and never read.
+- Sticky number (`leads.whatsapp_number_id`): set on the first send (any source) or the first matched inbound, whichever is
+  first; never changed automatically. Only an admin moves a contact (`POST /contacts/:id/whatsapp-number`, reason, audit,
+  timeline; prepared rows follow) or removes a number (rule 10: move its contacts or leave them without one).
+- Choosing (`domain/whatsappNumbers.ts`, the only place): the owner's connected, not-paused number with room today, else the
+  one with the most room after warm-up → fewest new chats today → oldest pairing; none → the send waits (deferral, no attempt).
+  Paused / disconnected / removed sticky number → that contact's sends wait; never a silent switch. Every sender goes through
+  `sendWhatsApp` → `resolveSendNumber` → that number's manager → `performSend`.
+- Safety (E1 below) is counted **per number** (`loadSendStats` on `whatsapp_number_id`), except the send window and the master
+  switch (per workspace) and the opt-out line / first-message link rule (per lead: the workspace never messaged the phone);
+  the new-chat limit counts a phone new to that number (`isNewChat`). STOP-rate auto-pause per number; a STOP on any number
+  opts the contact out of WhatsApp. Auto-pause notifications name the number.
+- Locks: session lock per number (`hashtextextended(numberId, 1)`); sends and inbound share `pg_advisory_xact_lock` on
+  (number, phone) (`numberPhoneLockKey`). Inbound carries its number; a reply on another number than the sticky one is
+  handled as usual and flagged `other_number`.
 
 ## WhatsApp safety (E1)
 

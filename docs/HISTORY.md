@@ -699,3 +699,34 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   enabled and both pool sizes (CLAUDE.md "DB connections"). Tests: `db`, `shutdown` (unit), `dbPoolers` (integration: 30 parallel
   queries on the transaction pooler while the session pool is held, the WhatsApp lock still excludes a second manager, the hot-score
   sweeper on the transaction pool), `whatsappManagers` uses the session URL.
+
+- **E4a (several WhatsApp numbers per workspace, sticky number per lead; migration 054; no OpenAI call, no real socket in tests):**
+  New `whatsapp_numbers` (one row per number: label, optional owner, QR pairing, status / desired state, `paired_at` warm-up, daily
+  cap, spacing, new-chat limit, `enabled` + pause, soft delete `removed_at`); auth state per number in `whatsapp_number_auth_*`
+  (the old per-workspace `whatsapp_auth_*` tables are kept, unused); `whatsapp_connection` stays the workspace row (send window,
+  new `outbound_enabled` master switch, `max_numbers` default 5; its per-number columns are legacy). `leads.whatsapp_number_id`
+  (sticky), `whatsapp_number_id` on outbound / inbound / safety rows and `message_facts`, inbound `other_number`, per-number counter
+  indexes. Backfill: each connection → number #1 with the same id (so `message_facts.whatsapp_connection_id` history matches), same
+  `paired_at`, auth rows copied (AADs carry no workspace: no re-pairing), every lead with a sent WhatsApp or a matched reply and every
+  existing outbound / inbound / safety row → #1; re-runnable (only workspaces whose #1 the run creates). Staging: 8 numbers, 1 lead.
+  Domain `domain/whatsappNumbers.ts` (`chooseNumber`, `pickNumber`, `moveProblem`, `numberPhoneLockKey`); `decideSend` gets
+  `isNewChat` (per-number new-chat limit; the opt-out line / link block stay per lead via `isFirstMessage`). Worker: one
+  `BaileysManager(workspaceId, numberId)` per number (advisory lock on the number id, retry-counter cache, QR, auto-pause and
+  notifications per number, "WhatsApp number <label> paused automatically"), registry keyed by number (`NEEDS_MANAGER_SQL` on
+  `whatsapp_numbers`, removed numbers only while logging out), log line per change "WhatsApp numbers with a session: <ws>: n → N
+  session-pooler slot(s)". Sending: `sendWhatsApp` → `resolveSendNumber` (sticky, or rule 4 under the lead row lock; none usable →
+  `ProviderDeferredError`) → that number's manager; the claim locks (number, phone), re-checks the sticky number (assigns it when
+  still empty, defers 1 s when an admin moved it) and counts per number (`loadSendStats`); the outbound row and the fact carry the
+  number. Inbound: `processInboundUpsert(ws, event, numberId)`, lock per (number, phone), first matched inbound sets the sticky
+  number, another number → `other_number`. API: workspace settings, `/connections/whatsapp/numbers` (add / edit / pause / resume /
+  remove with the rule-10 options / connect / restart / logout), `POST /contacts/:id/whatsapp-number` (admin, reason, timeline,
+  audit), `GET /contacts/:id` `whatsappNumber`, funnel "number" by label (B4 §7s). UI: Settings → WhatsApp number cards
+  (`features/settings/whatsapp-numbers.tsx`: status, sent / cap with warm-up day, owner picker, safety, pause / resume, QR, remove
+  dialog), workspace settings (`whatsapp-safety.tsx`: master switch, window, max numbers, monitoring with number labels), session-slot
+  warning (headroom = 15 − 2 × DB_SESSION_POOL_MAX − 3); contact record "WhatsApp number" + admin "Move to another number"
+  (`features/contacts/move-whatsapp-number-dialog.tsx`). Not built: a WhatsApp test send (none existed). Tests: `whatsappNumbers`
+  (unit + integration: spread by room, owner first, cap on A → new leads to B while A's wait, pause one number, first inbound /
+  other number, STOP on B, moved lead), `agentLive` (agent → proposal → reply_draft on one number), `whatsappSafetyApi` (routes),
+  `dbPoolers` (one lock per number), `whatsappManagers` (two numbers → two managers, removed → none), registry / manager / auth
+  store unit tests; frontend `whatsapp-numbers`, `whatsapp-safety`, `move-whatsapp-number-dialog`, `contact-about`. Production: stop
+  the worker, apply 054 (MOTM and MOTM Tech: their number becomes #1, no re-pairing), deploy API + worker; env unchanged.
