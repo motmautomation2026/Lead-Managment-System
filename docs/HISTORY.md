@@ -792,3 +792,43 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity order by 1, 2, 3, 4;`
   After 056: `npm run db:security-check` cannot target production (it refuses); re-run the query instead (expect only storage
   rows for other buckets, if any).
+- **P7 (scalability review, test stability, system health; migration 057; no OpenAI call, nothing sent, no real WhatsApp
+  socket, no change in what the AI writes):** Item 0: SEC-1's failed staging runs were run 1 (`automationHomeApi` timed N+1
+  test over its 120 s timeout on a slow network), run 3 (`getaddrinfo ENOTFOUND` network outage in `replyDrafts`, one test
+  hung 6,280 s; and `whatsappSafety` "outside the send window": the helper's window opens at 00:00, so with "today" excluded a
+  run at 23:29 IST deferred only 31 min — the pure window function is correct), run 5 (`knowledgeApi` cleanup: Storage
+  `fetch failed`, no retry), run 7 (`agentLive` stalled 812 s on the network); they left 20 `[test]` workspaces (all with
+  WhatsApp numbers) and 2 `agent3b2_fail_*` functions. Item 1: cleanup retries network errors (`tests/helpers/networkRetry.ts`,
+  3 attempts, backoff; a retry after a lost commit reply stops when the workspace is gone); a cleanup that still fails is logged
+  and the new global teardown (`tests/global-setup.ts`) deletes every `[test]` workspace created during the run (a failed sweep
+  fails the run); `BaileysManager` takes an injected clock (4th argument) and the window test uses Wednesday 12:00 IST with a
+  09:30–19:00 window (asserts 21.5 h + ≤ 20 min); Storage uploads/lists/removes in tests retry, the asset signed URL is polled;
+  `staging:cleanup-test-workspaces` also takes `[test]` workspaces with WhatsApp numbers (numbers marked removed first) and
+  lists / drops (`--confirm`) `public` functions no migration creates (run: 20 workspaces + 2 functions removed). Item 2:
+  `npm run staging:load-seed` (staging ref; dry run; `--confirm`; `--remove`; 10 `[test] load-seed` workspaces × 2,000
+  contacts with companies, deals, tasks, 100,000 timeline events, meetings, proposals, 18,000 AI decisions, 8,000 sent
+  messages + facts, opens, replies, drafts, 24,000 wake-ups, 30 users, 20 disconnected fake numbers, AI off; stops above
+  70 % of the plan limit — Free plan 500 MB assumed, `max_connections` 60; staging 141.6 → 226.4 MB) and
+  `npm run staging:perf-measure` (20 runs per path, every statement under EXPLAIN ANALYZE in a rolled-back transaction, seq
+  scans on tables > 10k rows flagged; `--only`, `--explain`); results in `docs/perf/P7-baseline.md`. Item 3: fair worker ticks
+  (`services/fairPick.ts`: every multi-workspace claim round-robin across workspaces within its per-tick limit; sweeps pick
+  candidates up front; email outbound longest-waiting workspace first; reply escalation also ≤ 100 per tick); migration 057
+  `email_outbound_lead_idx` (hot-score batch 161 → 44 ms); work lists join `leads` / `companies` with the workspace equality
+  (tasks "Hottest first" 31 → 2 ms, no seq scan). At 20,000 contacts every API read ≤ 25 ms server, funnel 180 d ≤ 70 ms,
+  every claim ≤ 1 ms, every batch ≤ 45 ms; the funnel's 180-day cohort still seq-scans `leads` while one workspace is 10 % of
+  it (planner choice; the index exists). Per WhatsApp number (fake managers, `npm run staging:worker-capacity`): ~0.1 MB heap
+  and one session-pooler client; recommended ≤ 8 numbers per worker on a 15-client session pooler (the E4a/E4b formula).
+  Item 4: migration 057 `worker_heartbeats` + `system_health_alerts` (RLS on, no policies, no grants); the worker runs every
+  tick step through `step()` (failures logged as codes, the tick goes on) and upserts one heartbeat row per loop per tick;
+  `GET /health/worker` (public, no data: 200 `ok` / 503 `stale` + critical loop names when a loop hasn't finished within
+  expected × 3, expected = max(60 s, 2 × poll)); `GET /super-admin/system-health` + Settings → System health (super-admins,
+  lazy); `runHealthAlerts` every 15 min: one admin notification per workspace per IST day per red problem (stuck queue,
+  paused channel, AI budget ≥ 90 %). Item 5: load seed removed (workspaces 1, contacts 26, seed users 0 — as before; the
+  database stays at 229 MB until autovacuum reuses the space). Tests: backend 1258 → 1271, frontend 510 → 512, integration
+  462 + 2 skipped → 468 + 2 skipped; `npm run db:security-check` OK after 057.
+  **Production:** apply 057 (additive). On a large `email_outbound_messages` first run
+  `create index concurrently if not exists email_outbound_lead_idx on public.email_outbound_messages (lead_id) where lead_id is not null;`
+  by hand (not inside a transaction), or apply 057 in a quiet window; the two new tables are empty. Point an uptime monitor at
+  `https://<api>/health/worker` (alert on non-200). Keep `DB_POOL_MAX` 10 (API) and `WORKER_DB_POOL_MAX` 10 (worker) within the
+  production transaction pooler's client limit, `DB_SESSION_POOL_MAX` 2, and run ≤ (session pooler clients − 2 × 2 − 3)
+  connected numbers per worker; measure a real Baileys socket's memory on the first production numbers before raising it.

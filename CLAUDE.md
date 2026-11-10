@@ -50,6 +50,11 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Stop any local `npm run dev` / `npm run worker:dev` that points at staging first: a live worker
   claims queued proposal/meeting rows that the tests create. `TEST_DATABASE_URL` is the transaction
   pooler (6543), `TEST_DATABASE_SESSION_URL` the session pooler (5432, the WhatsApp lock tests).
+- P7: test cleanup retries network errors (`tests/helpers/networkRetry.ts`, 3 attempts); a cleanup that still fails on the
+  network is logged and the global teardown (`tests/global-setup.ts`) deletes every `[test]` workspace created during the
+  run (a failed sweep fails the run). Tests that depend on the time of day inject a clock (e.g. `BaileysManager`'s 4th
+  argument); Storage calls in tests retry / poll. Leftover `public` functions no migration creates (e.g. `agent3b2_fail_*`)
+  and `[test]` workspaces with WhatsApp numbers: `npm run staging:cleanup-test-workspaces` (dry run; `-- --confirm`).
 
 ## DB connections
 
@@ -92,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `056`).
+  (currently `057`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -121,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `056`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `057`).
 
 ## Way of working
 
@@ -132,6 +137,31 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Completed so far
 
 Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it for details of a past phase.
+
+## Scale, fair ticks and system health (P7)
+
+- Fair worker ticks: every worker claim that can serve several workspaces has a per-tick limit AND picks round-robin across
+  workspaces (`services/fairPick.ts` `fairPickSql`: each workspace's first due row before anyone's second, then the claim
+  re-checks under `for update skip locked`). Never add a claim ordered only globally. Email outbound: one row per workspace,
+  longest-waiting first; IMAP: one workspace per tick by `next_poll_at`; reply escalation: 20 per workspace, 100 per tick.
+- Heartbeats: `src/worker.ts` runs every tick step through `step(loop, …)`; a failing step is logged (codes only) and the tick
+  goes on; one upsert per tick into `worker_heartbeats` (one row per loop, error codes only). A new worker step gets a
+  `WORKER_LOOPS` entry (`services/systemHealth.service.ts`, critical or background).
+- `GET /health/worker` (public, mounted before `/api/v1` like `/t/o`, `no-store`): 200 `{status:"ok",stale:[]}`, or 503
+  `{status:"stale",stale:[<critical loops>]}` when a critical loop hasn't finished within `expected_seconds` × 3 (expected =
+  max(60 s, 2 × poll interval)). Never add workspace data to it. For an external uptime monitor in production.
+- Settings → System health (super-admins, `GET /super-admin/system-health`): loop ages and per workspace stuck (due > 15 min)
+  vs waiting (window / spacing / warm-up / pause / backoff) email + WhatsApp queues, overdue AI wake-ups, paused numbers /
+  email, failed sends 24 h, AI budget %, decisions today vs cap. The worker's `runHealthAlerts` (every 15 min) sends a
+  workspace's admins one notification per IST day per red problem (`stuck_queue`, `paused_channel`, `ai_budget` ≥ 90 %),
+  deduplicated in `system_health_alerts`. Nothing here sends a message.
+- Performance targets (server time; measure on staging only: `npm run staging:load-seed -- --confirm` →
+  `npm run staging:perf-measure -- --label <x>` → `npm run staging:load-seed -- --remove --confirm`; results in
+  `docs/perf/`): API reads p95 < 300 ms, funnel 180 days < 1 s, each worker claim/batch < 500 ms, no sequential scan on a
+  table > 10,000 rows in a hot path. Joins to `leads` / `companies` from a workspace-scoped table carry the workspace
+  equality (`l.workspace_id = t.workspace_id`) so the workspace indexes are used.
+- Per-number cost (fake managers, `npm run staging:worker-capacity`): one session-pooler connection (the lock client) per
+  running number; the session-slot formula (E4a/E4b) is unchanged.
 
 ## Workspace access (E4b)
 

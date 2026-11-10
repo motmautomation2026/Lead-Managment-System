@@ -570,6 +570,22 @@ revenue rules + fallback, website default owner, WhatsApp number owner) must be 
 active member of this workspace.` (rules: `Every owner must be an active member of this workspace.`). An unchanged owner who
 is no longer a member is kept. Every membership change is a row in `workspace_member_events`.
 
+## 7u. System health — P7
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/health/worker` | public (no auth, no `X-Workspace-Id`; outside `/api/v1` like `/t/o`) | `Cache-Control: no-store`. **200** `{status: "ok", stale: []}` while every critical worker loop finished within its `expected_seconds` × 3; else **503** `{status: "stale", stale: ["agent_tick", …]}` (also when the database can't be read). Only loop names, never workspace data. For an external uptime monitor. |
+| GET | `/super-admin/system-health` | super-admin (403 otherwise; no `X-Workspace-Id`) | `{status, stale, loops: [{loop, critical, lastStartedAt, lastFinishedAt, ageSeconds, expectedSeconds, lastError, lastErrorAt, itemsProcessed}], workspaces: [{workspaceId, name, emailStuck, emailWaiting, whatsappStuck, whatsappWaiting, overdueWakeups, pausedNumbers, emailPaused, failedSends24h, budgetUsedPct, decisionsToday, decisionCap, decisionCapUsedPct, red: ("stuck_queue"\|"paused_channel"\|"ai_budget")[]}]}` for every active workspace. |
+
+Queues: a queued row (email `email_outbound_messages`; WhatsApp workflow steps, AI sends, reply-draft sends, proposal and
+meeting messages) created more than 15 minutes ago is **stuck** when it has been due for more than 15 minutes, **waiting**
+when its next attempt is later or was set within the last 15 minutes (send window, spacing, warm-up, pause, backoff).
+Overdue AI wake-ups: pending, due more than 15 minutes ago, AI mode shadow/live. Failed sends: email + WhatsApp rows failed
+in the last 24 h. Budget: this IST month's AI spend / `monthly_budget_usd`; decisions today vs `max_decisions_per_day`.
+Red (`red`): a stuck row, a paused number or paused email sending, budget ≥ 90 %; the worker notifies that workspace's admins
+once per IST day per red problem (`system_health_alerts`). Heartbeats (`worker_heartbeats`, one row per loop) are written by
+the worker once per tick; error columns hold codes only.
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
@@ -590,6 +606,11 @@ is no longer a member is kept. Every membership change is a row in `workspace_me
 | Global search `perf12` | 23 + 3 + 4 ms | 164 ms | seq scans at this size |
 
 \* HTTP includes the network round trips from the local API to the staging pooler (~100 ms each); server execution is the target (< 300 ms, met everywhere).
+
+**P7 (2026-11-10), 20,000 contacts in 10 workspaces** (`npm run staging:load-seed`, `npm run staging:perf-measure`; full
+tables in `docs/perf/P7-baseline.md`): every list, count, search, Home, AI Activity and Results read ≤ 25 ms server time;
+funnel 180 days ≤ 70 ms; every worker claim ≤ 1 ms and batch ≤ 45 ms. Fixed: tasks "Hottest first" 31 → 2 ms (workspace
+equality on the `leads` / `companies` joins), hot-score batch 161 → 44 ms (migration 057 `email_outbound_lead_idx`).
 
 ## 9. Deprecated endpoints — remove after the production release (C6b)
 
