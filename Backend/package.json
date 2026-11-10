@@ -25,6 +25,8 @@
     "db:connections": "tsx scripts/db-connections.ts",
     "db:security-check": "tsx scripts/db-security-check.ts",
     "staging:cleanup-test-workspaces": "tsx scripts/cleanup-test-workspaces.ts",
+    "staging:load-seed": "tsx scripts/load-seed.ts",
+    "staging:perf-measure": "tsx scripts/perf-measure.ts",
     "staging:cleanup-test-users": "tsx scripts/cleanup-test-users.ts",
     "crm:sweep": "tsx scripts/crm-sweep.ts",
     "crm:deal-sweep": "tsx scripts/crm-deal-sweep.ts",
