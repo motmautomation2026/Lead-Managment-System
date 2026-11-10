@@ -10,6 +10,7 @@ import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 import { PREFETCH_WINDOW_MS } from "../domain/emailTracking.js";
 import { markHotScore } from "./messageFacts.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 /** Rule 12: every open raises open_count; only one more than 60 s after sending can be the first counted open. */
 export async function recordEmailOpen(db: Queryable, token: string): Promise<void> {
@@ -24,14 +25,18 @@ export async function recordEmailOpen(db: Queryable, token: string): Promise<voi
 
 /** Worker tick: up to `limit` first counted opens not yet recorded, one short transaction each. */
 export async function runOpenEvents(options: { limit?: number; workspaceIds?: string[] } = {}): Promise<number> {
-  const due = await pool.query<{ id: string }>(
-    `select id from public.email_outbound_messages
-      where first_counted_open_at is not null and open_event_at is null and ($2::uuid[] is null or workspace_id = any($2::uuid[]))
-      order by first_counted_open_at limit $1`,
+  const due = await pool.query<{ k: string }>(
+    // P7: round-robin across workspaces.
+    fairPickSql({
+      from: "public.email_outbound_messages x",
+      where: "x.first_counted_open_at is not null and x.open_event_at is null and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))",
+      order: "x.first_counted_open_at",
+      limit: "$1",
+    }),
     [options.limit ?? 50, options.workspaceIds ?? null],
   );
   let recorded = 0;
-  for (const { id } of due.rows) {
+  for (const { k: id } of due.rows) {
     await withTransaction(async (db) => {
       const row = (
         await db.query<{ lead_id: string | null; source: string; subject: string; first_counted_open_at: Date }>(

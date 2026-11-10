@@ -5,6 +5,7 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { companyMatch, SIMILAR_NAME_THRESHOLD, type CompanyMatch, type CompanyRef, type MatchCandidate } from "../domain/companyMatch.js";
 import { corporateDomain, isPlaceholderCompany, normalizeCompanyName } from "../domain/companyNormalize.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * CRM v2 companies (B2-design §2.1). A contact is a `leads` row; `leads.company_id`
@@ -295,37 +296,45 @@ export interface CompanySweepCounts {
 
 /**
  * The company sweeper (B2-design §3): links contacts that were never checked
- * (old data) or whose inline link failed. Oldest first, up to `limit` per call,
- * on ONE connection with one short transaction per contact; SKIP LOCKED makes
- * it safe with several workers. A contact that fails is not retried in the same
- * pass, and is given up after MAX_COMPANY_LINK_ATTEMPTS. `workspaceId` is for
- * tests and scripts. Returns counts only (callers log no names).
+ * (old data) or whose inline link failed. Up to `limit` per call, picked up front
+ * round-robin across workspaces, oldest first (P7: one big import can't hold back
+ * the others), on ONE connection with one short transaction per contact; SKIP
+ * LOCKED makes it safe with several workers. A contact that fails is not retried
+ * in the same pass, and is given up after MAX_COMPANY_LINK_ATTEMPTS. `workspaceId`
+ * is for tests and scripts. Returns counts only (callers log no names).
  */
 export async function runCompanySweep(options: { limit?: number; workspaceId?: string } = {}): Promise<CompanySweepCounts> {
   const limit = options.limit ?? 200;
   const counts: CompanySweepCounts = { processed: 0, linked: 0, created: 0, none: 0, failed: 0 };
-  const tried: string[] = [];
   const client = await pool.connect();
   try {
-    while (counts.processed < limit) {
+    const candidates = (
+      await client.query<{ k: string }>(
+        fairPickSql({
+          from: "public.leads x",
+          where: "x.company_link_checked_at is null and x.company_link_attempts < $1 and x.merged_into_lead_id is null and ($2::uuid is null or x.workspace_id = $2::uuid)",
+          order: "x.created_at",
+          limit: "$3",
+        }),
+        [MAX_COMPANY_LINK_ATTEMPTS, options.workspaceId ?? null, limit],
+      )
+    ).rows;
+    for (const { k: candidate } of candidates) {
       await client.query("begin");
       try {
         const next = (
           await client.query<{ id: string; workspace_id: string }>(
             `select id, workspace_id from public.leads
-              where company_link_checked_at is null and company_link_attempts < $1 and merged_into_lead_id is null
-                and ($2::uuid is null or workspace_id = $2::uuid) and not (id = any($3::uuid[]))
-              order by created_at, id
-              limit 1
+              where id = $1 and company_link_checked_at is null and company_link_attempts < $2 and merged_into_lead_id is null
               for update skip locked`,
-            [MAX_COMPANY_LINK_ATTEMPTS, options.workspaceId ?? null, tried],
+            [candidate, MAX_COMPANY_LINK_ATTEMPTS],
           )
         ).rows[0];
         if (!next) {
+          // Linked meanwhile, or another worker holds it.
           await client.query("commit");
-          break;
+          continue;
         }
-        tried.push(next.id);
         const result = await linkCompanySafely(client, next.workspace_id, next.id);
         await client.query("commit");
         counts.processed++;

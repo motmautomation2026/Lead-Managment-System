@@ -156,7 +156,10 @@ export async function queueEmailForAction(input: Omit<EnqueueEmailInput, "source
   return requeued.rows[0] ?? row;
 }
 
-/** One due row per workspace (spacing makes more pointless), SKIP LOCKED; claiming pushes the reclaim time 15 min out. */
+/**
+ * One due row per workspace (spacing makes more pointless), SKIP LOCKED; claiming pushes the reclaim time 15 min out.
+ * P7: the workspaces whose next email has waited longest go first, so more than `limit` busy workspaces all get a turn.
+ */
 export async function claimDueEmails(db: Queryable, limit: number, workspaceIds: string[] | null = null): Promise<EmailOutboundRow[]> {
   const claimed = await db.query<EmailOutboundRow>(
     `update public.email_outbound_messages
@@ -171,6 +174,7 @@ export async function claimDueEmails(db: Queryable, limit: number, workspaceIds:
          )
            -- Repeated so the lock re-checks them on the latest row: a concurrent tick that claimed it first wins.
            and status in ('queued', 'sending') and next_attempt_at <= now()
+         order by next_attempt_at, id
          limit $1
          for update skip locked
       )

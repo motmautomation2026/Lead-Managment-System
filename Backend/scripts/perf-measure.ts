@@ -233,8 +233,10 @@ async function main() {
     }
 
     const results: Result[] = [];
+    // --only "<part of a name>": just those scenarios (re-measuring one path).
+    const only = argv.includes("--only") ? argv[argv.indexOf("--only") + 1] : undefined;
     try {
-      for (const s of scenarios) {
+      for (const s of scenarios.filter((x) => !only || x.name.includes(only))) {
         const runs: number[] = [];
         let recorded: Recorded[] = [];
         const total = s.runs ?? runsArg;

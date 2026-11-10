@@ -90,7 +90,8 @@ export const taskListSchema = taskFilterSchema.extend({ ...pageParams, sort: tas
 export type TaskFilters = z.infer<typeof taskFilterSchema>;
 export const TASK_COLUMNS = ["title", "type", "dueAt", "contact", "company", "deal", "owner", "origin", "status", "createdAt", "updatedAt"] as const;
 
-const TASK_FROM = `public.tasks t join public.leads l on l.id = t.lead_id`;
+// P7: the workspace equality lets the planner use the leads/companies workspace indexes (not a scan of every workspace).
+const TASK_FROM = `public.tasks t join public.leads l on l.id = t.lead_id and l.workspace_id = t.workspace_id`;
 
 function taskWhere(workspaceId: string, actor: Actor, f: TaskFilters): SqlBuilder {
   const b = new SqlBuilder();
@@ -117,7 +118,7 @@ export async function listWorkTasks(db: Queryable, actor: Actor, workspaceId: st
     `select t.*, (t.status = 'open' and t.due_at < now()) as is_overdue,
             o.full_name as owner_full_name, ${CONTACT_JSON} as contact, ${COMPANY_JSON} as company, od.deal, ${cursorSelect}
        from ${TASK_FROM}
-       left join public.companies c on c.id = l.company_id
+       left join public.companies c on c.id = l.company_id and c.workspace_id = l.workspace_id
        left join public.profiles o on o.id = t.owner_id
        left join lateral (
          select json_build_object('id', d.id, 'name', d.name) as deal
@@ -168,7 +169,7 @@ export const meetingListSchema = meetingFilterSchema.extend({ ...pageParams, sor
 export type MeetingFilters = z.infer<typeof meetingFilterSchema>;
 export const MEETING_COLUMNS = ["title", "at", "contact", "company", "deal", "owner", "status", "outcome", "calendar", "notify", "link", "createdAt"] as const;
 
-const MEETING_FROM = `public.meetings m join public.leads l on l.id = m.lead_id`;
+const MEETING_FROM = `public.meetings m join public.leads l on l.id = m.lead_id and l.workspace_id = m.workspace_id`;
 
 function meetingWhere(workspaceId: string, actor: Actor, f: MeetingFilters): SqlBuilder {
   const b = new SqlBuilder();
@@ -191,7 +192,7 @@ export async function listWorkMeetings(db: Queryable, actor: Actor, workspaceId:
   const page = await runPage<MeetingRow & RefColumns>(db, meetingWhere(workspaceId, actor, query), query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
     `select m.*, o.full_name as owner_full_name, ${CONTACT_JSON} as contact, ${COMPANY_JSON} as company, ${DEAL_JSON} as deal, ${cursorSelect}
        from ${MEETING_FROM}
-       left join public.companies c on c.id = l.company_id
+       left join public.companies c on c.id = l.company_id and c.workspace_id = l.workspace_id
        left join public.deals d on d.id = m.deal_id
        left join public.profiles o on o.id = m.owner_id
       ${where}
@@ -234,7 +235,7 @@ export const proposalListSchema = proposalFilterSchema.extend({ ...pageParams, s
 export type ProposalFilters = z.infer<typeof proposalFilterSchema>;
 export const PROPOSAL_COLUMNS = ["title", "contact", "company", "deal", "amount", "status", "sentAt", "owner", "updatedAt", "sendStatus", "document"] as const;
 
-const PROPOSAL_FROM = `public.proposals p join public.leads l on l.id = p.lead_id`;
+const PROPOSAL_FROM = `public.proposals p join public.leads l on l.id = p.lead_id and l.workspace_id = p.workspace_id`;
 
 function proposalWhere(workspaceId: string, actor: Actor, f: ProposalFilters): SqlBuilder {
   const b = new SqlBuilder();
@@ -254,7 +255,7 @@ export async function listWorkProposals(db: Queryable, actor: Actor, workspaceId
   const page = await runPage<ProposalRow & RefColumns>(db, proposalWhere(workspaceId, actor, query), query.sort, query, ({ where, orderBy, limit, cursorSelect }) =>
     `select p.*, o.full_name as owner_full_name, ${CONTACT_JSON} as contact, ${COMPANY_JSON} as company, ${DEAL_JSON} as deal, ${cursorSelect}
        from ${PROPOSAL_FROM}
-       left join public.companies c on c.id = l.company_id
+       left join public.companies c on c.id = l.company_id and c.workspace_id = l.workspace_id
        left join public.deals d on d.id = p.deal_id
        left join public.profiles o on o.id = p.owner_id
       ${where}

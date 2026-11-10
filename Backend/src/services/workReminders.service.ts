@@ -14,9 +14,12 @@ import { escalationDue } from "../domain/replyDrafts.js";
 import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.js";
 import { createTask } from "./tasks.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 const PER_WORKSPACE = 20;
 const MEETING_BATCH = 50;
+/** P7: at most this many reply tasks are looked at per tick across all workspaces. */
+const TICK_LIMIT = 100;
 export const MEETING_OUTCOME_TASK_TITLE = "Log the meeting outcome";
 
 interface EscalationCandidate {
@@ -52,8 +55,10 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
          left join public.profiles p on p.id = t.owner_id
          left join public.agent_settings s on s.workspace_id = t.workspace_id
         where t.rn <= $4
-        order by t.workspace_id, t.created_at`,
-      [REPLY_TASK_TITLES, now, opts.workspaceIds ?? null, PER_WORKSPACE],
+        -- P7: also at most TICK_LIMIT per tick in all, round-robin (every workspace's oldest first).
+        order by t.rn, t.created_at
+        limit $5`,
+      [REPLY_TASK_TITLES, now, opts.workspaceIds ?? null, PER_WORKSPACE, TICK_LIMIT],
     )
   ).rows;
   const escalated: string[] = [];
@@ -90,12 +95,17 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
            from public.meetings m
            join public.leads l on l.id = m.lead_id and l.merged_into_lead_id is null
            join public.agent_settings rs on rs.workspace_id = m.workspace_id and m.created_at >= rs.reminders_since
-          where m.outcome is null and m.outcome_task_created_at is null
-            and m.status::text not in ('cancelled', 'no_show', 'failed')
-            and m.scheduled_at < now() - interval '2 days' and m.scheduled_at > now() - interval '30 days'
-            and ($1::uuid[] is null or m.workspace_id = any($1::uuid[]))
-          order by m.scheduled_at
-          limit $2
+          where m.id in (${fairPickSql({
+            from: "public.meetings x join public.agent_settings rs on rs.workspace_id = x.workspace_id and x.created_at >= rs.reminders_since",
+            where: `x.outcome is null and x.outcome_task_created_at is null
+            and x.status::text not in ('cancelled', 'no_show', 'failed')
+            and x.scheduled_at < now() - interval '2 days' and x.scheduled_at > now() - interval '30 days'
+            and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
+            order: "x.scheduled_at",
+            limit: "$2",
+          })})
+            -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+            and m.outcome is null and m.outcome_task_created_at is null
           for update of m skip locked`,
         [opts.workspaceIds ?? null, MEETING_BATCH],
       )

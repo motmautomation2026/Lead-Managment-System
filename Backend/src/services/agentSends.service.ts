@@ -15,6 +15,7 @@ import { createTask } from "./tasks.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
 import { agentSendRecheck, recordAgentSendOutcome, type AgentSendOutcome } from "./agentSendState.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 export { agentSendRecheck, recordAgentSendOutcome };
 
@@ -74,10 +75,14 @@ export async function runAgentSends(enabled: boolean, deps: AgentSendDeps = {}):
           set send_status = 'sending', send_claimed_at = date_trunc('milliseconds', now()), send_next_at = now() + interval '15 minutes'
         where id in (
           select id from public.agent_decisions
-           where action = 'send_whatsapp' and send_status in ('queued', 'sending') and send_next_at <= now()
-             and ($1::uuid[] is null or workspace_id = any($1::uuid[]))
-           order by send_next_at
-           limit $2
+           where id in (${fairPickSql({
+             from: "public.agent_decisions x",
+             where: "x.action = 'send_whatsapp' and x.send_status in ('queued', 'sending') and x.send_next_at <= now() and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))",
+             order: "x.send_next_at",
+             limit: "$2",
+           })})
+             -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+             and send_status in ('queued', 'sending') and send_next_at <= now()
            for update skip locked)
         returning id, workspace_id, lead_id, message_body, asset_ids, angle, send_attempts, send_claimed_at`,
       [deps.workspaceIds ?? null, BATCH],

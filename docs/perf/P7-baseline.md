@@ -82,3 +82,78 @@ sent; the AI tick used the tests' fake model (never OpenAI).
 - Company / deal sweeps: one short transaction per contact by design (4–5 statements each); the wall time is round
   trips from this laptop, ~0.2 s per 20 contacts in region.
 - Statement counts are fixed per call everywhere (no N+1): Home 9, AI Results 11, WhatsApp numbers 9 (parallel).
+
+## After the fixes (item 3, same data, `--label after`)
+
+Fixes: migration 057 `email_outbound_lead_idx`; the task / meeting / proposal work lists join `leads` and `companies` with
+the workspace equality (`l.workspace_id = t.workspace_id`, `c.workspace_id = l.workspace_id`) so the workspace indexes are
+used; every multi-workspace worker claim is round-robin across workspaces (`fairPickSql`). Four paths measured slower in
+the full run because migration 057 was re-applied (DDL locks) while it ran; they were re-measured alone (`--only`, marked *).
+
+Before → after, server time (the 12 slowest at baseline, plus the claims changed by the fair ticks):
+
+| Path | before server ms | after server ms | after p95 wall ms (laptop) | seq scan > 10k rows |
+|---|---:|---:|---:|---|
+| AI wake-up claim + tick (shadow, fake model) | 202.3 | 16.3 | 1,409 | — |
+| hot-score sweep batch (200) | 161.5 | 44.3 | 1,535 | — |
+| funnel 180 d by source | 70.6 | 69.6 | 556 | leads (planner choice, see below) |
+| funnel 180 d by number | 45.0 | 42.3 | 660 | — |
+| funnel 180 d by angle | 43.4 | 42.9 | 419 | — |
+| funnel 180 d by channel | 42.5 | 42.9 | 474 | — |
+| company sweep (20 contacts) | 36.4 | 34.7 | 10,470 (81 round trips) | — |
+| tasks: Hottest first | 31.3 | 2.1 | 878 | leads → none |
+| funnel 30 d by source | 29.6 | 18.9 | 554 | — |
+| global search q=Seed 15 | 25.8 | 12.4 | 320 | — |
+| deal sweep (10 contacts) | 20.9 | 12.6 | 4,164 (52 round trips) | — |
+| AI Results stats | 15.3 | 15.9 | 556 | — |
+| Home summary* | 10.9 | 18.7 | 772 | — |
+| workflow action claim (20) | 0.3 | 0.5 | 544 | — |
+| email outbound claim (10) | 0.5 | 0.5 | 561 | — |
+| decideSend counters* | 1.1 | 1.7 | 117 | — |
+| inbound reply match* | 0.3 | 0.3 | 137 | — |
+| Settings → WhatsApp numbers* | 4.9 | 4.9 | 308 | — |
+
+All targets met on server time: API reads ≤ 25 ms (p95 target 300 ms), funnel 180 days ≤ 70 ms (target 1 s), every worker
+claim ≤ 1 ms and every batch ≤ 45 ms (target 500 ms). The one remaining sequential scan is the funnel's 180-day cohort on
+`leads`: the planner reads the whole table while one workspace is 10 % of it; `leads_workspace_created_idx` serves it as
+soon as workspaces are a smaller share (the funnel is an analytics page, not a hot path). Wall times from this laptop are
+round trips to Mumbai (~40–60 ms each): the company / deal sweeps run one short transaction per contact by design, so
+~4 round trips per contact (~5 ms per contact in region). Statement counts per call are fixed (no N+1 found).
+
+## Worker loops (one sequential loop; sleeps `WORKER_POLL_INTERVAL_MS` = 10 s after each tick)
+
+| Step | Per-tick limit | Fairness before → after |
+|---|---|---|
+| Workflow actions | 20 (`WORKER_BATCH_SIZE`) | global oldest due → round-robin per workspace |
+| Email outbound | 10, ≤ 1 per workspace | 1 per workspace, unordered pick of 10 → longest-waiting workspaces first |
+| IMAP inbound | 1 workspace | round-robin by `next_poll_at` (unchanged) |
+| Proposal / meeting WhatsApp | 20 / 20 | global oldest → round-robin |
+| Knowledge ingestion | 2 documents | global oldest → round-robin |
+| Company sweep | 200 contacts | global oldest, one claim query per contact → candidates picked round-robin up front, each locked (`skip locked`) |
+| Deal sweep | 100 contacts | same as company sweep |
+| Hot-score sweep | 200 | global by id / staleness → round-robin |
+| Reply labels / reply drafts | 10 / 5 per channel | global oldest → round-robin |
+| Open events | 50 | global oldest → round-robin |
+| Reply-draft sends / AI sends / AI wake-ups | 5 / 5 / 5 | global oldest → round-robin |
+| Reply escalation | 20 per workspace, no total | 20 per workspace + 100 per tick, round-robin |
+| Meeting outcome tasks | 50 | global oldest → round-robin |
+| Health alerts (new) | every 15 min, all workspaces | one notification per workspace per day per problem |
+| WhatsApp managers | every needed number, one start per tick | unchanged |
+
+## Worker memory and connections per number (rule 6, `npm run staging:worker-capacity`)
+
+Fake managers: the `BaileysManager` object (never started: no Baileys socket, nothing sent) plus its session-lock client
+holding the number's advisory lock, as `start()` opens it. Staging's session pooler has 15 clients, so at 20 numbers the
+last 9 lock clients were stand-ins on the transaction pooler (same client cost).
+
+| numbers | RSS Δ MB | heap Δ MB | heap per number | DB clients held |
+|---:|---:|---:|---:|---|
+| 1 | -0.9 | 0.1 | 121 KB | 1 (session pooler) |
+| 10 | 0.7 | 0.7 | 76 KB | 10 (session pooler) |
+| 20 | -3.2 | 0.4 | 19 KB | 20 (11 session pooler + 9 stand-ins) |
+
+Per number: ~0.1 MB of heap (within GC noise) and **one session-pooler client** for as long as its manager runs; sends use
+the shared transaction pool (no extra connection). A real Baileys socket's memory (signal sessions, caches) was not measured
+(no real socket allowed here): measure it on the first production numbers before raising the cap. The limit is the session
+pooler, by the unchanged E4a/E4b formula: numbers ≤ session pooler clients − 2 × `DB_SESSION_POOL_MAX` (API + worker) − 3
+= 15 − 4 − 3 = **8 numbers per worker on a 15-client pooler** (the Settings warning threshold).

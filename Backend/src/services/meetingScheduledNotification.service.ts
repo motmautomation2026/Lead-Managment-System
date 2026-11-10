@@ -8,6 +8,7 @@ import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
 import { enqueueEmail } from "./emailOutbound.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * Sends the "meeting scheduled" confirmation to the lead on both channels,
@@ -122,10 +123,15 @@ export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: numb
         set notify_whatsapp_status = 'sending', notify_whatsapp_next_attempt_at = now() + interval '15 minutes'
       where id in (
         select id from public.meetings
-         where notify_whatsapp_status in ('queued', 'sending')
+         where id in (${fairPickSql({
+           from: "public.meetings x",
+           where: "x.notify_whatsapp_status in ('queued', 'sending') and (x.notify_whatsapp_next_attempt_at is null or x.notify_whatsapp_next_attempt_at <= now())",
+           order: "x.created_at",
+           limit: "$1",
+         })})
+           -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+           and notify_whatsapp_status in ('queued', 'sending')
            and (notify_whatsapp_next_attempt_at is null or notify_whatsapp_next_attempt_at <= now())
-         order by created_at asc
-         limit $1
          for update skip locked
       )
       returning *`,

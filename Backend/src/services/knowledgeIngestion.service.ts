@@ -7,6 +7,7 @@ import type { Embedder } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError } from "../providers/provider-errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { toVectorLiteral } from "./knowledge.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 export const INGEST_BATCH_SIZE = 2;
 export const STUCK_AFTER_MINUTES = 15;
@@ -59,14 +60,16 @@ export async function claimKnowledgeDocuments(db: Queryable, { limit = INGEST_BA
       where ${stuck} and attempt_count + 1 >= $1 and ($2::uuid is null or workspace_id = $2)`,
     [MAX_INGEST_ATTEMPTS, workspaceId ?? null],
   );
+  const due = (t: string) =>
+    `(${t}status = 'pending' and (${t}next_attempt_at is null or ${t}next_attempt_at <= now()))
+     or (${t}status = 'processing' and ${t}claimed_at < now() - make_interval(mins => ${STUCK_AFTER_MINUTES}))
+     or (${t}status = 'ready' and coalesce(${t}chunker_version, 1) < $3)`;
   const claimed = await db.query<ClaimedDocument>(
     `with picked as (
        select id from public.kb_documents
-        where ((status = 'pending' and (next_attempt_at is null or next_attempt_at <= now())) or (${stuck})
-               or (status = 'ready' and coalesce(chunker_version, 1) < $3))
-          and ($2::uuid is null or workspace_id = $2)
-        order by created_at
-        limit $1
+        where id in (${fairPickSql({ from: "public.kb_documents x", where: `(${due("x.")}) and ($2::uuid is null or x.workspace_id = $2)`, order: "x.created_at", limit: "$1" })})
+          -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+          and (${due("")})
         for update skip locked
      )
      update public.kb_documents d

@@ -16,6 +16,7 @@ import {
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { attributeOutcome } from "./messageFacts.service.js";
 import { getLeadRowOr404, markWon, type LeadRow } from "./leads.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 export type DealSource = "meeting" | "proposal" | "manual" | "backfill";
 
@@ -348,31 +349,33 @@ async function backfillContact(db: Queryable, workspaceId: string, leadId: strin
 export async function runDealSweep(options: { limit?: number; workspaceId?: string } = {}): Promise<DealSweepCounts> {
   const limit = options.limit ?? 100;
   const counts: DealSweepCounts = { processed: 0, created: 0, attachedMeetings: 0, attachedProposals: 0, failed: 0, workspacesCompleted: 0 };
-  const tried: string[] = [];
   const client = await pool.connect();
   try {
-    while (counts.processed + counts.failed < limit) {
+    // P7: picked up front, round-robin across workspaces, oldest first.
+    const candidates = (
+      await client.query<{ k: string }>(
+        fairPickSql({
+          from: "public.leads x",
+          where: `x.id in (select lead_id from public.meetings where deal_id is null union select lead_id from public.proposals where deal_id is null)
+                  and ($1::uuid is null or x.workspace_id = $1::uuid) and not (x.id = any($2::uuid[]))`,
+          order: "x.created_at",
+          limit: "$3",
+        }),
+        [options.workspaceId ?? null, [...failedContacts], limit],
+      )
+    ).rows;
+    for (const { k: candidate } of candidates) {
       await client.query("begin");
       let leadId: string | undefined;
       try {
         const next = (
-          await client.query<{ id: string; workspace_id: string }>(
-            `select l.id, l.workspace_id from public.leads l
-              where l.id in (select lead_id from public.meetings where deal_id is null
-                             union select lead_id from public.proposals where deal_id is null)
-                and ($1::uuid is null or l.workspace_id = $1::uuid) and not (l.id = any($2::uuid[]))
-              order by l.created_at, l.id
-              limit 1
-              for update of l skip locked`,
-            [options.workspaceId ?? null, [...tried, ...failedContacts]],
-          )
+          await client.query<{ id: string; workspace_id: string }>(`select l.id, l.workspace_id from public.leads l where l.id = $1 for update of l skip locked`, [candidate])
         ).rows[0];
         if (!next) {
           await client.query("commit");
-          break;
+          continue;
         }
         leadId = next.id;
-        tried.push(next.id);
         const result = await backfillContact(client, next.workspace_id, next.id);
         await client.query("commit");
         counts.processed++;

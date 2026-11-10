@@ -8,6 +8,7 @@ import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
 import { createTask } from "./tasks.service.js";
 import { getLatestMeetingForLead, toRenderMeeting } from "./meetings.service.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * This module is the ONLY place business rules run for automation
@@ -249,16 +250,24 @@ async function buildContext(db: Queryable, action: ScheduledActionRow): Promise<
  * for >15 minutes (a crashed worker process never reported back), so a
  * crash can't strand an action forever.
  */
+// P7: round-robin across workspaces, oldest due first.
+const DUE_ACTIONS_FAIR = fairPickSql({
+  from: "public.scheduled_actions x",
+  where: `(x.status in ('pending', 'due') and x.scheduled_for <= now()) or (x.status = 'executing' and x.last_attempt_at < now() - interval '15 minutes')`,
+  order: "x.scheduled_for",
+  limit: "$1",
+});
+
 export async function claimDueActions(db: Queryable, limit: number): Promise<ActionContext[]> {
   const claimed = await db.query<ScheduledActionRow>(
     `update public.scheduled_actions
         set status = 'executing', last_attempt_at = now()
       where id in (
         select id from public.scheduled_actions
-         where (status in ('pending', 'due') and scheduled_for <= now())
-            or (status = 'executing' and last_attempt_at < now() - interval '15 minutes')
-         order by scheduled_for asc
-         limit $1
+         where id in (${DUE_ACTIONS_FAIR})
+           -- Repeated so the lock re-checks them on the latest row.
+           and ((status in ('pending', 'due') and scheduled_for <= now())
+             or (status = 'executing' and last_attempt_at < now() - interval '15 minutes'))
          for update skip locked
       )
       returning *`,

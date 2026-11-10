@@ -11,6 +11,7 @@ import { enqueueEmail } from "./emailOutbound.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * Orchestrates the one-click "Send proposal" flow: create the proposal and queue
@@ -152,10 +153,15 @@ export async function claimQueuedProposalWhatsappSends(db: Queryable, limit: num
         set whatsapp_send_status = 'sending', whatsapp_next_attempt_at = now() + interval '15 minutes'
       where id in (
         select id from public.proposals
-         where whatsapp_send_status in ('queued', 'sending')
+         where id in (${fairPickSql({
+           from: "public.proposals x",
+           where: "x.whatsapp_send_status in ('queued', 'sending') and (x.whatsapp_next_attempt_at is null or x.whatsapp_next_attempt_at <= now())",
+           order: "x.created_at",
+           limit: "$1",
+         })})
+           -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+           and whatsapp_send_status in ('queued', 'sending')
            and (whatsapp_next_attempt_at is null or whatsapp_next_attempt_at <= now())
-         order by created_at asc
-         limit $1
          for update skip locked
       )
       returning *`,

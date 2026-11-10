@@ -8,6 +8,7 @@
 import { pool } from "../db.js";
 import { leadScore } from "../domain/leadScore.js";
 import { WEBSITE_TITLES } from "./agentContext.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 interface ScoreInputRow {
   id: string;
@@ -24,17 +25,19 @@ interface ScoreInputRow {
   proposals: Date[];
 }
 
+// P7: round-robin across workspaces (a big import can't hold back another workspace's scores); `where` uses the alias x.
 const CLAIM_SQL = (where: string, order: string) =>
   `update public.leads set hot_score_dirty = false, hot_score_at = now()
-    where id in (select id from public.leads where ${where} and ($2::uuid is null or workspace_id = $2) order by ${order} limit $1 for update skip locked)
+    where id in (select id from public.leads x where x.id in (${fairPickSql({ from: "public.leads x", where: `${where} and ($2::uuid is null or x.workspace_id = $2)`, order, limit: "$1" })})
+                    and ${where} for update skip locked)
     returning id`;
 
 export async function runLeadScoreSweep(options: { limit?: number; workspaceId?: string; now?: Date } = {}): Promise<number> {
   const limit = options.limit ?? 200;
   const ws = options.workspaceId ?? null;
-  const ids = (await pool.query<{ id: string }>(CLAIM_SQL("hot_score_dirty", "id"), [limit, ws])).rows.map((r) => r.id);
+  const ids = (await pool.query<{ id: string }>(CLAIM_SQL("x.hot_score_dirty", "x.id"), [limit, ws])).rows.map((r) => r.id);
   if (ids.length < limit) {
-    const stale = await pool.query<{ id: string }>(CLAIM_SQL("hot_score_at < now() - interval '24 hours' and merged_into_lead_id is null", "hot_score_at"), [limit - ids.length, ws]);
+    const stale = await pool.query<{ id: string }>(CLAIM_SQL("x.hot_score_at < now() - interval '24 hours' and x.merged_into_lead_id is null", "x.hot_score_at"), [limit - ids.length, ws]);
     ids.push(...stale.rows.map((r) => r.id));
   }
   if (!ids.length) return 0;

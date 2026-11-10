@@ -22,6 +22,7 @@ import { executeHandoff, executeStageChange, executeStop } from "./agentSends.se
 import { enqueueEmail, type AttachmentRef } from "./emailOutbound.service.js";
 import { attachmentFileName } from "../agent/assetRules.js";
 import { AGENT_ASSETS_BUCKET } from "./knowledgeLibrary.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * The agent's decision loop (3C-2): turns due wakeups into agent_decisions. A shadow
@@ -254,6 +255,24 @@ export async function runAgentTick(enabled: boolean, deps: AgentRunnerDeps): Pro
   return outcomes;
 }
 
+const WAKEUP_FAIR = fairPickSql({
+  from: "public.agent_wakeups x join public.agent_settings s on s.workspace_id = x.workspace_id and s.mode in ('shadow', 'live')",
+  where: `((x.status = 'pending' and x.due_at <= now())
+               or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
+             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+             -- At most one per lead: only the earliest claimable one, and none while another
+             -- wakeup for the lead is being processed (a fresh executing row).
+             and not exists (
+               select 1 from public.agent_wakeups y
+                where y.lead_id = x.lead_id and y.id <> x.id
+                  and (((y.status = 'pending' and y.due_at <= now())
+                        or (y.status = 'executing' and y.claimed_at < now() - interval '15 minutes'))
+                       and (y.due_at, y.id) < (x.due_at, x.id)
+                    or (y.status = 'executing' and y.claimed_at >= now() - interval '15 minutes')))`,
+  order: "x.due_at",
+  limit: "$2",
+});
+
 async function claimWakeups(workspaceIds: string[] | null): Promise<ClaimedWakeup[]> {
   return withTransaction(async (client) => {
     await client.query(
@@ -271,21 +290,10 @@ async function claimWakeups(workspaceIds: string[] | null): Promise<ClaimedWakeu
           set status = 'executing', claimed_at = date_trunc('milliseconds', now()), attempt_count = w.attempt_count + 1
         where w.id in (
           select x.id from public.agent_wakeups x
-            join public.agent_settings s on s.workspace_id = x.workspace_id and s.mode in ('shadow', 'live')
-           where ((x.status = 'pending' and x.due_at <= now())
+           where x.id in (${WAKEUP_FAIR})
+             -- P7: round-robin across workspaces (above); repeated so the lock re-checks the latest row.
+             and ((x.status = 'pending' and x.due_at <= now())
                or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
-             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
-             -- At most one per lead: only the earliest claimable one, and none while another
-             -- wakeup for the lead is being processed (a fresh executing row).
-             and not exists (
-               select 1 from public.agent_wakeups y
-                where y.lead_id = x.lead_id and y.id <> x.id
-                  and (((y.status = 'pending' and y.due_at <= now())
-                        or (y.status = 'executing' and y.claimed_at < now() - interval '15 minutes'))
-                       and (y.due_at, y.id) < (x.due_at, x.id)
-                    or (y.status = 'executing' and y.claimed_at >= now() - interval '15 minutes')))
-           order by x.due_at
-           limit $2
            for update of x skip locked)
         returning w.id, w.workspace_id, w.lead_id, w.attempt_count, w.claimed_at`,
       [workspaceIds, BATCH_SIZE],

@@ -44,6 +44,7 @@ import { enqueueEmail } from "./emailOutbound.service.js";
 import { canReadReplies, decryptInboundBody, emailReplyAad, whatsappReplyAad, type EmailReplyBody, type InboundBody } from "./inboundReplies.service.js";
 import { completeTask } from "./tasks.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
@@ -144,11 +145,16 @@ export async function runReplyDrafts(enabled: boolean, deps: ReplyDraftDeps): Pr
           set draft_attempts = e.draft_attempts + 1, draft_next_at = now() + interval '15 minutes'
         where e.${e.key} in (
           select x.${e.key} from ${e.table} x
-           where x.draft_status = 'pending' and x.draft_next_at <= now()
-             and x.classification_status is distinct from 'pending'
-             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
-           order by x.draft_next_at
-           limit $2
+           where x.${e.key} in (${fairPickSql({
+             from: `${e.table} x`,
+             where:
+               "x.draft_status = 'pending' and x.draft_next_at <= now() and x.classification_status is distinct from 'pending' and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))",
+             order: "x.draft_next_at",
+             limit: "$2",
+             key: `x.${e.key}`,
+           })})
+             -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+             and x.draft_status = 'pending' and x.draft_next_at <= now()
            for update skip locked)
         returning $3::text as channel, e.${e.key}::text as reply_id, e.workspace_id, e.lead_id, e.reply_label, e.draft_attempts,
                   e.body_ciphertext, e.body_iv, e.body_tag, e.body_key_version, ${e.extra}`,
@@ -725,10 +731,14 @@ export async function runReplyDraftSends(deps: ReplySendDeps = {}): Promise<{ id
           set send_status = 'sending', send_claimed_at = date_trunc('milliseconds', now()), send_next_at = now() + interval '15 minutes'
         where id in (
           select id from public.reply_drafts
-           where channel = 'whatsapp' and send_status in ('queued', 'sending') and send_next_at <= now()
-             and ($1::uuid[] is null or workspace_id = any($1::uuid[]))
-           order by send_next_at
-           limit $2
+           where id in (${fairPickSql({
+             from: "public.reply_drafts x",
+             where: "x.channel = 'whatsapp' and x.send_status in ('queued', 'sending') and x.send_next_at <= now() and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))",
+             order: "x.send_next_at",
+             limit: "$2",
+           })})
+             -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+             and send_status in ('queued', 'sending') and send_next_at <= now()
            for update skip locked)
         returning id, workspace_id, lead_id, send_attempts, send_claimed_at`,
       [deps.workspaceIds ?? null, BATCH_SIZE],

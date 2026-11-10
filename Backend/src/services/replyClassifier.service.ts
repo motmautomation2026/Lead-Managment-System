@@ -14,6 +14,7 @@ import { PermanentProviderError, ProviderDeferredError } from "../providers/prov
 import { decryptInboundBody, emailReplyAad, whatsappReplyAad, type EmailReplyBody, type InboundBody } from "./inboundReplies.service.js";
 import { MONTH_SPEND_SQL } from "./agentRunner.service.js";
 import { applyReplyLabel } from "./replyLabels.service.js";
+import { fairPickSql } from "./fairPick.js";
 
 const BATCH_SIZE = 10;
 const MAX_ATTEMPTS = 3;
@@ -72,10 +73,15 @@ export async function runReplyClassification(enabled: boolean, deps: ReplyClassi
               classification_next_at = now() + interval '15 minutes'
         where e.${c.key} in (
           select x.${c.key} from ${c.table} x
-           where x.classification_status = 'pending' and x.classification_next_at <= now()
-             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
-           order by x.classification_next_at
-           limit $2
+           where x.${c.key} in (${fairPickSql({
+             from: `${c.table} x`,
+             where: "x.classification_status = 'pending' and x.classification_next_at <= now() and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))",
+             order: "x.classification_next_at",
+             limit: "$2",
+             key: `x.${c.key}`,
+           })})
+             -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+             and x.classification_status = 'pending' and x.classification_next_at <= now()
            for update skip locked)
         returning $3::text as channel, e.${c.key}::text as message_id, e.workspace_id, e.lead_id, e.classification_attempts,
                   e.body_ciphertext, e.body_iv, e.body_tag, e.body_key_version`,
