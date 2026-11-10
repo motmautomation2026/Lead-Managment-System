@@ -396,6 +396,40 @@ export interface TeamMember {
 }
 
 /** E4b: the super-admin page (every workspace × active users). */
+/** P7: Settings → System health (super-admins). */
+export interface SystemHealth {
+  status: "ok" | "stale";
+  stale: string[];
+  loops: {
+    loop: string;
+    critical: boolean;
+    lastStartedAt: string;
+    lastFinishedAt: string | null;
+    ageSeconds: number | null;
+    expectedSeconds: number;
+    lastError: string | null;
+    lastErrorAt: string | null;
+    itemsProcessed: number;
+  }[];
+  workspaces: {
+    workspaceId: string;
+    name: string;
+    emailStuck: number;
+    emailWaiting: number;
+    whatsappStuck: number;
+    whatsappWaiting: number;
+    overdueWakeups: number;
+    pausedNumbers: number;
+    emailPaused: boolean;
+    failedSends24h: number;
+    budgetUsedPct: number;
+    decisionsToday: number;
+    decisionCap: number;
+    decisionCapUsedPct: number;
+    red: ("stuck_queue" | "paused_channel" | "ai_budget")[];
+  }[];
+}
+
 export interface MembershipPage {
   workspaces: { id: string; name: string }[];
   data: {
@@ -1278,6 +1312,7 @@ export const backend = {
     ) => get<MembershipPage>(listQuery("/super-admin/memberships", params), signal),
     setMembership: (input: { workspaceId: string; userId: string; role: WorkspaceRole | null }) =>
       send<{ data: TeamMember[] }>("PUT", "/super-admin/memberships", input),
+    systemHealth: (signal?: AbortSignal) => get<SystemHealth>("/super-admin/system-health", signal),
   },
   admin: {
     users: {

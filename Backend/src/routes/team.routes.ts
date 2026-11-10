@@ -4,6 +4,7 @@ import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin, requireAuth, requireCrmUser, requireSuperAdmin } from "../authMiddleware.js";
 import { parseBody, parseParams, parseQuery } from "../validation/parse.js";
 import * as team from "../services/team.service.js";
+import { getSystemHealth } from "../services/systemHealth.service.js";
 
 /** E4b rule 9: Settings → Team, the X-Workspace-Id workspace's members (its admins, or a super-admin). Mounted in the CRM router. */
 export const teamRouter = Router();
@@ -35,6 +36,8 @@ teamRouter.delete(
 export const superAdminRouter = Router();
 superAdminRouter.use(requireAuth, requireCrmUser, requireSuperAdmin);
 
+// P7: Settings → System health (loop heartbeats, per-workspace queues / pauses / failures / AI budget).
+superAdminRouter.get("/system-health", asyncHandler(async (_req, res) => res.json(await getSystemHealth())));
 superAdminRouter.get("/memberships", asyncHandler(async (req, res) => res.json(await team.listMemberships(parseQuery(team.membershipListSchema, req.query)))));
 superAdminRouter.put(
   "/memberships",

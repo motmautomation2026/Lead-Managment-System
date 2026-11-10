@@ -15,6 +15,7 @@ export const keys = {
   profiles: (workspaceId: string | null) => ["profiles", workspaceId] as const,
   team: (workspaceId: string | null) => ["team", workspaceId] as const,
   memberships: (q: string) => ["memberships", q] as const,
+  systemHealth: ["system-health"] as const,
   workspaces: ["workspaces"] as const,
   search: (workspaceId: string | null, q: string) => ["search", workspaceId, q] as const,
   lead: (workspaceId: string | null, id: string) => ["lead", workspaceId, id] as const,

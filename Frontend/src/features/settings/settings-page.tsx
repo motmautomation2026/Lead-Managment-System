@@ -34,6 +34,9 @@ const TeamPanel = lazy(() => import("./team-panel").then((m) => ({ default: m.Te
 const SuperAdminPanel = lazy(() =>
   import("./super-admin-panel").then((m) => ({ default: m.SuperAdminPanel })),
 );
+const SystemHealthPanel = lazy(() =>
+  import("./system-health-panel").then((m) => ({ default: m.SystemHealthPanel })),
+);
 import { ProfilePanel } from "./profile-panel";
 import { WhatsAppSafety } from "./whatsapp-safety";
 import { WhatsAppNumbers } from "./whatsapp-numbers";
@@ -135,6 +138,10 @@ export function SettingsPage() {
           ) : tab === "workspaces" ? (
             <Suspense fallback={<LoadingBlock />}>
               <SuperAdminPanel />
+            </Suspense>
+          ) : tab === "health" ? (
+            <Suspense fallback={<LoadingBlock />}>
+              <SystemHealthPanel />
             </Suspense>
           ) : tab === "profile" ? (
             <ProfilePanel />

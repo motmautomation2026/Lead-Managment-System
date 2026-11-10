@@ -14,6 +14,8 @@ export const SETTINGS_TABS = [
   { id: "users", label: "Users", access: "users" },
   // E4b rule 10: every workspace × user.
   { id: "workspaces", label: "All workspaces", access: "super" },
+  // P7: worker heartbeats and every workspace's queues, pauses, failures and AI budget.
+  { id: "health", label: "System health", access: "super" },
   // E3b-1: everyone's own booking link.
   { id: "profile", label: "Profile", access: "all" },
   { id: "appearance", label: "Appearance", access: "all" },
@@ -34,6 +36,7 @@ export const settingsSearchSchema = z.object({
       "team",
       "users",
       "workspaces",
+      "health",
       "profile",
       "appearance",
     ])

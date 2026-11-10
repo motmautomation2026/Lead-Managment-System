@@ -25,6 +25,7 @@ import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runLeadScoreSweep } from "./services/leadScore.service.js";
 import { runDealSweep } from "./services/deals.service.js";
+import { recordHeartbeats, runHealthAlerts, type Heartbeat, type WorkerLoop } from "./services/systemHealth.service.js";
 
 /**
  * The automation executor: polls for due scheduled_actions and dispatches
@@ -131,152 +132,155 @@ async function processAction(ctx: automationService.ActionContext): Promise<void
   }
 }
 
-async function tick(): Promise<void> {
-  const claimed = await withTransaction((client) => automationService.claimDueActions(client, env.WORKER_BATCH_SIZE));
-  if (claimed.length > 0) {
-    console.log(`[worker] Claimed ${claimed.length} due action(s).`);
-    // Each claimed action owns its own DB transaction and provider call, with
-    // no shared mutable state between them, so processing the batch
-    // concurrently is safe — and avoids one slow/hung send stalling the rest
-    // of the batch behind it.
-    await Promise.allSettled(
-      claimed.map((ctx) =>
-        processAction(ctx).catch((err) => {
-          console.error(`[worker] Unexpected error processing action ${ctx.action.id}:`, err);
-        }),
-      ),
-    );
+// P7: every step's heartbeat (start, finish, error code, items), written once per tick.
+let beats: Heartbeat[] = [];
+const errorCode = (err: unknown) => (err as { code?: string; name?: string })?.code ?? (err as { name?: string })?.name ?? "unknown error";
+
+/** Runs one step; a failure is logged (codes only: a pg message can quote names) and recorded, and the tick goes on. */
+async function step<T>(loop: WorkerLoop, label: string, run: () => Promise<T>, items: (result: T) => number): Promise<T | undefined> {
+  const startedAt = new Date();
+  try {
+    const result = await run();
+    beats.push({ loop, startedAt, finishedAt: new Date(), error: null, items: items(result) });
+    return result;
+  } catch (err) {
+    console.error(`[worker] ${label} failed: ${errorCode(err)}`);
+    beats.push({ loop, startedAt, finishedAt: new Date(), error: errorCode(err), items: 0 });
+    return undefined;
   }
+}
+
+async function tick(): Promise<void> {
+  await step("workflow_actions", "Workflow actions", async () => {
+    const claimed = await withTransaction((client) => automationService.claimDueActions(client, env.WORKER_BATCH_SIZE));
+    if (claimed.length > 0) {
+      console.log(`[worker] Claimed ${claimed.length} due action(s).`);
+      // Each claimed action owns its own DB transaction and provider call, with
+      // no shared mutable state between them, so processing the batch
+      // concurrently is safe — and avoids one slow/hung send stalling the rest
+      // of the batch behind it.
+      await Promise.allSettled(
+        claimed.map((ctx) =>
+          processAction(ctx).catch((err) => {
+            console.error(`[worker] Unexpected error processing action ${ctx.action.id}:`, err);
+          }),
+        ),
+      );
+    }
+    return claimed.length;
+  }, (n) => n);
 
   // E1b: every email (workflow steps, proposals, meetings, tests), one per workspace per tick.
-  const emails = await runEmailOutbound({ dryRun: env.WORKER_DRY_RUN });
-  if (emails.length > 0) console.log(`[worker] Emails: ${emails.join(", ")}.`);
+  const emails = await step("email_outbound", "Email outbound", () => runEmailOutbound({ dryRun: env.WORKER_DRY_RUN }), (r) => r.length);
+  if (emails?.length) console.log(`[worker] Emails: ${emails.join(", ")}.`);
 
   // D3: read one due workspace's mailbox (read-only) for replies, bounces and unsubscribes.
-  const inbound = await runEmailInbound({ pollSeconds: env.EMAIL_IMAP_POLL_SECONDS }).catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Email inbound failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return null;
-  });
+  const inbound = await step("email_inbound", "Email inbound", () => runEmailInbound({ pollSeconds: env.EMAIL_IMAP_POLL_SECONDS }), (r) => (r?.processed ? 1 : 0));
   if (inbound?.processed) console.log(`[worker] Email inbound ${inbound.workspaceId}: ${JSON.stringify(inbound.kinds)}.`);
 
-  const queuedProposals = await withTransaction((client) => claimQueuedProposalWhatsappSends(client, env.WORKER_BATCH_SIZE));
-  if (queuedProposals.length > 0) {
-    console.log(`[worker] Claimed ${queuedProposals.length} queued proposal WhatsApp send(s).`);
-    await Promise.allSettled(
-      queuedProposals.map((row) =>
-        processQueuedProposalWhatsappSend(row).catch((err) => {
-          console.error(`[worker] Unexpected error processing proposal WhatsApp send ${row.id}:`, err);
-        }),
-      ),
-    );
-  }
+  await step("proposal_whatsapp", "Proposal WhatsApp sends", async () => {
+    const queuedProposals = await withTransaction((client) => claimQueuedProposalWhatsappSends(client, env.WORKER_BATCH_SIZE));
+    if (queuedProposals.length > 0) {
+      console.log(`[worker] Claimed ${queuedProposals.length} queued proposal WhatsApp send(s).`);
+      await Promise.allSettled(
+        queuedProposals.map((row) =>
+          processQueuedProposalWhatsappSend(row).catch((err) => {
+            console.error(`[worker] Unexpected error processing proposal WhatsApp send ${row.id}:`, err);
+          }),
+        ),
+      );
+    }
+    return queuedProposals.length;
+  }, (n) => n);
 
-  const queuedMeetings = await withTransaction((client) => claimQueuedMeetingWhatsappSends(client, env.WORKER_BATCH_SIZE));
-  if (queuedMeetings.length > 0) {
-    console.log(`[worker] Claimed ${queuedMeetings.length} queued meeting WhatsApp send(s).`);
-    await Promise.allSettled(
-      queuedMeetings.map((row) =>
-        processQueuedMeetingWhatsappSend(row).catch((err) => {
-          console.error(`[worker] Unexpected error processing meeting WhatsApp send ${row.id}:`, err);
-        }),
-      ),
-    );
-  }
+  await step("meeting_whatsapp", "Meeting WhatsApp sends", async () => {
+    const queuedMeetings = await withTransaction((client) => claimQueuedMeetingWhatsappSends(client, env.WORKER_BATCH_SIZE));
+    if (queuedMeetings.length > 0) {
+      console.log(`[worker] Claimed ${queuedMeetings.length} queued meeting WhatsApp send(s).`);
+      await Promise.allSettled(
+        queuedMeetings.map((row) =>
+          processQueuedMeetingWhatsappSend(row).catch((err) => {
+            console.error(`[worker] Unexpected error processing meeting WhatsApp send ${row.id}:`, err);
+          }),
+        ),
+      );
+    }
+    return queuedMeetings.length;
+  }, (n) => n);
 
   // Knowledge-base ingestion: at most 2 documents per tick (extraction and
   // embedding are the slow part, done outside any transaction).
-  const ingested = await runKnowledgeIngestion({ embedder: getDefaultEmbedder() });
-  for (const { id, outcome } of ingested) console.log(`[worker] Knowledge document ${id}: ${outcome}.`);
+  const ingested = await step("knowledge_ingestion", "Knowledge ingestion", () => runKnowledgeIngestion({ embedder: getDefaultEmbedder() }), (r) => r.length);
+  for (const { id, outcome } of ingested ?? []) console.log(`[worker] Knowledge document ${id}: ${outcome}.`);
 
   // CRM v2: link up to 200 unchecked contacts to companies (backfill + inline-failure safety net).
   if (env.CRM_COMPANY_SWEEP_ENABLED) {
-    // Codes only: a pg message can quote company names.
-    const swept = await runCompanySweep().catch((err: { code?: string; name?: string }) => {
-      console.error(`[worker] Company sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-      return null;
-    });
+    const swept = await step("company_sweep", "Company sweep", () => runCompanySweep(), (r) => r.processed);
     if (swept && swept.processed > 0) console.log(`[worker] Company sweep: ${swept.processed} contact(s), ${swept.created} created, ${swept.linked} linked, ${swept.none} without company, ${swept.failed} failed.`);
   }
 
   // CRM v2: attach up to 100 contacts' unlinked meetings/proposals to deals (backfill + inline-failure safety net).
   if (env.CRM_DEAL_SWEEP_ENABLED) {
-    const swept = await runDealSweep().catch((err: { code?: string; name?: string }) => {
-      console.error(`[worker] Deal sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-      return null;
-    });
+    const swept = await step("deal_sweep", "Deal sweep", () => runDealSweep(), (r) => r.processed);
     if (swept && swept.processed + swept.failed > 0) console.log(`[worker] Deal sweep: ${swept.processed} contact(s), ${swept.created} deal(s) created, ${swept.attachedMeetings} meeting(s) and ${swept.attachedProposals} proposal(s) attached, ${swept.failed} failed.`);
   }
 
   // E3b-2b: recompute up to 200 marked or day-old hot-lead scores (backfills every lead after deploy).
-  const scored = await runLeadScoreSweep().catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Hot-score sweep failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return 0;
-  });
+  const scored = await step("hot_score_sweep", "Hot-score sweep", () => runLeadScoreSweep(), (n) => n);
   if (scored) console.log(`[worker] Hot-score sweep: ${scored} contact(s).`);
 
   // D4a: label WhatsApp replies that matched no keyword, behind AGENT_RUNNER_ENABLED.
-  const labelled = await runReplyClassification(env.AGENT_RUNNER_ENABLED, { model: decisionModel }).catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Reply classification failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (labelled.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
+  const labelled = await step("reply_classification", "Reply classification", () => runReplyClassification(env.AGENT_RUNNER_ENABLED, { model: decisionModel }), (r) => r.length);
+  if (labelled?.length) console.log(`[worker] Reply classification: ${labelled.length} reply(ies).`);
 
-  // E3b-2a: suggested replies for reps (after the labels), behind AGENT_RUNNER_ENABLED.
   // E3b-2b: first counted email opens → one timeline event, the message fact, a hot-score mark.
-  const opens = await runOpenEvents().catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Email open events failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return 0;
-  });
+  const opens = await step("open_events", "Email open events", () => runOpenEvents(), (n) => n);
   if (opens) console.log(`[worker] Email opens recorded: ${opens}.`);
 
-  const drafted = await runReplyDrafts(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }).catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Reply drafts failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (drafted.length) console.log(`[worker] Reply drafts: ${drafted.map((d) => d.result).join(", ")}.`);
+  // E3b-2a: suggested replies for reps (after the labels), behind AGENT_RUNNER_ENABLED.
+  const drafted = await step("reply_drafts", "Reply drafts", () => runReplyDrafts(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }), (r) => r.length);
+  if (drafted?.length) console.log(`[worker] Reply drafts: ${drafted.map((d) => d.result).join(", ")}.`);
 
   // E3b-2a: a rep's Send of a WhatsApp reply draft (emails go through runEmailOutbound above); no flag: the rep chose to send.
-  const replySends = await runReplyDraftSends({ dryRun: env.WORKER_DRY_RUN }).catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Reply sends failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (replySends.length) console.log(`[worker] Reply WhatsApp sends: ${replySends.map((s) => s.result).join(", ")}.`);
+  const replySends = await step("reply_draft_sends", "Reply sends", () => runReplyDraftSends({ dryRun: env.WORKER_DRY_RUN }), (r) => r.length);
+  if (replySends?.length) console.log(`[worker] Reply WhatsApp sends: ${replySends.map((s) => s.result).join(", ")}.`);
 
   // E3b-2a: unanswered reply tasks (2 working hours → admins) and meetings with no outcome after 2 days (owner task).
-  const escalated = await runReplyEscalation().catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Reply escalation failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (escalated.length) console.log(`[worker] Reply tasks escalated: ${escalated.length}.`);
-  const outcomeTasks = await runMeetingOutcomeTasks().catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] Meeting outcome tasks failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (outcomeTasks.length) console.log(`[worker] Meeting outcome tasks: ${outcomeTasks.length}.`);
+  const escalated = await step("reply_escalation", "Reply escalation", () => runReplyEscalation(), (r) => r.length);
+  if (escalated?.length) console.log(`[worker] Reply tasks escalated: ${escalated.length}.`);
+  const outcomeTasks = await step("meeting_outcome_tasks", "Meeting outcome tasks", () => runMeetingOutcomeTasks(), (r) => r.length);
+  if (outcomeTasks?.length) console.log(`[worker] Meeting outcome tasks: ${outcomeTasks.length}.`);
+
+  // P7: at most every 15 min, one admin notification per workspace per IST day per red problem.
+  if (Date.now() - lastHealthAlertsAt >= HEALTH_ALERTS_EVERY_MS) {
+    lastHealthAlertsAt = Date.now();
+    const alerted = await step("health_alerts", "Health alerts", () => runHealthAlerts(), (r) => r.length);
+    if (alerted?.length) console.log(`[worker] Health alerts sent to ${alerted.length} workspace(s).`);
+  }
 
   // E2: the AI's queued WhatsApp sends (its emails go through runEmailOutbound above), behind AGENT_RUNNER_ENABLED.
-  const aiSends = await runAgentSends(env.AGENT_RUNNER_ENABLED, { dryRun: env.WORKER_DRY_RUN }).catch((err: { code?: string; name?: string }) => {
-    console.error(`[worker] AI sends failed: ${err?.code ?? err?.name ?? "unknown error"}`);
-    return [];
-  });
-  if (aiSends.length) console.log(`[worker] AI WhatsApp sends: ${aiSends.map((s) => s.result).join(", ")}.`);
+  const aiSends = await step("agent_sends", "AI sends", () => runAgentSends(env.AGENT_RUNNER_ENABLED, { dryRun: env.WORKER_DRY_RUN }), (r) => r.length);
+  if (aiSends?.length) console.log(`[worker] AI WhatsApp sends: ${aiSends.map((s) => s.result).join(", ")}.`);
 
   // AI agent decisions (shadow drafts; live contacts queue sends / execute actions), behind AGENT_RUNNER_ENABLED; after all other work.
-  await runAgentTick(env.AGENT_RUNNER_ENABLED, {
-    model: decisionModel,
-    embedder: getDefaultEmbedder(),
-  });
+  await step("agent_tick", "AI agent tick", () => runAgentTick(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }), (r) => r.length);
 }
 
 const decisionModel = createOpenAIDecisionModel();
+const HEALTH_ALERTS_EVERY_MS = 15 * 60_000;
+let lastHealthAlertsAt = 0;
+// A loop is healthy while it finishes at least this often (the tick runs every poll interval; an AI tick can take a while).
+const EXPECTED_LOOP_SECONDS = Math.max(60, Math.ceil(env.WORKER_POLL_INTERVAL_MS / 1000) * 2);
 
 let stopped = false;
 
 async function loop(): Promise<void> {
   while (!stopped) {
+    beats = [];
     await tick().catch((err) => console.error("[worker] Poll tick failed:", err));
     // Every tick (one cheap query), so a Settings pairing request starts its manager within a poll interval.
-    await baileysRegistry.ensureManagers().catch((err) => console.error("[worker] WhatsApp manager scan failed:", err));
+    await step("whatsapp_managers", "WhatsApp manager scan", () => baileysRegistry.ensureManagers(), () => 0);
+    await recordHeartbeats(beats, EXPECTED_LOOP_SECONDS).catch((err) => console.error(`[worker] Heartbeat write failed: ${errorCode(err)}`));
     if (stopped) break;
     await new Promise((resolve) => setTimeout(resolve, env.WORKER_POLL_INTERVAL_MS));
   }
