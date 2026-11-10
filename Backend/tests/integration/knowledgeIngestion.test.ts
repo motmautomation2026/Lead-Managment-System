@@ -7,11 +7,12 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, removeStorageObjects } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Embedder } from "../../src/providers/openai.provider.js";
 import { ProviderDeferredError } from "../../src/providers/provider-errors.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
+import { withNetworkRetry } from "../helpers/networkRetry.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -25,8 +26,10 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
   async function upload(bucket: string, name: string, contentType: string) {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const path = `${WORKSPACE}/${randomUUID()}-${name}`;
-    const { error } = await supabaseAdmin.storage.from(bucket).upload(path, fixture(name), { contentType });
-    if (error) throw new Error(error.message);
+    await withNetworkRetry(async () => {
+      const { error } = await supabaseAdmin.storage.from(bucket).upload(path, fixture(name), { contentType, upsert: true });
+      if (error) throw new Error(error.message);
+    });
     uploaded.push({ bucket, path });
     return path;
   }
@@ -66,11 +69,7 @@ describeIfDb("knowledge ingestion (requires TEST_DATABASE_URL)", () => {
 
   afterAll(async () => {
     await deleteCreatedTestWorkspaces(pool);
-    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
-    for (const bucket of ["kb-documents", "agent-assets"]) {
-      const paths = uploaded.filter((file) => file.bucket === bucket).map((file) => file.path);
-      if (paths.length) await supabaseAdmin.storage.from(bucket).remove(paths);
-    }
+    await removeStorageObjects(uploaded);
     await pool.end();
   });
 

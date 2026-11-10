@@ -13,6 +13,7 @@ import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/tes
 import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
+import { withNetworkRetry } from "../helpers/networkRetry.js";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import type { BaileysManager } from "../../src/providers/baileys.manager.js";
 import type { EmailTransport, TransportCache as TransportCacheType } from "../../src/providers/email.provider.js";
@@ -84,8 +85,10 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   async function asset(ws: string, title: string, channels: string[]) {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const path = `${ws}/${randomUUID()}-case.pdf`;
-    const { error } = await supabaseAdmin.storage.from("agent-assets").upload(path, PDF, { contentType: "application/pdf" });
-    if (error) throw new Error(`upload failed: ${error.message}`);
+    await withNetworkRetry(async () => {
+      const { error } = await supabaseAdmin.storage.from("agent-assets").upload(path, PDF, { contentType: "application/pdf", upsert: true });
+      if (error) throw new Error(`upload failed: ${error.message}`);
+    });
     const row = await pool.query<{ id: string }>(
       `insert into public.agent_assets (workspace_id, title, use_when, channels, storage_path, file_name, mime_type, size_bytes)
        values ($1, $2, 'After a call with a steel trader', $3, $4, 'steel_case_v3.pdf', 'application/pdf', $5) returning id`,

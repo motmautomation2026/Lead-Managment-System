@@ -117,8 +117,8 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     };
   }
 
-  function manager(ws: string, socket: ReturnType<typeof fakeSocket>) {
-    const m = new Manager(ws, numberOf(ws), async () => undefined);
+  function manager(ws: string, socket: ReturnType<typeof fakeSocket>, clock?: () => Date) {
+    const m = new Manager(ws, numberOf(ws), async () => undefined, clock);
     Object.assign(m as unknown as Record<string, unknown>, { socket, connected: true });
     return m;
   }
@@ -164,19 +164,22 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
   });
 
   it("outside the send window defers a workflow send but not a rep's proposal send", async () => {
-    // Every weekday except today's (IST) is in the window.
-    const today = (await pool.query<{ d: number }>(`select extract(isodow from now() at time zone 'Asia/Kolkata')::int as d`)).rows[0]!.d;
-    const days = [1, 2, 3, 4, 5, 6, 7].filter((d) => d !== today);
-    const ws = await workspace("window", { send_window_days: days });
+    // P7: an injected clock, Wednesday 12:00 IST, with every day but Wednesday in a 09:30–19:00 window. (With the real
+    // clock and the helper's 00:00 opening, a run at 23:29 IST deferred only 31 min and failed.)
+    const now = new Date("2026-11-11T06:30:00Z");
+    const ws = await workspace("window", { send_window_days: [1, 2, 4, 5, 6, 7], send_window_start: "09:30", send_window_end: "19:00" });
     const socket = fakeSocket();
-    const m = manager(ws, socket);
+    const m = manager(ws, socket, () => now);
 
     const workflowLead = await lead(ws);
     const workflow = await send(m, await workflowSource(ws, workflowLead.id), workflowLead.phone);
     expect(workflow.ok).toBe(false);
     expect(workflow.ok || workflow.error).toBeInstanceOf(ProviderDeferredError);
     expect(workflow.ok || workflow.error.message).toBe("Outside the WhatsApp send window.");
-    expect(workflow.ok || (workflow.error as ProviderDeferredError).retryAfterMs).toBeGreaterThan(60 * 60_000);
+    // Thursday's opening (09:30 IST = 04:00Z) is 21.5 h away, plus 0–20 min jitter.
+    const retryAfterMs = workflow.ok ? 0 : (workflow.error as ProviderDeferredError).retryAfterMs;
+    expect(retryAfterMs).toBeGreaterThanOrEqual(21.5 * 3_600_000);
+    expect(retryAfterMs).toBeLessThanOrEqual(21.5 * 3_600_000 + 20 * 60_000);
 
     const repLead = await lead(ws);
     expect(await send(m, await proposalSource(ws, repLead.id), repLead.phone)).toMatchObject({ ok: true });

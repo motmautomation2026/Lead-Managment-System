@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
 import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { expectConsistentPaging, qs, startTestApi, type TestApi } from "../helpers/testApi.js";
+import { withNetworkRetry } from "../helpers/networkRetry.js";
 import type { Actor } from "../../src/authMiddleware.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -376,8 +377,10 @@ describeIfDb("automation lists, workflows list, home summary, proposal flags + d
     it("GET /proposals/:id/document: a 5-minute signed URL for its own workspace; 404 elsewhere or without a file", async () => {
       const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
       const path = `${contactA}/${randomUUID()}-quote.pdf`;
-      const { error } = await supabaseAdmin.storage.from("proposal-documents").upload(path, Buffer.from("%PDF-1.4 test"), { contentType: "application/pdf" });
-      expect(error).toBeNull();
+      await withNetworkRetry(async () => {
+        const { error } = await supabaseAdmin.storage.from("proposal-documents").upload(path, Buffer.from("%PDF-1.4 test"), { contentType: "application/pdf", upsert: true });
+        if (error) throw new Error(`upload failed: ${error.message}`);
+      });
       const withFile = await proposal(contactA, "sent", path);
       const noFile = await proposal(contactA, "sent");
 

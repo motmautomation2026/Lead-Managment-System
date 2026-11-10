@@ -10,11 +10,12 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, removeStorageObjects, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
 import type { Embedder } from "../../src/providers/openai.provider.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
+import { withNetworkRetry } from "../helpers/networkRetry.js";
 
 const mocks = vi.hoisted(() => ({ embedder: null as Embedder | null }));
 vi.mock("../../src/providers/openai.provider.js", async (importOriginal) => ({
@@ -73,8 +74,11 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const slash = path.lastIndexOf("/");
     const name = path.slice(slash + 1);
-    const { data, error } = await supabaseAdmin.storage.from(bucket).list(path.slice(0, slash), { search: name });
-    if (error) throw new Error(`Storage list failed: ${error.message}`);
+    const data = await withNetworkRetry(async () => {
+      const listed = await supabaseAdmin.storage.from(bucket).list(path.slice(0, slash), { search: name });
+      if (listed.error) throw new Error(`Storage list failed: ${listed.error.message}`);
+      return listed.data;
+    });
     return data.some((object) => object.name === name);
   }
 
@@ -107,13 +111,12 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
   afterAll(async () => {
     await deleteCreatedTestWorkspaces(pool);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const leftovers = await pool.query<{ bucket: string; path: string }>(
       `select storage_bucket as bucket, storage_path as path from public.kb_documents where workspace_id = $1 and storage_path is not null
        union select 'agent-assets', storage_path from public.agent_assets where workspace_id = $1`,
       [WORKSPACE],
     );
-    for (const { bucket, path } of leftovers.rows) await supabaseAdmin.storage.from(bucket).remove([path]);
+    if (leftovers.rows.length) await removeStorageObjects(leftovers.rows);
     // Users with append-only admin_audit_events rows can't be deleted; that must not block the others.
     for (const id of authUserIds) await pool.query(`delete from auth.users where id = $1`, [id]).catch(() => undefined);
     await pool.end();
@@ -187,7 +190,8 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     );
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ title: "Process one-pager", channels: ["email", "whatsapp"], tags: ["process"], fileName: "sample.pdf", status: "pending", isActive: true });
-    expect(created.body.downloadUrl).toMatch(/^https:\/\//);
+    // P7: a signed URL is null while staging Storage fails for a moment (by design); the listing below polls for one.
+    if (created.body.downloadUrl !== null) expect(created.body.downloadUrl).toMatch(/^https:\/\//);
     const docId = created.body.kbDocumentId as string;
     expect((await api(rep, "GET", `/documents/${docId}`)).body).toMatchObject({ docType: "asset", assetId: created.body.id, title: "Process one-pager" });
 
@@ -196,7 +200,11 @@ describeIfDb("knowledge API (requires TEST_DATABASE_URL)", () => {
     expect(first.rows[0].content).toBe(
       "Asset: Process one-pager. Use when: the lead asks how we work.\n\nOur process starts with research.\n\nThen we run outreach campaigns.\n\nFinally we hand over warm meetings.",
     );
-    const listed = await api(rep, "GET", "/assets");
+    let listed = await api(rep, "GET", "/assets");
+    for (let i = 0; i < 4 && listed.body.data?.[0]?.downloadUrl === null; i++) {
+      await new Promise((r) => setTimeout(r, 2_000 * (i + 1)));
+      listed = await api(rep, "GET", "/assets");
+    }
     expect(listed.body.data).toEqual([expect.objectContaining({ id: created.body.id, status: "ready", chunkCount: 1, downloadUrl: expect.stringMatching(/^https:\/\//) })]);
 
     expect(await api(admin, "DELETE", `/documents/${docId}`)).toMatchObject({ status: 409, body: { error: { message: "This document belongs to an asset. Delete the asset instead." } } });

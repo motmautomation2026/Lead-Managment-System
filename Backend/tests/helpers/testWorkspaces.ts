@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { isNetworkError, withNetworkRetry } from "./networkRetry.js";
 
 /** Every test-created workspace is named `[test] <label> <uuid>`. */
 export const TEST_WORKSPACE_PREFIX = "[test] ";
@@ -51,10 +52,19 @@ export async function addTestMember(db: Pool | PoolClient, workspaceId: string, 
   if (added.rowCount !== 1) throw new Error(`addTestMember: ${workspaceId} is not a [test] workspace.`);
 }
 
-/** afterAll: deletes every workspace this file created (before its test users). Throws on the first failure. */
+/**
+ * afterAll: deletes every workspace this file created (before its test users). A network error that
+ * outlasts the retries is logged and left to the global teardown's sweep (tests/global-setup.ts);
+ * any other failure throws.
+ */
 export async function deleteCreatedTestWorkspaces(pool: Pool): Promise<void> {
   for (const id of created) {
-    await deleteTestWorkspace(pool, id);
+    try {
+      await deleteTestWorkspace(pool, id);
+    } catch (error) {
+      if (!isNetworkError(error)) throw error;
+      console.error(`[test cleanup] workspace ${id} not deleted (network); the global teardown sweeps it: ${error instanceof Error ? error.message : String(error)}`);
+    }
     created.delete(id);
   }
 }
@@ -135,24 +145,37 @@ export async function removeStorageObjects(objects: StorageObject[]): Promise<vo
   const byBucket = new Map<string, string[]>();
   for (const { bucket, path } of objects) byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), path]);
   for (const [bucket, paths] of byBucket) {
-    const { error } = await supabaseAdmin.storage.from(bucket).remove(paths);
-    if (error) throw new Error(`Couldn't remove ${paths.length} Storage object(s) from ${bucket}: ${error.message}`);
+    // P7: removing is idempotent, so network errors are retried.
+    await withNetworkRetry(async () => {
+      const { error } = await supabaseAdmin.storage.from(bucket).remove(paths);
+      if (error) throw new Error(`Couldn't remove ${paths.length} Storage object(s) from ${bucket}: ${error.message}`);
+    });
   }
 }
 
-/** Deletes a test workspace and everything in it, in one transaction. Throws on failure. */
+/**
+ * Deletes a test workspace and everything in it, in one transaction, then its Storage objects.
+ * Network errors are retried (P7); a retry after a commit whose reply was lost finds the workspace
+ * gone and stops there. Throws on failure.
+ */
 export async function deleteTestWorkspace(pool: Pool, workspaceId: string): Promise<void> {
-  const client = await pool.connect();
-  let storage: StorageObject[];
-  try {
-    await client.query("begin");
-    storage = await deleteWorkspaceRows(client, workspaceId);
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw new Error(`Test workspace ${workspaceId} could not be deleted: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    client.release();
-  }
+  const storage = await withNetworkRetry(async () => {
+    const client = await pool.connect();
+    let broken: Error | undefined;
+    try {
+      if (!(await client.query(`select 1 from public.workspaces where id = $1`, [workspaceId])).rowCount) return [];
+      await client.query("begin");
+      const objects = await deleteWorkspaceRows(client, workspaceId);
+      await client.query("commit");
+      return objects;
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      broken = new Error(`Test workspace ${workspaceId} could not be deleted: ${error instanceof Error ? error.message : String(error)}`);
+      throw broken;
+    } finally {
+      // A connection that failed is discarded, so the retry gets a fresh one.
+      client.release(broken);
+    }
+  });
   await removeStorageObjects(storage);
 }

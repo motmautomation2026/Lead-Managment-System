@@ -353,6 +353,8 @@ export class BaileysManager {
     private readonly numberId: string,
     /** Spacing and typing waits; tests inject a no-op. */
     private readonly wait: (ms: number) => Promise<unknown> = sleep,
+    /** The send decision's clock; tests inject a fixed time (no dependence on the real time of day). */
+    private readonly clock: () => Date = () => new Date(),
   ) {
     this.logger = pino({
       level: process.env.NODE_ENV === "production" ? "warn" : "info",
@@ -770,7 +772,7 @@ export class BaileysManager {
       const stats = await loadSendStats(db, this.workspaceId, this.numberId, jid, input.phoneE164, control.resumed_at);
       const signal = paused ? null : shouldAutoPause(stats);
       if (signal && (await autoPause(db, this.workspaceId, this.numberId, signal))) paused = true;
-      const now = new Date();
+      const now = this.clock();
       const decision = decideSend({
         source: input.source.type,
         now,
