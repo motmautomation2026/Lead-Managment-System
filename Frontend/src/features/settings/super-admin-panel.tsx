@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { EmptyState } from "@/components/crm/empty-state";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 const CELL_SELECT = "h-8 w-full min-w-28 rounded-md border bg-background px-2 text-xs";
 const NONE = "";
@@ -183,5 +184,18 @@ export function SuperAdminPanel() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/** Settings → Admin → All workspaces (super-admins). */
+export function WorkspacesSection() {
+  return (
+    <>
+      <SectionHeader
+        title="All workspaces"
+        description="Every workspace × user, with the role in each."
+      />
+      <SuperAdminPanel />
+    </>
   );
 }

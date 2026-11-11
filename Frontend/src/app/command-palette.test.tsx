@@ -89,6 +89,9 @@ async function renderPalette() {
       page("/deals"),
       page("/deals/$dealId"),
       page("/search"),
+      page("/settings/email"),
+      page("/settings/whatsapp"),
+      page("/settings/team"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
@@ -214,6 +217,24 @@ describe("CommandPalette search", () => {
     expect(screen.queryByRole("option", { name: "Go to Tasks" })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: "Go to Deals" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/deals"));
+  });
+});
+
+describe("CommandPalette Settings (UX-1)", () => {
+  it("jumps to a Settings section and to frequent settings actions; hides what the viewer can't open", async () => {
+    mocks.search.mockResolvedValue(EMPTY);
+    const { input, router } = await renderPalette();
+    type(input, "settings em");
+    fireEvent.click(screen.getByRole("option", { name: "Settings → Email" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/email"));
+    type(input, "whatsapp number");
+    fireEvent.click(screen.getByRole("option", { name: "Connect a WhatsApp number" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/whatsapp"));
+    expect(router.state.location.search).toEqual({ tab: "numbers" });
+    // Not signed in as an admin here: admin-only sections and actions are not offered.
+    type(input, "team");
+    expect(screen.queryByRole("option", { name: "Settings → Team" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Add a team member" })).toBeNull();
   });
 });
 

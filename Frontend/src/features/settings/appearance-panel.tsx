@@ -3,6 +3,7 @@ import { useTheme } from "@/app/theme-context";
 import { label } from "@/lib/labels";
 import { DENSITIES, THEMES } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 /** Settings → Appearance: the same theme + density the user menu sets (this browser only). */
 export function AppearancePanel() {
@@ -57,5 +58,15 @@ function Choice<T extends string>({
         ))}
       </div>
     </fieldset>
+  );
+}
+
+/** Settings → Personal → Appearance. */
+export function AppearanceSection() {
+  return (
+    <>
+      <SectionHeader title="Appearance" description="Theme and density in this browser." />
+      <AppearancePanel />
+    </>
   );
 }

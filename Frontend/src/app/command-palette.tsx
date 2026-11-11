@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Building2, Handshake, Moon, Plus, Search, User } from "lucide-react";
+import { Building2, Handshake, Moon, Plus, Search, Settings, User } from "lucide-react";
 import {
   CommandDialog,
   CommandGroup,
@@ -12,7 +12,13 @@ import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Money } from "@/components/crm/money";
 import { NAV_GROUPS, SETTINGS_NAV } from "@/app/nav";
 import { useTheme } from "@/app/theme-context";
-import { messageFromError, useGlobalSearch } from "@/store";
+import { messageFromError, useGlobalSearch, useIsAdmin, useSession } from "@/store";
+import {
+  SETTINGS_PALETTE_ACTIONS,
+  settingsPath,
+  visibleSections,
+  canOpen,
+} from "@/features/settings/settings-search";
 import { SEARCH_MIN_CHARS } from "@/store/server-hooks";
 import { label } from "@/lib/labels";
 import { readRecents, type RecentType } from "@/lib/recent-records";
@@ -71,6 +77,9 @@ export function CommandPalette({
   const search = useGlobalSearch(open ? input : "");
   const term = input.trim();
   const { currentWorkspaceId } = useWorkspace();
+  const isAdmin = useIsAdmin();
+  const { canManageUsers, isSuperAdmin } = useSession();
+  const viewer = { isAdmin, canManageUsers, isSuperAdmin };
   // Read on every open (records opened since then are new); per browser + workspace.
   const recents = useMemo(
     () => (open ? readRecents(currentWorkspaceId) : []),
@@ -95,6 +104,24 @@ export function CommandPalette({
       icon: <item.icon />,
       run: () => void navigate({ to: item.to }),
     })),
+    // UX-1: every Settings section the viewer may open, and frequent settings actions (typed queries only).
+    ...visibleSections(viewer).map((section) => ({
+      id: `settings-${section.id}`,
+      label: `Settings → ${section.label}`,
+      icon: <Settings />,
+      run: () => void navigate({ to: settingsPath(section.id) }),
+    })),
+    ...SETTINGS_PALETTE_ACTIONS.filter((a) => canOpen(a.access, viewer)).map((a) => ({
+      id: `settings-action-${a.label}`,
+      label: a.label,
+      icon: <Settings />,
+      run: () =>
+        void navigate({
+          to: settingsPath(a.section),
+          search: (a.tab ? { tab: a.tab } : {}) as never,
+          ...(a.anchor ? { hash: a.anchor } : {}),
+        }),
+    })),
     {
       id: "toggle-theme",
       label: `Switch to ${resolvedTheme === "dark" ? "light" : "dark"} theme`,
@@ -102,8 +129,9 @@ export function CommandPalette({
       run: () => setTheme(resolvedTheme === "dark" ? "light" : "dark"),
     },
   ];
+  const words = term.toLowerCase().split(/\s+/).filter(Boolean);
   const matchingActions = term
-    ? actions.filter((a) => a.label.toLowerCase().includes(term.toLowerCase()))
+    ? actions.filter((a) => words.every((w) => a.label.toLowerCase().includes(w)))
     : actions.filter((a) => QUICK_ACTIONS.has(a.id));
 
   const data = search.enabled && search.query === term ? search.data : undefined;

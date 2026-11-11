@@ -1,224 +1,19 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { QRCodeSVG } from "qrcode.react";
-import { Bot, CalendarDays, Globe, Mail, RefreshCw, ShieldCheck } from "lucide-react";
+import { CalendarDays, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/crm/page-header";
-import { EmptyState } from "@/components/crm/empty-state";
-import { useListUrlState } from "@/lib/use-list-url-state";
-import { cn } from "@/lib/utils";
 import { backend } from "@/lib/backend-client";
 import { backendBaseUrl } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { LoadingBlock } from "@/components/common/server-state";
-import { keys, messageFromError, useIsAdmin, useSession } from "@/store";
+import { keys, messageFromError } from "@/store";
+import { SectionHeader } from "@/components/crm/section-layout";
 import { useWorkspace } from "@/store/workspace-context";
-import { LeadAssignmentPanel } from "./lead-assignment-panel";
-import { AgentPanel } from "./agent-panel";
-import { AppearancePanel } from "./appearance-panel";
-import {
-  SETTINGS_TABS,
-  settingsSearchSchema,
-  type SettingsAccess,
-  type SettingsTab,
-} from "./settings-search";
-import { UsersPanel } from "./users-panel";
 
-// E4b: loaded only when opened (first-load budget).
-const TeamPanel = lazy(() => import("./team-panel").then((m) => ({ default: m.TeamPanel })));
-const SuperAdminPanel = lazy(() =>
-  import("./super-admin-panel").then((m) => ({ default: m.SuperAdminPanel })),
-);
-const SystemHealthPanel = lazy(() =>
-  import("./system-health-panel").then((m) => ({ default: m.SystemHealthPanel })),
-);
-import { ProfilePanel } from "./profile-panel";
-import { WhatsAppSafety } from "./whatsapp-safety";
-import { WhatsAppNumbers } from "./whatsapp-numbers";
-import { EmailPanel } from "./email-settings";
-
-/**
- * /settings: a left sub-nav (tabs on phone) over Workspace (Email, WhatsApp, Google Calendar),
- * Lead assignment, AI agent and Users (admins) and Appearance. `?tab=` holds the section;
- * each panel saves exactly as before C6b.
- */
-export function SettingsPage() {
-  const [state, set] = useListUrlState(settingsSearchSchema);
-  const isAdmin = useIsAdmin();
-  const { canManageUsers, isSuperAdmin } = useSession();
-  const { currentWorkspace, isLoading } = useWorkspace();
-  const tab: SettingsTab = state.tab ?? "workspace";
-  const allowed = (access: SettingsAccess) =>
-    access === "all" ||
-    (access === "admin" && isAdmin) ||
-    (access === "users" && canManageUsers) ||
-    (access === "super" && isSuperAdmin);
-  const tabs = SETTINGS_TABS.filter((t) => allowed(t.access));
-  const adminOnly = !allowed(SETTINGS_TABS.find((t) => t.id === tab)?.access ?? "all");
-
-  const needsWorkspace = (panel: ReactNode) =>
-    currentWorkspace ? (
-      panel
-    ) : (
-      <Card>
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          {isLoading ? "Loading workspace…" : "No workspace is selected."}
-        </CardContent>
-      </Card>
-    );
-
-  return (
-    <div className="pb-24">
-      <PageHeader
-        title="Settings"
-        description={
-          currentWorkspace
-            ? `Connections, lead assignment, the AI agent and users for ${currentWorkspace.name}.`
-            : "Select a workspace to configure its connections."
-        }
-      />
-      <div className="flex flex-col gap-4 px-4 pt-4 sm:px-6 lg:flex-row lg:gap-6">
-        <nav aria-label="Settings sections" className="shrink-0 lg:w-48">
-          <ul className="flex gap-1 overflow-x-auto border-b pb-2 lg:flex-col lg:border-b-0 lg:pb-0">
-            {tabs.map((t) => (
-              <li key={t.id}>
-                <button
-                  type="button"
-                  aria-current={t.id === tab ? "page" : undefined}
-                  onClick={() => void set({ tab: t.id === "workspace" ? undefined : t.id })}
-                  className={cn(
-                    "w-full whitespace-nowrap rounded-md px-3 py-2 text-left text-sm",
-                    t.id === tab
-                      ? "bg-accent font-medium text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                  )}
-                >
-                  {t.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="min-w-0 flex-1 space-y-6">
-          {adminOnly && !isAdmin ? (
-            <EmptyState
-              icon={ShieldCheck}
-              title="Admins only"
-              text="Ask an admin to change these settings."
-            />
-          ) : tab === "workspace" ? (
-            needsWorkspace(
-              currentWorkspace && (
-                <>
-                  <EmailPanel workspaceId={currentWorkspace.id} />
-                  <WhatsAppPanel workspaceId={currentWorkspace.id} />
-                  <GoogleCalendarPanel workspaceId={currentWorkspace.id} />
-                </>
-              ),
-            )
-          ) : tab === "assignment" ? (
-            needsWorkspace(
-              currentWorkspace && <LeadAssignmentPanel workspaceId={currentWorkspace.id} />,
-            )
-          ) : tab === "agent" ? (
-            needsWorkspace(<AgentPanel />)
-          ) : tab === "team" ? (
-            needsWorkspace(
-              <Suspense fallback={<LoadingBlock />}>
-                <TeamPanel />
-              </Suspense>,
-            )
-          ) : tab === "users" ? (
-            <UsersPanel />
-          ) : tab === "workspaces" ? (
-            <Suspense fallback={<LoadingBlock />}>
-              <SuperAdminPanel />
-            </Suspense>
-          ) : tab === "health" ? (
-            <Suspense fallback={<LoadingBlock />}>
-              <SystemHealthPanel />
-            </Suspense>
-          ) : tab === "profile" ? (
-            <ProfilePanel />
-          ) : (
-            <AppearancePanel />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function WhatsAppPanel({ workspaceId }: { workspaceId: string }) {
-  const query = useQuery({
-    queryKey: keys.connection(workspaceId, "whatsapp"),
-    queryFn: ({ signal }) => backend.connections.whatsapp.get(signal),
-    refetchInterval: 5_000,
-  });
-  const data = query.data;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Bot /> WhatsApp · Baileys
-        </CardTitle>
-        <CardDescription>
-          Unofficial WhatsApp Web connection. Use opted-in, dedicated business accounts for this
-          workspace; each number is paired with its own QR code.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {!data ? (
-          query.isError ? (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive">
-                Couldn't load WhatsApp status: {messageFromError(query.error)}
-              </p>
-              <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-                <RefreshCw className="size-3.5" /> Retry
-              </Button>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Loading WhatsApp health…</p>
-          )
-        ) : (
-          <>
-            <WhatsAppNumbers workspaceId={workspaceId} data={data} />
-            <div className="text-xs text-muted-foreground">
-              Pending workflow messages: {data.pendingCount} · Invalid existing phone values:{" "}
-              {data.invalidPhoneCount}
-            </div>
-            <WhatsAppSafety workspaceId={workspaceId} data={data} />
-            {data.inboundReview.length > 0 && (
-              <div className="space-y-2 rounded-lg border p-3">
-                <div className="text-sm font-medium">Inbound replies needing review</div>
-                {data.inboundReview.map((event) => (
-                  <div
-                    key={event.messageId}
-                    className="flex flex-wrap justify-between gap-2 border-t pt-2 text-xs"
-                  >
-                    <span>{event.senderPhoneE164 ?? "Unknown direct sender"}</span>
-                    <span className="capitalize text-muted-foreground">
-                      {event.disposition} · {event.messageType} · {event.matchCount} matches ·{" "}
-                      {new Date(event.receivedAt).toLocaleString()}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
+export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: keys.connection(workspaceId, "google-calendar"),
@@ -458,5 +253,19 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 truncate text-sm font-semibold capitalize">{value}</div>
     </div>
+  );
+}
+
+/** Settings → Channels → Google Calendar. */
+export function CalendarSection() {
+  const { currentWorkspaceId } = useWorkspace();
+  return (
+    <>
+      <SectionHeader
+        title="Google Calendar"
+        description="Meet links and invites for CRM meetings."
+      />
+      {currentWorkspaceId && <GoogleCalendarPanel workspaceId={currentWorkspaceId} />}
+    </>
   );
 }

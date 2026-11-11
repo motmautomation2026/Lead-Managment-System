@@ -10,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { messageFromError, useIsAdmin, useSession } from "@/store";
 import { keys } from "@/store/query";
 import { previewOwner, ruleRowsProblem, rowsToRules, type RuleRow } from "./lead-assignment-rules";
+import { SectionHeader } from "@/components/crm/section-layout";
+import { useWorkspace } from "@/store/workspace-context";
 
 const UNASSIGNED = "";
 const SELECT_CLASS = "h-9 w-full rounded-md border bg-background px-3 text-sm";
@@ -258,5 +260,19 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Settings → Workspace → Lead assignment. */
+export function AssignmentSection() {
+  const { currentWorkspaceId } = useWorkspace();
+  return (
+    <>
+      <SectionHeader
+        title="Lead assignment"
+        description="Who owns a new lead, by company revenue."
+      />
+      {currentWorkspaceId && <LeadAssignmentPanel workspaceId={currentWorkspaceId} />}
+    </>
   );
 }

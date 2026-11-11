@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { SectionHeader } from "@/components/crm/section-layout";
 import { BookOpen, History, RefreshCw, SlidersHorizontal, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type {
@@ -729,5 +730,98 @@ function PlaybookCard() {
         onConfirm={onRestore}
       />
     </Card>
+  );
+}
+
+function WithAgentSettings({ children }: { children: (settings: AgentSettings) => ReactNode }) {
+  const settings = useAgentSettings();
+  if (settings.isError)
+    return (
+      <div className="space-y-2 text-sm">
+        <p className="text-destructive">
+          Couldn't load the AI agent settings: {messageFromError(settings.error)}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => void settings.refetch()}>
+          <RefreshCw className="size-3.5" /> Retry
+        </Button>
+      </div>
+    );
+  if (!settings.data)
+    return <p className="text-sm text-muted-foreground">Loading AI agent settings…</p>;
+  return <>{children(settings.data)}</>;
+}
+
+/** Settings → AI → AI agent: mode, live scope and the go-live gate (admins). */
+export function AgentModeSection() {
+  return (
+    <>
+      <SectionHeader title="AI agent" description="Off, Shadow or Live, and who is live." />
+      <WithAgentSettings>{(s) => <ModeCard settings={s} />}</WithAgentSettings>
+    </>
+  );
+}
+
+/** Settings → AI → Limits & schedule (admins). */
+export function AgentLimitsSection() {
+  return (
+    <>
+      <SectionHeader title="Limits & schedule" description="When and how often the AI may write." />
+      <WithAgentSettings>{(s) => <LimitsCard settings={s} />}</WithAgentSettings>
+    </>
+  );
+}
+
+/** Settings → AI → Message rules: admins edit; everyone else reads (E2b). */
+export function MessageRulesSection() {
+  const isAdmin = useIsAdmin();
+  return (
+    <>
+      <SectionHeader
+        title="Message rules"
+        description="Every AI message is checked against these."
+      />
+      {isAdmin ? (
+        <WithAgentSettings>{(s) => <MessageRulesCard rules={s} editable />}</WithAgentSettings>
+      ) : (
+        <MessageRulesReadOnly />
+      )}
+    </>
+  );
+}
+
+/** Settings → AI → Playbook (admins). */
+export function PlaybookSection() {
+  return (
+    <>
+      <SectionHeader title="Playbook" description="What the AI knows and how it behaves." />
+      <PlaybookCard />
+    </>
+  );
+}
+
+/** Settings → AI → Style examples (admins). */
+export function StyleSection() {
+  return (
+    <>
+      <SectionHeader title="Style examples" description="The style the AI writes in." />
+      <WithAgentSettings>
+        {(s) => <StyleExamplesCard examples={s.styleExamples} editable />}
+      </WithAgentSettings>
+    </>
+  );
+}
+
+/** Settings → AI → Target industries (admins). */
+export function IndustriesSection() {
+  return (
+    <>
+      <SectionHeader
+        title="Target industries"
+        description="Industries that raise the hot-lead score."
+      />
+      <WithAgentSettings>
+        {(s) => <TargetIndustriesCard keywords={s.targetIndustryKeywords ?? []} />}
+      </WithAgentSettings>
+    </>
   );
 }

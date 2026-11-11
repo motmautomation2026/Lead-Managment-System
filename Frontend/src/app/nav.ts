@@ -12,6 +12,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import { SETTINGS_SECTIONS } from "@/features/settings/settings-search";
 
 export interface NavItem {
   to:
@@ -75,6 +76,10 @@ const SUB_PAGES: Array<[RegExp, string]> = [
   [/^\/automations\/templates/, "Templates"],
   [/^\/automations\/runs/, "Runs"],
   [/^\/automations\/workflows\/[^/]+/, "Workflow"],
+  ...SETTINGS_SECTIONS.map((s): [RegExp, string] => [
+    new RegExp(`^/settings/${s.id}(/|$)`),
+    s.label,
+  ]),
 ];
 
 export interface Crumb {

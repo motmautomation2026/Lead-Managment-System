@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { bookingUrlField } from "./booking-url";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 /** Settings → Users (admins): today's Admin page — list, create, edit, deactivate / reactivate. */
 export function UsersPanel() {
@@ -178,5 +179,18 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <Label className="mb-1.5 block text-xs">{label}</Label>
       {children}
     </div>
+  );
+}
+
+/** Settings → Admin → User accounts (global admins and super-admins). */
+export function UsersSection() {
+  return (
+    <>
+      <SectionHeader
+        title="User accounts"
+        description="Create, edit and deactivate sign-in accounts."
+      />
+      <UsersPanel />
+    </>
   );
 }

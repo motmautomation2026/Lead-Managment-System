@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SettingsPage } from "@/features/settings/settings-page";
-import { validateSettingsSearch } from "@/features/settings/settings-search";
+import { SettingsLayout } from "@/features/settings/settings-layout";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -8,16 +7,9 @@ export const Route = createFileRoute("/settings")({
       { title: "Settings - MOTM Flow" },
       {
         name: "description",
-        content:
-          "Workspace connections, lead assignment, the AI agent, users and appearance settings.",
-      },
-      { property: "og:title", content: "Settings - MOTM Flow" },
-      {
-        property: "og:description",
-        content: "Configure how this workspace sends email, WhatsApp, and calendar invites.",
+        content: "Workspace, channels, AI agent, personal and admin settings.",
       },
     ],
   }),
-  validateSearch: validateSettingsSearch,
-  component: SettingsPage,
+  component: SettingsLayout,
 });

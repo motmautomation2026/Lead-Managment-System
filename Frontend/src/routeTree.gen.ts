@@ -32,6 +32,23 @@ import { Route as DevUiRouteImport } from './routes/dev.ui'
 import { Route as LeadsIndexRouteImport } from './routes/leads.index'
 import { Route as LeadsLeadIdRouteImport } from './routes/leads.$leadId'
 import { Route as ProposalsIndexRouteImport } from './routes/proposals.index'
+import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as SettingsAiAgentRouteImport } from './routes/settings.ai-agent'
+import { Route as SettingsAiLimitsRouteImport } from './routes/settings.ai-limits'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as SettingsAssignmentRouteImport } from './routes/settings.assignment'
+import { Route as SettingsCalendarRouteImport } from './routes/settings.calendar'
+import { Route as SettingsEmailRouteImport } from './routes/settings.email'
+import { Route as SettingsHealthRouteImport } from './routes/settings.health'
+import { Route as SettingsIndustriesRouteImport } from './routes/settings.industries'
+import { Route as SettingsMessageRulesRouteImport } from './routes/settings.message-rules'
+import { Route as SettingsPlaybookRouteImport } from './routes/settings.playbook'
+import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
+import { Route as SettingsStyleRouteImport } from './routes/settings.style'
+import { Route as SettingsTeamRouteImport } from './routes/settings.team'
+import { Route as SettingsUsersRouteImport } from './routes/settings.users'
+import { Route as SettingsWhatsappRouteImport } from './routes/settings.whatsapp'
+import { Route as SettingsWorkspacesRouteImport } from './routes/settings.workspaces'
 import { Route as AutomationsWorkflowsWorkflowIdRouteImport } from './routes/automations.workflows.$workflowId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -149,6 +166,91 @@ const ProposalsIndexRoute = ProposalsIndexRouteImport.update({
   path: '/proposals/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAiAgentRoute = SettingsAiAgentRouteImport.update({
+  id: '/ai-agent',
+  path: '/ai-agent',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAiLimitsRoute = SettingsAiLimitsRouteImport.update({
+  id: '/ai-limits',
+  path: '/ai-limits',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAssignmentRoute = SettingsAssignmentRouteImport.update({
+  id: '/assignment',
+  path: '/assignment',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsCalendarRoute = SettingsCalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsEmailRoute = SettingsEmailRouteImport.update({
+  id: '/email',
+  path: '/email',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsHealthRoute = SettingsHealthRouteImport.update({
+  id: '/health',
+  path: '/health',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsIndustriesRoute = SettingsIndustriesRouteImport.update({
+  id: '/industries',
+  path: '/industries',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsMessageRulesRoute = SettingsMessageRulesRouteImport.update({
+  id: '/message-rules',
+  path: '/message-rules',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsPlaybookRoute = SettingsPlaybookRouteImport.update({
+  id: '/playbook',
+  path: '/playbook',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProfileRoute = SettingsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsStyleRoute = SettingsStyleRouteImport.update({
+  id: '/style',
+  path: '/style',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsTeamRoute = SettingsTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsUsersRoute = SettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsWhatsappRoute = SettingsWhatsappRouteImport.update({
+  id: '/whatsapp',
+  path: '/whatsapp',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsWorkspacesRoute = SettingsWorkspacesRouteImport.update({
+  id: '/workspaces',
+  path: '/workspaces',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const AutomationsWorkflowsWorkflowIdRoute =
   AutomationsWorkflowsWorkflowIdRouteImport.update({
     id: '/automations/workflows/$workflowId',
@@ -164,7 +266,7 @@ export interface FileRoutesByFullPath {
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
-  '/settings': typeof SettingsRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
@@ -174,12 +276,29 @@ export interface FileRoutesByFullPath {
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
+  '/settings/ai-agent': typeof SettingsAiAgentRoute
+  '/settings/ai-limits': typeof SettingsAiLimitsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/assignment': typeof SettingsAssignmentRoute
+  '/settings/calendar': typeof SettingsCalendarRoute
+  '/settings/email': typeof SettingsEmailRoute
+  '/settings/health': typeof SettingsHealthRoute
+  '/settings/industries': typeof SettingsIndustriesRoute
+  '/settings/message-rules': typeof SettingsMessageRulesRoute
+  '/settings/playbook': typeof SettingsPlaybookRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/style': typeof SettingsStyleRoute
+  '/settings/team': typeof SettingsTeamRoute
+  '/settings/users': typeof SettingsUsersRoute
+  '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
   '/deals/': typeof DealsIndexRoute
   '/leads/': typeof LeadsIndexRoute
   '/proposals/': typeof ProposalsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
 }
 export interface FileRoutesByTo {
@@ -190,7 +309,6 @@ export interface FileRoutesByTo {
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
-  '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
@@ -200,12 +318,29 @@ export interface FileRoutesByTo {
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
+  '/settings/ai-agent': typeof SettingsAiAgentRoute
+  '/settings/ai-limits': typeof SettingsAiLimitsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/assignment': typeof SettingsAssignmentRoute
+  '/settings/calendar': typeof SettingsCalendarRoute
+  '/settings/email': typeof SettingsEmailRoute
+  '/settings/health': typeof SettingsHealthRoute
+  '/settings/industries': typeof SettingsIndustriesRoute
+  '/settings/message-rules': typeof SettingsMessageRulesRoute
+  '/settings/playbook': typeof SettingsPlaybookRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/style': typeof SettingsStyleRoute
+  '/settings/team': typeof SettingsTeamRoute
+  '/settings/users': typeof SettingsUsersRoute
+  '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/automations': typeof AutomationsIndexRoute
   '/companies': typeof CompaniesIndexRoute
   '/contacts': typeof ContactsIndexRoute
   '/deals': typeof DealsIndexRoute
   '/leads': typeof LeadsIndexRoute
   '/proposals': typeof ProposalsIndexRoute
+  '/settings': typeof SettingsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
 }
 export interface FileRoutesById {
@@ -217,7 +352,7 @@ export interface FileRoutesById {
   '/meetings': typeof MeetingsRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
-  '/settings': typeof SettingsRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/tasks': typeof TasksRoute
   '/automations/runs': typeof AutomationsRunsRoute
   '/automations/templates': typeof AutomationsTemplatesRoute
@@ -227,12 +362,29 @@ export interface FileRoutesById {
   '/deals/$dealId': typeof DealsDealIdRoute
   '/dev/ui': typeof DevUiRoute
   '/leads/$leadId': typeof LeadsLeadIdRoute
+  '/settings/ai-agent': typeof SettingsAiAgentRoute
+  '/settings/ai-limits': typeof SettingsAiLimitsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/assignment': typeof SettingsAssignmentRoute
+  '/settings/calendar': typeof SettingsCalendarRoute
+  '/settings/email': typeof SettingsEmailRoute
+  '/settings/health': typeof SettingsHealthRoute
+  '/settings/industries': typeof SettingsIndustriesRoute
+  '/settings/message-rules': typeof SettingsMessageRulesRoute
+  '/settings/playbook': typeof SettingsPlaybookRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/style': typeof SettingsStyleRoute
+  '/settings/team': typeof SettingsTeamRoute
+  '/settings/users': typeof SettingsUsersRoute
+  '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
   '/deals/': typeof DealsIndexRoute
   '/leads/': typeof LeadsIndexRoute
   '/proposals/': typeof ProposalsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/automations/workflows/$workflowId': typeof AutomationsWorkflowsWorkflowIdRoute
 }
 export interface FileRouteTypes {
@@ -255,12 +407,29 @@ export interface FileRouteTypes {
     | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
+    | '/settings/ai-agent'
+    | '/settings/ai-limits'
+    | '/settings/appearance'
+    | '/settings/assignment'
+    | '/settings/calendar'
+    | '/settings/email'
+    | '/settings/health'
+    | '/settings/industries'
+    | '/settings/message-rules'
+    | '/settings/playbook'
+    | '/settings/profile'
+    | '/settings/style'
+    | '/settings/team'
+    | '/settings/users'
+    | '/settings/whatsapp'
+    | '/settings/workspaces'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
     | '/deals/'
     | '/leads/'
     | '/proposals/'
+    | '/settings/'
     | '/automations/workflows/$workflowId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -271,7 +440,6 @@ export interface FileRouteTypes {
     | '/meetings'
     | '/privacy'
     | '/search'
-    | '/settings'
     | '/tasks'
     | '/automations/runs'
     | '/automations/templates'
@@ -281,12 +449,29 @@ export interface FileRouteTypes {
     | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
+    | '/settings/ai-agent'
+    | '/settings/ai-limits'
+    | '/settings/appearance'
+    | '/settings/assignment'
+    | '/settings/calendar'
+    | '/settings/email'
+    | '/settings/health'
+    | '/settings/industries'
+    | '/settings/message-rules'
+    | '/settings/playbook'
+    | '/settings/profile'
+    | '/settings/style'
+    | '/settings/team'
+    | '/settings/users'
+    | '/settings/whatsapp'
+    | '/settings/workspaces'
     | '/automations'
     | '/companies'
     | '/contacts'
     | '/deals'
     | '/leads'
     | '/proposals'
+    | '/settings'
     | '/automations/workflows/$workflowId'
   id:
     | '__root__'
@@ -307,12 +492,29 @@ export interface FileRouteTypes {
     | '/deals/$dealId'
     | '/dev/ui'
     | '/leads/$leadId'
+    | '/settings/ai-agent'
+    | '/settings/ai-limits'
+    | '/settings/appearance'
+    | '/settings/assignment'
+    | '/settings/calendar'
+    | '/settings/email'
+    | '/settings/health'
+    | '/settings/industries'
+    | '/settings/message-rules'
+    | '/settings/playbook'
+    | '/settings/profile'
+    | '/settings/style'
+    | '/settings/team'
+    | '/settings/users'
+    | '/settings/whatsapp'
+    | '/settings/workspaces'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
     | '/deals/'
     | '/leads/'
     | '/proposals/'
+    | '/settings/'
     | '/automations/workflows/$workflowId'
   fileRoutesById: FileRoutesById
 }
@@ -324,7 +526,7 @@ export interface RootRouteChildren {
   MeetingsRoute: typeof MeetingsRoute
   PrivacyRoute: typeof PrivacyRoute
   SearchRoute: typeof SearchRoute
-  SettingsRoute: typeof SettingsRoute
+  SettingsRoute: typeof SettingsRouteWithChildren
   TasksRoute: typeof TasksRoute
   AutomationsRunsRoute: typeof AutomationsRunsRoute
   AutomationsTemplatesRoute: typeof AutomationsTemplatesRoute
@@ -506,6 +708,125 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProposalsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/ai-agent': {
+      id: '/settings/ai-agent'
+      path: '/ai-agent'
+      fullPath: '/settings/ai-agent'
+      preLoaderRoute: typeof SettingsAiAgentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/ai-limits': {
+      id: '/settings/ai-limits'
+      path: '/ai-limits'
+      fullPath: '/settings/ai-limits'
+      preLoaderRoute: typeof SettingsAiLimitsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/assignment': {
+      id: '/settings/assignment'
+      path: '/assignment'
+      fullPath: '/settings/assignment'
+      preLoaderRoute: typeof SettingsAssignmentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/calendar': {
+      id: '/settings/calendar'
+      path: '/calendar'
+      fullPath: '/settings/calendar'
+      preLoaderRoute: typeof SettingsCalendarRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/email': {
+      id: '/settings/email'
+      path: '/email'
+      fullPath: '/settings/email'
+      preLoaderRoute: typeof SettingsEmailRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/health': {
+      id: '/settings/health'
+      path: '/health'
+      fullPath: '/settings/health'
+      preLoaderRoute: typeof SettingsHealthRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/industries': {
+      id: '/settings/industries'
+      path: '/industries'
+      fullPath: '/settings/industries'
+      preLoaderRoute: typeof SettingsIndustriesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/message-rules': {
+      id: '/settings/message-rules'
+      path: '/message-rules'
+      fullPath: '/settings/message-rules'
+      preLoaderRoute: typeof SettingsMessageRulesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/playbook': {
+      id: '/settings/playbook'
+      path: '/playbook'
+      fullPath: '/settings/playbook'
+      preLoaderRoute: typeof SettingsPlaybookRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/profile': {
+      id: '/settings/profile'
+      path: '/profile'
+      fullPath: '/settings/profile'
+      preLoaderRoute: typeof SettingsProfileRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/style': {
+      id: '/settings/style'
+      path: '/style'
+      fullPath: '/settings/style'
+      preLoaderRoute: typeof SettingsStyleRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/team': {
+      id: '/settings/team'
+      path: '/team'
+      fullPath: '/settings/team'
+      preLoaderRoute: typeof SettingsTeamRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/users': {
+      id: '/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/whatsapp': {
+      id: '/settings/whatsapp'
+      path: '/whatsapp'
+      fullPath: '/settings/whatsapp'
+      preLoaderRoute: typeof SettingsWhatsappRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/workspaces': {
+      id: '/settings/workspaces'
+      path: '/workspaces'
+      fullPath: '/settings/workspaces'
+      preLoaderRoute: typeof SettingsWorkspacesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/automations/workflows/$workflowId': {
       id: '/automations/workflows/$workflowId'
       path: '/automations/workflows/$workflowId'
@@ -516,6 +837,50 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface SettingsRouteChildren {
+  SettingsAiAgentRoute: typeof SettingsAiAgentRoute
+  SettingsAiLimitsRoute: typeof SettingsAiLimitsRoute
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
+  SettingsAssignmentRoute: typeof SettingsAssignmentRoute
+  SettingsCalendarRoute: typeof SettingsCalendarRoute
+  SettingsEmailRoute: typeof SettingsEmailRoute
+  SettingsHealthRoute: typeof SettingsHealthRoute
+  SettingsIndustriesRoute: typeof SettingsIndustriesRoute
+  SettingsMessageRulesRoute: typeof SettingsMessageRulesRoute
+  SettingsPlaybookRoute: typeof SettingsPlaybookRoute
+  SettingsProfileRoute: typeof SettingsProfileRoute
+  SettingsStyleRoute: typeof SettingsStyleRoute
+  SettingsTeamRoute: typeof SettingsTeamRoute
+  SettingsUsersRoute: typeof SettingsUsersRoute
+  SettingsWhatsappRoute: typeof SettingsWhatsappRoute
+  SettingsWorkspacesRoute: typeof SettingsWorkspacesRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAiAgentRoute: SettingsAiAgentRoute,
+  SettingsAiLimitsRoute: SettingsAiLimitsRoute,
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsAssignmentRoute: SettingsAssignmentRoute,
+  SettingsCalendarRoute: SettingsCalendarRoute,
+  SettingsEmailRoute: SettingsEmailRoute,
+  SettingsHealthRoute: SettingsHealthRoute,
+  SettingsIndustriesRoute: SettingsIndustriesRoute,
+  SettingsMessageRulesRoute: SettingsMessageRulesRoute,
+  SettingsPlaybookRoute: SettingsPlaybookRoute,
+  SettingsProfileRoute: SettingsProfileRoute,
+  SettingsStyleRoute: SettingsStyleRoute,
+  SettingsTeamRoute: SettingsTeamRoute,
+  SettingsUsersRoute: SettingsUsersRoute,
+  SettingsWhatsappRoute: SettingsWhatsappRoute,
+  SettingsWorkspacesRoute: SettingsWorkspacesRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
+  SettingsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
@@ -524,7 +889,7 @@ const rootRouteChildren: RootRouteChildren = {
   MeetingsRoute: MeetingsRoute,
   PrivacyRoute: PrivacyRoute,
   SearchRoute: SearchRoute,
-  SettingsRoute: SettingsRoute,
+  SettingsRoute: SettingsRouteWithChildren,
   TasksRoute: TasksRoute,
   AutomationsRunsRoute: AutomationsRunsRoute,
   AutomationsTemplatesRoute: AutomationsTemplatesRoute,

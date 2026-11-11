@@ -44,7 +44,7 @@ vi.mock("@/app/app-shell", () => ({
 
 import { AuthGate } from "@/app/auth-gate";
 import { AdminRedirect } from "@/features/settings/admin-redirect";
-import { validateSettingsSearch } from "@/features/settings/settings-search";
+import { validateCalendarSearch } from "@/features/settings/settings-search";
 
 afterEach(() => {
   cleanup();
@@ -70,10 +70,11 @@ async function renderAt(path: string) {
     routeTree: rootRoute.addChildren([
       page("/", "dashboard"),
       createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminRedirect }),
+      page("/settings/users", "settings"),
       createRoute({
         getParentRoute: () => rootRoute,
-        path: "/settings",
-        validateSearch: validateSettingsSearch,
+        path: "/settings/calendar",
+        validateSearch: validateCalendarSearch,
         component: () => <div>settings</div>,
       }),
     ]),
@@ -93,13 +94,12 @@ describe("AuthGate", () => {
     expect(router.state.location.pathname).toBe("/");
   });
 
-  it("sends an admin from /admin to Settings → Users (C6b)", async () => {
+  it("sends an admin from /admin to Settings → User accounts (C6b, UX-1)", async () => {
     mocks.role = "admin";
     const router = await renderAt("/admin");
     expect(await screen.findByText("settings")).toBeTruthy();
     expect(screen.getByTestId("shell")).toBeTruthy();
-    expect(router.state.location.pathname).toBe("/settings");
-    expect(router.state.location.search).toEqual({ tab: "users" });
+    expect(router.state.location.pathname).toBe("/settings/users");
   });
 
   it("redirects a salesperson from /admin to /", async () => {
@@ -110,15 +110,14 @@ describe("AuthGate", () => {
   });
 
   it.each(["admin", "salesperson"] as const)(
-    "sends the Google Calendar return (/admin?calendar=) to Settings → Workspace with the same query, for an %s",
+    "sends the Google Calendar return (/admin?calendar=) to Settings → Google Calendar with the same query, for an %s",
     async (role) => {
       mocks.role = role;
       vi.stubGlobal("location", { ...window.location, search: "?calendar=error&message=Denied" });
       const router = await renderAt("/admin?calendar=error&message=Denied");
       expect(await screen.findByText("settings")).toBeTruthy();
-      expect(router.state.location.pathname).toBe("/settings");
+      expect(router.state.location.pathname).toBe("/settings/calendar");
       expect(router.state.location.search).toEqual({
-        tab: "workspace",
         calendar: "error",
         message: "Denied",
       });

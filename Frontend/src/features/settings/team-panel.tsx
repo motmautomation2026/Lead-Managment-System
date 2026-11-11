@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { EmptyState } from "@/components/crm/empty-state";
 import { Users } from "lucide-react";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 const SELECT_CLASS = "h-9 w-full rounded-md border bg-background px-3 text-sm";
 const ROLE_LABEL: Record<WorkspaceRole, string> = { admin: "Admin", salesperson: "Salesperson" };
@@ -186,5 +187,15 @@ export function TeamPanel() {
         onConfirm={() => removing && remove.mutate(removing.userId)}
       />
     </div>
+  );
+}
+
+/** Settings → Workspace → Team. */
+export function TeamSection() {
+  return (
+    <>
+      <SectionHeader title="Team" description="Who can open this workspace, and their role here." />
+      <TeamPanel />
+    </>
   );
 }

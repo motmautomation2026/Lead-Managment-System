@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { EmptyState } from "@/components/crm/empty-state";
 import { StatusPill } from "@/components/crm/status-pill";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 const RED_TEXT: Record<SystemHealth["workspaces"][number]["red"][number], string> = {
   stuck_queue: "Stuck queue",
@@ -215,5 +216,18 @@ export function SystemHealthPanel() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/** Settings → Admin → System health (super-admins). */
+export function HealthSection() {
+  return (
+    <>
+      <SectionHeader
+        title="System health"
+        description="The worker's loops and every workspace's queues."
+      />
+      <SystemHealthPanel />
+    </>
   );
 }

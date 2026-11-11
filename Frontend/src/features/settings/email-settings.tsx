@@ -21,6 +21,8 @@ import { Switch } from "@/components/ui/switch";
 import { StatusPill, type PillTone } from "@/components/crm/status-pill";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { keys, messageFromError, useIsAdmin } from "@/store";
+import { SectionHeader } from "@/components/crm/section-layout";
+import { useWorkspace } from "@/store/workspace-context";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -991,5 +993,19 @@ function ReadOnly({ label, value }: { label: string; value: string }) {
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="break-words">{value}</dd>
     </div>
+  );
+}
+
+/** Settings → Channels → Email. */
+export function EmailSection() {
+  const { currentWorkspaceId } = useWorkspace();
+  return (
+    <>
+      <SectionHeader
+        title="Email"
+        description="The SMTP + IMAP mailbox this workspace sends from."
+      />
+      {currentWorkspaceId && <EmailPanel workspaceId={currentWorkspaceId} />}
+    </>
   );
 }

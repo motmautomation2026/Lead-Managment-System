@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { keys, messageFromError } from "@/store";
 import { bookingUrlField } from "./booking-url";
+import { SectionHeader } from "@/components/crm/section-layout";
 
 const schema = z.object({ bookingUrl: bookingUrlField });
 type FormValues = z.infer<typeof schema>;
@@ -82,5 +83,15 @@ export function ProfilePanel() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Settings → Personal → My profile. */
+export function ProfileSection() {
+  return (
+    <>
+      <SectionHeader title="My profile" description="Your account and booking link." />
+      <ProfilePanel />
+    </>
   );
 }
