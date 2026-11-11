@@ -17,6 +17,8 @@ const PAIRS: Array<[fg: string, bg: string]> = [
   ["accent-foreground", "accent"],
   ["destructive-foreground", "destructive"],
   ["destructive", "card"],
+  // UX-1: the SaveBar error line.
+  ["danger-soft-foreground", "surface-raised"],
   ["success-foreground", "success"],
   ["warning-foreground", "warning"],
   ["info-foreground", "info"],
