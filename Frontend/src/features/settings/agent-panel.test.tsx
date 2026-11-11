@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const settings = {
@@ -55,6 +56,7 @@ const readiness = (ready: boolean) => ({
 vi.mock("@/store", () => {
   const mutation = (fn: ReturnType<typeof vi.fn>) => ({
     mutate: fn,
+    reset: vi.fn(),
     isPending: false,
     isError: false,
   });
@@ -93,44 +95,49 @@ vi.mock("@/store", () => {
   };
 });
 
-import { AgentPanel } from "./agent-panel";
+import { renderInRouter } from "@/test/render-in-router";
+import { AgentModeSection } from "./agent-panel";
+import { AgentLimitsSection } from "./ai-limits-section";
+import { MessageRulesSection } from "./message-rules-card";
+import { PlaybookSection } from "./playbook-section";
+import { StyleSection } from "./style-examples-card";
+
+const show = (Section: () => ReactNode) => renderInRouter(() => <Section />);
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
 
-describe("AgentPanel", () => {
-  it("salespeople see only the message rules, read-only, and never load the settings", () => {
+describe("Settings → AI sections (UX-1: one section per route)", () => {
+  it("salespeople see only the message rules, read-only, and never load the settings", async () => {
     mocks.isAdmin = false;
-    render(<AgentPanel />);
+    await show(MessageRulesSection);
     expect(mocks.settingsQuery).not.toHaveBeenCalled();
-    expect(screen.getByText("Message rules")).toBeInTheDocument();
     expect(
       screen.getByText("WhatsApp 75 words (the AI aims for about 50) · email 160 words"),
     ).toBeInTheDocument();
     expect(screen.getByText("thanks for connecting, today")).toBeInTheDocument();
     expect(screen.getByText("Only admins can change these.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save message rules" })).toBeNull();
-    expect(screen.queryByText("AI agent limits")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
   });
 
-  it("E3a: others read the style examples; admins edit them", async () => {
+  it("E3a: others read the style examples; admins edit them (validated before saving)", async () => {
     mocks.isAdmin = false;
-    const { unmount } = render(<AgentPanel />);
+    const { unmount } = await show(MessageRulesSection);
     expect(screen.getByText("Hi Ravi, thanks for the call.")).toBeInTheDocument();
     expect(screen.getByText("Only admins can change the examples.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save style examples" })).toBeNull();
     unmount();
 
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(StyleSection);
     const field = screen.getByLabelText("Style examples");
     expect(field).toHaveValue("Hi Ravi, thanks for the call.");
+    expect(screen.queryByRole("button", { name: "Save style examples" })).toBeNull();
     fireEvent.change(field, { target: { value: "x".repeat(6001) } });
-    fireEvent.click(screen.getByRole("button", { name: "Save style examples" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save style examples" }));
     expect(await screen.findByText("At most 6000 characters.")).toBeInTheDocument();
     expect(mocks.update).not.toHaveBeenCalled();
     fireEvent.change(field, { target: { value: "Hi Asha, good to speak today." } });
@@ -143,10 +150,11 @@ describe("AgentPanel", () => {
     );
   });
 
-  it("E2b: admins edit banned phrases (one per line) and word limits", async () => {
+  it("E2b: admins edit banned phrases (one per line) and word limits; the save bar appears on change", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(MessageRulesSection);
+    expect(screen.queryByRole("button", { name: "Save message rules" })).toBeNull();
     expect(screen.getByLabelText("Banned phrases (one per line)")).toHaveValue(
       "thanks for connecting\ntoday",
     );
@@ -154,7 +162,7 @@ describe("AgentPanel", () => {
       target: { value: " just checking in \n\nfree\n" },
     });
     fireEvent.change(screen.getByLabelText("WhatsApp max words"), { target: { value: "60" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save message rules" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save message rules" }));
     await waitFor(() =>
       expect(mocks.update).toHaveBeenCalledWith(
         { bannedPhrases: ["just checking in", "free"], whatsappMaxWords: 60, emailMaxWords: 160 },
@@ -163,24 +171,27 @@ describe("AgentPanel", () => {
     );
   });
 
-  it("E2b: message rules are validated before saving", async () => {
+  it("E2b: message rules are validated before saving; Discard restores the saved rules", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(MessageRulesSection);
     fireEvent.change(screen.getByLabelText("Email max words (body)"), { target: { value: "501" } });
     fireEvent.change(screen.getByLabelText("Banned phrases (one per line)"), {
       target: { value: "x".repeat(61) },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save message rules" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save message rules" }));
     expect(await screen.findByText("At most 500 words.")).toBeInTheDocument();
     expect(screen.getByText("Each phrase can be at most 60 characters.")).toBeInTheDocument();
     expect(mocks.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.getByLabelText("Email max words (body)")).toHaveValue(160));
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
   });
 
-  it("asks for confirmation before switching Off → Shadow, then saves the mode", () => {
+  it("asks for confirmation before switching Off → Shadow, then saves the mode", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(AgentModeSection);
 
     fireEvent.click(screen.getByRole("button", { name: "Shadow" }));
     expect(screen.getByText(/Nothing is sent to leads in Shadow mode/)).toBeInTheDocument();
@@ -193,7 +204,7 @@ describe("AgentPanel", () => {
     expect(mocks.update).toHaveBeenCalledWith({ mode: "shadow" }, expect.any(Object));
   });
 
-  it("Live: the confirm shows the gate numbers, contacts that become live and runs to cancel, then saves mode + scope", () => {
+  it("Live: the confirm shows the gate numbers, contacts that become live and runs to cancel, then saves mode + scope", async () => {
     mocks.isAdmin = true;
     mocks.ready = false;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
@@ -208,7 +219,7 @@ describe("AgentPanel", () => {
       },
       error: null,
     }));
-    render(<AgentPanel />);
+    await show(AgentModeSection);
     fireEvent.click(screen.getByRole("button", { name: "Live" }));
     expect(mocks.preview).toHaveBeenLastCalledWith("test_contacts");
     expect(screen.getByText("Go live: Test contacts only?")).toBeInTheDocument();
@@ -227,12 +238,12 @@ describe("AgentPanel", () => {
     );
   });
 
-  it("Live: pilot and all are disabled until the gate passes; the red Live banner shows", () => {
+  it("Live: pilot and all are disabled until the gate passes; the red Live banner shows", async () => {
     mocks.isAdmin = true;
     mocks.ready = false;
     mocks.settingsQuery.mockReturnValue({ data: { ...settings, mode: "live" }, isError: false });
     mocks.preview.mockReturnValue({ data: undefined, error: null });
-    render(<AgentPanel />);
+    await show(AgentModeSection);
     expect(screen.getByRole("status")).toHaveTextContent(
       "Live: the AI sends real messages to 1 contact (Test contacts only). 3 sent today",
     );
@@ -246,7 +257,7 @@ describe("AgentPanel", () => {
     expect(screen.getAllByText("Not passed").length).toBeGreaterThan(0);
   });
 
-  it("Live: a wider scope confirms (refused by the gate → Go live disabled with the reason); narrowing saves at once", () => {
+  it("Live: a wider scope confirms (refused by the gate → Go live disabled with the reason); narrowing saves at once", async () => {
     mocks.isAdmin = true;
     mocks.ready = true;
     mocks.settingsQuery.mockReturnValue({
@@ -264,7 +275,7 @@ describe("AgentPanel", () => {
       },
       error: null,
     }));
-    render(<AgentPanel />);
+    await show(AgentModeSection);
     fireEvent.click(screen.getByRole("button", { name: "All AI contacts" }));
     expect(screen.getByText("The go-live gate isn't passed yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Go live" })).toBeDisabled();
@@ -273,10 +284,11 @@ describe("AgentPanel", () => {
     expect(mocks.update).toHaveBeenCalledWith({ liveScope: "test_contacts" }, expect.any(Object));
   });
 
-  it("saves the limits form with numbers and blank models as null", () => {
+  it("saves the limits form with numbers and blank models as null", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(AgentLimitsSection);
+    expect(screen.queryByRole("button", { name: "Save limits" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Wait after a rep's call or note (hours)"), {
       target: { value: "12" },
     });
@@ -295,10 +307,10 @@ describe("AgentPanel", () => {
     expect(screen.getByText(/Last updated by Ada Admin/)).toBeInTheDocument();
   });
 
-  it("saves the company display name trimmed, and blank as null", () => {
+  it("saves the company display name trimmed, and blank as null", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
+    await show(AgentLimitsSection);
     const field = screen.getByLabelText("Company name used in AI messages");
     expect(field).toHaveAttribute("placeholder", "Workspace name");
     fireEvent.change(field, { target: { value: "  MOTM Technologies " } });
@@ -309,17 +321,15 @@ describe("AgentPanel", () => {
     );
   });
 
-  it("offers the starter template when there is no playbook, and saves it as a new version", () => {
+  it("offers the starter template when there is no playbook, and saves it as a new version", async () => {
     mocks.isAdmin = true;
-    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
-    render(<AgentPanel />);
-    const saveButton = screen.getByRole("button", { name: "Save as new version" });
-    expect(saveButton).toBeDisabled();
+    await show(PlaybookSection);
+    expect(screen.queryByRole("button", { name: "Save as new version" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Insert starter template" }));
     expect((screen.getByLabelText("Playbook") as HTMLTextAreaElement).value).toContain(
       "# When to hand off to the rep",
     );
-    fireEvent.click(saveButton);
+    fireEvent.click(screen.getByRole("button", { name: "Save as new version" }));
     expect(mocks.save).toHaveBeenCalledWith(
       expect.stringContaining("# Who we are"),
       expect.any(Object),

@@ -1,15 +1,17 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { backend, type WhatsAppConnection, type WhatsAppSettingsInput } from "@/lib/backend-client";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { keys, messageFromError, useIsAdmin } from "@/store";
+import { SaveBar } from "@/components/crm/save-bar";
+import { DailyTable, SafetyEventsList, Stat } from "./safety-events";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -51,8 +53,8 @@ function windowText({ days, start, end }: WhatsAppConnection["sendWindow"]) {
 }
 
 /**
- * Settings → Workspace → WhatsApp → Safety (E1, E4a): the workspace's master switch, send window
- * and max numbers, and monitoring across its numbers. Per-number limits live on each number's card.
+ * Settings → Channels → WhatsApp → Safety & limits (E1, E4a, UX-1): the workspace's master switch, send window and
+ * max numbers (admins edit with a sticky save bar; others read). Per-number limits live in each number's drawer.
  */
 export function WhatsAppSafety({
   workspaceId,
@@ -67,9 +69,9 @@ export function WhatsAppSafety({
     client.setQueryData(keys.connection(workspaceId, "whatsapp"), next);
 
   return (
-    <section aria-labelledby="whatsapp-safety" className="space-y-4 border-t pt-4">
+    <section aria-labelledby="whatsapp-safety" className="space-y-4">
       <div>
-        <h3 id="whatsapp-safety" className="text-sm font-semibold">
+        <h3 id="whatsapp-safety" className="type-section-title">
           Safety
         </h3>
         <p className="text-xs text-muted-foreground">
@@ -82,18 +84,11 @@ export function WhatsAppSafety({
       {!data.enabled && (
         <div
           role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          className="rounded-md border border-destructive/30 bg-danger-soft px-3 py-2 text-sm text-danger-soft-foreground"
         >
           WhatsApp outbound is switched off for this workspace: no number sends.
         </div>
       )}
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Sent today (all numbers)" value={String(data.todayCount)} />
-        <Stat label="New chats today" value={String(data.newChatsToday)} />
-        <Stat label="Send failures (24 h)" value={String(data.failures24h)} />
-        <Stat label="STOP replies (24 h)" value={String(data.stops24h)} />
-      </div>
 
       {isAdmin ? (
         <SafetyForm key={workspaceId} data={data} onSaved={store} />
@@ -107,52 +102,67 @@ export function WhatsAppSafety({
           </p>
         </dl>
       )}
+    </section>
+  );
+}
 
-      {data.safetyEvents.length > 0 && (
-        <div className="space-y-2 rounded-lg border p-3">
-          <div className="text-sm font-medium">Recent safety events</div>
-          <ul className="space-y-1">
-            {data.safetyEvents.map((event) => (
+/** Settings → Channels → WhatsApp → Monitoring: today's counts, the whole safety-event history, 14 days, review. */
+export function WhatsAppMonitoring({
+  workspaceId,
+  data,
+}: {
+  workspaceId: string;
+  data: WhatsAppConnection;
+}) {
+  return (
+    <div className="space-y-6">
+      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Sent today (all numbers)" value={String(data.todayCount)} />
+        <Stat label="New chats today" value={String(data.newChatsToday)} />
+        <Stat label="Send failures (24 h)" value={String(data.failures24h)} />
+        <Stat label="STOP replies (24 h)" value={String(data.stops24h)} />
+      </dl>
+      <p className="type-small text-muted-foreground">
+        Pending workflow messages: {data.pendingCount} · Invalid existing phone values:{" "}
+        {data.invalidPhoneCount}
+      </p>
+      {data.inboundReview.length > 0 && (
+        <section aria-labelledby="wa-inbound-review" className="space-y-2">
+          <h3 id="wa-inbound-review" className="type-section-title">
+            Inbound replies needing review
+          </h3>
+          <ul className="divide-y rounded-lg border">
+            {data.inboundReview.map((event) => (
               <li
-                key={`${event.at}-${event.kind}-${event.numberLabel ?? ""}`}
-                className="flex flex-wrap justify-between gap-x-2 border-t pt-1 text-xs"
+                key={event.messageId}
+                className="flex flex-wrap justify-between gap-2 px-3 py-2 text-xs"
               >
-                <span className="font-medium">
-                  {event.numberLabel ? `${event.numberLabel} · ` : ""}
-                  {EVENT_LABELS[event.kind]}
-                </span>
-                <span className="min-w-0 break-words text-muted-foreground">
-                  {event.detail ? `${event.detail} · ` : ""}
-                  {new Date(event.at).toLocaleString()}
+                <span>{event.senderPhoneE164 ?? "Unknown direct sender"}</span>
+                <span className="capitalize text-muted-foreground">
+                  {event.disposition} · {event.messageType} · {event.matchCount} matches ·{" "}
+                  {new Date(event.receivedAt).toLocaleString()}
                 </span>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
-
-      <table className="w-full text-xs">
-        <caption className="mb-1 text-left text-sm font-medium">Last 14 days</caption>
-        <thead className="text-muted-foreground">
-          <tr className="text-left">
-            <th className="py-1 font-normal">Date (IST)</th>
-            <th className="py-1 text-right font-normal">Sent</th>
-            <th className="py-1 text-right font-normal">Failed</th>
-            <th className="py-1 text-right font-normal">STOP</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.daily.map((day) => (
-            <tr key={day.date} className="border-t">
-              <td className="py-1">{day.date}</td>
-              <td className="py-1 text-right tabular-nums">{day.sent}</td>
-              <td className="py-1 text-right tabular-nums">{day.failed}</td>
-              <td className="py-1 text-right tabular-nums">{day.stops}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
+      <SafetyEventsList
+        queryKey={keys.safetyEvents(workspaceId, "whatsapp")}
+        fetchPage={(cursor, signal) =>
+          backend.connections.whatsapp.safetyEvents({ cursor }, signal)
+        }
+        labels={EVENT_LABELS}
+      />
+      <DailyTable
+        rows={data.daily}
+        columns={[
+          { key: "sent", label: "Sent" },
+          { key: "failed", label: "Failed" },
+          { key: "stops", label: "STOP" },
+        ]}
+      />
+    </div>
   );
 }
 
@@ -168,14 +178,16 @@ function SafetyForm({
     defaultValues: formValues(data),
   });
   const errors = form.formState.errors;
+  const [saveError, setSaveError] = useState<string | null>(null);
   const save = form.handleSubmit(async (values) => {
+    setSaveError(null);
     try {
       const next = await backend.connections.whatsapp.update(values);
       onSaved(next);
       form.reset(formValues(next));
       toast.success("WhatsApp settings saved.");
     } catch (error) {
-      toast.error(messageFromError(error));
+      setSaveError(messageFromError(error));
     }
   });
   return (
@@ -252,35 +264,37 @@ function SafetyForm({
           </div>
         </div>
       </fieldset>
-      <div className="flex flex-wrap items-center gap-4">
-        <Controller
-          control={form.control}
-          name="enabled"
-          render={({ field }) => (
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <Switch
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                aria-label="Outbound enabled (all numbers)"
-              />
-              Outbound enabled (all numbers)
-            </label>
-          )}
-        />
-        <Button type="submit" disabled={form.formState.isSubmitting}>
-          Save WhatsApp settings
-        </Button>
-      </div>
+      <Controller
+        control={form.control}
+        name="enabled"
+        render={({ field }) => (
+          <label className="flex items-center justify-between gap-4 rounded-lg border p-3 text-sm">
+            <span>
+              <span className="font-medium">Outbound enabled (all numbers)</span>
+              <span className="block text-xs text-muted-foreground">
+                Off: no number sends; messages wait.
+              </span>
+            </span>
+            <Switch
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              aria-label="Outbound enabled (all numbers)"
+            />
+          </label>
+        )}
+      />
+      <SaveBar
+        dirty={form.formState.isDirty}
+        saving={form.formState.isSubmitting}
+        onSave={() => void save()}
+        onDiscard={() => {
+          setSaveError(null);
+          form.reset(formValues(data));
+        }}
+        error={saveError}
+        saveLabel="Save WhatsApp settings"
+      />
     </form>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-semibold">{value}</div>
-    </div>
   );
 }
 

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ListChecks } from "lucide-react";
+import { ListChecks, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import type { AgentMessageRules } from "@/lib/backend-client";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { messageFromError, useUpdateAgentSettings } from "@/store";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionHeader } from "@/components/crm/section-layout";
+import { SectionSkeleton } from "@/components/crm/section-skeleton";
+import { messageFromError, useAgentStats, useIsAdmin, useUpdateAgentSettings } from "@/store";
+import { StyleExamplesCard } from "./style-examples-card";
+import { WithAgentSettings } from "./agent-settings-gate";
 
 const words = z.coerce
   .number({ invalid_type_error: "Enter a number." })
@@ -117,7 +122,6 @@ function RulesForm({ rules }: { rules: AgentMessageRules }) {
   const submit = form.handleSubmit((values) =>
     update.mutate(values, {
       onSuccess: () => toast.success("Message rules saved."),
-      onError: (error) => toast.error(messageFromError(error)),
     }),
   );
 
@@ -170,9 +174,60 @@ function RulesForm({ rules }: { rules: AgentMessageRules }) {
           <p className="text-xs text-destructive">{errors.bannedPhrases.message}</p>
         )}
       </div>
-      <Button type="submit" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save message rules"}
-      </Button>
+      <SaveBar
+        dirty={form.formState.isDirty}
+        saving={update.isPending}
+        onSave={() => void submit()}
+        onDiscard={() => {
+          update.reset();
+          reset(formValues(rules));
+        }}
+        error={update.isError ? messageFromError(update.error) : undefined}
+        saveLabel="Save message rules"
+      />
     </form>
+  );
+}
+
+function MessageRulesReadOnly() {
+  const stats = useAgentStats();
+  if (stats.isError) {
+    return (
+      <Card>
+        <CardContent className="space-y-2 py-6 text-sm">
+          <p className="text-destructive">
+            Couldn't load the AI message rules: {messageFromError(stats.error)}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void stats.refetch()}>
+            <RefreshCw className="size-3.5" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!stats.data) return <SectionSkeleton label="Loading AI message rules" />;
+  return stats.data.messageRules ? (
+    <div className="space-y-6">
+      <MessageRulesCard rules={stats.data.messageRules} editable={false} />
+      <StyleExamplesCard examples={stats.data.messageRules.styleExamples} editable={false} />
+    </div>
+  ) : null;
+}
+
+/** Settings → AI → Message rules: admins edit; everyone else reads (E2b). */
+export function MessageRulesSection() {
+  const isAdmin = useIsAdmin();
+  return (
+    <>
+      <SectionHeader
+        title="Message rules"
+        description="Every AI message is checked against these."
+      />
+      {isAdmin ? (
+        <WithAgentSettings>{(s) => <MessageRulesCard rules={s} editable />}</WithAgentSettings>
+      ) : (
+        <MessageRulesReadOnly />
+      )}
+    </>
   );
 }

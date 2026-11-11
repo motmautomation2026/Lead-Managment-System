@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Plus, RefreshCw, Trash2, Users } from "lucide-react
 import { toast } from "sonner";
 import { backend, type AssignmentRules } from "@/lib/backend-client";
 import { Button } from "@/components/ui/button";
+import { SaveBar } from "@/components/crm/save-bar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,7 +56,6 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
       client.setQueryData(queryKey, data);
       toast.success("Lead assignment rules saved.");
     },
-    onError: (error) => toast.error(messageFromError(error)),
   });
 
   const problem = ruleRowsProblem(rows);
@@ -75,6 +75,10 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
       : undefined;
 
   const saved = query.data;
+  const dirty =
+    saved !== undefined &&
+    (JSON.stringify(rows) !== JSON.stringify(rowsFrom(saved)) ||
+      fallbackOwnerId !== (saved.fallbackOwnerId ?? UNASSIGNED));
   return (
     <Card>
       <CardHeader>
@@ -246,16 +250,20 @@ function LeadAssignmentEditor({ workspaceId }: { workspaceId: string }) {
                 {problem}
               </p>
             )}
-            <div className="flex items-center gap-3 border-t pt-4">
-              <p className="text-xs text-muted-foreground">Applies to new leads only.</p>
-              <Button
-                className="ml-auto"
-                onClick={() => save.mutate()}
-                disabled={Boolean(problem) || save.isPending}
-              >
-                Save rules
-              </Button>
-            </div>
+            <p className="text-xs text-muted-foreground">Applies to new leads only.</p>
+            <SaveBar
+              dirty={dirty}
+              saving={save.isPending}
+              disabled={Boolean(problem)}
+              onSave={() => save.mutate()}
+              onDiscard={() => {
+                save.reset();
+                setRows(rowsFrom(saved));
+                setFallbackOwnerId(saved.fallbackOwnerId ?? UNASSIGNED);
+              }}
+              error={save.isError ? messageFromError(save.error) : undefined}
+              saveLabel="Save rules"
+            />
           </>
         )}
       </CardContent>

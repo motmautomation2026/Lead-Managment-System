@@ -4,11 +4,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Factory } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionHeader } from "@/components/crm/section-layout";
 import { messageFromError, useUpdateAgentSettings } from "@/store";
+import { WithAgentSettings } from "./agent-settings-gate";
 import { parseIndustries } from "./target-industries";
 
 // Mirrors the server (settingsSchema.ts): ≤ 100 industries, each ≤ 60 characters.
@@ -42,7 +44,6 @@ export function TargetIndustriesCard({ keywords }: { keywords: string[] }) {
       { targetIndustryKeywords: parseIndustries(values.industries) },
       {
         onSuccess: () => toast.success("Target industries saved."),
-        onError: (e) => toast.error(messageFromError(e)),
       },
     ),
   );
@@ -73,11 +74,34 @@ export function TargetIndustriesCard({ keywords }: { keywords: string[] }) {
             </p>
             {error && <p className="text-xs text-destructive">{error.message}</p>}
           </div>
-          <Button type="submit" disabled={update.isPending}>
-            {update.isPending ? "Saving…" : "Save target industries"}
-          </Button>
+          <SaveBar
+            dirty={form.formState.isDirty}
+            saving={update.isPending}
+            onSave={() => void submit()}
+            onDiscard={() => {
+              update.reset();
+              reset({ industries: keywords.join(", ") });
+            }}
+            error={update.isError ? messageFromError(update.error) : undefined}
+            saveLabel="Save target industries"
+          />
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/** Settings → AI → Target industries (admins). */
+export function IndustriesSection() {
+  return (
+    <>
+      <SectionHeader
+        title="Target industries"
+        description="Industries that raise the hot-lead score."
+      />
+      <WithAgentSettings>
+        {(s) => <TargetIndustriesCard keywords={s.targetIndustryKeywords ?? []} />}
+      </WithAgentSettings>
+    </>
   );
 }

@@ -1,5 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const members = [
@@ -48,6 +47,7 @@ vi.mock("@/store", async () => {
   };
 });
 
+import { renderInRouter } from "@/test/render-in-router";
 import { TeamPanel } from "./team-panel";
 
 afterEach(() => {
@@ -56,23 +56,19 @@ afterEach(() => {
 });
 
 function renderPanel() {
-  mocks.list.mockResolvedValue({ data: members });
-  return render(
-    <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-    >
-      <TeamPanel />
-    </QueryClientProvider>,
-  );
+  mocks.list.mockResolvedValue({ data: members, nextCursor: null });
+  return renderInRouter(() => <TeamPanel />);
 }
 
 describe("TeamPanel (E4b rule 9)", () => {
   it("lists members with their role here; adds an existing user by email", async () => {
     mocks.add.mockResolvedValue({ data: members });
-    renderPanel();
+    await renderPanel();
     expect(await screen.findByText("Naitik")).toBeTruthy();
     expect((screen.getByLabelText("Role of Asha Admin") as HTMLSelectElement).value).toBe("admin");
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: " new@motm.test " } });
+    fireEvent.change(screen.getByLabelText("Add an existing user by email"), {
+      target: { value: " new@motm.test " },
+    });
     fireEvent.change(screen.getByLabelText("Role in this workspace"), {
       target: { value: "admin" },
     });
@@ -85,7 +81,7 @@ describe("TeamPanel (E4b rule 9)", () => {
 
   it("changes a role", async () => {
     mocks.setRole.mockResolvedValue({ data: members });
-    renderPanel();
+    await renderPanel();
     fireEvent.change(await screen.findByLabelText("Role of Naitik"), {
       target: { value: "admin" },
     });
@@ -98,7 +94,7 @@ describe("TeamPanel (E4b rule 9)", () => {
         "This user still owns 3 active contact(s), 0 open deal(s) and 1 open task(s) in this workspace. Reassign them first.",
       ),
     );
-    renderPanel();
+    await renderPanel();
     const row = (await screen.findByText("Naitik")).closest("li")!;
     fireEvent.click(within(row).getByRole("button", { name: "Remove" }));
     const dialog = await screen.findByRole("dialog", { name: "Remove Naitik?" });
@@ -107,6 +103,27 @@ describe("TeamPanel (E4b rule 9)", () => {
     await waitFor(() =>
       expect(mocks.toast.error).toHaveBeenCalledWith(
         expect.stringContaining("still owns 3 active contact(s)"),
+      ),
+    );
+  });
+
+  it("UX-1: members are paged (Load more) and searched on the server", async () => {
+    mocks.list
+      .mockResolvedValueOnce({ data: [members[0]], nextCursor: "c-2" })
+      .mockResolvedValueOnce({ data: [members[1]], nextCursor: null })
+      .mockResolvedValue({ data: [members[1]], nextCursor: null });
+    await renderInRouter(() => <TeamPanel />);
+    expect(await screen.findByText("Asha Admin")).toBeInTheDocument();
+    expect(screen.queryByText("Naitik")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("Naitik")).toBeInTheDocument();
+    expect(mocks.list).toHaveBeenLastCalledWith({ cursor: "c-2", q: undefined }, expect.anything());
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search members"), { target: { value: "nai" } });
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenLastCalledWith(
+        { cursor: undefined, q: "nai" },
+        expect.anything(),
       ),
     );
   });

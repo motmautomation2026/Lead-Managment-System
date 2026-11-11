@@ -1297,7 +1297,9 @@ export const backend = {
       signal,
     ),
   team: {
-    list: (signal?: AbortSignal) => get<{ data: TeamMember[] }>("/team/members", signal),
+    /** UX-1: keyset pages by name. */
+    list: (params: { cursor?: string | undefined; q?: string | undefined }, signal?: AbortSignal) =>
+      get<Page<TeamMember>>(listQuery("/team/members", params), signal),
     add: (input: { email: string; role: WorkspaceRole }) =>
       send<{ data: TeamMember[] }>("POST", "/team/members", input),
     setRole: (userId: string, role: WorkspaceRole) =>
@@ -1316,7 +1318,11 @@ export const backend = {
   },
   admin: {
     users: {
-      list: (signal?: AbortSignal) => get<{ data: AdminUser[] }>("/admin/users", signal),
+      /** UX-1: keyset pages, newest first. */
+      list: (
+        params: { cursor?: string | undefined; q?: string | undefined },
+        signal?: AbortSignal,
+      ) => get<Page<AdminUser>>(listQuery("/admin/users", params), signal),
       create: (input: { name: string; email: string; password: string }) =>
         send<AdminUser>("POST", "/admin/users", input),
       update: (
@@ -1338,6 +1344,12 @@ export const backend = {
   connections: {
     email: {
       get: (signal?: AbortSignal) => get<EmailSettings>("/connections/email/settings", signal),
+      /** UX-1: the whole safety-event history, newest first. */
+      safetyEvents: (params: { cursor?: string | undefined }, signal?: AbortSignal) =>
+        get<Page<EmailSettings["safetyEvents"][number] & { id: string }>>(
+          listQuery("/connections/email/safety-events", params),
+          signal,
+        ),
       update: (input: EmailSettingsInput) =>
         send<EmailSettings>("PUT", "/connections/email/settings", input),
       testSmtp: () => send<EmailConnectionTest>("POST", "/connections/email/test-smtp"),
@@ -1359,6 +1371,12 @@ export const backend = {
     whatsapp: {
       get: (signal?: AbortSignal) =>
         get<WhatsAppConnection>("/connections/whatsapp/settings", signal),
+      /** UX-1: the whole safety-event history, newest first. */
+      safetyEvents: (params: { cursor?: string | undefined }, signal?: AbortSignal) =>
+        get<Page<WhatsAppConnection["safetyEvents"][number] & { id: string }>>(
+          listQuery("/connections/whatsapp/safety-events", params),
+          signal,
+        ),
       update: (input: WhatsAppSettingsInput) =>
         send<WhatsAppConnection>("PUT", "/connections/whatsapp/settings", input),
       addNumber: (input: { label?: string; ownerUserId?: string | null } = {}) =>

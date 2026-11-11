@@ -4,11 +4,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { PenLine } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionHeader } from "@/components/crm/section-layout";
 import { messageFromError, useUpdateAgentSettings } from "@/store";
+import { WithAgentSettings } from "./agent-settings-gate";
 
 // Mirrors the server (settingsSchema.ts).
 const MAX_CHARS = 6000;
@@ -59,7 +61,6 @@ function StyleExamplesForm({ examples }: { examples: string }) {
   const submit = form.handleSubmit((values) =>
     update.mutate(values, {
       onSuccess: () => toast.success("Style examples saved."),
-      onError: (e) => toast.error(messageFromError(e)),
     }),
   );
 
@@ -78,9 +79,29 @@ function StyleExamplesForm({ examples }: { examples: string }) {
         </p>
         {error && <p className="text-xs text-destructive">{error.message}</p>}
       </div>
-      <Button type="submit" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save style examples"}
-      </Button>
+      <SaveBar
+        dirty={form.formState.isDirty}
+        saving={update.isPending}
+        onSave={() => void submit()}
+        onDiscard={() => {
+          update.reset();
+          reset({ styleExamples: examples });
+        }}
+        error={update.isError ? messageFromError(update.error) : undefined}
+        saveLabel="Save style examples"
+      />
     </form>
+  );
+}
+
+/** Settings → AI → Style examples (admins). */
+export function StyleSection() {
+  return (
+    <>
+      <SectionHeader title="Style examples" description="The style the AI writes in." />
+      <WithAgentSettings>
+        {(s) => <StyleExamplesCard examples={s.styleExamples} editable />}
+      </WithAgentSettings>
+    </>
   );
 }

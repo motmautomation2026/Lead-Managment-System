@@ -3,7 +3,7 @@ import { Controller, useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Mail, RefreshCw, ShieldAlert } from "lucide-react";
+import { Mail, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   backend,
@@ -13,7 +13,13 @@ import {
   type EmailSettingsInput,
 } from "@/lib/backend-client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusCard } from "@/components/crm/status-card";
+import { SectionTabs } from "@/components/crm/section-tabs";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionSkeleton } from "@/components/crm/section-skeleton";
+import { useSearchTab } from "@/lib/use-search-param";
+import { EMAIL_TABS } from "./settings-search";
+import { DailyTable, SafetyEventsList, Stat } from "./safety-events";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -123,9 +129,10 @@ const windowText = ({ days, start, end }: EmailSettings["sendWindow"]) =>
   `${days.map((d) => DAYS[d - 1]).join(", ")} · ${start}–${end} IST`;
 
 /**
- * Settings → Workspace → Email (E1b): the SMTP + IMAP mailbox, connection tests, a test
- * email, safety limits, pause/resume, monitoring and the deliverability check. Every CRM
- * user can read it (never a secret); only admins change, test or resume.
+ * Settings → Channels → Email (E1b, UX-1): a status card (state, sent today, the next action), then tabs —
+ * Connection (SMTP + IMAP, mailbox checks) · Safety & limits · Replies & bounces · Monitoring · Deliverability.
+ * Connection and Safety share one form with a sticky save bar. Every CRM user can read it (never a secret); only
+ * admins change, test or resume.
  */
 export function EmailPanel({ workspaceId }: { workspaceId: string }) {
   const isAdmin = useIsAdmin();
@@ -149,172 +156,355 @@ export function EmailPanel({ workspaceId }: { workspaceId: string }) {
 
   const data = query.data;
   if (!data)
-    return (
-      <Card>
-        <CardContent className="p-6 text-sm text-muted-foreground">
-          {query.isError ? (
-            <div className="space-y-2">
-              <p className="text-destructive">
-                Couldn't load the email settings: {messageFromError(query.error)}
-              </p>
-              <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-                <RefreshCw className="size-3.5" /> Retry
-              </Button>
-            </div>
-          ) : (
-            "Loading email settings…"
-          )}
-        </CardContent>
-      </Card>
+    return query.isError ? (
+      <div className="space-y-2 text-sm">
+        <p className="text-destructive">
+          Couldn't load the email settings: {messageFromError(query.error)}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
+          <RefreshCw className="size-3.5" /> Retry
+        </Button>
+      </div>
+    ) : (
+      <SectionSkeleton label="Loading email settings" />
     );
 
-  const capText =
-    data.warmupDay !== null && data.effectiveDailyCap < data.dailyCap
-      ? `${data.sentToday} / ${data.effectiveDailyCap} (warm-up day ${data.warmupDay})`
-      : `${data.sentToday} / ${data.effectiveDailyCap}`;
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Mail /> Email
-        </CardTitle>
-        <CardDescription>
-          Email goes out through your own mailbox (SMTP), one at a time from the background worker.
-          Passwords are encrypted and never shown again.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {!data.configured && (
-          <div
-            role="status"
-            className="rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground"
-          >
-            <div className="font-medium">Email is not set up</div>
-            <div>
-              {data.legacyProvider === "resend"
-                ? "This workspace used Resend, which is no longer supported. "
-                : ""}
-              {isAdmin
-                ? "Add the SMTP mailbox below. Emails wait in the queue until then."
-                : "An admin must add the SMTP mailbox here. Emails wait in the queue until then."}
-            </div>
-          </div>
-        )}
-
-        {data.pause && (
-          <div
-            role="alert"
-            className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="flex gap-2">
-              <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <div>
-                <div className="font-medium">Email sending is paused</div>
-                <div>{data.pause.reason ?? "Sending is turned off."}</div>
-                {data.pause.at && (
-                  <div className="text-xs">
-                    {new Date(data.pause.at).toLocaleString()}
-                    {data.pause.byName ? ` · by ${data.pause.byName}` : " · automatically"}
-                  </div>
-                )}
-              </div>
-            </div>
-            {isAdmin && (
-              <Button size="sm" variant="outline" onClick={() => setResumeOpen(true)}>
-                Resume sending
-              </Button>
-            )}
-          </div>
-        )}
-
-        {isAdmin ? (
-          <>
-            <EmailForm key={workspaceId} data={data} onSaved={store} />
-            {data.configured && <ConnectionTests />}
-          </>
-        ) : (
-          <ReadOnlySettings data={data} />
-        )}
-
-        <section aria-labelledby="email-monitoring" className="space-y-3 border-t pt-4">
-          <h3 id="email-monitoring" className="text-sm font-semibold">
-            Sending
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Sent today" value={capText} />
-            <Stat label="Sent this hour" value={`${data.sentThisHour} / ${data.hourlyCap}`} />
-            <Stat label="Send failures (24 h)" value={String(data.failures24h)} />
-            <Stat label="Rejected by recipient (24 h)" value={String(data.rejections24h)} />
-          </div>
-          {data.safetyEvents.length > 0 && (
-            <div className="space-y-2 rounded-lg border p-3">
-              <div className="text-sm font-medium">Recent safety events</div>
-              <ul className="space-y-1">
-                {data.safetyEvents.map((event) => (
-                  <li
-                    key={`${event.at}-${event.kind}`}
-                    className="flex flex-wrap justify-between gap-x-2 border-t pt-1 text-xs"
-                  >
-                    <span className="font-medium">{EVENT_LABELS[event.kind]}</span>
-                    <span className="min-w-0 break-words text-muted-foreground">
-                      {event.detail ? `${event.detail} · ` : ""}
-                      {new Date(event.at).toLocaleString()}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <table className="w-full text-xs">
-            <caption className="mb-1 text-left text-sm font-medium">Last 14 days</caption>
-            <thead className="text-muted-foreground">
-              <tr className="text-left">
-                <th className="py-1 font-normal">Date (IST)</th>
-                <th className="py-1 text-right font-normal">Sent</th>
-                <th className="py-1 text-right font-normal">Failed</th>
-                <th className="py-1 text-right font-normal">Rejected</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.daily.map((day) => (
-                <tr key={day.date} className="border-t">
-                  <td className="py-1">{day.date}</td>
-                  <td className="py-1 text-right tabular-nums">{day.sent}</td>
-                  <td className="py-1 text-right tabular-nums">{day.failed}</td>
-                  <td className="py-1 text-right tabular-nums">{day.rejected}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-        {data.imapStatus && (
-          <RepliesAndBounces status={data.imapStatus} isAdmin={isAdmin} onChecked={store} />
-        )}
-
-        <OpenTracking data={data} isAdmin={isAdmin} onSaved={store} />
-
-        {isAdmin && data.configured && <DeliverabilityCard />}
-
+    <EmailView
+      key={workspaceId}
+      data={data}
+      isAdmin={isAdmin}
+      workspaceId={workspaceId}
+      onSaved={store}
+      onResume={() => setResumeOpen(true)}
+      resumeDialog={
         <ConfirmDialog
           open={resumeOpen}
           onOpenChange={setResumeOpen}
           title="Resume email sending?"
-          description="Queued emails will start going out again, with the usual spacing, caps and send window. Check why it was paused first."
+          description="Queued emails start going out again, with the usual spacing, caps and send window. Check why it was paused first."
           confirmLabel="Resume sending"
+          confirmVariant="default"
           disabled={resume.isPending}
           onConfirm={() => resume.mutate()}
         />
-      </CardContent>
-    </Card>
+      }
+    />
   );
 }
 
-function ReadOnlySettings({ data }: { data: EmailSettings }) {
+const EMAIL_TAB_FIELDS: Record<"connection" | "safety", (keyof EmailFormValues)[]> = {
+  connection: [
+    "smtpHost",
+    "smtpPort",
+    "smtpSecurity",
+    "smtpUsername",
+    "smtpPassword",
+    "fromAddress",
+    "fromName",
+    "replyTo",
+    "imapHost",
+    "imapPort",
+    "imapSecurity",
+    "imapSameLogin",
+    "imapUsername",
+    "imapPassword",
+    "imapFolder",
+  ],
+  safety: [
+    "minDelaySeconds",
+    "maxDelaySeconds",
+    "dailyCap",
+    "hourlyCap",
+    "sendWindow",
+    "alreadyWarmed",
+    "enabled",
+  ],
+};
+
+function EmailView({
+  data,
+  isAdmin,
+  workspaceId,
+  onSaved,
+  onResume,
+  resumeDialog,
+}: {
+  data: EmailSettings;
+  isAdmin: boolean;
+  workspaceId: string;
+  onSaved: (next: EmailSettings) => void;
+  onResume: () => void;
+  resumeDialog: ReactNode;
+}) {
+  const tabs = data.imapStatus ? EMAIL_TABS : EMAIL_TABS.filter((t) => t !== "replies");
+  const [tab, setTab] = useSearchTab(tabs);
+  const form = useForm<EmailFormValues>({
+    resolver: zodResolver(emailSchema),
+    defaultValues: formValues(data),
+  });
+  const errors = form.formState.errors;
+  const errorCount = (t: "connection" | "safety") =>
+    EMAIL_TAB_FIELDS[t].filter((name) => errors[name]).length;
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const save = form.handleSubmit(
+    async (values) => {
+      setSaveError(null);
+      const input: EmailSettingsInput = { ...values };
+      // Blank secrets keep the saved ones.
+      for (const key of ["smtpUsername", "smtpPassword", "imapUsername", "imapPassword"] as const) {
+        if (!input[key]) delete input[key];
+      }
+      try {
+        const next = await backend.connections.email.update(input);
+        onSaved(next);
+        form.reset(formValues(next));
+        toast.success("Email settings saved.");
+      } catch (error) {
+        setSaveError(messageFromError(error));
+      }
+    },
+    // Show the tab with the first problem.
+    (problems) => {
+      const has = (t: "connection" | "safety") => EMAIL_TAB_FIELDS[t].some((n) => problems[n]);
+      if (has("connection")) setTab("connection");
+      else if (has("safety")) setTab("safety");
+    },
+  );
+
+  const badge = (t: "connection" | "safety") =>
+    errorCount(t) ? (
+      <StatusPill tone="danger" className="px-1.5">
+        {errorCount(t)}
+      </StatusPill>
+    ) : null;
+
   return (
-    <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-      {data.configured && (
+    <div className="space-y-6">
+      <EmailStatusCard
+        data={data}
+        isAdmin={isAdmin}
+        onResume={onResume}
+        onSetUp={() => {
+          setTab("connection");
+          requestAnimationFrame(() => document.getElementById("email-smtpHost")?.focus());
+        }}
+        onOpenTab={setTab}
+      />
+      <SectionTabs
+        label="Email settings"
+        value={tab}
+        onValueChange={(t) => setTab(t as (typeof EMAIL_TABS)[number])}
+        keepMounted={["connection", "safety"]}
+        tabs={[
+          {
+            id: "connection",
+            label: "Connection",
+            badge: badge("connection"),
+            content: isAdmin ? (
+              <div className="space-y-6">
+                <ConnectionFields form={form} data={data} />
+                {data.configured && <ConnectionTests />}
+              </div>
+            ) : (
+              <ReadOnlyConnection data={data} />
+            ),
+          },
+          {
+            id: "safety",
+            label: "Safety & limits",
+            badge: badge("safety"),
+            content: isAdmin ? <SafetyFields form={form} /> : <ReadOnlySafety data={data} />,
+          },
+          ...(data.imapStatus
+            ? [
+                {
+                  id: "replies",
+                  label: "Replies & bounces",
+                  content: (
+                    <RepliesAndBounces
+                      status={data.imapStatus}
+                      isAdmin={isAdmin}
+                      onChecked={onSaved}
+                    />
+                  ),
+                },
+              ]
+            : []),
+          {
+            id: "monitoring",
+            label: "Monitoring",
+            content: <EmailMonitoring data={data} workspaceId={workspaceId} />,
+          },
+          {
+            id: "deliverability",
+            label: "Deliverability",
+            content: (
+              <div className="space-y-6">
+                {isAdmin && data.configured && <DeliverabilityCard />}
+                <OpenTracking data={data} isAdmin={isAdmin} onSaved={onSaved} />
+              </div>
+            ),
+          },
+        ]}
+      />
+      {isAdmin && (
+        <SaveBar
+          dirty={form.formState.isDirty}
+          saving={form.formState.isSubmitting}
+          onSave={() => void save()}
+          onDiscard={() => {
+            setSaveError(null);
+            form.reset(formValues(data));
+          }}
+          error={
+            saveError ??
+            (errorCount("connection") + errorCount("safety")
+              ? "Fix the highlighted fields first."
+              : undefined)
+          }
+          saveLabel="Save email settings"
+        />
+      )}
+      {resumeDialog}
+    </div>
+  );
+}
+
+function EmailStatusCard({
+  data,
+  isAdmin,
+  onResume,
+  onSetUp,
+  onOpenTab,
+}: {
+  data: EmailSettings;
+  isAdmin: boolean;
+  onResume: () => void;
+  onSetUp: () => void;
+  onOpenTab: (tab: (typeof EMAIL_TABS)[number]) => void;
+}) {
+  const capText =
+    data.warmupDay !== null && data.effectiveDailyCap < data.dailyCap
+      ? `${data.sentToday} / ${data.effectiveDailyCap} (warm-up day ${data.warmupDay})`
+      : `${data.sentToday} / ${data.effectiveDailyCap}`;
+  const metric = { label: "Sent today", value: capText };
+  const common = { title: "Email", icon: Mail, metric };
+  if (!data.configured)
+    return (
+      <StatusCard
+        {...common}
+        tone="warning"
+        status="Not set up"
+        detail={
+          <>
+            {data.legacyProvider === "resend"
+              ? "This workspace used Resend, which is no longer supported. "
+              : ""}
+            {isAdmin
+              ? "Add the SMTP mailbox below. Emails wait in the queue until then."
+              : "An admin must add the SMTP mailbox here. Emails wait in the queue until then."}
+          </>
+        }
+        action={isAdmin && <Button onClick={onSetUp}>Set up mailbox</Button>}
+      />
+    );
+  if (data.pause)
+    return (
+      <StatusCard
+        {...common}
+        tone="danger"
+        status="Paused"
+        detail={
+          <span role="alert">
+            Email sending is paused: {data.pause.reason ?? "Sending is turned off."}
+            {data.pause.at && (
+              <span className="block type-small">
+                {new Date(data.pause.at).toLocaleString()}
+                {data.pause.byName ? ` · by ${data.pause.byName}` : " · automatically"}
+              </span>
+            )}
+          </span>
+        }
+        action={
+          isAdmin && (
+            <Button variant="outline" onClick={onResume}>
+              Resume sending
+            </Button>
+          )
+        }
+      />
+    );
+  if (!data.enabled)
+    return (
+      <StatusCard
+        {...common}
+        tone="neutral"
+        status="Sending off"
+        detail="Emails wait in the queue until sending is turned on."
+        action={
+          isAdmin && (
+            <Button variant="outline" onClick={() => onOpenTab("safety")}>
+              Open safety & limits
+            </Button>
+          )
+        }
+      />
+    );
+  if (data.imapStatus?.lastError)
+    return (
+      <StatusCard
+        {...common}
+        tone="warning"
+        status="Needs attention"
+        detail={`Replies and bounces can't be read: ${data.imapStatus.lastError}`}
+        action={
+          <Button variant="outline" onClick={() => onOpenTab("replies")}>
+            Open replies & bounces
+          </Button>
+        }
+      />
+    );
+  return (
+    <StatusCard
+      {...common}
+      tone="success"
+      status="Connected"
+      detail={`From ${data.fromName} <${data.fromAddress}>`}
+    />
+  );
+}
+
+function EmailMonitoring({ data, workspaceId }: { data: EmailSettings; workspaceId: string }) {
+  return (
+    <div className="space-y-6">
+      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Sent this hour" value={`${data.sentThisHour} / ${data.hourlyCap}`} />
+        <Stat label="Waiting in the queue" value={String(data.queuedCount)} />
+        <Stat label="Send failures (24 h)" value={String(data.failures24h)} />
+        <Stat label="Rejected by recipient (24 h)" value={String(data.rejections24h)} />
+      </dl>
+      <SafetyEventsList
+        queryKey={keys.safetyEvents(workspaceId, "email")}
+        fetchPage={(cursor, signal) => backend.connections.email.safetyEvents({ cursor }, signal)}
+        labels={EVENT_LABELS}
+      />
+      <DailyTable
+        rows={data.daily}
+        columns={[
+          { key: "sent", label: "Sent" },
+          { key: "failed", label: "Failed" },
+          { key: "rejected", label: "Rejected" },
+        ]}
+      />
+    </div>
+  );
+}
+
+function ReadOnlyConnection({ data }: { data: EmailSettings }) {
+  return (
+    <dl className="grid gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+      {data.configured ? (
         <>
           <ReadOnly label="From" value={`${data.fromName} <${data.fromAddress}>`} />
           <ReadOnly
@@ -328,7 +518,17 @@ function ReadOnlySettings({ data }: { data: EmailSettings }) {
             }
           />
         </>
+      ) : (
+        <ReadOnly label="Mailbox" value="Not set up" />
       )}
+      <p className="text-xs text-muted-foreground sm:col-span-2">Only admins can change these.</p>
+    </dl>
+  );
+}
+
+function ReadOnlySafety({ data }: { data: EmailSettings }) {
+  return (
+    <dl className="grid gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
       <ReadOnly label="Sending" value={data.enabled ? "On" : "Off"} />
       <ReadOnly
         label="Spacing between emails"
@@ -341,39 +541,12 @@ function ReadOnlySettings({ data }: { data: EmailSettings }) {
   );
 }
 
-function EmailForm({
-  data,
-  onSaved,
-}: {
-  data: EmailSettings;
-  onSaved: (next: EmailSettings) => void;
-}) {
-  const form = useForm<EmailFormValues>({
-    resolver: zodResolver(emailSchema),
-    defaultValues: formValues(data),
-  });
-  const errors = form.formState.errors;
+function ConnectionFields({ form, data }: { form: FormApi; data: EmailSettings }) {
   const sameLogin = form.watch("imapSameLogin");
-  const save = form.handleSubmit(async (values) => {
-    const input: EmailSettingsInput = { ...values };
-    // Blank secrets keep the saved ones.
-    for (const key of ["smtpUsername", "smtpPassword", "imapUsername", "imapPassword"] as const) {
-      if (!input[key]) delete input[key];
-    }
-    try {
-      const next = await backend.connections.email.update(input);
-      onSaved(next);
-      form.reset(formValues(next));
-      toast.success("Email settings saved.");
-    } catch (error) {
-      toast.error(messageFromError(error));
-    }
-  });
-
   return (
-    <form className="space-y-5" onSubmit={(e) => void save(e)} noValidate>
-      <fieldset className="space-y-3 rounded-lg border p-3">
-        <legend className="px-1 text-sm font-semibold">Sending (SMTP)</legend>
+    <div className="space-y-5">
+      <fieldset className="space-y-3">
+        <legend className="type-section-title">Sending (SMTP)</legend>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <TextField form={form} name="smtpHost" label="SMTP host" placeholder="smtp.gmail.com" />
           <TextField form={form} name="smtpPort" label="Port" type="number" />
@@ -408,12 +581,12 @@ function EmailForm({
         </div>
         <p className="text-xs text-muted-foreground">
           Emails to a contact go out as "&lt;owner&gt; | &lt;company&gt;"; others use the default
-          from name.
+          from name. Passwords are encrypted and never shown again.
         </p>
       </fieldset>
 
-      <fieldset className="space-y-3 rounded-lg border p-3">
-        <legend className="px-1 text-sm font-semibold">Replies and bounces (IMAP)</legend>
+      <fieldset className="space-y-3 border-t pt-5">
+        <legend className="type-section-title">Replies and bounces (IMAP)</legend>
         <p className="text-xs text-muted-foreground">
           Every 2 minutes the worker reads new mail in this folder (read-only: nothing is marked
           read, moved or deleted) to record replies, bounces and unsubscribes.
@@ -456,126 +629,119 @@ function EmailForm({
           </div>
         )}
       </fieldset>
+    </div>
+  );
+}
 
-      <fieldset className="space-y-3 rounded-lg border p-3">
-        <legend className="px-1 text-sm font-semibold">Safety</legend>
-        <p className="text-xs text-muted-foreground">
-          Slow, capped sending protects the mailbox's reputation. Workflow emails go out only inside
-          the send window; a rep's proposal, meeting and test emails are not held by it.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <TextField
-            form={form}
-            name="minDelaySeconds"
-            label="Min spacing (seconds)"
-            type="number"
-          />
-          <TextField
-            form={form}
-            name="maxDelaySeconds"
-            label="Max spacing (seconds)"
-            type="number"
-          />
-          <TextField form={form} name="dailyCap" label="Daily cap (IST)" type="number" />
-          <TextField form={form} name="hourlyCap" label="Hourly cap" type="number" />
-        </div>
-        <fieldset className="space-y-2">
-          <legend className="text-xs font-medium">Send window for workflow emails (IST)</legend>
-          <Controller
-            control={form.control}
-            name="sendWindow.days"
-            render={({ field }) => (
-              <div className="flex flex-wrap gap-x-4 gap-y-2">
-                {DAYS.map((name, index) => {
-                  const day = index + 1;
-                  return (
-                    <label key={name} className="flex items-center gap-1.5 text-sm">
-                      <Checkbox
-                        aria-label={name}
-                        checked={field.value.includes(day)}
-                        onCheckedChange={(checked) =>
-                          field.onChange(
-                            checked === true
-                              ? [...new Set([...field.value, day])].sort((a, b) => a - b)
-                              : field.value.filter((d) => d !== day),
-                          )
-                        }
-                      />
-                      {name}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          />
-          {errors.sendWindow?.days && (
-            <p className="text-xs text-destructive">{errors.sendWindow.days.message}</p>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="email-window-start" className="text-xs">
-                Opens
-              </Label>
-              <Input id="email-window-start" type="time" {...form.register("sendWindow.start")} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="email-window-end" className="text-xs">
-                Closes
-              </Label>
-              <Input
-                id="email-window-end"
-                type="time"
-                aria-invalid={Boolean(errors.sendWindow?.end)}
-                {...form.register("sendWindow.end")}
-              />
-              {errors.sendWindow?.end && (
-                <p className="text-xs text-destructive">{errors.sendWindow.end.message}</p>
-              )}
-            </div>
-          </div>
-        </fieldset>
-        <Controller
-          control={form.control}
-          name="alreadyWarmed"
-          render={({ field }) => (
-            <label className="flex items-start gap-2 text-sm">
-              <Checkbox
-                className="mt-0.5"
-                checked={field.value}
-                onCheckedChange={(checked) => field.onChange(checked === true)}
-              />
-              <span>
-                This mailbox is already warmed up (used for normal email for months)
-                <span className="block text-xs text-muted-foreground">
-                  Otherwise a new mailbox sends at most 20 / 40 / 70 a day in its first 3 / 7 / 14
-                  days.
-                </span>
+function SafetyFields({ form }: { form: FormApi }) {
+  const errors = form.formState.errors;
+  return (
+    <div className="space-y-5">
+      <Controller
+        control={form.control}
+        name="enabled"
+        render={({ field }) => (
+          <label className="flex items-center justify-between gap-4 rounded-lg border p-3 text-sm">
+            <span>
+              <span className="font-medium">Sending enabled</span>
+              <span className="block text-xs text-muted-foreground">
+                Off: every email waits in the queue.
               </span>
-            </label>
-          )}
-        />
-      </fieldset>
-
-      <div className="flex flex-wrap items-center gap-4">
+            </span>
+            <Switch
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              aria-label="Sending enabled"
+            />
+          </label>
+        )}
+      />
+      <p className="text-xs text-muted-foreground">
+        Slow, capped sending protects the mailbox's reputation. Workflow emails go out only inside
+        the send window; a rep's proposal, meeting and test emails are not held by it.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <TextField form={form} name="minDelaySeconds" label="Min spacing (seconds)" type="number" />
+        <TextField form={form} name="maxDelaySeconds" label="Max spacing (seconds)" type="number" />
+        <TextField form={form} name="dailyCap" label="Daily cap (IST)" type="number" />
+        <TextField form={form} name="hourlyCap" label="Hourly cap" type="number" />
+      </div>
+      <fieldset className="space-y-2">
+        <legend className="type-label">Send window for workflow emails (IST)</legend>
         <Controller
           control={form.control}
-          name="enabled"
+          name="sendWindow.days"
           render={({ field }) => (
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <Switch
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                aria-label="Sending enabled"
-              />
-              Sending enabled
-            </label>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {DAYS.map((name, index) => {
+                const day = index + 1;
+                return (
+                  <label key={name} className="flex items-center gap-1.5 text-sm">
+                    <Checkbox
+                      aria-label={name}
+                      checked={field.value.includes(day)}
+                      onCheckedChange={(checked) =>
+                        field.onChange(
+                          checked === true
+                            ? [...new Set([...field.value, day])].sort((a, b) => a - b)
+                            : field.value.filter((d) => d !== day),
+                        )
+                      }
+                    />
+                    {name}
+                  </label>
+                );
+              })}
+            </div>
           )}
         />
-        <Button type="submit" disabled={form.formState.isSubmitting}>
-          Save email settings
-        </Button>
-      </div>
-    </form>
+        {errors.sendWindow?.days && (
+          <p className="text-xs text-destructive">{errors.sendWindow.days.message}</p>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="email-window-start" className="text-xs">
+              Opens
+            </Label>
+            <Input id="email-window-start" type="time" {...form.register("sendWindow.start")} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="email-window-end" className="text-xs">
+              Closes
+            </Label>
+            <Input
+              id="email-window-end"
+              type="time"
+              aria-invalid={Boolean(errors.sendWindow?.end)}
+              {...form.register("sendWindow.end")}
+            />
+            {errors.sendWindow?.end && (
+              <p className="text-xs text-destructive">{errors.sendWindow.end.message}</p>
+            )}
+          </div>
+        </div>
+      </fieldset>
+      <Controller
+        control={form.control}
+        name="alreadyWarmed"
+        render={({ field }) => (
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              className="mt-0.5"
+              checked={field.value}
+              onCheckedChange={(checked) => field.onChange(checked === true)}
+            />
+            <span>
+              This mailbox is already warmed up (used for normal email for months)
+              <span className="block text-xs text-muted-foreground">
+                Otherwise a new mailbox sends at most 20 / 40 / 70 a day in its first 3 / 7 / 14
+                days.
+              </span>
+            </span>
+          </label>
+        )}
+      />
+    </div>
   );
 }
 
@@ -966,24 +1132,15 @@ function RepliesAndBounces({
           {status.lastError}
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Replies today" value={String(t.replies)} />
         <Stat label="Bounces today" value={String(t.bounces)} />
         <Stat label="Auto-replies today" value={String(t.autoReplies)} />
         <Stat label="Unsubscribes today" value={String(t.unsubscribes)} />
         <Stat label="Unmatched today" value={String(t.unmatched)} />
         <Stat label="Bounces (24 h)" value={String(status.bounces24h)} />
-      </div>
+      </dl>
     </section>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-semibold">{value}</div>
-    </div>
   );
 }
 

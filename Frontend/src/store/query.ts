@@ -14,6 +14,9 @@ export const keys = {
   /** E4b: the directory is per workspace (members + non-member owners). */
   profiles: (workspaceId: string | null) => ["profiles", workspaceId] as const,
   team: (workspaceId: string | null) => ["team", workspaceId] as const,
+  /** UX-1: paginated safety events of a channel. */
+  safetyEvents: (workspaceId: string, channel: "email" | "whatsapp") =>
+    ["safety-events", workspaceId, channel] as const,
   memberships: (q: string) => ["memberships", q] as const,
   systemHealth: ["system-health"] as const,
   workspaces: ["workspaces"] as const,

@@ -1,5 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ me: vi.fn(), updateMe: vi.fn() }));
@@ -11,6 +10,7 @@ vi.mock("@/store", () => ({
 vi.mock("@/lib/backend-client", () => ({ backend: { me: mocks.me, updateMe: mocks.updateMe } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import { renderInRouter } from "@/test/render-in-router";
 import { ProfilePanel } from "./profile-panel";
 import { bookingUrlField } from "./booking-url";
 
@@ -28,22 +28,16 @@ function renderPanel(bookingUrl: string | null) {
     bookingUrl,
   });
   mocks.updateMe.mockImplementation(async (input: { bookingUrl: string | null }) => input);
-  return render(
-    <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-    >
-      <ProfilePanel />
-    </QueryClientProvider>,
-  );
+  return renderInRouter(() => <ProfilePanel />);
 }
 
 describe("ProfilePanel (E3b-1 booking link)", () => {
   it("shows the saved link and saves a new one", async () => {
-    renderPanel("https://calendly.com/old");
+    await renderPanel("https://calendly.com/old");
     const input = screen.getByLabelText<HTMLInputElement>("Booking link");
     await waitFor(() => expect(input.value).toBe("https://calendly.com/old"));
     fireEvent.change(input, { target: { value: "https://calendly.com/ravi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save booking link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save booking link" }));
     await waitFor(() =>
       expect(mocks.updateMe).toHaveBeenCalledWith(
         { bookingUrl: "https://calendly.com/ravi" },
@@ -53,15 +47,15 @@ describe("ProfilePanel (E3b-1 booking link)", () => {
   });
 
   it("an empty field removes the link; an http link is refused", async () => {
-    renderPanel("https://calendly.com/old");
+    await renderPanel("https://calendly.com/old");
     const input = screen.getByLabelText<HTMLInputElement>("Booking link");
     await waitFor(() => expect(input.value).toBe("https://calendly.com/old"));
     fireEvent.change(input, { target: { value: "http://calendly.com/ravi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save booking link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save booking link" }));
     expect(await screen.findByText(/Use a full https:\/\/ link/)).toBeTruthy();
     expect(mocks.updateMe).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save booking link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save booking link" }));
     await waitFor(() =>
       expect(mocks.updateMe).toHaveBeenCalledWith({ bookingUrl: null }, expect.anything()),
     );

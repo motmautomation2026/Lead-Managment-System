@@ -6,11 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { backend } from "@/lib/backend-client";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { keys, messageFromError } from "@/store";
+import { SaveBar } from "@/components/crm/save-bar";
 import { bookingUrlField } from "./booking-url";
 import { SectionHeader } from "@/components/crm/section-layout";
 
@@ -30,7 +30,6 @@ export function ProfilePanel() {
       void client.invalidateQueries({ queryKey: keys.session });
       toast.success("Booking link saved.");
     },
-    onError: (error) => toast.error(messageFromError(error)),
   });
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -76,9 +75,18 @@ export function ProfilePanel() {
               </p>
               {error && <p className="text-xs text-destructive">{error.message}</p>}
             </div>
-            <Button type="submit" disabled={save.isPending || me.isLoading}>
-              {save.isPending ? "Saving…" : "Save booking link"}
-            </Button>
+            <SaveBar
+              dirty={form.formState.isDirty}
+              saving={save.isPending}
+              disabled={me.isLoading}
+              onSave={() => void submit()}
+              onDiscard={() => {
+                save.reset();
+                reset({ bookingUrl: saved });
+              }}
+              error={save.isError ? messageFromError(save.error) : undefined}
+              saveLabel="Save booking link"
+            />
           </form>
         )}
       </CardContent>

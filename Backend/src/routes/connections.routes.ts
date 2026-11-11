@@ -9,6 +9,7 @@ import { requireAdmin } from "../authMiddleware.js";
 import * as emailConnection from "../services/emailConnection.service.js";
 import { getTestEmail, queueTestEmail } from "../services/emailOutbound.service.js";
 import { checkDeliverability } from "../services/emailDeliverability.service.js";
+import * as safetyEvents from "../services/safetyEvents.service.js";
 
 /**
  * Workspace-scoped Email/WhatsApp/Google Calendar connection management.
@@ -27,6 +28,19 @@ const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour).
 // E1b email: SMTP only. Every CRM user may read the settings (no secrets) and the monitoring;
 // everything else is admin-only. Sending happens only in the worker.
 connectionsRouter.get("/email/settings", asyncHandler(async (req, res) => res.json(await emailConnection.getEmailSettings(req.workspaceId!))));
+// UX-1: the whole safety-event history as keyset pages (the settings carry the latest 20).
+connectionsRouter.get(
+  "/email/safety-events",
+  asyncHandler(async (req, res) =>
+    res.json(await safetyEvents.listEmailSafetyEvents(req.workspaceId!, parseQuery(safetyEvents.safetyEventListSchema, req.query))),
+  ),
+);
+connectionsRouter.get(
+  "/whatsapp/safety-events",
+  asyncHandler(async (req, res) =>
+    res.json(await safetyEvents.listWhatsAppSafetyEvents(req.workspaceId!, parseQuery(safetyEvents.safetyEventListSchema, req.query))),
+  ),
+);
 
 const port = z.number().int().min(1).max(65535);
 const security = z.enum(["ssl", "starttls"]);

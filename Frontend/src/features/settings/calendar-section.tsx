@@ -2,17 +2,24 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { backend } from "@/lib/backend-client";
+import { backend, type GoogleCalendarConnection } from "@/lib/backend-client";
 import { backendBaseUrl } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { keys, messageFromError } from "@/store";
+import { SaveBar } from "@/components/crm/save-bar";
 import { SectionHeader } from "@/components/crm/section-layout";
+import { SectionSkeleton } from "@/components/crm/section-skeleton";
+import { StatusCard } from "@/components/crm/status-card";
+import { keys, messageFromError } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 
+/**
+ * Settings → Channels → Google Calendar (UX-1): a status card with Connect / Reconnect, the OAuth client (optional
+ * when the platform has one) with a sticky save bar, and Disconnect behind a confirm. Google's OAuth redirect lands
+ * here as `?calendar=connected|error` (via /admin, A5): one toast, then the params are stripped.
+ */
 export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
   const client = useQueryClient();
   const query = useQuery({
@@ -21,29 +28,9 @@ export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
     refetchInterval: 5_000,
   });
   const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [redirectUri, setRedirectUri] = useState("");
   const refresh = () =>
     void client.invalidateQueries({ queryKey: keys.connection(workspaceId, "google-calendar") });
 
-  const suggestedRedirectUri = backendBaseUrl
-    ? `${backendBaseUrl}/api/v1/connections/google-calendar/oauth/callback`
-    : "";
-  useEffect(() => {
-    if (query.data && !dirty) {
-      setClientId(query.data.clientId ?? "");
-      setRedirectUri(query.data.redirectUri ?? suggestedRedirectUri);
-    }
-    // Only re-sync from freshly-fetched server data, not on every keystroke
-    // recomputing suggestedRedirectUri.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.data, dirty]);
-
-  // Google's OAuth redirect lands back here as ?calendar=connected|error —
-  // surface it once as a toast, then strip it so a page refresh doesn't
-  // re-show it.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const calendarResult = params.get("calendar");
@@ -59,21 +46,6 @@ export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const saveCredentials = useMutation({
-    mutationFn: () =>
-      backend.connections.googleCalendar.updateCredentials({
-        clientId,
-        redirectUri,
-        ...(clientSecret ? { clientSecret } : {}),
-      }),
-    onSuccess: () => {
-      setDirty(false);
-      setClientSecret("");
-      refresh();
-      toast.success("Google OAuth credentials saved.");
-    },
-    onError: (error) => toast.error(messageFromError(error)),
-  });
   const start = useMutation({
     mutationFn: backend.connections.googleCalendar.oauthStart,
     onSuccess: (data) => {
@@ -91,132 +63,104 @@ export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
     onError: (error) => toast.error(messageFromError(error)),
   });
   const data = query.data;
-
-  const credentialsForm = data && (
-    <>
-      <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Client ID">
-          <Input
-            value={clientId}
-            onChange={(e) => {
-              setDirty(true);
-              setClientId(e.target.value);
-            }}
-          />
-        </Field>
-        <Field label={`Client secret${data.clientSecretConfigured ? " (configured)" : ""}`}>
-          <Input
-            type="password"
-            value={clientSecret}
-            placeholder={data.clientSecretConfigured ? "•••••••• - retain current" : "GOCSPX-…"}
-            onChange={(e) => {
-              setDirty(true);
-              setClientSecret(e.target.value);
-            }}
-          />
-        </Field>
-      </div>
-      <Field label="Redirect URI">
-        <Input
-          value={redirectUri}
-          onChange={(e) => {
-            setDirty(true);
-            setRedirectUri(e.target.value);
-          }}
-        />
-      </Field>
-      <p className="-mt-3 text-xs text-muted-foreground">
-        Add this exact URL as an authorized redirect URI on the OAuth client in Google Cloud
-        Console.
-      </p>
-      <div className="flex justify-end border-b pb-4">
-        <Button onClick={() => saveCredentials.mutate()} disabled={saveCredentials.isPending}>
-          Save credentials
+  if (!data)
+    return query.isError ? (
+      <div className="space-y-2">
+        <p className="text-sm text-destructive">
+          Couldn't load Google Calendar status: {messageFromError(query.error)}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
+          <RefreshCw className="size-3.5" /> Retry
         </Button>
       </div>
-    </>
+    ) : (
+      <SectionSkeleton label="Loading Google Calendar status" />
+    );
+
+  const connectLabel =
+    data.status === "connected"
+      ? "Reconnect"
+      : data.status === "error"
+        ? "Reconnect Google Calendar"
+        : "Connect Google Calendar";
+  const connectButton = (
+    <Button
+      onClick={() => start.mutate()}
+      disabled={!data.configured || start.isPending}
+      variant={data.status === "connected" ? "outline" : "default"}
+    >
+      {connectLabel}
+    </Button>
   );
+  const credentials = <CredentialsForm data={data} onSaved={refresh} />;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CalendarDays /> Google Calendar
-        </CardTitle>
-        <CardDescription>
-          A meeting scheduled in the CRM creates an event with an auto-generated Meet link on this
-          workspace's calendar and invites its participants.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {!data ? (
-          query.isError ? (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive">
-                Couldn't load Google Calendar status: {messageFromError(query.error)}
-              </p>
-              <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-                <RefreshCw className="size-3.5" /> Retry
-              </Button>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Loading Google Calendar status…</p>
-          )
-        ) : (
-          <>
-            {data.platformConfigured ? (
-              <details
-                className="rounded-md border px-3 py-2 text-sm"
-                open={data.usesOwnCredentials}
-              >
-                <summary className="cursor-pointer text-muted-foreground">
-                  Advanced: use your own Google app
-                </summary>
-                <div className="mt-3 space-y-4">
-                  <Notice>
-                    Most workspaces don't need this — just click Connect below. If you save your own
-                    OAuth client here it replaces the shared one, and you'll need to reconnect.
-                  </Notice>
-                  {credentialsForm}
-                </div>
-              </details>
-            ) : (
-              <>
-                <Notice>
-                  Register an OAuth 2.0 client (Web application) in Google Cloud Console with the
-                  Calendar API enabled, then paste its credentials below. The client secret is
-                  encrypted in the database, same as the Resend API key.
-                </Notice>
-                {credentialsForm}
-              </>
-            )}
+    <div className="space-y-6">
+      <StatusCard
+        title="Google Calendar"
+        icon={CalendarDays}
+        tone={
+          data.status === "connected" ? "success" : data.status === "error" ? "danger" : "neutral"
+        }
+        status={
+          data.status === "connected"
+            ? "Connected"
+            : data.status === "error"
+              ? "Needs attention"
+              : "Not connected"
+        }
+        detail={
+          data.lastError ??
+          (data.status === "connected"
+            ? `Meetings sync to ${data.connectedEmail ?? "the connected account"} with a Meet link.`
+            : data.configured
+              ? "Connect a Google account so meetings get a calendar event and a Meet link."
+              : "Add the OAuth client below first.")
+        }
+        metric={{ label: "Connected account", value: data.connectedEmail || "None" }}
+        action={connectButton}
+      />
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Metric label="Status" value={data.status.replaceAll("_", " ")} />
-              <Metric label="Connected account" value={data.connectedEmail || "Not connected"} />
-            </div>
-            {data.lastError && <Notice danger>{data.lastError}</Notice>}
-            <div className="flex flex-wrap gap-2 border-t pt-4">
-              <Button onClick={() => start.mutate()} disabled={!data.configured || start.isPending}>
-                {data.status === "connected"
-                  ? "Reconnect"
-                  : data.status === "error"
-                    ? "Reconnect Google Calendar"
-                    : "Connect Google Calendar"}
-              </Button>
-              {data.status === "connected" && (
-                <Button
-                  variant="destructive"
-                  className="ml-auto"
-                  onClick={() => setDisconnectOpen(true)}
-                >
-                  Disconnect
-                </Button>
-              )}
-            </div>
-          </>
-        )}
-      </CardContent>
+      {data.platformConfigured ? (
+        <details className="rounded-lg border px-4 py-3 text-sm" open={data.usesOwnCredentials}>
+          <summary className="cursor-pointer font-medium">
+            Advanced: use your own Google app
+          </summary>
+          <div className="mt-3 space-y-4">
+            <Notice>
+              Most workspaces don't need this — just Connect above. If you save your own OAuth
+              client here it replaces the shared one, and you'll need to reconnect.
+            </Notice>
+            {credentials}
+          </div>
+        </details>
+      ) : (
+        <section aria-labelledby="calendar-oauth" className="space-y-4">
+          <h3 id="calendar-oauth" className="type-section-title">
+            OAuth client
+          </h3>
+          <Notice>
+            Register an OAuth 2.0 client (Web application) in Google Cloud Console with the Calendar
+            API enabled, then paste its credentials below. The client secret is encrypted in the
+            database.
+          </Notice>
+          {credentials}
+        </section>
+      )}
+
+      {data.status === "connected" && (
+        <section aria-labelledby="calendar-danger" className="space-y-2 rounded-lg border p-4">
+          <h3 id="calendar-danger" className="type-section-title">
+            Disconnect
+          </h3>
+          <p className="type-small text-muted-foreground">
+            Meetings stop syncing to Google Calendar until reconnected.
+          </p>
+          <Button variant="destructive" onClick={() => setDisconnectOpen(true)}>
+            Disconnect
+          </Button>
+        </section>
+      )}
       <ConfirmDialog
         open={disconnectOpen}
         onOpenChange={setDisconnectOpen}
@@ -226,32 +170,116 @@ export function GoogleCalendarPanel({ workspaceId }: { workspaceId: string }) {
         disabled={disconnect.isPending}
         onConfirm={() => disconnect.mutate()}
       />
-    </Card>
+    </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function CredentialsForm({
+  data,
+  onSaved,
+}: {
+  data: GoogleCalendarConnection;
+  onSaved: () => void;
+}) {
+  const suggestedRedirectUri = backendBaseUrl
+    ? `${backendBaseUrl}/api/v1/connections/google-calendar/oauth/callback`
+    : "";
+  const saved = {
+    clientId: data.clientId ?? "",
+    redirectUri: data.redirectUri ?? suggestedRedirectUri,
+  };
+  const [clientId, setClientId] = useState(saved.clientId);
+  const [clientSecret, setClientSecret] = useState("");
+  const [redirectUri, setRedirectUri] = useState(saved.redirectUri);
+  const dirty =
+    clientId !== saved.clientId || redirectUri !== saved.redirectUri || clientSecret !== "";
+  // Re-sync from the server while nothing is being edited (the status polls).
+  useEffect(() => {
+    if (dirty) return;
+    setClientId(saved.clientId);
+    setRedirectUri(saved.redirectUri);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved.clientId, saved.redirectUri]);
+  const save = useMutation({
+    mutationFn: () =>
+      backend.connections.googleCalendar.updateCredentials({
+        clientId,
+        redirectUri,
+        ...(clientSecret ? { clientSecret } : {}),
+      }),
+    onSuccess: () => {
+      setClientSecret("");
+      onSaved();
+      toast.success("Google OAuth credentials saved.");
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Client ID" id="calendar-client-id">
+          <Input
+            id="calendar-client-id"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={`Client secret${data.clientSecretConfigured ? " (configured)" : ""}`}
+          id="calendar-client-secret"
+        >
+          <Input
+            id="calendar-client-secret"
+            type="password"
+            value={clientSecret}
+            placeholder={data.clientSecretConfigured ? "•••••••• - retain current" : "GOCSPX-…"}
+            onChange={(e) => setClientSecret(e.target.value)}
+          />
+        </Field>
+      </div>
+      <Field label="Redirect URI" id="calendar-redirect-uri">
+        <Input
+          id="calendar-redirect-uri"
+          value={redirectUri}
+          onChange={(e) => setRedirectUri(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Add this exact URL as an authorized redirect URI on the OAuth client in Google Cloud
+          Console.
+        </p>
+      </Field>
+      <SaveBar
+        dirty={dirty}
+        saving={save.isPending}
+        onSave={() => save.mutate()}
+        onDiscard={() => {
+          save.reset();
+          setClientId(saved.clientId);
+          setRedirectUri(saved.redirectUri);
+          setClientSecret("");
+        }}
+        error={save.isError ? messageFromError(save.error) : undefined}
+        saveLabel="Save credentials"
+      />
+    </div>
+  );
+}
+
+function Field({ label, id, children }: { label: string; id: string; children: ReactNode }) {
   return (
     <div>
-      <Label className="mb-1.5 block text-xs">{label}</Label>
+      <Label htmlFor={id} className="mb-1.5 block text-xs">
+        {label}
+      </Label>
       {children}
     </div>
   );
 }
-function Notice({ children, danger = false }: { children: ReactNode; danger?: boolean }) {
+
+function Notice({ children }: { children: ReactNode }) {
   return (
-    <div
-      className={`rounded-md border px-3 py-2 text-sm ${danger ? "border-destructive/30 bg-destructive/5 text-destructive" : "bg-muted/50 text-muted-foreground"}`}
-    >
+    <div className="rounded-md border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
       {children}
-    </div>
-  );
-}
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold capitalize">{value}</div>
     </div>
   );
 }
@@ -263,7 +291,7 @@ export function CalendarSection() {
     <>
       <SectionHeader
         title="Google Calendar"
-        description="Meet links and invites for CRM meetings."
+        description="A meeting scheduled in the CRM creates an event with a Meet link on this workspace's calendar and invites its participants."
       />
       {currentWorkspaceId && <GoogleCalendarPanel workspaceId={currentWorkspaceId} />}
     </>

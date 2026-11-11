@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
-import { Plus, RefreshCw, ShieldAlert } from "lucide-react";
+import { ChevronRight, MessageCircle, Plus, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
   backend,
@@ -32,6 +32,12 @@ import {
 } from "@/components/ui/select";
 import { StatusPill, type PillTone } from "@/components/crm/status-pill";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import { DetailDrawer } from "@/components/crm/detail-drawer";
+import { EmptyState } from "@/components/crm/empty-state";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionTabs } from "@/components/crm/section-tabs";
+import { useSearchParam } from "@/lib/use-search-param";
+import { Stat } from "./safety-events";
 import { keys, messageFromError, useIsAdmin, useSession } from "@/store";
 
 const NO_OWNER = "none";
@@ -80,9 +86,11 @@ function capText(n: WhatsAppNumber) {
 }
 
 /**
- * Settings → Workspace → WhatsApp → Numbers (E4a): one card per number (own QR pairing, status,
- * today's sent / cap, warm-up, owner, safety, pause/resume, remove), "Add number", and the
- * session-pooler warning (rule 12).
+ * Settings → Channels → WhatsApp → Numbers (E4a, UX-1): the main view — one row per number (status, phone, sent /
+ * cap, new chats, contacts, owner), "Add number" and the session-pooler warning (rule 12). A row opens the number in
+ * a drawer (`?number=<id>`): Overview (pairing QR, connect / restart / pause / log out / remove, all dangerous ones
+ * confirmed) and Settings (admins; sticky save bar).
+ * Not paginated on purpose: a workspace has at most `max_numbers` (≤ 20) numbers.
  */
 export function WhatsAppNumbers({
   workspaceId,
@@ -93,37 +101,36 @@ export function WhatsAppNumbers({
 }) {
   const isAdmin = useIsAdmin();
   const client = useQueryClient();
+  const [openId, setOpenId] = useSearchParam("number");
   const store = (next: WhatsAppConnection) =>
     client.setQueryData(keys.connection(workspaceId, "whatsapp"), next);
   const add = useMutation({
     mutationFn: () => backend.connections.whatsapp.addNumber(),
     onSuccess: (next) => {
       store(next);
-      toast.success("Number added. Its QR code appears here in a few seconds.");
+      const added = next.numbers.find((n) => !data.numbers.some((o) => o.id === n.id));
+      if (added) setOpenId(added.id, { replace: false });
+      toast.success("Number added. Its QR code appears in a few seconds.");
     },
     onError: (error) => toast.error(messageFromError(error)),
   });
   const atMax = data.numbers.length >= data.maxNumbers;
+  const open = data.numbers.find((n) => n.id === openId) ?? null;
 
   return (
     <section aria-labelledby="whatsapp-numbers" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 id="whatsapp-numbers" className="text-sm font-semibold">
+          <h3 id="whatsapp-numbers" className="type-section-title">
             Numbers ({data.numbers.length} of {data.maxNumbers})
           </h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="type-small text-muted-foreground">
             A contact always hears from the same number. New contacts go to their owner's number,
             else the number with the most room left today.
           </p>
         </div>
         {isAdmin && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => add.mutate()}
-            disabled={atMax || add.isPending}
-          >
+          <Button size="sm" onClick={() => add.mutate()} disabled={atMax || add.isPending}>
             <Plus className="size-3.5" /> Add number
           </Button>
         )}
@@ -138,32 +145,115 @@ export function WhatsAppNumbers({
           pooler size in Supabase (Database → Connection pooling) before connecting more numbers.
         </div>
       )}
-      {data.numbers.map((n) => (
-        <NumberCard
-          key={n.id}
-          number={n}
-          others={data.numbers.filter((o) => o.id !== n.id)}
-          isAdmin={isAdmin}
-          onSaved={store}
+      {data.numbers.length === 0 ? (
+        <EmptyState
+          icon={MessageCircle}
+          title="No WhatsApp number yet"
+          text={isAdmin ? "Add a number, then scan its QR code." : "Ask an admin to add a number."}
+          action={
+            isAdmin && (
+              <Button onClick={() => add.mutate()} disabled={add.isPending}>
+                Add number
+              </Button>
+            )
+          }
         />
-      ))}
+      ) : (
+        <ul className="divide-y rounded-lg border" aria-label="WhatsApp numbers">
+          {data.numbers.map((n) => (
+            <li key={n.id}>
+              <button
+                type="button"
+                aria-label={`WhatsApp number ${n.label}`}
+                onClick={() => setOpenId(n.id, { replace: false })}
+                className="grid w-full gap-x-4 gap-y-1 px-3 py-3 text-left hover:bg-accent/50 sm:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(0,1fr))_auto] sm:items-center"
+              >
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{n.label}</span>
+                    <NumberStatus number={n} />
+                  </span>
+                  <span className="block truncate type-small text-muted-foreground">
+                    {n.displayName || (n.connectedPhone ? `+${n.connectedPhone}` : "Not paired")}
+                    {n.ownerName ? ` · ${n.ownerName}` : ""}
+                  </span>
+                </span>
+                <RowFact label="Sent today" value={capText(n)} />
+                <RowFact label="New chats" value={`${n.newChatsToday} / ${n.maxNewChatsPerDay}`} />
+                <RowFact label="Contacts" value={String(n.leadCount)} />
+                <ChevronRight
+                  className="hidden size-4 text-muted-foreground sm:block"
+                  aria-hidden
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <DetailDrawer
+        open={open !== null}
+        onOpenChange={(o) => !o && setOpenId(undefined, { replace: false })}
+        title={open ? `Number ${open.label}` : "Number"}
+        description={
+          open
+            ? open.displayName || (open.connectedPhone ? `+${open.connectedPhone}` : "Not paired")
+            : undefined
+        }
+      >
+        {open && (
+          <NumberDetail
+            key={open.id}
+            number={open}
+            others={data.numbers.filter((o) => o.id !== open.id)}
+            isAdmin={isAdmin}
+            onSaved={store}
+            onRemoved={() => setOpenId(undefined)}
+          />
+        )}
+      </DetailDrawer>
     </section>
   );
 }
 
-function NumberCard({
+function RowFact({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="type-small">
+      <span className="text-muted-foreground sm:hidden">{label}: </span>
+      <span className="num">{value}</span>
+      <span className="sr-only"> {label.toLowerCase()}</span>
+    </span>
+  );
+}
+
+function NumberStatus({ number: n }: { number: WhatsAppNumber }) {
+  return n.pause ? (
+    <StatusPill tone="danger" dot>
+      paused
+    </StatusPill>
+  ) : (
+    <StatusPill tone={STATUS_TONE[n.status] ?? "neutral"} dot>
+      {n.status.replaceAll("_", " ")}
+    </StatusPill>
+  );
+}
+
+function NumberDetail({
   number: n,
   others,
   isAdmin,
   onSaved,
+  onRemoved,
 }: {
   number: WhatsAppNumber;
   others: WhatsAppNumber[];
   isAdmin: boolean;
   onSaved: (next: WhatsAppConnection) => void;
+  onRemoved: () => void;
 }) {
+  const [tab, setTab] = useState("overview");
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const command = useMutation({
     mutationFn: (c: "connect" | "restart" | "logout") =>
@@ -179,31 +269,19 @@ function NumberCard({
     mutationFn: (paused: boolean) => backend.connections.whatsapp.pauseNumber(n.id, paused),
     onSuccess: (next, paused) => {
       setResumeOpen(false);
+      setPauseOpen(false);
       onSaved(next);
       toast.success(paused ? `Number ${n.label} paused.` : `Number ${n.label} resumed.`);
     },
     onError: (error) => toast.error(messageFromError(error)),
   });
 
-  return (
-    <article aria-label={`WhatsApp number ${n.label}`} className="space-y-3 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="font-medium">{n.label}</span>
-          <StatusPill tone={STATUS_TONE[n.status] ?? "neutral"} dot>
-            {n.status.replaceAll("_", " ")}
-          </StatusPill>
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {n.displayName || (n.connectedPhone ? `+${n.connectedPhone}` : "Not paired")}
-          </span>
-        </div>
-        <span className="text-xs text-muted-foreground">Owner: {n.ownerName ?? "None"}</span>
-      </div>
-
+  const overview = (
+    <div className="space-y-4">
       {n.pause && (
         <div
           role="alert"
-          className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-danger-soft px-3 py-2 text-sm text-danger-soft-foreground sm:flex-row sm:items-center sm:justify-between"
         >
           <div className="flex gap-2">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -232,8 +310,11 @@ function NumberCard({
           automatically.
         </p>
       )}
-
-      <dl className="grid gap-3 text-sm sm:grid-cols-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <NumberStatus number={n} />
+        <span className="type-small text-muted-foreground">Owner: {n.ownerName ?? "None"}</span>
+      </div>
+      <dl className="grid gap-3 sm:grid-cols-3">
         <Stat label="Sent today" value={capText(n)} />
         <Stat label="New chats today" value={`${n.newChatsToday} / ${n.maxNewChatsPerDay}`} />
         <Stat label="Contacts on this number" value={String(n.leadCount)} />
@@ -248,13 +329,8 @@ function NumberCard({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => command.mutate("connect")}
-          disabled={command.isPending}
-        >
+      <div className="flex flex-wrap gap-2 border-t pt-4">
+        <Button size="sm" onClick={() => command.mutate("connect")} disabled={command.isPending}>
           Connect / get QR
         </Button>
         <Button
@@ -269,18 +345,15 @@ function NumberCard({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => pause.mutate(true)}
+            onClick={() => setPauseOpen(true)}
             disabled={pause.isPending}
           >
             Pause sending
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="destructive"
-          className="sm:ml-auto"
-          onClick={() => setLogoutOpen(true)}
-        >
+      </div>
+      <div className="flex flex-wrap gap-2 border-t pt-4">
+        <Button size="sm" variant="destructive" onClick={() => setLogoutOpen(true)}>
           Log out
         </Button>
         {isAdmin && others.length > 0 && (
@@ -289,16 +362,35 @@ function NumberCard({
           </Button>
         )}
       </div>
-
-      {isAdmin ? (
-        <NumberSettingsForm number={n} onSaved={onSaved} />
-      ) : (
+      {!isAdmin && (
         <p className="text-xs text-muted-foreground">
           Spacing {n.minDelaySeconds}–{n.maxDelaySeconds} s · daily cap {n.dailyCap} ·{" "}
           {n.maxNewChatsPerDay} new chats per day. Only admins can change these.
         </p>
       )}
+    </div>
+  );
 
+  return (
+    <>
+      {isAdmin ? (
+        <SectionTabs
+          label={`Number ${n.label}`}
+          value={tab}
+          onValueChange={setTab}
+          keepMounted={["settings"]}
+          tabs={[
+            { id: "overview", label: "Overview", content: overview },
+            {
+              id: "settings",
+              label: "Settings",
+              content: <NumberSettingsForm number={n} onSaved={onSaved} />,
+            },
+          ]}
+        />
+      ) : (
+        overview
+      )}
       <ConfirmDialog
         open={logoutOpen}
         onOpenChange={setLogoutOpen}
@@ -309,11 +401,21 @@ function NumberCard({
         onConfirm={() => command.mutate("logout")}
       />
       <ConfirmDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        title={`Pause sending on ${n.label}?`}
+        description="Nothing is sent from this number until an admin resumes it. Its queued messages wait (they are not cancelled), and its contacts stay on it."
+        confirmLabel="Pause sending"
+        disabled={pause.isPending}
+        onConfirm={() => pause.mutate(true)}
+      />
+      <ConfirmDialog
         open={resumeOpen}
         onOpenChange={setResumeOpen}
         title={`Resume sending on ${n.label}?`}
         description="Its queued messages start going out again, with the usual spacing, caps and send window. Check why it was paused first."
         confirmLabel="Resume sending"
+        confirmVariant="default"
         disabled={pause.isPending}
         onConfirm={() => pause.mutate(false)}
       />
@@ -323,10 +425,13 @@ function NumberCard({
           others={others}
           open={removeOpen}
           onOpenChange={setRemoveOpen}
-          onSaved={onSaved}
+          onSaved={(next) => {
+            onSaved(next);
+            onRemoved();
+          }}
         />
       )}
-    </article>
+    </>
   );
 }
 
@@ -343,7 +448,9 @@ function NumberSettingsForm({
     defaultValues: formValues(n),
   });
   const errors = form.formState.errors;
+  const [saveError, setSaveError] = useState<string | null>(null);
   const save = form.handleSubmit(async (values) => {
+    setSaveError(null);
     const input: WhatsAppNumberInput = {
       ...values,
       ownerUserId: values.ownerUserId === NO_OWNER ? null : values.ownerUserId,
@@ -355,7 +462,7 @@ function NumberSettingsForm({
       if (saved) form.reset(formValues(saved));
       toast.success(`Number ${values.label} saved.`);
     } catch (error) {
-      toast.error(messageFromError(error));
+      setSaveError(messageFromError(error));
     }
   });
   const field = (
@@ -378,8 +485,8 @@ function NumberSettingsForm({
   );
 
   return (
-    <form className="space-y-3 border-t pt-3" onSubmit={(e) => void save(e)} noValidate>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <form className="space-y-3" onSubmit={(e) => void save(e)} noValidate>
+      <div className="grid gap-3 sm:grid-cols-2">
         {field("label", "Label", false)}
         <div className="space-y-1">
           <Label htmlFor={`wa-${n.id}-owner`} className="text-xs">
@@ -408,13 +515,21 @@ function NumberSettingsForm({
           />
         </div>
         {field("dailyCap", "Daily cap (IST)")}
+        {field("maxNewChatsPerDay", "New chats per day")}
         {field("minDelaySeconds", "Min spacing (seconds)")}
         {field("maxDelaySeconds", "Max spacing (seconds)")}
-        {field("maxNewChatsPerDay", "New chats per day")}
       </div>
-      <Button type="submit" size="sm" disabled={form.formState.isSubmitting}>
-        Save number
-      </Button>
+      <SaveBar
+        dirty={form.formState.isDirty}
+        saving={form.formState.isSubmitting}
+        onSave={() => void save()}
+        onDiscard={() => {
+          setSaveError(null);
+          form.reset(formValues(n));
+        }}
+        error={saveError}
+        saveLabel="Save number"
+      />
     </form>
   );
 }
@@ -527,14 +642,5 @@ export function RemoveNumberDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 text-sm font-semibold">{value}</dd>
-    </div>
   );
 }

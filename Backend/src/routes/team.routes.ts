@@ -12,7 +12,8 @@ teamRouter.use(requireAdmin);
 
 const userParams = z.object({ userId: z.string().uuid() });
 
-teamRouter.get("/members", asyncHandler(async (req, res) => res.json({ data: await team.listMembers(req.workspaceId!) })));
+// UX-1: keyset pages by name (`q`, `cursor`, `limit`); the writes still return the whole list.
+teamRouter.get("/members", asyncHandler(async (req, res) => res.json(await team.listMembersPage(req.workspaceId!, parseQuery(team.memberListSchema, req.query)))));
 teamRouter.post(
   "/members",
   asyncHandler(async (req, res) => res.status(201).json({ data: await team.addMember(req.actor!, req.workspaceId!, parseBody(team.addMemberSchema, req.body)) })),

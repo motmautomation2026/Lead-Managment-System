@@ -3,6 +3,8 @@ import { pool, withTransaction } from "../db.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
+import { z } from "zod";
+import { containsPattern, defineSorts, pageParams, runPage, searchQuery, sortParam, SqlBuilder } from "../lists/listQuery.js";
 
 const LONG_BAN = "876000h";
 
@@ -14,6 +16,29 @@ function initials(name: string) {
     .map((part) => part[0])
     .join("")
     .toUpperCase();
+}
+
+const USER_SORTS = defineSorts({ fields: { createdAt: { columns: ["created_at"], type: "timestamptz" } }, idColumn: "id", defaultSort: "createdAt:desc" });
+export const userListSchema = z.object({ ...pageParams, sort: sortParam(USER_SORTS), q: searchQuery.optional() }).strict();
+
+/** UX-1: Settings → User accounts, a keyset page (newest first; `q` = name or email). */
+export async function listSalespeoplePage(query: z.infer<typeof userListSchema>) {
+  const b = new SqlBuilder();
+  b.and("role = 'salesperson'");
+  if (query.q) {
+    const pattern = b.p(containsPattern(query.q));
+    b.and(`(full_name ilike ${pattern} or email ilike ${pattern})`);
+  }
+  const page = await runPage<{ id: string; name: string; email: string; initials: string; active: boolean; createdAt: Date; bookingUrl: string | null }>(
+    pool,
+    b,
+    query.sort,
+    query,
+    ({ where, orderBy, limit, cursorSelect }) =>
+      `select id, full_name as name, email, initials, is_active as active, created_at as "createdAt", booking_url as "bookingUrl", ${cursorSelect}
+         from public.profiles ${where} order by ${orderBy} limit ${limit}`,
+  );
+  return { data: page.data.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })), nextCursor: page.nextCursor };
 }
 
 export async function listSalespeople() {

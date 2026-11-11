@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PlaybookSection } from "@/features/settings/agent-panel";
+import { PlaybookSection } from "@/features/settings/playbook-section";
 import { settingsHead } from "@/features/settings/settings-search";
 
 export const Route = createFileRoute("/settings/playbook")({

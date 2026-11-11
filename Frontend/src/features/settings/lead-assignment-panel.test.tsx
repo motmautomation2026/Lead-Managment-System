@@ -1,5 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -26,6 +25,7 @@ vi.mock("@/lib/backend-client", () => ({
   backend: { assignmentRules: { get: mocks.get, replace: mocks.replace } },
 }));
 
+import { renderInRouter } from "@/test/render-in-router";
 import { LeadAssignmentPanel } from "./lead-assignment-panel";
 import { previewOwner, ruleRowsProblem, rowsToRules } from "./lead-assignment-rules";
 
@@ -57,24 +57,20 @@ function renderPanel() {
     fallbackOwnerName: null,
     fallbackOwnerAvailable: true,
   });
-  return render(
-    <QueryClientProvider client={new QueryClient()}>
-      <LeadAssignmentPanel workspaceId="ws-1" />
-    </QueryClientProvider>,
-  );
+  return renderInRouter(() => <LeadAssignmentPanel workspaceId="ws-1" />);
 }
 
 describe("LeadAssignmentPanel", () => {
-  it("is hidden from salespeople and never loads the rules", () => {
+  it("is hidden from salespeople and never loads the rules", async () => {
     mocks.isAdmin = false;
-    const view = renderPanel();
+    const view = await renderPanel();
     expect(view.container).toBeEmptyDOMElement();
     expect(mocks.get).not.toHaveBeenCalled();
   });
 
   it("shows admins the rules, a live preview and the new-leads hint", async () => {
     mocks.isAdmin = true;
-    renderPanel();
+    await renderPanel();
     expect(await screen.findAllByTestId("rule-row")).toHaveLength(2);
     expect(screen.getByText("Applies to new leads only.")).toBeInTheDocument();
     expect(screen.getByText("Person A", { selector: "strong" })).toBeInTheDocument();
@@ -84,7 +80,7 @@ describe("LeadAssignmentPanel", () => {
     expect(screen.getByText("Person B", { selector: "strong" })).toBeInTheDocument();
   });
 
-  it("blocks saving an invalid rule and saves a valid list", async () => {
+  it("blocks saving an invalid rule and saves a valid list from the save bar", async () => {
     mocks.isAdmin = true;
     mocks.replace.mockResolvedValue({
       rules: [],
@@ -92,9 +88,9 @@ describe("LeadAssignmentPanel", () => {
       fallbackOwnerName: null,
       fallbackOwnerAvailable: true,
     });
-    renderPanel();
+    await renderPanel();
     await screen.findAllByTestId("rule-row");
-    const save = screen.getByRole("button", { name: "Save rules" });
+    expect(screen.queryByRole("button", { name: "Save rules" })).toBeNull();
 
     fireEvent.change(
       screen.getByLabelText("From (₹ Cr, exclusive, optional)", { selector: "#rule-0-from" }),
@@ -103,12 +99,18 @@ describe("LeadAssignmentPanel", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       'Rule 1: "From" must be less than "Up to".',
     );
-    expect(save).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save rules" })).toBeDisabled();
 
     fireEvent.change(
       screen.getByLabelText("From (₹ Cr, exclusive, optional)", { selector: "#rule-0-from" }),
       { target: { value: "" } },
     );
+    // Back to the saved rules: nothing to save.
+    expect(screen.queryByRole("button", { name: "Save rules" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("When revenue is unknown or no rule matches"), {
+      target: { value: "a" },
+    });
+    const save = screen.getByRole("button", { name: "Save rules" });
     expect(save).toBeEnabled();
     fireEvent.click(save);
     await vi.waitFor(() =>
@@ -117,7 +119,7 @@ describe("LeadAssignmentPanel", () => {
           { position: 0, minCr: null, maxCr: 5, ownerId: "a" },
           { position: 1, minCr: 5, maxCr: null, ownerId: "b" },
         ],
-        fallbackOwnerId: null,
+        fallbackOwnerId: "a",
       }),
     );
   });

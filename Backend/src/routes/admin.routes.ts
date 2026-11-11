@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin, requireAuth } from "../authMiddleware.js";
-import { parseBody, parseParams, uuidParam } from "../validation/parse.js";
+import { parseBody, parseParams, parseQuery, uuidParam } from "../validation/parse.js";
 import * as users from "../services/admin-users.service.js";
 import { bookingUrlSchema } from "../services/profiles.service.js";
 
@@ -18,7 +18,8 @@ export const adminRouter = Router();
 adminRouter.use(requireAuth, requireAdmin);
 adminRouter.param("id", uuidParam("user"));
 
-adminRouter.get("/users", asyncHandler(async (_req, res) => res.json({ data: await users.listSalespeople() })));
+// UX-1: keyset pages, newest first (`q`, `cursor`, `limit`).
+adminRouter.get("/users", asyncHandler(async (req, res) => res.json(await users.listSalespeoplePage(parseQuery(users.userListSchema, req.query)))));
 
 const createUserSchema = z.object({
   name: z.string().trim().min(1),

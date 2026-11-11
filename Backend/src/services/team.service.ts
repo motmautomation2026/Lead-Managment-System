@@ -29,6 +29,30 @@ export async function listMembers(workspaceId: string, db: Queryable = pool) {
   return rows.rows.map((r) => ({ userId: r.user_id, name: r.full_name, email: r.email, active: r.is_active, role: r.role, since: r.created_at.toISOString() }));
 }
 
+const MEMBER_SORTS = defineSorts({ fields: { name: { columns: ["p.full_name"], type: "text" } }, idColumn: "m.user_id", defaultSort: "name:asc" });
+export const memberListSchema = z.object({ ...pageParams, sort: sortParam(MEMBER_SORTS), q: searchQuery.optional() }).strict();
+
+/** UX-1: Settings → Team, a keyset page of members by name (`q` = name or email). */
+export async function listMembersPage(workspaceId: string, query: z.infer<typeof memberListSchema>, db: Queryable = pool) {
+  const b = new SqlBuilder();
+  b.and(`m.workspace_id = ${b.p(workspaceId)}`);
+  if (query.q) {
+    const pattern = b.p(containsPattern(query.q));
+    b.and(`(p.full_name ilike ${pattern} or p.email ilike ${pattern})`);
+  }
+  const page = await runPage<{ userId: string; name: string; email: string; active: boolean; role: WorkspaceRole; since: Date }>(
+    db,
+    b,
+    query.sort,
+    query,
+    ({ where, orderBy, limit, cursorSelect }) =>
+      `select m.user_id as "userId", p.full_name as name, p.email, p.is_active as active, m.role, m.created_at as since, ${cursorSelect}
+         from public.workspace_members m join public.profiles p on p.id = m.user_id
+         ${where} order by ${orderBy} limit ${limit}`,
+  );
+  return { data: page.data.map((r) => ({ ...r, since: r.since.toISOString() })), nextCursor: page.nextCursor };
+}
+
 /** Rows locked for the change (serialises concurrent member edits of one workspace). */
 async function lockMembers(db: Queryable, workspaceId: string): Promise<MemberRow[]> {
   const ws = await db.query(`select 1 from public.workspaces where id = $1 for update`, [workspaceId]);

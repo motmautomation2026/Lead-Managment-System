@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EmailSettings } from "@/lib/backend-client";
 
@@ -15,13 +15,29 @@ const mocks = vi.hoisted(() => ({
   deliverability: vi.fn(),
   checkNow: vi.fn(),
   setTrackOpens: vi.fn(),
+  safetyEvents: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/store", () => ({
-  keys: { connection: (ws: string | null, kind: string) => ["connection", ws, kind] },
+  keys: {
+    connection: (ws: string | null, kind: string) => ["connection", ws, kind],
+    safetyEvents: (ws: string, kind: string) => ["safety-events", ws, kind],
+  },
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
+}));
+vi.mock("@/store/server-hooks", () => ({
+  useCursorList: (
+    queryKey: readonly unknown[],
+    fetchPage: (cursor: string | undefined, signal: AbortSignal) => Promise<unknown>,
+  ) =>
+    useInfiniteQuery({
+      queryKey,
+      queryFn: ({ pageParam, signal }) => fetchPage(pageParam, signal) as never,
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (last: { nextCursor: string | null }) => last.nextCursor ?? undefined,
+    }),
 }));
 vi.mock("@/lib/backend-client", () => ({
   backend: {
@@ -37,11 +53,13 @@ vi.mock("@/lib/backend-client", () => ({
         deliverability: mocks.deliverability,
         checkNow: mocks.checkNow,
         setTrackOpens: mocks.setTrackOpens,
+        safetyEvents: mocks.safetyEvents,
       },
     },
   },
 }));
 
+import { renderInRouter } from "@/test/render-in-router";
 import { EmailPanel } from "./email-settings";
 
 const SAVED: EmailSettings = {
@@ -99,20 +117,29 @@ const SAVED: EmailSettings = {
   updatedAt: "2026-10-28T04:00:00.000Z",
 };
 
-function renderPanel(over: Partial<EmailSettings> = {}) {
+/** UX-1: the panel at `/page?tab=…` (Connection by default). */
+function renderPanel(over: Partial<EmailSettings> = {}, tab?: string) {
   mocks.data = { ...SAVED, ...over };
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  return renderInRouter(() => <EmailPanel workspaceId="ws-1" />, {
+    search: tab ? `?tab=${tab}` : "",
   });
-  return render(
-    <QueryClientProvider client={client}>
-      <EmailPanel workspaceId="ws-1" />
-    </QueryClientProvider>,
-  );
 }
+const openTab = async (name: string) =>
+  fireEvent.mouseDown(await screen.findByRole("tab", { name: new RegExp(name) }), { button: 0 });
 
 beforeEach(() => {
   mocks.isAdmin = false;
+  mocks.safetyEvents.mockResolvedValue({
+    data: [
+      {
+        id: "e-1",
+        kind: "recipient_rejected",
+        detail: "550 5.1.1 User unknown",
+        at: "2026-10-28T04:00:00.000Z",
+      },
+    ],
+    nextCursor: "c-2",
+  });
 });
 afterEach(() => {
   cleanup();
@@ -123,32 +150,36 @@ describe("EmailPanel (E1b)", () => {
   it("E3b-2b: Track email opens is off by default; an admin turns it on; without a public API address it says so", async () => {
     mocks.isAdmin = true;
     mocks.setTrackOpens.mockResolvedValue({ ...SAVED, trackOpens: true });
-    renderPanel();
+    await renderPanel({}, "deliverability");
     const toggle = await screen.findByRole("switch", { name: "Track email opens" });
     expect(toggle).not.toBeChecked();
     expect(screen.queryByText(/needs a public API address/)).not.toBeInTheDocument();
     fireEvent.click(toggle);
     await waitFor(() => expect(mocks.setTrackOpens).toHaveBeenCalledWith(true, expect.anything()));
     cleanup();
-    renderPanel({ openTrackingAvailable: false });
+    await renderPanel({ openTrackingAvailable: false }, "deliverability");
     expect(await screen.findByText(/Open tracking needs a public API address/)).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Track email opens" })).toBeDisabled();
   });
 
   it("E3b-2b: a salesperson can't change Track email opens", async () => {
-    renderPanel({ trackOpens: true });
+    await renderPanel({ trackOpens: true }, "deliverability");
     expect(await screen.findByRole("switch", { name: "Track email opens" })).toBeDisabled();
   });
 
   it("a salesperson sees the settings read-only, the monitoring, and no secret, test or form", async () => {
-    renderPanel();
+    await renderPanel();
     expect(await screen.findByText("MOTM Sales <sales@motm.test>")).toBeInTheDocument();
     expect(screen.getByText("smtp.motm.test:465 (SSL/TLS)")).toBeInTheDocument();
-    expect(screen.getByText("7 / 20 (warm-up day 2)")).toBeInTheDocument();
-    expect(screen.getByText("3 / 20")).toBeInTheDocument();
-    expect(screen.getByText("Recipient rejected")).toBeInTheDocument();
+    // The status card: state + the one key number.
+    const card = screen.getByRole("region", { name: "Email status" });
+    expect(card).toHaveTextContent("Connected");
+    expect(card).toHaveTextContent("7 / 20 (warm-up day 2)");
+    expect(screen.getAllByText("Only admins can change these.").length).toBeGreaterThan(0);
+    await openTab("Monitoring");
+    expect(await screen.findByText("3 / 20")).toBeInTheDocument();
+    expect(await screen.findByText("Recipient rejected")).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveTextContent("2026-10-28");
-    expect(screen.getByText("Only admins can change these.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save email settings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Test SMTP login" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Check DNS" })).toBeNull();
@@ -158,8 +189,11 @@ describe("EmailPanel (E1b)", () => {
   it("not set up (was on Resend): says so; there is no Resend option", async () => {
     mocks.isAdmin = true;
     renderPanel({ configured: false, legacyProvider: "resend", smtpHost: "", fromAddress: "" });
-    expect(await screen.findByText("Email is not set up")).toBeInTheDocument();
-    expect(screen.getByText(/used Resend, which is no longer supported/)).toBeInTheDocument();
+    const card = await screen.findByRole("region", { name: "Email status" });
+    expect(card).toHaveTextContent("Not set up");
+    expect(card).toHaveTextContent(/used Resend, which is no longer supported/);
+    fireEvent.click(within(card).getByRole("button", { name: "Set up mailbox" }));
+    await waitFor(() => expect(screen.getByLabelText("SMTP host")).toHaveFocus());
     expect(screen.queryByText(/^Resend$/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Test SMTP login" })).toBeNull();
   });
@@ -167,12 +201,13 @@ describe("EmailPanel (E1b)", () => {
   it("an admin saves; saved secrets stay blank and are not sent", async () => {
     mocks.isAdmin = true;
     mocks.update.mockResolvedValue(SAVED);
-    renderPanel();
+    await renderPanel();
     const password = await screen.findByLabelText("Password or app password");
     expect(password).toHaveValue("");
     expect(password).toHaveAttribute("type", "password");
+    expect(screen.queryByRole("button", { name: "Save email settings" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Default from name"), { target: { value: "MOTM" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save email settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save email settings" }));
     await waitFor(() => expect(mocks.update).toHaveBeenCalledOnce());
     const input = mocks.update.mock.calls[0]![0] as Record<string, unknown>;
     expect(input).toMatchObject({ fromName: "MOTM", smtpHost: "smtp.motm.test", smtpPort: 465 });
@@ -183,19 +218,31 @@ describe("EmailPanel (E1b)", () => {
 
   it("validates ports, spacing, caps and the window before saving", async () => {
     mocks.isAdmin = true;
-    renderPanel();
+    await renderPanel({}, "safety");
     fireEvent.change(await screen.findByLabelText("Min spacing (seconds)"), {
       target: { value: "120" },
     });
     fireEvent.change(screen.getAllByLabelText("Port")[0]!, { target: { value: "70000" } });
     fireEvent.change(screen.getByLabelText("Hourly cap"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("Closes"), { target: { value: "08:00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save email settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save email settings" }));
     expect(
       await screen.findByText("The minimum can't be more than the maximum."),
     ).toBeInTheDocument();
     expect(screen.getByText("The window must start before it ends.")).toBeInTheDocument();
     expect(mocks.update).not.toHaveBeenCalled();
+    // The bad port is on Connection: that tab opens and both tabs count their problems.
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /Connection/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(screen.getByRole("tab", { name: /Connection/ })).toHaveTextContent("Connection1");
+    expect(screen.getByRole("tab", { name: /Safety & limits/ })).toHaveTextContent("3");
+    expect(screen.getByRole("region", { name: "Unsaved changes" })).toHaveTextContent(
+      "Fix the highlighted fields first.",
+    );
   });
 
   it("login tests show the server's result; the test email shows its live status", async () => {
@@ -216,7 +263,7 @@ describe("EmailPanel (E1b)", () => {
       to: "admin@motm.test",
       lastError: null,
     });
-    renderPanel();
+    await renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Test SMTP login" }));
     expect(await screen.findByText(/create an app password/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Test IMAP login" }));
@@ -226,10 +273,10 @@ describe("EmailPanel (E1b)", () => {
     expect(mocks.testStatus).toHaveBeenCalledWith("t-1", expect.anything());
   });
 
-  it("paused: a red banner for everyone, Resume (with confirm) for admins", async () => {
+  it("paused: the status card says why for everyone; Resume (with confirm) for admins", async () => {
     mocks.isAdmin = true;
     mocks.resume.mockResolvedValue({ ...SAVED, pause: null });
-    renderPanel({
+    await renderPanel({
       enabled: false,
       pause: {
         reason: "SMTP login rejected — check the password.",
@@ -248,7 +295,7 @@ describe("EmailPanel (E1b)", () => {
 
     cleanup();
     mocks.isAdmin = false;
-    renderPanel({
+    await renderPanel({
       enabled: false,
       pause: { reason: "Paused by Govind.", at: null, byName: "Govind" },
     });
@@ -278,7 +325,7 @@ describe("EmailPanel (E1b)", () => {
         { check: "dmarc", status: "green", summary: "DMARC policy is p=quarantine.", fix: null },
       ],
     });
-    renderPanel();
+    await renderPanel({}, "deliverability");
     fireEvent.change(await screen.findByLabelText("DKIM selector (optional)"), {
       target: { value: "s1" },
     });
@@ -298,7 +345,7 @@ describe("EmailPanel (E1b)", () => {
 
     it("shows the last checks and today's counts; a salesperson has no Check now", async () => {
       mocks.isAdmin = false;
-      renderPanel();
+      await renderPanel({}, "replies");
       expect(await screen.findByRole("heading", { name: "Replies & bounces" })).toBeInTheDocument();
       expect(stat("Replies today")).toHaveTextContent("4");
       expect(stat("Bounces today")).toHaveTextContent("2");
@@ -311,32 +358,94 @@ describe("EmailPanel (E1b)", () => {
 
     it("shows the last error in plain text and Never before the first check", async () => {
       mocks.isAdmin = false;
-      renderPanel({
-        imapStatus: {
-          ...SAVED.imapStatus!,
-          lastCheckAt: null,
-          lastSuccessAt: null,
-          lastError:
-            "IMAP login rejected — check the IMAP username and password in Settings → Email.",
+      await renderPanel(
+        {
+          imapStatus: {
+            ...SAVED.imapStatus!,
+            lastCheckAt: null,
+            lastSuccessAt: null,
+            lastError:
+              "IMAP login rejected — check the IMAP username and password in Settings → Email.",
+          },
         },
-      });
-      expect(await screen.findByText(/IMAP login rejected/)).toBeInTheDocument();
+        "replies",
+      );
+      // The status card points at it too.
+      expect(await screen.findByRole("region", { name: "Email status" })).toHaveTextContent(
+        "Needs attention",
+      );
+      expect((await screen.findAllByText(/IMAP login rejected/)).length).toBeGreaterThan(0);
       expect(screen.getAllByText("Never")).toHaveLength(2);
     });
 
     it("an admin's Check now asks the server once", async () => {
       mocks.isAdmin = true;
       mocks.checkNow.mockResolvedValue({ ...SAVED });
-      renderPanel();
+      await renderPanel({}, "replies");
       fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
       await waitFor(() => expect(mocks.checkNow).toHaveBeenCalledTimes(1));
     });
 
-    it("no IMAP login saved: no card", async () => {
+    it("no IMAP login saved: no Replies & bounces tab", async () => {
       mocks.isAdmin = false;
-      renderPanel({ imapStatus: null });
+      await renderPanel({ imapStatus: null });
       await screen.findByText("Sent today");
-      expect(screen.queryByRole("heading", { name: "Replies & bounces" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Replies & bounces" })).toBeNull();
+    });
+  });
+
+  describe("UX-1 layout", () => {
+    it("tabs live in the URL; the shared form keeps edits across tabs; Discard restores", async () => {
+      mocks.isAdmin = true;
+      const { router } = await renderPanel();
+      fireEvent.change(await screen.findByLabelText("Default from name"), {
+        target: { value: "Edited" },
+      });
+      await openTab("Safety & limits");
+      await waitFor(() => expect(router.state.location.search).toEqual({ tab: "safety" }));
+      expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
+      await openTab("Connection");
+      expect(screen.getByLabelText("Default from name")).toHaveValue("Edited");
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+      await waitFor(() =>
+        expect(screen.getByLabelText("Default from name")).toHaveValue("MOTM Sales"),
+      );
+      expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
+    });
+
+    it("leaving with unsaved changes asks first", async () => {
+      mocks.isAdmin = true;
+      const { router } = await renderPanel();
+      fireEvent.change(await screen.findByLabelText("Default from name"), {
+        target: { value: "Edited" },
+      });
+      void router.navigate({ to: "/elsewhere" as never });
+      expect(
+        await screen.findByRole("dialog", { name: "Leave without saving?" }),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+      expect(router.state.location.pathname).toBe("/page");
+    });
+
+    it("monitoring pages the whole safety-event history with Load more", async () => {
+      mocks.safetyEvents
+        .mockResolvedValueOnce({
+          data: [
+            { id: "e-1", kind: "send_failed", detail: "timeout", at: "2026-10-28T04:00:00.000Z" },
+          ],
+          nextCursor: "c-2",
+        })
+        .mockResolvedValueOnce({
+          data: [{ id: "e-2", kind: "paused", detail: "too many", at: "2026-10-27T04:00:00.000Z" }],
+          nextCursor: null,
+        });
+      await renderPanel({}, "monitoring");
+      const list = await screen.findByRole("list", { name: "Safety events" });
+      expect(list).toHaveTextContent("Send failed");
+      fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+      await waitFor(() => expect(list).toHaveTextContent("Paused"));
+      expect(mocks.safetyEvents).toHaveBeenLastCalledWith({ cursor: "c-2" }, expect.anything());
+      expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     });
   });
 });
