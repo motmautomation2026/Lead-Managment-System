@@ -136,7 +136,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it for details of a past phase.
+Every completed phase (0A … E3b-1b and later, incl. UX-1) is in `docs/HISTORY.md`; read it for details of a past phase.
 
 ## Scale, fair ticks and system health (P7)
 
@@ -310,6 +310,14 @@ Every completed phase (0A … E3b-1b and later) is in `docs/HISTORY.md`; read it
   hard-coded colours; lists always server-side via the B4 endpoints (never fetch everything); list state
   (filters/sort/view/q) in the URL via `useListUrlState`; icon-only buttons need `aria-label`; every page has
   loading/empty/error states and works at 375 px; new forms use react-hook-form + Zod.
+- UX-1 (frontend patterns, `docs/crm-v2/C1-ui.md` §11–12, audit + phase plan `docs/crm-v2/UX-audit.md`): **every list that can
+  grow is paginated** — a B4 keyset endpoint with Load more (never fetch everything; add the endpoint first); fixed-size lists
+  say why in the audit. Sub-nav pages use `SectionLayout` (one route per section, hidden-not-disabled by permission, phones:
+  list → section); channel/record sections open with a `StatusCard`, details go in `SectionTabs` (`?tab=`); item details open
+  in a `DetailDrawer` (`?<item>=<id>`); every form has one `SaveBar` (sticky, guards leaving) instead of Save buttons;
+  dangerous actions behind `ConfirmDialog` saying exactly what happens; reversible ones use `toastUndo`; loading =
+  `SectionSkeleton`/skeletons; empty states carry one next action. Settings: `/settings/<section>`, registry
+  `features/settings/settings-search.ts` (sections, access, search entries — a new setting gets a field id + an entry).
 - Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
   manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
   contact owner, `agent_status` or automation.

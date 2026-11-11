@@ -406,13 +406,7 @@ endpoint; a row opens the decision **Sheet** (`decision-drawer.tsx`, same rating
 **Knowledge — `/knowledge`**: Documents and Assets tabs are DataTables (status with the error on hover, active switch,
 view / reprocess / delete, download); admin-only writes unchanged; Test retrieval unchanged.
 
-**Settings — `/settings?tab=`** (`settings-page.tsx`, `settings-search.ts`): a left sub-nav (a scrolling tab row below lg):
-Workspace (Email, WhatsApp, Google Calendar), Lead assignment (incl. the website-lead fallback owner), AI agent, Users
-(`users-panel.tsx`, the old Admin page) — those three for admins; others opening them see "Admins only" — and Appearance
-(theme + density, the same as the user menu). `/admin` (`admin-redirect.tsx`) opens Settings → Users; the Google Calendar
-OAuth landing `/admin?calendar=…&message=…` (A5) opens Settings → Workspace with the same query, so the Calendar panel shows
-its toast and strips it. AuthGate keeps the admin sign-in at `/admin` and still sends salespeople to `/`. Settings, Admin
-and auth query keys live in `store/query.ts` (`keys.connection`, `assignmentRules`, `adminUsers`, `authRole`; A17).
+**Settings — `/settings/<section>` (UX-1; was `?tab=` in C6b)**: see §12.
 
 **Home — `/`** (`features/home/home-page.tsx`, `useHomeSummary` → `GET /home/summary`): My day (overdue / due today / need
 an outcome, each linking to the matching Tasks or Meetings view with `ownerId=me`; the next 5 tasks; today's meetings with
@@ -447,3 +441,31 @@ sub-nav layout `gap-8`; titles `type-page-title` (page and section), `type-secti
 labels, nav group labels), `type-small` (hints). Focus: the global `:focus-visible` outline (`focus-ring`); never remove it
 without a replacement ring. Colours only from tokens; every new text/background pair goes into `styles-contrast.test.ts`
 (UX-1 added `danger-soft-foreground` on `surface-raised`, the SaveBar error). Dark mode: tokens only, so parity is automatic.
+
+## 12. Settings (UX-1) — `features/settings/`
+
+- **Routes:** `routes/settings.tsx` = `SettingsLayout` (PageHeader + `SectionLayout` + `<Outlet />`), one file per section
+  (`settings.<id>.tsx`, its own chunk; only the open section's code and queries load). `settings.index.tsx` = `SettingsIndex`:
+  desktop → `/settings/email`; phones → the section list. Registry: `settings-search.ts` `SETTINGS_SECTIONS`
+  (id, group, label, `access` all | admin | users | super, `workspace`), `SETTINGS_GROUPS` Workspace · Channels · AI ·
+  Personal · Admin. A section the viewer can't open is hidden (sub-nav, search, ⌘K) and by URL shows "No access";
+  workspace sections need a selected workspace. The AI group also links Knowledge & assets (`/knowledge`).
+- **Sections:** Workspace — Team (`team-panel.tsx`: add by email at the top, members searched + paged), Lead assignment ·
+  Channels — Email, WhatsApp, Google Calendar · AI — AI agent (mode, scope, gate), Limits & schedule, Message rules (read-only
+  for non-admins), Playbook, Style examples, Target industries · Personal — My profile (booking link), Appearance · Admin —
+  User accounts (paged, create dialog, account drawer), All workspaces, System health.
+- **Channel sections** open with a `StatusCard` (state, the key number, the one next action) and `SectionTabs` with `?tab=`
+  (`useSearchTab`, `lib/use-search-param.ts`): Email `connection · safety · replies · monitoring · deliverability` (Connection
+  and Safety share one react-hook-form form, `keepMounted`, one SaveBar; a failed save opens the tab with the first problem
+  and each tab badge counts its problems; no Replies tab without an IMAP login); WhatsApp `numbers · safety · monitoring`
+  (numbers list → `DetailDrawer` at `?number=<id>` with Overview (QR, connect, restart, pause/log out/remove behind confirms)
+  and Settings tabs); Google Calendar: status + credentials + Disconnect. Monitoring tabs page the whole safety-event history
+  (`SafetyEventsList`, `safety-events.tsx`).
+- **Forms:** every section form uses `SaveBar` (no inline Save buttons); dangerous actions use `ConfirmDialog` with exactly
+  what happens. Field ids are stable: the Settings search (`SETTING_ENTRIES`: label, section, tab, anchor) and ⌘K
+  (`SETTINGS_PALETTE_ACTIONS` + "Settings → <section>") jump to `?tab=` + `#<field id>`, which `SettingsLayout` scrolls to and
+  focuses. A new setting = a field with an id + one `SETTING_ENTRIES` row.
+- **Old URLs:** `/settings?tab=<old>` → its section (`legacySettingsRedirect`), `?calendar=` (Google OAuth return, via `/admin`)
+  → `/settings/calendar` with the query (the Calendar section toasts once and strips it); `/admin` → User accounts.
+- **Tests** render sections with `renderInRouter` (`src/test/render-in-router.tsx`: SaveBar and `?tab=` need a router).
+- **Bundle:** first load 298.5 → 284.1 kB gzip (re-chunking after the per-section routes; every section is lazy).

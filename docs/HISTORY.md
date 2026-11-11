@@ -832,3 +832,21 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   `https://<api>/health/worker` (alert on non-200). Keep `DB_POOL_MAX` 10 (API) and `WORKER_DB_POOL_MAX` 10 (worker) within the
   production transaction pooler's client limit, `DB_SESSION_POOL_MAX` 2, and run ≤ (session pooler clients − 2 × 2 − 3)
   connected numbers per worker; measure a real Baileys socket's memory on the first production numbers before raising it.
+- **UX-1 (UX audit, design foundations, Settings redesign; branch `ui-redesign`, local only; no OpenAI call, nothing sent,
+  no migration):** Item 0: `docs/crm-v2/UX-audit.md` — every route (tasks + clicks, scroll, pagination status, problems,
+  fixes), repetitive-work flows before → after, top 10 problems, phase plan UX-2 (lists + repetitive work), UX-3 (records +
+  Home), UX-4 (AI / automation + polish; backend keyset lists for workflows, templates, knowledge, notifications). Item 1:
+  foundations in `components/crm` — PageHeader `menuActions` + `filters`, `SectionLayout`/`SectionHeader`, `StatusCard`,
+  `SectionTabs`, `DetailDrawer`, `SaveBar` + `UnsavedChangesGuard` (TanStack `useBlocker`), `SectionSkeleton`; ConfirmDialog
+  ReactNode description + `cancelLabel`; `lib/toast-undo.ts`; contrast pair `danger-soft-foreground` on `surface-raised`;
+  C1-ui §11. Item 2: Settings = one route per section (`/settings/<id>`, own chunk) in five groups (Workspace, Channels, AI,
+  Personal, Admin) with a sub-nav (phones: section list → section), hidden by permission ("No access" by URL), a settings
+  search that jumps to `?tab=` + the field, ⌘K "Settings → <section>" + frequent settings actions (word-based action
+  matching), breadcrumbs, redirects from `/settings?tab=…`, `?calendar=` and `/admin`. Item 3: Email / WhatsApp / Google
+  Calendar with status cards and tabs (WhatsApp numbers list → drawer `?number=`), every form on the save bar, pause /
+  remove / log out / deactivate / disconnect behind confirms (WhatsApp Pause newly confirmed), AI sections split per module;
+  backend keyset pages `GET /team/members`, `GET /admin/users` and new `GET /connections/{email,whatsapp}/safety-events`
+  (B4 §7v; integration test `settingsLists`). Tests: frontend 512 → 549, backend unit 1271 (unchanged), integration
+  468 + 2 skipped → 471 + 2 skipped. First load 298.5 → 284.1 kB gzip. Staging integration: runs 1 and 2 each had one
+  unrelated flaky failure (E2h attachment send left queued; a Knowledge asset upload got a Storage 500), each passing when
+  re-run alone. **Production:** no migration; the API change is additive in shape (`{data, nextCursor}` on the two lists).

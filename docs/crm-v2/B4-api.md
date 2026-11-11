@@ -586,6 +586,22 @@ Red (`red`): a stuck row, a paused number or paused email sending, budget ≥ 90
 once per IST day per red problem (`system_health_alerts`). Heartbeats (`worker_heartbeats`, one row per loop) are written by
 the worker once per tick; error columns hold codes only.
 
+## 7v. Settings lists — UX-1
+
+Every list in Settings that can grow is a keyset page (§1: `limit` 1–100, default 50, `cursor`, 400 when invalid,
+`{data, nextCursor}`).
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/team/members?q=&cursor=&limit=` | admins of the workspace | By name (`sort` `name:asc|desc`); `q` ≥ 2 chars = name or email. Rows `{userId, name, email, active, role, since}`. The POST / PATCH / DELETE responses are unchanged (the whole list). |
+| GET | `/admin/users?q=&cursor=&limit=` | global admin / super-admin | Salesperson accounts, newest first (`sort` `createdAt:asc|desc`); `q` = name or email. Rows `{id, name, email, initials, active, createdAt, bookingUrl}`. |
+| GET | `/connections/email/safety-events?cursor=&limit=` | every member | The whole history, newest first: `{id, kind, detail, at}`. The settings payload still carries the latest 20. |
+| GET | `/connections/whatsapp/safety-events?cursor=&limit=` | every member | Same, plus `numberLabel` (null for workspace-level events). |
+
+Fixed-size lists stay unpaginated on purpose: WhatsApp numbers (≤ `max_numbers`, at most 20), the 14-day monitoring tables,
+lead assignment rule rows (an admin's form), the WhatsApp inbound review queue (latest 20) and playbook versions (latest 50).
+The safety-event keysets use the 041 / 042 `(workspace_id, created_at desc)` indexes (ties by id).
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a
