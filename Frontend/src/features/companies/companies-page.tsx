@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { useCreateCompanyDialog } from "@/app/add-lead-context";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
+import { useListPrefs } from "@/lib/list-prefs";
 import {
   useCompanies,
   useCompaniesCount,
@@ -43,6 +44,7 @@ const EMPTY_TEXT: Record<string, string> = {
 
 export function CompaniesPage() {
   const [state, set] = useListUrlState(companiesSearchSchema);
+  const prefs = useListPrefs("companies", state.columns, DEFAULT_COLUMNS);
   const navigate = useNavigate();
   const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
@@ -50,7 +52,7 @@ export function CompaniesPage() {
   const createCompany = useCreateCompanyDialog();
 
   const params = useMemo(() => toApiParams(state), [state]);
-  const list = useCompanies(params);
+  const list = useCompanies({ ...params, limit: prefs.limit });
   const count = useCompaniesCount(params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const industries = useCompanyIndustries();
@@ -176,8 +178,13 @@ export function CompaniesPage() {
           }
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
-          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
-          onColumnsChange={(columns) => void set({ columns })}
+          visibleColumns={prefs.columns}
+          onColumnsChange={(columns) => {
+            prefs.rememberColumns(columns);
+            void set({ columns });
+          }}
+          pageSize={prefs.pageSize}
+          onPageSizeChange={prefs.setPageSize}
           hasNextPage={list.hasNextPage}
           isFetchingNextPage={list.isFetchingNextPage}
           onLoadMore={() => void list.fetchNextPage()}

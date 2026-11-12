@@ -24,6 +24,7 @@ import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
 import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
+import { useListPrefs } from "@/lib/list-prefs";
 import { useMediaQuery } from "@/lib/use-media-query";
 import {
   messageFromError,
@@ -59,6 +60,7 @@ const EMPTY_TEXT: Record<string, string> = {
 
 export function MeetingsPage() {
   const [state, set] = useListUrlState(meetingsSearchSchema);
+  const prefs = useListPrefs("meetings", state.columns, DEFAULT_COLUMNS);
   const { users } = useSession();
   const schedule = useScheduleMeetingDialog();
   const narrow = useMediaQuery("(max-width: 767px)");
@@ -66,7 +68,7 @@ export function MeetingsPage() {
   const params = useMemo(() => toApiParams(state), [state]);
   // A bare /meetings is rewritten to Upcoming first (useListViews); don't fetch "all" meanwhile.
   const landing = Object.keys(state).length === 0;
-  const list = useMeetingList(params, !landing);
+  const list = useMeetingList({ ...params, limit: prefs.limit }, !landing);
   const count = useMeetingCount(params, !landing);
   const needsOutcome = useMeetingCount(NEEDS_OUTCOME);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
@@ -190,8 +192,13 @@ export function MeetingsPage() {
             onRowClick={setSheet}
             sort={parseSort(state.sort)}
             onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
-            visibleColumns={state.columns ?? DEFAULT_COLUMNS}
-            onColumnsChange={(columns) => void set({ columns })}
+            visibleColumns={prefs.columns}
+            onColumnsChange={(columns) => {
+              prefs.rememberColumns(columns);
+              void set({ columns });
+            }}
+            pageSize={prefs.pageSize}
+            onPageSizeChange={prefs.setPageSize}
             hasNextPage={list.hasNextPage}
             isFetchingNextPage={list.isFetchingNextPage}
             onLoadMore={() => void list.fetchNextPage()}

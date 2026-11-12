@@ -334,3 +334,31 @@ describe("ContactsPage", () => {
     expect(screen.queryByRole("button", { name: "Reorder Team" })).toBeNull();
   });
 });
+
+describe("ContactsPage — UX-2 list standard", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("remembers rows per page and columns in this browser; the URL keeps filters and Back works", async () => {
+    const router = await renderPage({ ownerId: ["me"] });
+    fireEvent.keyDown(screen.getByLabelText("Rows per page"), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "100 per page" }));
+    await waitFor(() => expect(lastParams()).toMatchObject({ limit: 100, ownerId: ["me"] }));
+
+    openMenu("Columns");
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Source" }));
+    await waitFor(() => expect(searchOf(router)["columns"]).toContain("source"));
+    const columns = searchOf(router)["columns"];
+
+    // Back restores the URL before the column change; the filter stays.
+    router.history.back();
+    await waitFor(() => expect(searchOf(router)["columns"]).toBeUndefined());
+    expect(searchOf(router)["ownerId"]).toEqual(["me"]);
+
+    // A fresh visit without columns in the URL uses the remembered page size and columns.
+    cleanup();
+    await renderPage({});
+    expect(lastParams()).toMatchObject({ limit: 100 });
+    expect(screen.getByRole("columnheader", { name: "Source" })).toBeInTheDocument();
+    expect(columns).toContain("source");
+  });
+});

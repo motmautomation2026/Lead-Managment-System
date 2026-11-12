@@ -29,6 +29,7 @@ import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
 import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
+import { useListPrefs } from "@/lib/list-prefs";
 import {
   useCompany,
   useCreateProposal,
@@ -62,11 +63,12 @@ const EMPTY_TEXT: Record<string, string> = {
 
 export function ProposalsPage() {
   const [state, set] = useListUrlState(proposalsSearchSchema);
+  const prefs = useListPrefs("proposals", state.columns, DEFAULT_COLUMNS);
   const { users } = useSession();
   const params = useMemo(() => toApiParams(state), [state]);
   // A bare /proposals is rewritten to Open first (useListViews); don't fetch "all" meanwhile.
   const landing = Object.keys(state).length === 0;
-  const list = useProposalList(params, !landing);
+  const list = useProposalList({ ...params, limit: prefs.limit }, !landing);
   const count = useProposalCount(params, !landing);
   const summary = useProposalSummary(useMemo(() => toSummaryParams(state), [state]));
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
@@ -174,8 +176,13 @@ export function ProposalsPage() {
           onRowClick={(r) => setSheetId(r.id)}
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
-          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
-          onColumnsChange={(columns) => void set({ columns })}
+          visibleColumns={prefs.columns}
+          onColumnsChange={(columns) => {
+            prefs.rememberColumns(columns);
+            void set({ columns });
+          }}
+          pageSize={prefs.pageSize}
+          onPageSizeChange={prefs.setPageSize}
           hasNextPage={list.hasNextPage}
           isFetchingNextPage={list.isFetchingNextPage}
           onLoadMore={() => void list.fetchNextPage()}

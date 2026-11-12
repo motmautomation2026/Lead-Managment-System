@@ -196,13 +196,15 @@ describe("DealBoard", () => {
     );
     mocks.list.mockResolvedValue({ data: [card("q9", "qualified")], nextCursor: null });
     await renderBoard();
-    fireEvent.click(await within(column("Qualified")).findByRole("button", { name: "Load more" }));
+    fireEvent.click(
+      await within(column("Qualified")).findByRole("button", { name: /^Load more \(\d+ more\)$/ }),
+    );
     expect(await within(column("Qualified")).findByText("Deal q9")).toBeTruthy();
     expect(mocks.list).toHaveBeenCalledWith(
       { ownerId: ["me"], status: "open", stage: ["qualified"], sort: "updatedAt:desc" },
       "cur-1",
     );
-    expect(within(column("Qualified")).queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(within(column("Qualified")).queryByRole("button", { name: /^Load more/ })).toBeNull();
   });
 
   it("keyboard move to an open stage is optimistic and rolls back with a toast on failure", async () => {

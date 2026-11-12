@@ -370,7 +370,9 @@ function BoardColumn({
               disabled={loadingMore}
               onClick={onLoadMore}
             >
-              {loadingMore ? "Loading…" : "Load more"}
+              {loadingMore
+                ? "Loading…"
+                : `Load more (${Math.max(column.count - cards.length, 0)} more)`}
             </Button>
           )}
         </div>

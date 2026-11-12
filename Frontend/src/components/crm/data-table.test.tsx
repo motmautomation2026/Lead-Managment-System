@@ -2,6 +2,7 @@ import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DataTable, type DataTableColumn, type SortState } from "@/components/crm/data-table";
+import { ThemeProvider } from "@/app/theme-provider";
 
 interface Row {
   id: string;
@@ -21,10 +22,10 @@ const columns: DataTableColumn<Row>[] = [
   { id: "city", header: "City", cell: (r) => r.city },
 ];
 
-type Props = Partial<Parameters<typeof DataTable<Row>>[0]>;
+type Props = Partial<Parameters<typeof DataTable<Row>>[0]> & { wrap?: boolean };
 
-function renderTable(props: Props = {}) {
-  return render(
+function renderTable({ wrap, ...props }: Props = {}) {
+  const table = (
     <DataTable<Row>
       label="Contacts"
       data={rows(3)}
@@ -32,8 +33,9 @@ function renderTable(props: Props = {}) {
       getRowId={(r) => r.id}
       getRowHref={(r) => `/leads/${r.id}`}
       {...props}
-    />,
+    />
   );
+  return render(wrap ? <ThemeProvider>{table}</ThemeProvider> : table);
 }
 
 function SelectableTable({ onSelect }: { onSelect: (ids: string[]) => void }) {
@@ -226,4 +228,112 @@ describe("DataTable", () => {
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "City" }));
     expect(onColumnsChange).toHaveBeenCalledWith(["name"]);
   });
+
+  it("j / k move between rows (also from outside the list), x selects, Enter opens", async () => {
+    const onRowClick = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <div>
+        <input aria-label="Search" />
+        <SelectableTableWithOpen onSelect={onSelect} onRowClick={onRowClick} />
+      </div>,
+    );
+    // j from the page body steps into the list; typing in a field never moves it.
+    screen.getByLabelText("Search").focus();
+    fireEvent.keyDown(screen.getByLabelText("Search"), { key: "j" });
+    expect(document.activeElement).toBe(screen.getByLabelText("Search"));
+    fireEvent.keyDown(document.body, { key: "j" });
+    await waitFor(() => expect(document.activeElement).toBe(bodyRows()[0]));
+    fireEvent.keyDown(bodyRows()[0]!, { key: "j" });
+    await waitFor(() => expect(document.activeElement).toBe(bodyRows()[1]));
+    fireEvent.keyDown(bodyRows()[1]!, { key: "k" });
+    await waitFor(() => expect(document.activeElement).toBe(bodyRows()[0]));
+    fireEvent.keyDown(bodyRows()[0]!, { key: "x" });
+    expect(onSelect).toHaveBeenLastCalledWith(["1"]);
+    fireEvent.keyDown(bodyRows()[0]!, { key: "Enter" });
+    expect(onRowClick).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
+  });
+
+  it("offers rows per page and density, and keeps row actions out of the row click", () => {
+    const onPageSizeChange = vi.fn();
+    const onRowClick = vi.fn();
+    const action = vi.fn();
+    renderTable({
+      wrap: true,
+      pageSize: 50,
+      onPageSizeChange,
+      onColumnsChange: vi.fn(),
+      onRowClick,
+      rowActions: (r) => (
+        <button type="button" onClick={() => action(r.id)}>
+          Actions for {r.name}
+        </button>
+      ),
+    });
+    fireEvent.keyDown(screen.getByLabelText("Rows per page"), { key: "Enter" });
+    fireEvent.click(screen.getByRole("option", { name: "25 per page" }));
+    expect(onPageSizeChange).toHaveBeenCalledWith(25);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Columns" }), { key: "Enter" });
+    expect(screen.getByRole("menuitemradio", { name: "Comfortable" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Compact" }));
+    expect(document.documentElement.dataset["density"]).toBe("compact");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Contact 2" }));
+    expect(action).toHaveBeenCalledWith("2");
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it("shows cards instead of a table on phones, with a sort picker", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }) as unknown as MediaQueryList,
+    );
+    const onRowClick = vi.fn();
+    renderTable({
+      onRowClick,
+      onSortChange: vi.fn(),
+      sort: { field: "name", dir: "asc" },
+      onColumnsChange: vi.fn(),
+    });
+    expect(screen.queryByRole("table")).toBeNull();
+    const list = screen.getByRole("list", { name: "Contacts" });
+    const cards = within(list).getAllByRole("listitem");
+    expect(cards).toHaveLength(3);
+    expect(cards[0]).toHaveTextContent("Contact 1");
+    expect(cards[0]).toHaveTextContent("CityPune");
+    expect(screen.getByLabelText("Sort by")).toBeInTheDocument();
+    fireEvent.click(cards[1]!);
+    expect(onRowClick).toHaveBeenCalledWith(expect.objectContaining({ id: "2" }));
+  });
 });
+
+function SelectableTableWithOpen({
+  onSelect,
+  onRowClick,
+}: {
+  onSelect: (ids: string[]) => void;
+  onRowClick: (row: Row) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  return (
+    <DataTable<Row>
+      label="Contacts"
+      data={rows(3)}
+      columns={columns}
+      getRowId={(r) => r.id}
+      onRowClick={onRowClick}
+      selectedIds={selected}
+      onSelectionChange={(ids) => {
+        onSelect(ids);
+        setSelected(ids);
+      }}
+    />
+  );
+}

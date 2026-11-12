@@ -26,8 +26,27 @@ export const SHORTCUTS = [
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
 export const SEQUENCE_MS = 1000;
 
+/**
+ * Shown in the help sheet only: lists (DataTable) and the call queue handle these keys
+ * themselves, with the same "not while typing / dialog open" rule (`keysAreTaken`).
+ */
+export const LOCAL_SHORTCUTS = [
+  { id: "listNext", keys: ["j"], label: "Next row", group: "Lists" },
+  { id: "listPrev", keys: ["k"], label: "Previous row", group: "Lists" },
+  { id: "listOpen", keys: ["Enter"], label: "Open the row (peek)", group: "Lists" },
+  { id: "listSelect", keys: ["x"], label: "Select the row", group: "Lists" },
+  { id: "listClose", keys: ["Esc"], label: "Close the drawer", group: "Lists" },
+  { id: "q1", keys: ["1"], label: "Connected", group: "Call queue" },
+  { id: "q2", keys: ["2"], label: "No answer", group: "Call queue" },
+  { id: "q3", keys: ["3"], label: "Busy", group: "Call queue" },
+  { id: "q4", keys: ["4"], label: "Wrong number", group: "Call queue" },
+  { id: "q5", keys: ["5"], label: "Call back at…", group: "Call queue" },
+  { id: "qSkip", keys: ["s"], label: "Skip", group: "Call queue" },
+  { id: "qPause", keys: ["p"], label: "Pause the queue", group: "Call queue" },
+] as const;
+
 /** Typing somewhere, or a dialog/menu/keyboard drag owns the keys. */
-function keysAreTaken(target: EventTarget | null) {
+export function keysAreTaken(target: EventTarget | null) {
   const el = target instanceof HTMLElement ? target : null;
   if (
     el &&

@@ -1,8 +1,14 @@
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ArrowRight, Building2, CopyCheck, User } from "lucide-react";
+import { ArrowRight, Building2, CopyCheck, MoreHorizontal, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card } from "@/components/ui/card";
 import {
   Dialog,
@@ -352,6 +358,13 @@ function ContactRow({ row, act }: { row: CompanyDuplicate; act: Act }) {
   const [target, setTarget] = useState<IdName | null>(null);
   const contact = row.contact;
   const open = row.status === "open";
+  const keepLink = () => void act(row.id, () => dismiss.mutateAsync(row.id), "Link kept");
+  const createSeparate = () =>
+    void act(
+      row.id,
+      () => relink.mutateAsync({ id: row.id }),
+      `Created “${row.observedName}” and moved the contact`,
+    );
 
   return (
     <Card className="space-y-3 p-4">
@@ -390,28 +403,38 @@ function ContactRow({ row, act }: { row: CompanyDuplicate; act: Act }) {
       </div>
       {open && (
         <div className="flex flex-wrap justify-end gap-2">
+          {/* Phones: one menu instead of up to three wrapping buttons (UX-2). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className="sm:hidden">
+                <MoreHorizontal /> Actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={keepLink}>Keep link</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setMoveOpen(true)}>
+                Move to another company…
+              </DropdownMenuItem>
+              {row.observedName && (
+                <DropdownMenuItem onSelect={createSeparate}>
+                  Create separate company
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" variant="outline" className="max-sm:hidden" onClick={keepLink}>
+            Keep link
+          </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void act(row.id, () => dismiss.mutateAsync(row.id), "Link kept")}
+            className="max-sm:hidden"
+            onClick={() => setMoveOpen(true)}
           >
-            Keep link
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
             Move to another company…
           </Button>
           {row.observedName && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void act(
-                  row.id,
-                  () => relink.mutateAsync({ id: row.id }),
-                  `Created “${row.observedName}” and moved the contact`,
-                )
-              }
-            >
+            <Button size="sm" variant="outline" className="max-sm:hidden" onClick={createSeparate}>
               Create separate company
             </Button>
           )}

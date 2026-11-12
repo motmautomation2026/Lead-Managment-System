@@ -6,7 +6,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { SHORTCUTS } from "@/app/shortcuts";
+import { LOCAL_SHORTCUTS, SHORTCUTS } from "@/app/shortcuts";
+
+const ALL = [...SHORTCUTS, ...LOCAL_SHORTCUTS] as ReadonlyArray<{
+  id: string;
+  keys: readonly string[];
+  label: string;
+  group: string;
+}>;
 
 const isMac = () => {
   try {
@@ -24,11 +31,12 @@ export function ShortcutsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const groups = [...new Set(SHORTCUTS.map((s) => s.group))];
-  const keyLabel = (key: string) => (key === "mod" ? (isMac() ? "⌘" : "Ctrl") : key.toUpperCase());
+  const groups = [...new Set(ALL.map((s) => s.group))];
+  const keyLabel = (key: string) =>
+    key === "mod" ? (isMac() ? "⌘" : "Ctrl") : key.length === 1 ? key.toUpperCase() : key;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
@@ -39,7 +47,7 @@ export function ShortcutsDialog({
           <section key={group} aria-label={group}>
             <h3 className="mb-1 type-label text-muted-foreground">{group}</h3>
             <dl className="divide-y">
-              {SHORTCUTS.filter((s) => s.group === group).map((s) => (
+              {ALL.filter((s) => s.group === group).map((s) => (
                 <div key={s.id} className="flex items-center justify-between gap-4 py-1.5">
                   <dt className="type-body">{s.label}</dt>
                   <dd className="flex shrink-0 items-center gap-1 type-small text-muted-foreground">

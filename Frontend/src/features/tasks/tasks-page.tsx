@@ -29,6 +29,7 @@ import { backend } from "@/lib/backend-client";
 import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
+import { useListPrefs } from "@/lib/list-prefs";
 import {
   refreshWork,
   useCompany,
@@ -77,6 +78,7 @@ async function eachTask(ids: string[], write: (id: string) => Promise<unknown>) 
 
 export function TasksPage() {
   const [state, set] = useListUrlState(tasksSearchSchema);
+  const prefs = useListPrefs("tasks", state.columns, DEFAULT_COLUMNS);
   const { users } = useSession();
   const createTask = useCreateTaskDialog();
   const client = useQueryClient();
@@ -86,7 +88,7 @@ export function TasksPage() {
   const params = useMemo(() => toApiParams(state), [state]);
   // A bare /tasks is rewritten to the My open view first (useListViews); don't fetch "all" meanwhile.
   const landing = Object.keys(state).length === 0;
-  const list = useTaskList(params, !landing);
+  const list = useTaskList({ ...params, limit: prefs.limit }, !landing);
   const count = useTaskCount(params, !landing);
   const overdue = useTaskCount(MY_OVERDUE);
   const dueToday = useTaskCount(MY_DUE_TODAY);
@@ -270,8 +272,13 @@ export function TasksPage() {
           onRowClick={setSheetTask}
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
-          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
-          onColumnsChange={(columns) => void set({ columns })}
+          visibleColumns={prefs.columns}
+          onColumnsChange={(columns) => {
+            prefs.rememberColumns(columns);
+            void set({ columns });
+          }}
+          pageSize={prefs.pageSize}
+          onPageSizeChange={prefs.setPageSize}
           selectedIds={selected}
           onSelectionChange={setSelected}
           bulkActions={

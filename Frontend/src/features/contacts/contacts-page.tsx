@@ -21,6 +21,7 @@ import { AGENT_STATUS_LABEL } from "@/features/agent/agent-labels";
 import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
+import { useListPrefs } from "@/lib/list-prefs";
 import {
   messageFromError,
   useBulkContacts,
@@ -65,6 +66,7 @@ const EMPTY_TEXT: Record<string, string> = {
 
 export function ContactsPage() {
   const [state, set] = useListUrlState(contactsSearchSchema);
+  const prefs = useListPrefs("contacts", state.columns, DEFAULT_COLUMNS);
   const navigate = useNavigate();
   const prefetch = usePrefetchRecord();
   const isAdmin = useIsAdmin();
@@ -73,7 +75,7 @@ export function ContactsPage() {
   const [importOpen, setImportOpen] = useState(false);
 
   const params = useMemo(() => toApiParams(state), [state]);
-  const list = useContacts(params);
+  const list = useContacts({ ...params, limit: prefs.limit });
   const count = useContactsCount(params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const bulk = useBulkContacts();
@@ -204,11 +206,7 @@ export function ContactsPage() {
       <PageHeader
         title="Contacts"
         count={count.data?.count ?? null}
-        actions={
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <Upload /> Import
-          </Button>
-        }
+        menuActions={[{ label: "Import CSV", icon: Upload, onSelect: () => setImportOpen(true) }]}
         primaryAction={<Button onClick={() => createContact.open()}>Create contact</Button>}
         tabs={<SavedViewTabs controller={viewsCtl} />}
       />
@@ -253,8 +251,13 @@ export function ContactsPage() {
           }
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
-          visibleColumns={state.columns ?? DEFAULT_COLUMNS}
-          onColumnsChange={(columns) => void set({ columns })}
+          visibleColumns={prefs.columns}
+          onColumnsChange={(columns) => {
+            prefs.rememberColumns(columns);
+            void set({ columns });
+          }}
+          pageSize={prefs.pageSize}
+          onPageSizeChange={prefs.setPageSize}
           selectedIds={selected}
           onSelectionChange={setSelected}
           bulkActions={
