@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const noop = vi.fn(async () => undefined);
 const mockRole = vi.hoisted(() => ({ isAdmin: false }));
 const mockOverdue = vi.hoisted(() => ({ count: null as number | null }));
+const mockReplies = vi.hoisted(() => ({ count: null as number | null }));
 
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Request failed"),
@@ -41,7 +42,10 @@ vi.mock("@/store", () => ({
   useCreateTask: () => ({ mutateAsync: noop, isPending: false }),
   useCreateMeeting: () => ({ mutateAsync: noop, isPending: false }),
   useUpdateMeeting: () => ({ mutateAsync: noop, isPending: false }),
-  useTaskCount: () => ({ data: mockOverdue.count === null ? undefined : mockOverdue }),
+  useTaskCount: (params: { replyTasks?: string }) => {
+    const source = params.replyTasks === "only" ? mockReplies : mockOverdue;
+    return { data: source.count === null ? undefined : source };
+  },
 }));
 
 vi.mock("@/store/workspace-context", () => ({
@@ -155,6 +159,25 @@ describe("AppShell nav", () => {
       within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: "Tasks" }),
     ).toBeTruthy();
     mockOverdue.count = null;
+  });
+
+  it("Replies shows how many replies wait for me (my open reply tasks), none at zero", async () => {
+    mockReplies.count = 3;
+    await renderShell();
+    const replies = within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", {
+      name: /^Replies.*3 replies waiting for you$/,
+    });
+    expect(replies).toHaveAttribute("href", "/tasks/replies");
+    expect(replies).toHaveTextContent("3");
+    cleanup();
+    mockReplies.count = 0;
+    await renderShell();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", {
+        name: "Replies",
+      }),
+    ).toBeTruthy();
+    mockReplies.count = null;
   });
 
   it("groups CRM, Work and Automation with the existing URLs", async () => {

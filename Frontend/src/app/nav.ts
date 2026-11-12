@@ -4,9 +4,10 @@ import {
   Building2,
   CalendarDays,
   FileText,
-  House,
   Handshake,
+  House,
   ListChecks,
+  MessageSquareReply,
   Settings,
   Sparkles,
   Users,
@@ -21,6 +22,7 @@ export interface NavItem {
     | "/companies"
     | "/deals"
     | "/tasks"
+    | "/tasks/replies"
     | "/meetings"
     | "/proposals"
     | "/automations"
@@ -46,6 +48,8 @@ export const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { to: "/", label: "Home", icon: House },
       { to: "/tasks", label: "Tasks", icon: ListChecks },
+      // UX-2: my open "Lead replied" tasks, one by one (badge = how many wait).
+      { to: "/tasks/replies", label: "Replies", icon: MessageSquareReply },
       { to: "/meetings", label: "Meetings", icon: CalendarDays },
       { to: "/proposals", label: "Proposals", icon: FileText },
     ],
@@ -69,6 +73,8 @@ export function isNavActive(to: string, pathname: string) {
 
 /** Second-level crumbs under a nav section, by path. */
 const SUB_PAGES: Array<[RegExp, string]> = [
+  [/^\/tasks\/calls/, "Call queue"],
+  [/^\/tasks\/replies/, "Replies"],
   [/^\/contacts\/[^/]+/, "Contact"],
   [/^\/companies\/duplicates/, "Duplicates"],
   [/^\/companies\/[^/]+/, "Company"],

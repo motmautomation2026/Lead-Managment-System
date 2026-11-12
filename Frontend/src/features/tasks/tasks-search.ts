@@ -128,6 +128,8 @@ export const BUILT_IN_VIEWS: BuiltInView<TasksSearch>[] = [
 /** The "My overdue" count (Overdue tab badge and the sidebar badge). */
 export const MY_OVERDUE: TaskListParams = { ownerId: ["me"], due: "overdue" };
 export const MY_DUE_TODAY: TaskListParams = { ownerId: ["me"], due: "today" };
+/** UX-2: my open "Lead replied" tasks (Replies queue, Tasks header and sidebar badge). */
+export const MY_REPLIES: TaskListParams = { ownerId: ["me"], replyTasks: "only" };
 
 export const TASK_VIEW_SPEC: ListViewSpec<TasksSearch> = {
   object: "tasks",

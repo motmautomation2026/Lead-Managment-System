@@ -50,6 +50,7 @@ import { Route as SettingsUsersRouteImport } from './routes/settings.users'
 import { Route as SettingsWhatsappRouteImport } from './routes/settings.whatsapp'
 import { Route as SettingsWorkspacesRouteImport } from './routes/settings.workspaces'
 import { Route as TasksCallsRouteImport } from './routes/tasks_.calls'
+import { Route as TasksRepliesRouteImport } from './routes/tasks_.replies'
 import { Route as AutomationsWorkflowsWorkflowIdRouteImport } from './routes/automations.workflows.$workflowId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -257,6 +258,11 @@ const TasksCallsRoute = TasksCallsRouteImport.update({
   path: '/tasks/calls',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TasksRepliesRoute = TasksRepliesRouteImport.update({
+  id: '/tasks_/replies',
+  path: '/tasks/replies',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AutomationsWorkflowsWorkflowIdRoute =
   AutomationsWorkflowsWorkflowIdRouteImport.update({
     id: '/automations/workflows/$workflowId',
@@ -299,6 +305,7 @@ export interface FileRoutesByFullPath {
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/tasks/calls': typeof TasksCallsRoute
+  '/tasks/replies': typeof TasksRepliesRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
@@ -342,6 +349,7 @@ export interface FileRoutesByTo {
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/tasks/calls': typeof TasksCallsRoute
+  '/tasks/replies': typeof TasksRepliesRoute
   '/automations': typeof AutomationsIndexRoute
   '/companies': typeof CompaniesIndexRoute
   '/contacts': typeof ContactsIndexRoute
@@ -387,6 +395,7 @@ export interface FileRoutesById {
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
   '/tasks_/calls': typeof TasksCallsRoute
+  '/tasks_/replies': typeof TasksRepliesRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
@@ -433,6 +442,7 @@ export interface FileRouteTypes {
     | '/settings/whatsapp'
     | '/settings/workspaces'
     | '/tasks/calls'
+    | '/tasks/replies'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
@@ -476,6 +486,7 @@ export interface FileRouteTypes {
     | '/settings/whatsapp'
     | '/settings/workspaces'
     | '/tasks/calls'
+    | '/tasks/replies'
     | '/automations'
     | '/companies'
     | '/contacts'
@@ -520,6 +531,7 @@ export interface FileRouteTypes {
     | '/settings/whatsapp'
     | '/settings/workspaces'
     | '/tasks_/calls'
+    | '/tasks_/replies'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
@@ -549,6 +561,7 @@ export interface RootRouteChildren {
   DevUiRoute: typeof DevUiRoute
   LeadsLeadIdRoute: typeof LeadsLeadIdRoute
   TasksCallsRoute: typeof TasksCallsRoute
+  TasksRepliesRoute: typeof TasksRepliesRoute
   AutomationsIndexRoute: typeof AutomationsIndexRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
   ContactsIndexRoute: typeof ContactsIndexRoute
@@ -847,6 +860,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TasksCallsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tasks_/replies': {
+      id: '/tasks_/replies'
+      path: '/tasks/replies'
+      fullPath: '/tasks/replies'
+      preLoaderRoute: typeof TasksRepliesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/automations/workflows/$workflowId': {
       id: '/automations/workflows/$workflowId'
       path: '/automations/workflows/$workflowId'
@@ -920,6 +940,7 @@ const rootRouteChildren: RootRouteChildren = {
   DevUiRoute: DevUiRoute,
   LeadsLeadIdRoute: LeadsLeadIdRoute,
   TasksCallsRoute: TasksCallsRoute,
+  TasksRepliesRoute: TasksRepliesRoute,
   AutomationsIndexRoute: AutomationsIndexRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
   ContactsIndexRoute: ContactsIndexRoute,

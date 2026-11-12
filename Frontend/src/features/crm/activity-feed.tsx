@@ -51,8 +51,15 @@ export function ActivityFeed({
   limit,
   initialFilter = "all",
   focusReply = false,
+  onDraftDone,
   ...source
-}: Source & { limit?: number; initialFilter?: ActivityFilter | undefined; focusReply?: boolean }) {
+}: Source & {
+  limit?: number;
+  initialFilter?: ActivityFilter | undefined;
+  focusReply?: boolean;
+  /** Passed to each Suggested reply card (UX-2 Replies queue). */
+  onDraftDone?: (action: "sent" | "discarded") => void;
+}) {
   const [filter, setFilter] = useState<ActivityFilter>(initialFilter);
   const kind = filter === "all" ? [] : [filter];
   // All hooks run; the ones without an id stay disabled.
@@ -134,6 +141,7 @@ export function ActivityFeed({
                         key={event.reply.draft.id}
                         contactId={source.contactId}
                         draft={event.reply.draft}
+                        onDone={onDraftDone}
                       />
                     )}
                   </>

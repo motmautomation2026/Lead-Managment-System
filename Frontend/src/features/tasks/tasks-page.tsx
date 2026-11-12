@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarClock, ExternalLink, ListChecks, Phone, PhoneCall, Search } from "lucide-react";
+import {
+  CalendarClock,
+  ExternalLink,
+  ListChecks,
+  MessageSquareReply,
+  Phone,
+  PhoneCall,
+  Search,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -61,6 +69,7 @@ import { TaskSheet } from "./task-sheet";
 import {
   DEFAULT_COLUMNS,
   MY_DUE_TODAY,
+  MY_REPLIES,
   MY_OVERDUE,
   TASK_VIEW_SPEC,
   fromFilterValues,
@@ -121,6 +130,7 @@ export function TasksPage() {
   const count = useTaskCount(params, !landing);
   const overdue = useTaskCount(MY_OVERDUE);
   const dueToday = useTaskCount(MY_DUE_TODAY);
+  const replies = useTaskCount(MY_REPLIES);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const filterCompany = useCompany(state.companyId);
 
@@ -397,6 +407,16 @@ export function TasksPage() {
         count={count.data?.count ?? null}
         actions={
           <>
+            <Button asChild variant="outline">
+              <Link to="/tasks/replies">
+                <MessageSquareReply /> Replies
+                {(replies.data?.count ?? 0) > 0 && (
+                  <span className="num rounded-full bg-primary px-1.5 type-small text-primary-foreground">
+                    {replies.data?.count}
+                  </span>
+                )}
+              </Link>
+            </Button>
             <Button asChild variant="outline">
               <Link to="/tasks/calls">
                 <PhoneCall /> Start calling

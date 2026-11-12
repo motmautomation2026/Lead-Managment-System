@@ -131,6 +131,7 @@ vi.mock("@/store", () => ({
   },
   useTaskCount: (params: TaskListParams) => {
     mocks.countParams.push(params);
+    if (params.replyTasks === "only") return { data: { count: 5 } };
     return { data: { count: params.due === "overdue" ? 3 : params.due === "today" ? 2 : 9 } };
   },
   useCompleteTask: () => ({ mutate: mocks.complete }),

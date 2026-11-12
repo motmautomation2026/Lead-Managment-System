@@ -15,7 +15,16 @@ const words = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
  * it (queued: the worker sends it in the channel's send window, with every safety check) or
  * discards it. The AI never sends it by itself.
  */
-export function SuggestedReplyCard({ contactId, draft }: { contactId: string; draft: ReplyDraft }) {
+export function SuggestedReplyCard({
+  contactId,
+  draft,
+  onDone,
+}: {
+  contactId: string;
+  draft: ReplyDraft;
+  /** UX-2 Replies queue: called after a successful Send or Discard (move to the next reply). */
+  onDone?: ((action: "sent" | "discarded") => void) | undefined;
+}) {
   const [body, setBody] = useState(draft.body ?? "");
   const { send, discard } = useReplyDraftActions(contactId);
   const channel = draft.channel === "email" ? "email" : "WhatsApp";
@@ -28,18 +37,23 @@ export function SuggestedReplyCard({ contactId, draft }: { contactId: string; dr
     send.mutate(
       { draftId: draft.id, body },
       {
-        onSuccess: (sent) =>
+        onSuccess: (sent) => {
           toast.success(
             sent.sendAt && new Date(sent.sendAt).getTime() > Date.now() + 60_000
               ? `Reply queued. Will send at ${fmtDateTime(sent.sendAt)}.`
               : "Reply queued. It goes out in a few minutes.",
-          ),
+          );
+          onDone?.("sent");
+        },
         onError: (error) => toast.error(messageFromError(error)),
       },
     );
   const onDiscard = () =>
     discard.mutate(draft.id, {
-      onSuccess: () => toast.success("Suggested reply discarded."),
+      onSuccess: () => {
+        toast.success("Suggested reply discarded.");
+        onDone?.("discarded");
+      },
       onError: (error) => toast.error(messageFromError(error)),
     });
 

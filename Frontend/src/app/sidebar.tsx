@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MY_REPLIES } from "@/features/tasks/tasks-search";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Check, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
 import { BrandLogo } from "@/components/common/brand-logo";
@@ -35,6 +36,7 @@ export function AppSidebar({
   // My overdue tasks: the same params (and cache) as the Tasks page's Overdue tab; refreshWork
   // refreshes it with the list.
   const overdue = useTaskCount({ ownerId: ["me"], due: "overdue" }).data?.count ?? 0;
+  const replies = useTaskCount(MY_REPLIES).data?.count ?? 0;
   const badgeFor = (to: NavItem["to"]) =>
     to === "/companies" && duplicates > 0
       ? {
@@ -43,7 +45,12 @@ export function AppSidebar({
         }
       : to === "/tasks" && overdue > 0
         ? { badge: overdue, badgeLabel: `${overdue} overdue task${overdue === 1 ? "" : "s"}` }
-        : {};
+        : to === "/tasks/replies" && replies > 0
+          ? {
+              badge: replies,
+              badgeLabel: `${replies} repl${replies === 1 ? "y" : "ies"} waiting for you`,
+            }
+          : {};
   const link = (item: NavItem) => (
     <SidebarLink
       key={item.to}
