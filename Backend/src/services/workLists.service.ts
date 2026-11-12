@@ -26,6 +26,7 @@ import {
   LEAD_FULL_NAME_SQL,
 } from "../lists/listQuery.js";
 import { taskToDto, type TaskRow } from "./tasks.service.js";
+import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { meetingToDto, type MeetingRow } from "./meetings.service.js";
 import { proposalToDto, type ProposalRow } from "./proposals.service.js";
 
@@ -82,6 +83,9 @@ export const taskFilterSchema = z
     contactId: z.string().uuid().optional(),
     companyId: z.string().uuid().optional(),
     dealId: z.string().uuid().optional(),
+    // UX-2: "Lead replied" tasks (the AI's open reply task: origin agent + a REPLY_TASK_TITLES title).
+    // `only` = the Replies queue and its badge; `exclude` = the call queue.
+    replyTasks: z.enum(["only", "exclude"]).optional(),
     q: searchQuery.optional(),
   })
   .strict();
@@ -109,6 +113,10 @@ function taskWhere(workspaceId: string, actor: Actor, f: TaskFilters): SqlBuilde
   if (f.companyId) b.and(`l.company_id = ${b.p(f.companyId)}`);
   // Tasks carry no deal_id: a deal's tasks are its contact's.
   if (f.dealId) b.and(`t.lead_id = (select dd.lead_id from public.deals dd where dd.id = ${b.p(f.dealId)} and dd.workspace_id = t.workspace_id)`);
+  if (f.replyTasks) {
+    const reply = `(t.origin = 'agent' and t.title = any(${b.p(REPLY_TASK_TITLES)}::text[]))`;
+    b.and(f.replyTasks === "only" ? reply : `not ${reply}`);
+  }
   addTitleOrContactSearch(b, "t.title", f.q);
   return b;
 }

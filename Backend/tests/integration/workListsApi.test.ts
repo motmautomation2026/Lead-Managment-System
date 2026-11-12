@@ -186,6 +186,41 @@ describeIfDb("work lists API (requires TEST_DATABASE_URL)", () => {
       expect(res.body.nextCursor).toBeUndefined();
       expect(res.body.data.length).toBe(3);
     });
+
+    it("UX-2: replyTasks=only|exclude splits the AI's open reply tasks (origin agent + a reply title) from the rest", async () => {
+      const lead = await contact(ws, "Reply Queue Work", "r@replyqueue.example.com", rep.id);
+      await pool.query(`delete from public.tasks where lead_id = $1`, [lead]);
+      await task("replyAgent", lead, `now() - interval '1 hour'`, { origin: "agent", title: "Asked a question — respond today" });
+      await task("replyEmail", lead, `now()`, { origin: "agent", title: "Lead replied by email — respond today" });
+      // Same title but made by a rep: not the AI's reply task.
+      await task("replyTitleManual", lead, `now()`, { title: "Asked a question — respond today" });
+      await task("agentHandoff", lead, `now()`, { origin: "agent", title: "AI handed off — please follow up" });
+      expect(await ids("/tasks/list", { contactId: lead, replyTasks: "only" })).toEqual(pick(tasks, "replyAgent", "replyEmail"));
+      expect(await ids("/tasks/list", { contactId: lead, replyTasks: "exclude" })).toEqual(pick(tasks, "replyTitleManual", "agentHandoff"));
+      expect(await count("/tasks/count", { contactId: lead, replyTasks: "only", ownerId: "me" })).toBe(2);
+      expect((await call("GET", "/tasks/list?replyTasks=all")).status).toBe(400);
+      await pool.query(`delete from public.tasks where lead_id = $1`, [lead]);
+    });
+
+    it("UX-2: logging a call completes an open call or follow-up task; other task types are refused", async () => {
+      const lead = await contact(ws, "Call Queue Work", "c@callqueue.example.com", rep.id);
+      await pool.query(`delete from public.tasks where lead_id = $1`, [lead]);
+      await task("queueFollowUp", lead, `now()`, { type: "follow_up" });
+      await task("queueEmail", lead, `now()`, { type: "send_email" });
+      const logged = await call("POST", `/leads/${lead}/calls`, { connected: false, notConnectedReason: "no_answer", taskId: tasks["queueFollowUp"] });
+      expect(logged.status, JSON.stringify(logged.body)).toBe(201);
+      const { rows } = await pool.query<{ id: string; status: string; title: string; task_type: string }>(
+        `select id, status, title, task_type from public.tasks where lead_id = $1 order by created_at`,
+        [lead],
+      );
+      expect(rows.find((r) => r.id === tasks["queueFollowUp"])?.status).toBe("completed");
+      // The not-connected rule's own follow-up, exactly as without the queue.
+      expect(rows.filter((r) => r.status === "open" && r.task_type === "call").map((r) => r.title)).toEqual(["Retry call after nurture touch"]);
+      const refused = await call("POST", `/leads/${lead}/calls`, { connected: false, notConnectedReason: "busy", taskId: tasks["queueEmail"] });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error ?? refused.body.message).toMatch(/call or follow-up task/);
+      await pool.query(`delete from public.tasks where lead_id = $1`, [lead]);
+    });
   });
 
   describe("meetings", () => {

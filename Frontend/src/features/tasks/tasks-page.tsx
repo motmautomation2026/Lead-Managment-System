@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarClock, ExternalLink, ListChecks, Phone, Search } from "lucide-react";
+import { CalendarClock, ExternalLink, ListChecks, Phone, PhoneCall, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ import { RelativeTime } from "@/components/crm/relative-time";
 import { InlineOwner, RowMenu } from "@/features/crm/row-controls";
 import { afterMenuClose } from "@/lib/after-menu-close";
 import { useCreateTaskDialog } from "@/app/add-lead-context";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { CompanyPicker } from "@/features/companies/company-picker";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
@@ -395,6 +395,15 @@ export function TasksPage() {
       <PageHeader
         title="Tasks"
         count={count.data?.count ?? null}
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link to="/tasks/calls">
+                <PhoneCall /> Start calling
+              </Link>
+            </Button>
+          </>
+        }
         primaryAction={<Button onClick={() => createTask.open()}>Create task</Button>}
         tabs={
           <SavedViewTabs

@@ -41,6 +41,8 @@ export interface TaskListParams {
   contactId?: string | undefined;
   companyId?: string | undefined;
   dealId?: string | undefined;
+  /** UX-2: the AI's open "Lead replied" tasks only (Replies queue) or everything else (call queue). */
+  replyTasks?: "only" | "exclude" | undefined;
   q?: string | undefined;
   sort?: string | undefined;
   limit?: number | undefined;

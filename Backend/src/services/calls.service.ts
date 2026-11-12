@@ -113,7 +113,10 @@ export async function logCall(db: Queryable, actor: Actor, workspaceId: string, 
     const task = taskResult.rows[0];
     if (!task) throw new NotFoundError("Task");
     if (task.lead_id !== leadId) throw new ValidationError("Task does not belong to this lead.");
-    if (task.task_type !== "call") throw new ValidationError("Only a call task can be completed by logging a call.");
+    // UX-2: the call queue also works follow-up tasks (a call is how a rep follows up).
+    if (task.task_type !== "call" && task.task_type !== "follow_up") {
+      throw new ValidationError("Only a call or follow-up task can be completed by logging a call.");
+    }
     if (task.status !== "open") throw new ValidationError("This task is no longer open.");
     await completeTask(db, actor, workspaceId, input.taskId);
   }

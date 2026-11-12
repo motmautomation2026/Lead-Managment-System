@@ -49,6 +49,7 @@ import { Route as SettingsTeamRouteImport } from './routes/settings.team'
 import { Route as SettingsUsersRouteImport } from './routes/settings.users'
 import { Route as SettingsWhatsappRouteImport } from './routes/settings.whatsapp'
 import { Route as SettingsWorkspacesRouteImport } from './routes/settings.workspaces'
+import { Route as TasksCallsRouteImport } from './routes/tasks_.calls'
 import { Route as AutomationsWorkflowsWorkflowIdRouteImport } from './routes/automations.workflows.$workflowId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -251,6 +252,11 @@ const SettingsWorkspacesRoute = SettingsWorkspacesRouteImport.update({
   path: '/workspaces',
   getParentRoute: () => SettingsRoute,
 } as any)
+const TasksCallsRoute = TasksCallsRouteImport.update({
+  id: '/tasks_/calls',
+  path: '/tasks/calls',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AutomationsWorkflowsWorkflowIdRoute =
   AutomationsWorkflowsWorkflowIdRouteImport.update({
     id: '/automations/workflows/$workflowId',
@@ -292,6 +298,7 @@ export interface FileRoutesByFullPath {
   '/settings/users': typeof SettingsUsersRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
+  '/tasks/calls': typeof TasksCallsRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
@@ -334,6 +341,7 @@ export interface FileRoutesByTo {
   '/settings/users': typeof SettingsUsersRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
+  '/tasks/calls': typeof TasksCallsRoute
   '/automations': typeof AutomationsIndexRoute
   '/companies': typeof CompaniesIndexRoute
   '/contacts': typeof ContactsIndexRoute
@@ -378,6 +386,7 @@ export interface FileRoutesById {
   '/settings/users': typeof SettingsUsersRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
   '/settings/workspaces': typeof SettingsWorkspacesRoute
+  '/tasks_/calls': typeof TasksCallsRoute
   '/automations/': typeof AutomationsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/contacts/': typeof ContactsIndexRoute
@@ -423,6 +432,7 @@ export interface FileRouteTypes {
     | '/settings/users'
     | '/settings/whatsapp'
     | '/settings/workspaces'
+    | '/tasks/calls'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
@@ -465,6 +475,7 @@ export interface FileRouteTypes {
     | '/settings/users'
     | '/settings/whatsapp'
     | '/settings/workspaces'
+    | '/tasks/calls'
     | '/automations'
     | '/companies'
     | '/contacts'
@@ -508,6 +519,7 @@ export interface FileRouteTypes {
     | '/settings/users'
     | '/settings/whatsapp'
     | '/settings/workspaces'
+    | '/tasks_/calls'
     | '/automations/'
     | '/companies/'
     | '/contacts/'
@@ -536,6 +548,7 @@ export interface RootRouteChildren {
   DealsDealIdRoute: typeof DealsDealIdRoute
   DevUiRoute: typeof DevUiRoute
   LeadsLeadIdRoute: typeof LeadsLeadIdRoute
+  TasksCallsRoute: typeof TasksCallsRoute
   AutomationsIndexRoute: typeof AutomationsIndexRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
   ContactsIndexRoute: typeof ContactsIndexRoute
@@ -827,6 +840,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsWorkspacesRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/tasks_/calls': {
+      id: '/tasks_/calls'
+      path: '/tasks/calls'
+      fullPath: '/tasks/calls'
+      preLoaderRoute: typeof TasksCallsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/automations/workflows/$workflowId': {
       id: '/automations/workflows/$workflowId'
       path: '/automations/workflows/$workflowId'
@@ -899,6 +919,7 @@ const rootRouteChildren: RootRouteChildren = {
   DealsDealIdRoute: DealsDealIdRoute,
   DevUiRoute: DevUiRoute,
   LeadsLeadIdRoute: LeadsLeadIdRoute,
+  TasksCallsRoute: TasksCallsRoute,
   AutomationsIndexRoute: AutomationsIndexRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
   ContactsIndexRoute: ContactsIndexRoute,
