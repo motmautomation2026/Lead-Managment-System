@@ -432,3 +432,73 @@ describe("TasksPage", () => {
     expect(mocks.toast.error).toHaveBeenCalledWith("1 reassigned, 1 failed: Task is closed");
   });
 });
+
+describe("TasksPage — UX-2 inline edits and bulk reschedule", () => {
+  it("changes the owner and the due date in the row, each with Undo", async () => {
+    mocks.update.mockResolvedValue({});
+    await renderPage();
+    const [first] = mocks.rows;
+    fireEvent.keyDown(screen.getByLabelText(`Owner of ${first!.title}`), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Ravi Rep" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith({ id: first!.id, input: { ownerId: "u-2" } }),
+    );
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalled());
+    const [message, options] = mocks.toast.success.mock.calls[0] as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    expect(message).toBe(`“${first!.title}” assigned to Ravi Rep`);
+    options.action.onClick();
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenLastCalledWith({ id: first!.id, input: { ownerId: "u-1" } }),
+    );
+
+    // Due date: same IST time of day (10:00), new day; Undo puts the old dueAt back.
+    fireEvent.change(screen.getByLabelText(`Due date of ${first!.title}`), {
+      target: { value: "2026-11-20" },
+    });
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenLastCalledWith({
+        id: first!.id,
+        input: { dueAt: "2026-11-20T04:30:00.000Z" },
+      }),
+    );
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalledTimes(3));
+    const undoDue = mocks.toast.success.mock.calls[2] as [
+      string,
+      { action: { onClick: () => void } },
+    ];
+    undoDue[1].action.onClick();
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenLastCalledWith({
+        id: first!.id,
+        input: { dueAt: first!.dueAt },
+      }),
+    );
+  });
+
+  it("bulk Reschedule confirms, moves every selected task and offers Undo", async () => {
+    mocks.backendUpdate.mockResolvedValue({});
+    await renderPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: /Reschedule/ }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Next week" }));
+    const confirm = await screen.findByRole("dialog", { name: "Reschedule tasks" });
+    expect(confirm).toHaveTextContent("Move 2 tasks to next week? Each keeps its time of day.");
+    await act(async () => {
+      fireEvent.click(within(confirm).getByRole("button", { name: "Reschedule" }));
+    });
+    await waitFor(() => expect(mocks.backendUpdate).toHaveBeenCalledTimes(2));
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { onClick: () => void } },
+    ];
+    expect(message).toBe("2 tasks rescheduled");
+    await act(async () => options.action.onClick());
+    await waitFor(() => expect(mocks.backendUpdate).toHaveBeenCalledTimes(4));
+    expect(mocks.backendUpdate).toHaveBeenLastCalledWith(mocks.rows[1]!.id, {
+      dueAt: mocks.rows[1]!.dueAt,
+    });
+  });
+});

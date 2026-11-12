@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Columns3, Handshake, Search, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,8 @@ const EMPTY_TEXT: Record<string, string> = {
   won: "No won deals yet.",
   lost: "No lost deals.",
 };
+
+const RecordPeek = lazy(() => import("@/features/crm/record-peek"));
 
 export function DealsPage() {
   const [state, set] = useListUrlState(dealsSearchSchema);
@@ -194,7 +196,7 @@ export function DealsPage() {
             getRowId={(r) => r.id}
             getRowHref={(r) => `/deals/${r.id}`}
             onRowIntent={(r) => prefetch("deal", r.id)}
-            onRowClick={(r) => void navigate({ to: "/deals/$dealId", params: { dealId: r.id } })}
+            onRowClick={(r) => void set({ peek: r.id })}
             sort={parseSort(state.sort)}
             onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
             visibleColumns={prefs.columns}
@@ -214,6 +216,11 @@ export function DealsPage() {
           />
         )}
       </div>
+      {state.peek && (
+        <Suspense fallback={null}>
+          <RecordPeek type="deal" id={state.peek} onClose={() => void set({ peek: undefined })} />
+        </Suspense>
+      )}
     </div>
   );
 }

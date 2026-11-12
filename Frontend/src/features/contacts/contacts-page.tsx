@@ -1,27 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Search, Sparkles, Upload, UserPlus, Users } from "lucide-react";
+import {
+  ExternalLink,
+  ListPlus,
+  Phone,
+  Search,
+  Sparkles,
+  StickyNote,
+  Upload,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { PageHeader } from "@/components/crm/page-header";
 import { FilterBar } from "@/components/crm/filter-bar";
 import type { FilterDef } from "@/components/crm/filter-model";
 import { DataTable } from "@/components/crm/data-table";
 import { EmptyState } from "@/components/crm/empty-state";
-import { useAddLead } from "@/app/add-lead-context";
+import { useAddLead, useCreateTaskDialog } from "@/app/add-lead-context";
 import { ImportLeadsDialog } from "@/features/leads/import-leads-dialog";
 import { AGENT_STATUS_LABEL } from "@/features/agent/agent-labels";
 import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
 import { useListPrefs } from "@/lib/list-prefs";
+import { toastUndo } from "@/lib/toast-undo";
 import {
   messageFromError,
   useBulkContacts,
@@ -29,6 +43,7 @@ import {
   useContacts,
   useContactsCount,
   useIsAdmin,
+  useLeadMutations,
   useSession,
 } from "@/store";
 import {
@@ -54,6 +69,14 @@ import { usePrefetchRecord } from "@/features/crm/prefetch";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
+import { InlineOwner, RowMenu } from "@/features/crm/row-controls";
+import { afterMenuClose } from "@/lib/after-menu-close";
+import { LogCallFlow } from "@/features/work/log-call-flow";
+import { NoteDialog } from "./note-dialog";
+
+type BulkAction = { action: "assignOwner" | "enrollAi"; ownerId?: string | undefined };
+/** Selections above this ask first (UX-2 rule 4). */
+const BULK_CONFIRM_OVER = 20;
 
 const options = (values: readonly string[]) =>
   values.map((value) => ({ value, label: label(value) }));
@@ -64,6 +87,8 @@ const EMPTY_TEXT: Record<string, string> = {
   unassigned: "Every contact has an owner.",
 };
 
+const RecordPeek = lazy(() => import("@/features/crm/record-peek"));
+
 export function ContactsPage() {
   const [state, set] = useListUrlState(contactsSearchSchema);
   const prefs = useListPrefs("contacts", state.columns, DEFAULT_COLUMNS);
@@ -72,6 +97,7 @@ export function ContactsPage() {
   const isAdmin = useIsAdmin();
   const { users } = useSession();
   const createContact = useAddLead();
+  const createTask = useCreateTaskDialog();
   const [importOpen, setImportOpen] = useState(false);
 
   const params = useMemo(() => toApiParams(state), [state]);
@@ -147,18 +173,50 @@ export function ContactsPage() {
   ];
 
   const nameOf = (id: string) => rows.find((r) => r.id === id)?.name ?? id;
-  const runBulk = async (action: "assignOwner" | "enrollAi", ownerId?: string) => {
-    const verb = action === "assignOwner" ? "assigned" : "enrolled in AI";
+  const userName = (id: string) => users.find((u) => u.id === id)?.name ?? "the new owner";
+  const plural = (n: number) => `${n} contact${n === 1 ? "" : "s"}`;
+  const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
+  const [rowDialog, setRowDialog] = useState<{
+    kind: "call" | "note";
+    id: string;
+    open: boolean;
+  } | null>(null);
+  const { addNote } = useLeadMutations();
+
+  /** Puts owners back (grouped by the previous owner); contacts that had none can't be unassigned. */
+  const undoAssign = async (before: Map<string, string>) => {
+    const groups = new Map<string, string[]>();
+    for (const [id, owner] of before) groups.set(owner, [...(groups.get(owner) ?? []), id]);
     try {
-      const results = await bulk.mutateAsync({
-        ids: selected,
-        action,
-        ...(ownerId ? { ownerId } : {}),
-      });
+      for (const [ownerId, ids] of groups)
+        await bulk.mutateAsync({ ids, action: "assignOwner", ownerId });
+      toast.success("Owner change undone");
+    } catch (error) {
+      toast.error(messageFromError(error));
+    }
+  };
+
+  const runBulk = async (ids: string[], { action, ownerId }: BulkAction) => {
+    const verb =
+      action === "assignOwner" ? `assigned to ${userName(ownerId ?? "")}` : "enrolled in AI";
+    const previous = new Map(
+      ids.map((id) => [id, rows.find((r) => r.id === id)?.owner?.id ?? null] as const),
+    );
+    try {
+      const results = await bulk.mutateAsync({ ids, action, ...(ownerId ? { ownerId } : {}) });
       const failed = results.filter((r) => !r.ok);
       const done = results.length - failed.length;
+      const subject = ids !== selected && done === 1 ? nameOf(ids[0]!) : plural(done);
+      // Undo only where it is reversible: an owner change from another owner.
+      const undoable = new Map<string, string>();
+      if (action === "assignOwner")
+        for (const r of results) {
+          const prev = previous.get(r.id);
+          if (r.ok && prev && prev !== ownerId) undoable.set(r.id, prev);
+        }
       if (failed.length === 0) {
-        toast.success(`${done} contact${done === 1 ? "" : "s"} ${verb}`);
+        if (undoable.size > 0) toastUndo(`${subject} ${verb}`, () => void undoAssign(undoable));
+        else toast.success(`${subject} ${verb}`);
       } else {
         toast.warning(`${done} of ${results.length} ${verb}; ${failed.length} not`, {
           description: failed
@@ -167,11 +225,72 @@ export function ContactsPage() {
             .join(" · "),
         });
       }
-      setSelected([]);
+      if (ids === selected) setSelected([]);
     } catch (error) {
       toast.error(messageFromError(error));
     }
   };
+  /** Large batches ask first (count + what happens); small ones run at once with Undo. */
+  const askBulk = (action: BulkAction) =>
+    selected.length > BULK_CONFIRM_OVER
+      ? afterMenuClose(() => setPendingBulk(action))()
+      : void runBulk(selected, action);
+
+  const columns = COLUMNS.map((c) =>
+    c.id === "owner"
+      ? {
+          ...c,
+          cell: (r: ContactListItem) => (
+            <InlineOwner
+              value={r.owner}
+              users={users}
+              label={`Owner of ${r.name || "contact"}`}
+              onChange={(ownerId) => void runBulk([r.id], { action: "assignOwner", ownerId })}
+            />
+          ),
+        }
+      : c,
+  );
+  const rowActions = (r: ContactListItem) => (
+    <RowMenu label={`Actions for ${r.name || "contact"}`}>
+      {r.lifecycle !== "do_not_contact" && (
+        <DropdownMenuItem
+          onSelect={afterMenuClose(() => setRowDialog({ kind: "call", id: r.id, open: true }))}
+        >
+          <Phone /> Log call
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem
+        onSelect={afterMenuClose(() => setRowDialog({ kind: "note", id: r.id, open: true }))}
+      >
+        <StickyNote /> Add note
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={afterMenuClose(() =>
+          createTask.open({ contact: { id: r.id, name: r.name || "Contact" } }),
+        )}
+      >
+        <ListPlus /> Add task
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={() => void navigate({ to: "/contacts/$contactId", params: { contactId: r.id } })}
+      >
+        <ExternalLink /> Open
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuLabel>Assign to</DropdownMenuLabel>
+      {users
+        .filter((u) => u.active && u.id !== r.owner?.id)
+        .map((u) => (
+          <DropdownMenuItem
+            key={u.id}
+            onSelect={() => void runBulk([r.id], { action: "assignOwner", ownerId: u.id })}
+          >
+            {u.name}
+          </DropdownMenuItem>
+        ))}
+    </RowMenu>
+  );
 
   const hasFilters = Object.keys(toSavedViewBody(state, toApiParams).filters).length > 0;
   const emptyState = !hasFilters ? (
@@ -242,13 +361,12 @@ export function ContactsPage() {
         <DataTable<ContactListItem>
           label="Contacts"
           data={rows}
-          columns={COLUMNS}
+          columns={columns}
+          rowActions={rowActions}
           getRowId={(r) => r.id}
           getRowHref={(r) => `/contacts/${r.id}`}
           onRowIntent={(r) => prefetch("contact", r.id)}
-          onRowClick={(r) =>
-            void navigate({ to: "/contacts/$contactId", params: { contactId: r.id } })
-          }
+          onRowClick={(r) => void set({ peek: r.id })}
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
           visibleColumns={prefs.columns}
@@ -274,7 +392,7 @@ export function ContactsPage() {
                     .map((u) => (
                       <DropdownMenuItem
                         key={u.id}
-                        onSelect={() => void runBulk("assignOwner", u.id)}
+                        onSelect={() => askBulk({ action: "assignOwner", ownerId: u.id })}
                       >
                         {u.name}
                       </DropdownMenuItem>
@@ -286,7 +404,7 @@ export function ContactsPage() {
                   size="sm"
                   variant="outline"
                   disabled={bulk.isPending}
-                  onClick={() => void runBulk("enrollAi")}
+                  onClick={() => askBulk({ action: "enrollAi" })}
                 >
                   <Sparkles /> Enroll in AI
                 </Button>
@@ -304,6 +422,51 @@ export function ContactsPage() {
       </div>
 
       <ImportLeadsDialog open={importOpen} onOpenChange={setImportOpen} />
+      <ConfirmDialog
+        open={pendingBulk !== null}
+        onOpenChange={(open) => !open && setPendingBulk(null)}
+        title={pendingBulk?.action === "enrollAi" ? "Enroll in AI" : "Assign owner"}
+        description={
+          pendingBulk?.action === "enrollAi"
+            ? `Enroll ${plural(selected.length)} in the AI agent? Contacts it can't take are skipped and listed.`
+            : `Make ${userName(pendingBulk?.ownerId ?? "")} the owner of ${plural(selected.length)}? Their open tasks follow the usual owner rules.`
+        }
+        confirmLabel={pendingBulk?.action === "enrollAi" ? "Enroll" : "Assign"}
+        confirmVariant="default"
+        disabled={bulk.isPending}
+        onConfirm={() => {
+          const action = pendingBulk;
+          setPendingBulk(null);
+          if (action) void runBulk(selected, action);
+        }}
+      />
+      {rowDialog?.kind === "call" && (
+        <LogCallFlow
+          key={rowDialog.id}
+          leadId={rowDialog.id}
+          open={rowDialog.open}
+          onOpenChange={(open) => setRowDialog({ ...rowDialog, open })}
+        />
+      )}
+      <NoteDialog
+        open={rowDialog?.kind === "note" && rowDialog.open}
+        onOpenChange={(open) => !open && setRowDialog(null)}
+        onSave={(body) =>
+          addNote(rowDialog?.id ?? "", body).then(
+            () => (toast.success("Note added"), true),
+            (error: unknown) => (toast.error(messageFromError(error)), false),
+          )
+        }
+      />
+      {state.peek && (
+        <Suspense fallback={null}>
+          <RecordPeek
+            type="contact"
+            id={state.peek}
+            onClose={() => void set({ peek: undefined })}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

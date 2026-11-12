@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks, Search } from "lucide-react";
+import { CalendarClock, ExternalLink, ListChecks, Phone, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,19 @@ import type { FilterDef } from "@/components/crm/filter-model";
 import { DataTable } from "@/components/crm/data-table";
 import { EmptyState } from "@/components/crm/empty-state";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { RelativeTime } from "@/components/crm/relative-time";
+import { InlineOwner, RowMenu } from "@/features/crm/row-controls";
+import { afterMenuClose } from "@/lib/after-menu-close";
 import { useCreateTaskDialog } from "@/app/add-lead-context";
+import { useNavigate } from "@tanstack/react-router";
 import { CompanyPicker } from "@/features/companies/company-picker";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
@@ -30,6 +42,8 @@ import { label } from "@/lib/labels";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
 import { useListPrefs } from "@/lib/list-prefs";
+import { dateInputValue, istParts, toIsoFromIst } from "@/lib/dates";
+import { toastUndo } from "@/lib/toast-undo";
 import {
   refreshWork,
   useCompany,
@@ -37,6 +51,8 @@ import {
   useSession,
   useTaskCount,
   useTaskList,
+  useUpdateTask,
+  messageFromError,
 } from "@/store";
 import { useWorkspace } from "@/store/workspace-context";
 import { TASK_TYPES, type TaskListItem } from "@/types";
@@ -75,6 +91,19 @@ async function eachTask(ids: string[], write: (id: string) => Promise<unknown>) 
   }
   return { failed, first };
 }
+
+type TaskPatch = { ownerId?: string; dueAt?: string };
+
+const RESCHEDULE = [
+  { days: 1, label: "Tomorrow" },
+  { days: 3, label: "In 3 days" },
+  { days: 7, label: "Next week" },
+] as const;
+
+/** `days` from today (IST), keeping the task's IST time of day. */
+const shiftedDue = (dueAt: string, days: number) =>
+  toIsoFromIst(dateInputValue(days), `${istParts(dueAt).time}:00`);
+const tasksText = (n: number) => `${n} task${n === 1 ? "" : "s"}`;
 
 export function TasksPage() {
   const [state, set] = useListUrlState(tasksSearchSchema);
@@ -121,8 +150,44 @@ export function TasksPage() {
   const [call, setCall] = useState<{ leadId: string; taskId: string; open: boolean } | null>(null);
   const [meetingFor, setMeetingFor] = useState<{ leadId: string; taskId: string } | null>(null);
   const [bulkOwner, setBulkOwner] = useState("");
-  const [confirm, setConfirm] = useState<"complete" | "reassign" | null>(null);
+  const [confirm, setConfirm] = useState<"complete" | "reassign" | "reschedule" | null>(null);
+  const [bulkDays, setBulkDays] = useState<number>(1);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const update = useUpdateTask();
+  const navigate = useNavigate();
+  const userName = (id: string) => users.find((u) => u.id === id)?.name ?? "the new owner";
+
+  /** One row edit (inline owner / due, row menu) with Undo back to the old values. */
+  const editTask = async (
+    task: TaskListItem,
+    patch: TaskPatch,
+    message: string,
+    undo: TaskPatch | null,
+  ) => {
+    try {
+      await update.mutateAsync({ id: task.id, input: patch });
+      if (!undo) return void toast.success(message);
+      toastUndo(
+        message,
+        () =>
+          void update.mutateAsync({ id: task.id, input: undo }).then(
+            () => toast.success("Change undone"),
+            (error: unknown) => toast.error(messageFromError(error)),
+          ),
+      );
+    } catch (error) {
+      toast.error(messageFromError(error));
+    }
+  };
+  const assignTask = (t: TaskListItem, ownerId: string) =>
+    void editTask(
+      t,
+      { ownerId },
+      `“${t.title}” assigned to ${userName(ownerId)}`,
+      t.ownerId ? { ownerId: t.ownerId } : null,
+    );
+  const moveDue = (t: TaskListItem, dueAt: string, when: string) =>
+    void editTask(t, { dueAt }, `“${t.title}” moved to ${when}`, { dueAt: t.dueAt });
 
   /** Done toggle: a call logs the call (which completes the task); a meeting task schedules it. */
   const done = (task: TaskListItem) => {
@@ -136,22 +201,135 @@ export function TasksPage() {
       onError: (error) => toast.error(error.message),
     });
   };
-  const columns = taskColumns(done);
+  const columns = taskColumns(done).map((c) =>
+    c.id === "owner"
+      ? {
+          ...c,
+          cell: (t: TaskListItem) =>
+            t.status === "open" ? (
+              <InlineOwner
+                value={t.ownerId ? { id: t.ownerId, name: t.ownerName ?? "Owner" } : null}
+                users={users}
+                label={`Owner of ${t.title}`}
+                onChange={(ownerId) => assignTask(t, ownerId)}
+              />
+            ) : (
+              c.cell(t)
+            ),
+        }
+      : c.id === "dueAt"
+        ? {
+            ...c,
+            cell: (t: TaskListItem) =>
+              t.status === "open" ? (
+                <span className="relative inline-flex">
+                  <RelativeTime value={t.dueAt} className={t.isOverdue ? "text-destructive" : ""} />
+                  {/* The native date picker over the text: keyboard and touch friendly. */}
+                  <input
+                    type="date"
+                    aria-label={`Due date of ${t.title}`}
+                    value={istParts(t.dueAt).date}
+                    onChange={(e) =>
+                      e.target.value &&
+                      moveDue(
+                        t,
+                        toIsoFromIst(e.target.value, `${istParts(t.dueAt).time}:00`),
+                        e.target.value,
+                      )
+                    }
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                </span>
+              ) : (
+                c.cell(t)
+              ),
+          }
+        : c,
+  );
+  const rowActions = (t: TaskListItem) => (
+    <RowMenu label={`Actions for ${t.title}`}>
+      {t.status === "open" && (t.type === "call" || t.type === "follow_up") && (
+        <DropdownMenuItem
+          onSelect={afterMenuClose(() =>
+            setCall({ leadId: t.contact.id, taskId: t.id, open: true }),
+          )}
+        >
+          <Phone /> Log call
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem
+        onSelect={() =>
+          void navigate({ to: "/contacts/$contactId", params: { contactId: t.contact.id } })
+        }
+      >
+        <ExternalLink /> Open contact
+      </DropdownMenuItem>
+      {t.status === "open" && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Reschedule</DropdownMenuLabel>
+          {RESCHEDULE.map((r) => (
+            <DropdownMenuItem
+              key={r.days}
+              onSelect={() => moveDue(t, shiftedDue(t.dueAt, r.days), r.label.toLowerCase())}
+            >
+              {r.label}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Assign to</DropdownMenuLabel>
+          {users
+            .filter((u) => u.active && u.id !== t.ownerId)
+            .map((u) => (
+              <DropdownMenuItem key={u.id} onSelect={() => assignTask(t, u.id)}>
+                {u.name}
+              </DropdownMenuItem>
+            ))}
+        </>
+      )}
+    </RowMenu>
+  );
 
-  const bulk = async (kind: "complete" | "reassign") => {
+  /** Puts the old owner / due date back on each task (Undo of a bulk change). */
+  const restore = async (before: Map<string, TaskPatch>) => {
+    const { failed } = await eachTask([...before.keys()], (id) =>
+      backend.tasks.update(id, before.get(id)!),
+    );
+    await refreshWork(client, ws);
+    if (failed) toast.error(`Couldn't undo ${tasksText(failed)}`);
+    else toast.success("Change undone");
+  };
+
+  const bulk = async (kind: "complete" | "reassign" | "reschedule") => {
     setBulkBusy(true);
-    const { failed, first } = await eachTask(selected, (id) =>
+    const ids = selected;
+    const byId = new Map(rows.map((r) => [r.id, r] as const));
+    // Undo only where it is reversible: an old owner to go back to, or the old due date.
+    const before = new Map<string, TaskPatch>();
+    for (const id of ids) {
+      const t = byId.get(id);
+      if (!t) continue;
+      if (kind === "reassign" && t.ownerId && t.ownerId !== bulkOwner)
+        before.set(id, { ownerId: t.ownerId });
+      if (kind === "reschedule") before.set(id, { dueAt: t.dueAt });
+    }
+    const { failed, first } = await eachTask(ids, (id) =>
       kind === "complete"
         ? backend.tasks.complete(id)
-        : backend.tasks.update(id, { ownerId: bulkOwner }),
+        : kind === "reassign"
+          ? backend.tasks.update(id, { ownerId: bulkOwner })
+          : backend.tasks.update(id, { dueAt: shiftedDue(byId.get(id)!.dueAt, bulkDays) }),
     );
     setBulkBusy(false);
     setConfirm(null);
     await refreshWork(client, ws);
-    const ok = selected.length - failed;
-    const verb = kind === "complete" ? "completed" : "reassigned";
-    if (failed === 0) toast.success(`${ok} task${ok === 1 ? "" : "s"} ${verb}`);
-    else
+    const ok = ids.length - failed;
+    const verb =
+      kind === "complete" ? "completed" : kind === "reassign" ? "reassigned" : "rescheduled";
+    if (failed === 0) {
+      if (before.size > 0) toastUndo(`${tasksText(ok)} ${verb}`, () => void restore(before));
+      else toast.success(`${tasksText(ok)} ${verb}`);
+    } else
       toast.error(
         `${ok} ${verb}, ${failed} failed: ${first instanceof Error ? first.message : "request failed"}`,
       );
@@ -270,6 +448,7 @@ export function TasksPage() {
           columns={columns}
           getRowId={(r) => r.id}
           onRowClick={setSheetTask}
+          rowActions={rowActions}
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
           visibleColumns={prefs.columns}
@@ -286,6 +465,26 @@ export function TasksPage() {
               <Button size="sm" variant="outline" onClick={() => setConfirm("complete")}>
                 Complete
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline">
+                    <CalendarClock /> Reschedule
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {RESCHEDULE.map((r) => (
+                    <DropdownMenuItem
+                      key={r.days}
+                      onSelect={afterMenuClose(() => {
+                        setBulkDays(r.days);
+                        setConfirm("reschedule");
+                      })}
+                    >
+                      {r.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Select
                 value={bulkOwner}
                 onValueChange={(v) => {
@@ -354,15 +553,27 @@ export function TasksPage() {
             setBulkOwner("");
           }
         }}
-        title={confirm === "complete" ? "Complete tasks" : "Reassign tasks"}
+        title={
+          confirm === "complete"
+            ? "Complete tasks"
+            : confirm === "reschedule"
+              ? "Reschedule tasks"
+              : "Reassign tasks"
+        }
         description={
           confirm === "complete"
-            ? `Mark ${selected.length} task${selected.length === 1 ? "" : "s"} as done?`
-            : `Reassign ${selected.length} task${selected.length === 1 ? "" : "s"} to ${
-                users.find((u) => u.id === bulkOwner)?.name ?? "this owner"
-              }?`
+            ? `Mark ${tasksText(selected.length)} as done?`
+            : confirm === "reschedule"
+              ? `Move ${tasksText(selected.length)} to ${
+                  RESCHEDULE.find((r) => r.days === bulkDays)?.label.toLowerCase() ?? "later"
+                }? Each keeps its time of day.`
+              : `Reassign ${tasksText(selected.length)} to ${
+                  users.find((u) => u.id === bulkOwner)?.name ?? "this owner"
+                }?`
         }
-        confirmLabel={confirm === "complete" ? "Complete" : "Reassign"}
+        confirmLabel={
+          confirm === "complete" ? "Complete" : confirm === "reschedule" ? "Reschedule" : "Reassign"
+        }
         confirmVariant="default"
         disabled={bulkBusy}
         onConfirm={() => confirm && void bulk(confirm)}

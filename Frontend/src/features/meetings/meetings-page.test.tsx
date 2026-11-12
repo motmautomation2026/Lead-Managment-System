@@ -263,3 +263,23 @@ describe("MeetingsPage", () => {
     expect(await screen.findByRole("dialog", { name: "Discovery call" })).toBeTruthy();
   });
 });
+
+describe("MeetingsPage — UX-2 row action", () => {
+  it("Needs outcome rows record the outcome in one click; other views don't show the button", async () => {
+    mocks.outcome.mockResolvedValue({});
+    await renderPage({ view: "upcoming", when: "upcoming" });
+    expect(screen.queryByRole("button", { name: "Record outcome" })).toBeNull();
+    cleanup();
+    await renderPage({ view: "needs_outcome", when: "needs_outcome" });
+    fireEvent.click(screen.getByRole("button", { name: "Record outcome" }));
+    const outcome = await screen.findByRole("dialog", { name: "Record meeting outcome" });
+    fireEvent.click(within(outcome).getByRole("button", { name: "Save outcome" }));
+    await waitFor(() =>
+      expect(mocks.outcome).toHaveBeenCalledWith({
+        id: "m-1",
+        outcome: "proposal_required",
+        notes: undefined,
+      }),
+    );
+  });
+});

@@ -49,6 +49,9 @@ vi.mock("./deal-board", () => ({
     return <div>board {JSON.stringify(props.params)}</div>;
   },
 }));
+vi.mock("@/features/crm/record-peek", () => ({
+  default: ({ id }: { id: string }) => <div>peek {id}</div>,
+}));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => false,
@@ -233,8 +236,13 @@ describe("DealsPage", () => {
       "href",
       "/deals/d-1",
     );
+    // UX-2: a row click opens the peek drawer (the list stays); Back closes it.
     fireEvent.click(screen.getByText("Bolt pilot"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/deals/d-2"));
+    await waitFor(() =>
+      expect((router.state.location.search as Record<string, unknown>)["peek"]).toBe("d-2"),
+    );
+    expect(await screen.findByText("peek d-2")).toBeInTheDocument();
+    expect(router.state.location.pathname).not.toBe("/deals/d-2");
   });
 
   it("saves the current list as a deals view and reopens a saved one", async () => {

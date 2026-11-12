@@ -37,7 +37,7 @@ import {
 } from "@/store";
 import { MEETING_STATUSES, type MeetingListItem } from "@/types";
 import { MEETING_COLUMNS } from "./meeting-columns";
-import { MEETING_STATUS_TONE } from "./meeting-labels";
+import { MEETING_STATUS_TONE, canRecordOutcome } from "./meeting-labels";
 import { MeetingSheet } from "./meeting-sheet";
 import {
   DEFAULT_COLUMNS,
@@ -190,6 +190,14 @@ export function MeetingsPage() {
             columns={MEETING_COLUMNS}
             getRowId={(r) => r.id}
             onRowClick={setSheet}
+            // UX-2: one click from the list (Needs outcome view) instead of row → sheet → button.
+            rowActions={(m) =>
+              viewsCtl.activeId === "needs_outcome" && canRecordOutcome(m) ? (
+                <Button size="sm" variant="outline" onClick={() => setOutcomeFor(m)}>
+                  Record outcome
+                </Button>
+              ) : null
+            }
             sort={parseSort(state.sort)}
             onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
             visibleColumns={prefs.columns}

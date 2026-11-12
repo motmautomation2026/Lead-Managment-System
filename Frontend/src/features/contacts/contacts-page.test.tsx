@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   isAdmin: false,
   listParams: [] as unknown[],
   hasNextPage: false,
+  manyRows: false,
   fetchNextPage: vi.fn(),
   bulk: vi.fn(),
   createView: vi.fn(),
@@ -44,11 +45,49 @@ const row = (id: string, name: string): ContactListItem => ({
   createdAt: "2026-10-01T10:00:00.000Z",
 });
 
+const MANY_ROWS = Array.from({ length: 21 }, (_, i) => row(`m-${i}`, `Many ${i}`));
+
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/features/leads/import-leads-dialog", () => ({ ImportLeadsDialog: () => null }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
+  useLeadMutations: () => ({ addNote: vi.fn() }),
+  // The peek drawer (lazy) reads the record by id.
+  useContact: (id: string) => ({
+    data: id
+      ? {
+          id,
+          firstName: "Mira",
+          lastName: "Rao",
+          companyText: "Acme",
+          company: { id: "co-1", name: "Acme", domain: null },
+          phone: "+919800000001",
+          email: "mira@example.com",
+          ownerName: "Asha Owner",
+          pipelineStage: "new",
+          lifecycleState: "active",
+          agentStatus: "none",
+          serviceInterest: "Hiring help",
+          hotScore: null,
+          hotBand: null,
+          hotReasons: [],
+          nextAction: null,
+          deals: [],
+        }
+      : undefined,
+    isLoading: false,
+    error: null,
+  }),
+  useDeal: () => ({ data: undefined }),
+  useContactTimeline: () => ({
+    data: { pages: [{ data: [], nextCursor: null }] },
+    isLoading: false,
+  }),
+  useCompanyTimeline: () => ({ data: undefined }),
+  useDealTimeline: () => ({ data: undefined }),
+  useCorrectReplyLabel: () => ({ mutate: vi.fn() }),
+  useInboundReply: () => ({ data: undefined }),
   useSession: () => ({
     users: [
       { id: "u-1", name: "Asha Owner", active: true },
@@ -59,7 +98,18 @@ vi.mock("@/store", () => ({
     mocks.listParams.push(params);
     return {
       data: {
-        pages: [{ data: [row("c-1", "Mira Rao"), row("c-2", "Dev Shah")], nextCursor: null }],
+        pages: [
+          {
+            data: mocks.manyRows
+              ? MANY_ROWS
+              : [
+                  row("c-1", "Mira Rao"),
+                  { ...row("c-2", "Dev Shah"), owner: { id: "u-1", name: "Asha Owner" } },
+                  { ...row("c-3", "Nia Dnc"), lifecycle: "do_not_contact" },
+                ],
+            nextCursor: null,
+          },
+        ],
       },
       hasNextPage: mocks.hasNextPage,
       isFetchingNextPage: false,
@@ -124,6 +174,7 @@ beforeEach(() => {
   mocks.views = [];
   mocks.hasNextPage = false;
   mocks.isAdmin = false;
+  mocks.manyRows = false;
 });
 afterEach(() => {
   cleanup();
@@ -212,13 +263,13 @@ describe("ContactsPage", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Ravi Owner" }));
     await waitFor(() =>
       expect(mocks.bulk).toHaveBeenCalledWith({
-        ids: ["c-1", "c-2"],
+        ids: ["c-1", "c-2", "c-3"],
         action: "assignOwner",
         ownerId: "u-2",
       }),
     );
     await waitFor(() =>
-      expect(mocks.toast.warning).toHaveBeenCalledWith("1 of 2 assigned; 1 not", {
+      expect(mocks.toast.warning).toHaveBeenCalledWith("1 of 2 assigned to Ravi Owner; 1 not", {
         description: "Dev Shah: Contact not found.",
       }),
     );
@@ -360,5 +411,90 @@ describe("ContactsPage — UX-2 list standard", () => {
     expect(lastParams()).toMatchObject({ limit: 100 });
     expect(screen.getByRole("columnheader", { name: "Source" })).toBeInTheDocument();
     expect(columns).toContain("source");
+  });
+});
+
+describe("ContactsPage — UX-2 peek, inline edits, row and bulk actions", () => {
+  it("opens the peek drawer in the URL and keeps the list's filters; closing returns to the list", async () => {
+    const router = await renderPage({ ownerId: ["me"] });
+    fireEvent.click(screen.getByText("Mira Rao"));
+    await waitFor(() => expect(searchOf(router)["peek"]).toBe("c-1"));
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByRole("link", { name: "+919800000001" })).toHaveAttribute(
+      "href",
+      "tel:+919800000001",
+    );
+    expect(within(drawer).getByRole("link", { name: /Open full page/ })).toHaveAttribute(
+      "href",
+      "/contacts/c-1",
+    );
+    expect(searchOf(router)["ownerId"]).toEqual(["me"]);
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    await waitFor(() => expect(searchOf(router)["peek"]).toBeUndefined());
+    expect(searchOf(router)["ownerId"]).toEqual(["me"]);
+    expect(screen.getByRole("table", { name: "Contacts" })).toBeInTheDocument();
+  });
+
+  it("changes the owner in the row and offers Undo back to the previous owner", async () => {
+    mocks.bulk.mockResolvedValue([{ id: "c-2", ok: true }]);
+    await renderPage();
+    fireEvent.keyDown(screen.getByLabelText("Owner of Dev Shah"), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Ravi Owner" }));
+    await waitFor(() =>
+      expect(mocks.bulk).toHaveBeenCalledWith({
+        ids: ["c-2"],
+        action: "assignOwner",
+        ownerId: "u-2",
+      }),
+    );
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalled());
+    const [message, options] = mocks.toast.success.mock.calls[0] as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    expect(message).toBe("Dev Shah assigned to Ravi Owner");
+    expect(options.action.label).toBe("Undo");
+    options.action.onClick();
+    await waitFor(() =>
+      expect(mocks.bulk).toHaveBeenLastCalledWith({
+        ids: ["c-2"],
+        action: "assignOwner",
+        ownerId: "u-1",
+      }),
+    );
+  });
+
+  it("asks before assigning more than 20 selected contacts and says how many", async () => {
+    mocks.manyRows = true;
+    mocks.bulk.mockResolvedValue(
+      Array.from({ length: 25 }, (_, i) => ({ id: `m-${i}`, ok: true })),
+    );
+    await renderPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    openMenu(/Assign owner/);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ravi Owner" }));
+    const confirm = await screen.findByRole("dialog", { name: "Assign owner" });
+    expect(confirm).toHaveTextContent("Make Ravi Owner the owner of 21 contacts?");
+    expect(mocks.bulk).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Assign" }));
+    await waitFor(() => expect(mocks.bulk).toHaveBeenCalledTimes(1));
+    expect((mocks.bulk.mock.calls[0]![0] as { ids: string[] }).ids).toHaveLength(21);
+  }, 30_000);
+
+  it("hides actions the viewer can't use: Enroll in AI for reps, Log call on a Do Not Contact row", async () => {
+    await renderPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    expect(screen.queryByRole("button", { name: /Enroll in AI/ })).toBeNull();
+    openMenu("Actions for Nia Dnc");
+    expect(await screen.findByRole("menuitem", { name: /Add note/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Log call/ })).toBeNull();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    openMenu("Actions for Mira Rao");
+    expect(await screen.findByRole("menuitem", { name: /Log call/ })).toBeInTheDocument();
+    cleanup();
+    mocks.isAdmin = true;
+    await renderPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    expect(screen.getByRole("button", { name: /Enroll in AI/ })).toBeInTheDocument();
   });
 });

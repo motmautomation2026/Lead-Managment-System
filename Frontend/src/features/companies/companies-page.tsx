@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Building2, CopyCheck, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,8 @@ const EMPTY_TEXT: Record<string, string> = {
   mine: "No companies are assigned to you.",
   recent: "No companies were added in the last 7 days.",
 };
+
+const RecordPeek = lazy(() => import("@/features/crm/record-peek"));
 
 export function CompaniesPage() {
   const [state, set] = useListUrlState(companiesSearchSchema);
@@ -173,9 +175,7 @@ export function CompaniesPage() {
           getRowId={(r) => r.id}
           getRowHref={(r) => `/companies/${r.id}`}
           onRowIntent={(r) => prefetch("company", r.id)}
-          onRowClick={(r) =>
-            void navigate({ to: "/companies/$companyId", params: { companyId: r.id } })
-          }
+          onRowClick={(r) => void set({ peek: r.id })}
           sort={parseSort(state.sort)}
           onSortChange={(s) => void set({ sort: `${s.field}:${s.dir}` })}
           visibleColumns={prefs.columns}
@@ -194,6 +194,15 @@ export function CompaniesPage() {
           emptyState={emptyState}
         />
       </div>
+      {state.peek && (
+        <Suspense fallback={null}>
+          <RecordPeek
+            type="company"
+            id={state.peek}
+            onClose={() => void set({ peek: undefined })}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

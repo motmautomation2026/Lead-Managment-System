@@ -42,6 +42,9 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/app/add-lead-context", () => ({
   useCreateCompanyDialog: () => ({ open: mocks.openCreate }),
 }));
+vi.mock("@/features/crm/record-peek", () => ({
+  default: ({ id }: { id: string }) => <div>peek {id}</div>,
+}));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
@@ -179,8 +182,13 @@ describe("CompaniesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(mocks.fetchNextPage).toHaveBeenCalled();
     expect(screen.getByRole("link", { name: /Acme/ })).toHaveAttribute("href", "/companies/co-1");
+    // UX-2: a row click opens the peek drawer (the list stays); Back closes it.
     fireEvent.click(screen.getByText("Bolt"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/companies/co-2"));
+    await waitFor(() =>
+      expect((router.state.location.search as Record<string, unknown>)["peek"]).toBe("co-2"),
+    );
+    expect(await screen.findByText("peek co-2")).toBeInTheDocument();
+    expect(router.state.location.pathname).not.toBe("/companies/co-2");
   });
 
   it("saves the current list as a companies view", async () => {

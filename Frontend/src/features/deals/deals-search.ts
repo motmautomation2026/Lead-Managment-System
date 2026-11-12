@@ -14,6 +14,8 @@ const list = z.array(z.string()).optional();
  */
 export const dealsSearchSchema = z.object({
   view: z.string().optional(),
+  /** UX-2: the record open in the peek drawer (not a filter). */
+  peek: z.string().optional(),
   q: z.string().optional(),
   sort: z.string().optional(),
   columns: list,

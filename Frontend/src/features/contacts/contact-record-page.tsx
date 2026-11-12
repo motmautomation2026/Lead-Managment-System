@@ -1,3 +1,4 @@
+import { NoteDialog } from "./note-dialog";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -1045,50 +1046,6 @@ function NoteForm({ onSave }: { onSave: (body: string) => Promise<boolean> }) {
         </Button>
       </CardContent>
     </Card>
-  );
-}
-
-function NoteDialog({
-  open,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSave: (body: string) => Promise<boolean>;
-}) {
-  const [body, setBody] = useState("");
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add note</DialogTitle>
-        </DialogHeader>
-        <Textarea
-          rows={4}
-          value={body}
-          aria-label="Note"
-          onChange={(e) => setBody(e.target.value)}
-        />
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!body.trim()}
-            onClick={() =>
-              void onSave(body.trim()).then((ok) => {
-                if (!ok) return;
-                setBody("");
-                onOpenChange(false);
-              })
-            }
-          >
-            Add note
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
