@@ -102,6 +102,14 @@ export function WhatsAppNumbers({
   const isAdmin = useIsAdmin();
   const client = useQueryClient();
   const [openId, setOpenId] = useSearchParam("number");
+  // UX-2: closing the drawer with unsaved number settings asks first.
+  const [dirty, setDirty] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const close = () => {
+    setDirty(false);
+    setConfirmClose(false);
+    setOpenId(undefined, { replace: false });
+  };
   const store = (next: WhatsAppConnection) =>
     client.setQueryData(keys.connection(workspaceId, "whatsapp"), next);
   const add = useMutation({
@@ -192,7 +200,11 @@ export function WhatsAppNumbers({
       )}
       <DetailDrawer
         open={open !== null}
-        onOpenChange={(o) => !o && setOpenId(undefined, { replace: false })}
+        onOpenChange={(o) => {
+          if (o) return;
+          if (dirty) setConfirmClose(true);
+          else close();
+        }}
         title={open ? `Number ${open.label}` : "Number"}
         description={
           open
@@ -208,9 +220,19 @@ export function WhatsAppNumbers({
             isAdmin={isAdmin}
             onSaved={store}
             onRemoved={() => setOpenId(undefined)}
+            onDirtyChange={setDirty}
           />
         )}
       </DetailDrawer>
+      <ConfirmDialog
+        open={confirmClose}
+        onOpenChange={setConfirmClose}
+        title="Discard unsaved changes?"
+        description="Your changes to this number's settings aren't saved. Closing discards them."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        onConfirm={close}
+      />
     </section>
   );
 }
@@ -243,12 +265,14 @@ function NumberDetail({
   isAdmin,
   onSaved,
   onRemoved,
+  onDirtyChange,
 }: {
   number: WhatsAppNumber;
   others: WhatsAppNumber[];
   isAdmin: boolean;
   onSaved: (next: WhatsAppConnection) => void;
   onRemoved: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const [tab, setTab] = useState("overview");
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -384,7 +408,9 @@ function NumberDetail({
             {
               id: "settings",
               label: "Settings",
-              content: <NumberSettingsForm number={n} onSaved={onSaved} />,
+              content: (
+                <NumberSettingsForm number={n} onSaved={onSaved} onDirtyChange={onDirtyChange} />
+              ),
             },
           ]}
         />
@@ -438,9 +464,11 @@ function NumberDetail({
 function NumberSettingsForm({
   number: n,
   onSaved,
+  onDirtyChange,
 }: {
   number: WhatsAppNumber;
   onSaved: (next: WhatsAppConnection) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const { users } = useSession();
   const form = useForm<NumberForm>({
@@ -448,6 +476,11 @@ function NumberSettingsForm({
     defaultValues: formValues(n),
   });
   const errors = form.formState.errors;
+  const isDirty = form.formState.isDirty;
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => onDirtyChange(false);
+  }, [isDirty, onDirtyChange]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const save = form.handleSubmit(async (values) => {
     setSaveError(null);

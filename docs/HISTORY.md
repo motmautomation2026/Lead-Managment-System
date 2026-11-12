@@ -850,3 +850,20 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   468 + 2 skipped → 471 + 2 skipped. First load 298.5 → 284.1 kB gzip. Staging integration: runs 1 and 2 each had one
   unrelated flaky failure (E2h attachment send left queued; a Knowledge asset upload got a Storage 500), each passing when
   re-run alone. **Production:** no migration; the API change is additive in shape (`{data, nextCursor}` on the two lists).
+- **UX-2 (lists and repetitive work; branch `ui-redesign`, local only; no OpenAI call, nothing sent, no migration):**
+  Item 1: the list standard on Contacts, Companies, Deals, Tasks, Meetings, Proposals — `DataTable` rows per page 25/50/100
+  and columns remembered per user + list in the browser (`lib/list-prefs.ts`), density in the Columns menu, `j`/`k`/`x`
+  (+ `Enter`, `Esc`, `?` sheet with list and call-queue keys), phone cards with a Sort picker, `rowActions`; Contacts Import in
+  the More menu; deal board "Load more (N more)"; duplicates one Actions menu on phones. Item 2: peek drawer `?peek=` on
+  Contacts / Companies / Deals (lazy `record-peek.tsx`), inline owner (Contacts, Tasks) and due date (Tasks) with Undo, row
+  menus, bulk confirm above 20 + owner Undo, Tasks bulk Reschedule + Undo, Meetings "Record outcome" on Needs outcome,
+  `NoteDialog` module, `afterMenuClose`. Item 3: call queue `/tasks/calls` (hottest first, contact facts + `tel:`, outcomes
+  1–5 / skip / pause, sent after a 6 s Undo window, resume per IST day); backend: `logCall` accepts an open follow-up task,
+  task lists `replyTasks=only|exclude` (B4 §7w). Item 4: Replies queue `/tasks/replies` (audited Show message, Suggested reply
+  Send / Discard, Mark done → next) and the sidebar "Replies" badge. Item 5: WhatsApp number drawer asks before discarding
+  unsaved settings; UX-1/UX-2 blocks on `/dev/ui`; C1-ui §13, B4 §7w, UX-audit §5 (clicks: 10 calls ≈ 50 → 11, 5 replies
+  ≈ 20 + scrolls → 11, one owner 3 → 2, meeting outcome 4 → 3). Tests: frontend 549 → 572, backend unit 1271 → 1275,
+  integration +2 (`workListsApi` UX-2 cases) — **not run**: the staging pooler answered "tenant/user … not found" (staging
+  project unreachable, probably paused) for the whole phase; the two staging passes UX-1 owed are still owed. First load
+  284.1 → 285.6 kB gzip. **Production:** no migration; API changes are additive (a new optional filter; one relaxed rule).
+

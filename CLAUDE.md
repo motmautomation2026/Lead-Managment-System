@@ -318,6 +318,12 @@ Every completed phase (0A … E3b-1b and later, incl. UX-1) is in `docs/HISTORY.
   dangerous actions behind `ConfirmDialog` saying exactly what happens; reversible ones use `toastUndo`; loading =
   `SectionSkeleton`/skeletons; empty states carry one next action. Settings: `/settings/<section>`, registry
   `features/settings/settings-search.ts` (sections, access, search entries — a new setting gets a field id + an entry).
+- UX-2 (lists + queues, `docs/crm-v2/C1-ui.md` §13): every list page uses `DataTable` with rows per page + columns remembered
+  (`lib/list-prefs.ts`), phone cards, `j`/`k`/`x`/`Enter` (`keysAreTaken`; new keys go in `LOCAL_SHORTCUTS` for `?`); record
+  lists open a peek drawer (`?peek=`, lazy `features/crm/record-peek.tsx`); inline/row edits use `features/crm/row-controls`
+  with Undo where reversible; a dialog opened from a menu item uses `afterMenuClose`. Call queue `/tasks/calls` sends a call
+  only after its Undo window (`POST /leads/:id/calls` + `taskId`, call or follow-up task); Replies `/tasks/replies` =
+  `replyTasks=only` (B4 §7w).
 - Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
   manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
   contact owner, `agent_status` or automation.

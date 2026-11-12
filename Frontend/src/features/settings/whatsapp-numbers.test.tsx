@@ -172,6 +172,37 @@ describe("WhatsAppNumbers (E4a, UX-1 list + drawer)", () => {
     });
   });
 
+  it("closing the drawer with unsaved settings asks first (UX-2); Keep editing keeps it open", async () => {
+    mocks.isAdmin = true;
+    const { router } = await renderNumbers();
+    let drawer = await openNumber("#1");
+    fireEvent.mouseDown(within(drawer).getByRole("tab", { name: "Settings" }), { button: 0 });
+    fireEvent.change(within(drawer).getByLabelText("Label"), { target: { value: "Sales line" } });
+    await within(drawer).findByRole("button", { name: "Save number" });
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    let ask = await screen.findByRole("dialog", { name: "Discard unsaved changes?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "Keep editing" }));
+    drawer = screen.getByRole("dialog", { name: "Number #1" });
+    expect(within(drawer).getByLabelText("Label")).toHaveValue("Sales line");
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    ask = await screen.findByRole("dialog", { name: "Discard unsaved changes?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() =>
+      expect((router.state.location.search as Record<string, unknown>)["number"]).toBeUndefined(),
+    );
+    expect(mocks.updateNumber).not.toHaveBeenCalled();
+  });
+
+  it("closing without changes needs no confirm", async () => {
+    const { router } = await renderNumbers();
+    const drawer = await openNumber("#1");
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    await waitFor(() =>
+      expect((router.state.location.search as Record<string, unknown>)["number"]).toBeUndefined(),
+    );
+    expect(screen.queryByRole("dialog", { name: "Discard unsaved changes?" })).toBeNull();
+  });
+
   it("pausing asks first and says what happens", async () => {
     mocks.isAdmin = true;
     mocks.pauseNumber.mockResolvedValue(data);

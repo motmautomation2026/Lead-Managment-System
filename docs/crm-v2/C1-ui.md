@@ -469,3 +469,39 @@ without a replacement ring. Colours only from tokens; every new text/background 
   → `/settings/calendar` with the query (the Calendar section toasts once and strips it); `/admin` → User accounts.
 - **Tests** render sections with `renderInRouter` (`src/test/render-in-router.tsx`: SaveBar and `?tab=` need a router).
 - **Bundle:** first load 298.5 → 284.1 kB gzip (re-chunking after the per-section routes; every section is lazy).
+
+## 13. Lists and queues (UX-2)
+
+**List standard** (Contacts, Companies, Deals table, Tasks, Meetings, Proposals): `PageHeader` (title, count, primary action,
+More menu), filters row with chips, filters + sort + view + `q` in the URL (`useListUrlState`; Back works), saved views,
+B4 keyset pages with Load more. `DataTable` adds: rows per page 25 / 50 / 100 and visible columns remembered per user and list
+in the browser (`lib/list-prefs.ts`, try/catch; URL columns win; `limit` only sent when not 50), density in the Columns menu
+(the app-wide setting), sticky header, skeleton rows, empty state with one action, and on phones (< 640 px) **cards** instead
+of a table (title + label/value lines, a Sort picker; no sideways scroll). `rowActions` adds a last, always-shown column.
+
+**Peek** (Contacts, Companies, Deals): a row click sets `?peek=<id>` and opens `features/crm/record-peek.tsx` (lazy) in a
+`DetailDrawer`: key facts, last 3 activities, next task, primary actions, "Open full page". The list keeps filters, scroll and
+selection; Back / Esc closes. Ctrl/⌘-click and middle-click open the full page in a new tab. Tasks, Meetings and Proposals keep
+their own Sheets (already a peek).
+
+**Inline edits and row actions** (`features/crm/row-controls.tsx`): `InlineOwner` (a quiet select) on Contacts and Tasks,
+the Tasks due date (native date picker over the relative time, same IST time of day); every reversible change toasts with Undo
+(owner back to the previous owner — never to "no owner", the API can't unassign; due date back). `RowMenu` (…): Contacts —
+Log call (hidden for Do Not Contact), Add note, Add task, Open, Assign to; Tasks — Log call (call / follow-up), Open contact,
+Reschedule, Assign to; Meetings — "Record outcome" button on the Needs outcome view. Dialogs opened from a menu item use
+`afterMenuClose` (lib) so the menu hands focus back first. Bulk: Contacts assign owner / Enroll in AI (admins) ask first above
+20 selected; Tasks Complete / Reassign / Reschedule always confirm; Undo where reversible.
+
+**Call queue** (`/tasks/calls`, "Start calling" on Tasks): my open call + follow-up tasks due today or overdue, hottest first,
+one at a time (contact facts, `tel:` link, enquiry, hot reasons, AI status, open deal, last 3 activities). Outcomes Connected
+(the full Log call dialog) · No answer · Busy · Wrong number · Call back at… (+ note); the next task shows at once and the call
+is sent after the 6 s Undo window (`POST /leads/:id/calls` + `taskId`: the backend completes the task and creates the follow-up);
+a nurture workflow is offered as a toast action. Skip / Pause; progress, skips and pause per user and IST day in the browser.
+
+**Replies queue** (`/tasks/replies`, sidebar "Replies" with a badge): my open "Lead replied" tasks, oldest first; the reply
+through the audited "Show message" (owner + admins only), the Suggested reply card (Send / Discard), Mark done; each moves on.
+
+**Keyboard** (all also by mouse/touch; never while typing or with a dialog/menu open — `keysAreTaken`): lists `j` / `k`
+(also from anywhere on the page into the list), `Enter` open (peek), `x` select, `Esc` close; call queue `1`–`5`, `s`, `p`;
+`?` lists them all (`LOCAL_SHORTCUTS`).
+

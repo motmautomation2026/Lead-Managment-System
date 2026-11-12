@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Building2, Users } from "lucide-react";
+import { Building2, MessageCircle, Phone, Users } from "lucide-react";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import { DetailDrawer } from "@/components/crm/detail-drawer";
+import { SaveBar } from "@/components/crm/save-bar";
+import { SectionHeader } from "@/components/crm/section-layout";
+import { SectionSkeleton } from "@/components/crm/section-skeleton";
+import { SectionTabs } from "@/components/crm/section-tabs";
+import { StatusCard } from "@/components/crm/status-card";
+import { InlineOwner, RowMenu } from "@/features/crm/row-controls";
+import { toastUndo } from "@/lib/toast-undo";
+import type { User } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/crm/page-header";
@@ -259,11 +270,131 @@ function Kit({ theme }: { theme: string }) {
         />
       </div>
 
+      <Foundations theme={theme} />
+
       <EmptyState
         icon={Building2}
         title="Coming in the next update"
         text="EmptyState with an action."
         action={<Button size="sm">Do the thing</Button>}
+      />
+    </div>
+  );
+}
+
+const SAMPLE_USERS = [
+  { id: "u-1", name: "Asha Owner", active: true },
+  { id: "u-2", name: "Ravi Rep", active: true },
+] as unknown as User[];
+
+/** UX-1 + UX-2 building blocks (C1-ui §11–13). */
+function Foundations({ theme }: { theme: string }) {
+  const [tab, setTab] = useState("connection");
+  const [drawer, setDrawer] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [label, setLabel] = useState("Sales line");
+  const [saved, setSaved] = useState("Sales line");
+  const [owner, setOwner] = useState<{ id: string; name: string } | null>(null);
+  return (
+    <div className="space-y-4 px-4 sm:px-6">
+      <SectionHeader
+        title={`Foundations · ${theme}`}
+        description="SectionHeader, StatusCard, SectionTabs, DetailDrawer, SaveBar, ConfirmDialog, toast + Undo, skeleton, row controls."
+      />
+      <StatusCard
+        title="WhatsApp"
+        icon={MessageCircle}
+        tone="success"
+        status="Connected"
+        detail="2 numbers sending · 41 sent today"
+        metric={{ label: "Sent today", value: "41 / 200" }}
+        action={
+          <Button size="sm" variant="outline">
+            Open numbers
+          </Button>
+        }
+      />
+      <SectionTabs
+        label="Email settings"
+        value={tab}
+        onValueChange={setTab}
+        tabs={[
+          {
+            id: "connection",
+            label: "Connection",
+            content: (
+              <div className="space-y-2 pb-16">
+                <Input
+                  aria-label="Label"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+                <SaveBar
+                  dirty={label !== saved}
+                  saving={false}
+                  onSave={() => setSaved(label)}
+                  onDiscard={() => setLabel(saved)}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "safety",
+            label: "Safety & limits",
+            badge: "2",
+            content: <SectionSkeleton rows={2} />,
+          },
+        ]}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" onClick={() => setDrawer(true)}>
+          Open drawer
+        </Button>
+        <Button variant="outline" onClick={() => setConfirm(true)}>
+          Confirm dialog
+        </Button>
+        <Button variant="outline" onClick={() => toastUndo("Task completed", () => undefined)}>
+          Toast + Undo
+        </Button>
+        <span className="w-44">
+          <InlineOwner
+            value={owner}
+            users={SAMPLE_USERS}
+            label="Owner (inline)"
+            onChange={(id) => setOwner(SAMPLE_USERS.find((u) => u.id === id) ?? null)}
+          />
+        </span>
+        <RowMenu label="Row actions">
+          <DropdownMenuItem>
+            <Phone /> Log call
+          </DropdownMenuItem>
+          <DropdownMenuItem>Add note</DropdownMenuItem>
+        </RowMenu>
+      </div>
+      <DetailDrawer
+        open={drawer}
+        onOpenChange={setDrawer}
+        title="Number #1"
+        description="Not paired"
+      >
+        <PropertyList
+          items={[
+            {
+              id: "status",
+              label: "Status",
+              value: <StatusPill tone="warning">QR ready</StatusPill>,
+            },
+            { id: "cap", label: "Daily cap", value: "200" },
+          ]}
+        />
+      </DetailDrawer>
+      <ConfirmDialog
+        open={confirm}
+        onOpenChange={setConfirm}
+        title="Pause sending?"
+        description="No WhatsApp message is sent from this number until an admin resumes it. Queued sends wait."
+        confirmLabel="Pause"
+        onConfirm={() => setConfirm(false)}
       />
     </div>
   );

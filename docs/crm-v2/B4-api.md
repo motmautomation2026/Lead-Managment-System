@@ -118,7 +118,7 @@ Writes are unchanged (`POST/PATCH /tasks…`, `/meetings…`, `/proposals…`). 
 
 | Endpoint | Notes |
 |---|---|
-| `GET /tasks/list` · `GET /tasks/count` | Filters: `ownerId[]` (ids / `me` / `none`), `status` (`open` **default**, `completed`, `cancelled`, `all`), `due` (`overdue` = due before now; `today` = due within today IST; `upcoming` = due from tomorrow 00:00 IST), `dueFrom/To`, `type[]`, `origin[]` (`manual`, `automation`, `agent`), `contactId`, `companyId` (the contact's company), `dealId` (tasks of that deal's contact — tasks have no deal link), `q` (title or contact name). `due_at` is NOT NULL, so there is no "no due date" bucket. Sorts: `dueAt` (**default asc**), `createdAt`, `updatedAt`. Row = the Task DTO + `ownerName`, `contact {id,name}`, `company {id,name}\|null`, `deal {id,name}\|null` (the contact's most recently updated open deal), `isOverdue` (open and past due, same rule as `due=overdue`). |
+| `GET /tasks/list` · `GET /tasks/count` | Filters: `ownerId[]` (ids / `me` / `none`), `status` (`open` **default**, `completed`, `cancelled`, `all`), `due` (`overdue` = due before now; `today` = due within today IST; `upcoming` = due from tomorrow 00:00 IST), `dueFrom/To`, `type[]`, `origin[]` (`manual`, `automation`, `agent`), `contactId`, `companyId` (the contact's company), `dealId` (tasks of that deal's contact — tasks have no deal link), `q` (title or contact name), `replyTasks` (`only` = the AI's open "Lead replied" tasks: origin `agent` + a `REPLY_TASK_TITLES` title; `exclude` = everything else; UX-2 §7w). `due_at` is NOT NULL, so there is no "no due date" bucket. Sorts: `dueAt` (**default asc**), `createdAt`, `updatedAt`. Row = the Task DTO + `ownerName`, `contact {id,name}`, `company {id,name}\|null`, `deal {id,name}\|null` (the contact's most recently updated open deal), `isOverdue` (open and past due, same rule as `due=overdue`). |
 | `GET /meetings/list` · `GET /meetings/count` | Filters: `ownerId[]`, `status[]`, `when` (`upcoming` = from now, not completed/cancelled/no-show/failed; `today` = today IST, any status; `past`; `needs_outcome` = past, not cancelled/no-show/failed, no outcome), `from/to` (scheduled time), `contactId`, `companyId`, `dealId` (`meetings.deal_id`), `q`. Sorts: `at` (scheduled time, **default asc**), `createdAt`. Row = the Meeting DTO (incl. `outcome`, `calendarSyncStatus/Error`, `notifyEmail/WhatsappStatus/Error`, `meetLink`) + `ownerName`, `contact`, `company`, `deal`. Participants are still not returned (A18 unchanged). |
 | `GET /proposals/list` · `GET /proposals/count` | Filters: `ownerId[]`, `status[]`, `group` (`open` = every non-terminal status; `awaiting_decision` = `sent`; `won` = `accepted`; `lost` = `rejected`, `expired`, `withdrawn`; `PROPOSAL_STATUS_GROUPS` in `domain/proposalRouting.ts`), `contactId`, `companyId`, `dealId`, `updatedFrom/To`, `q`. Sorts: `updatedAt` (**default desc**), `sentAt`, `amount` (both nullable: NULLs last). Row = the Proposal DTO + `ownerName`, `contact`, `company`, `deal`, **`allowedNextStatuses`**, **`lossReasonStatuses`** (C6b). |
 | `GET /proposals/:id/document` | C6b. `{ url, fileName, expiresAt }`: a **5-minute signed URL** for the proposal's file in the private `proposal-documents` bucket. The row is read with the workspace check (another workspace → 404); no file, or the object is gone → 404. The client fetches it on click and opens it at once (never stored). |
@@ -601,6 +601,19 @@ Every list in Settings that can grow is a keyset page (§1: `limit` 1–100, def
 Fixed-size lists stay unpaginated on purpose: WhatsApp numbers (≤ `max_numbers`, at most 20), the 14-day monitoring tables,
 lead assignment rule rows (an admin's form), the WhatsApp inbound review queue (latest 20) and playbook versions (latest 50).
 The safety-event keysets use the 041 / 042 `(workspace_id, created_at desc)` indexes (ties by id).
+
+## 7w. Queues — UX-2
+
+No new endpoint; two small changes behind the call queue and the Replies queue (both on staging-tested services, tests
+`tests/unit/ux2Queues.test.ts` + integration `workListsApi`):
+
+| Change | Where | Notes |
+|---|---|---|
+| `replyTasks=only\|exclude` on `GET /tasks/list` + `/tasks/count` | `workLists.service.ts` `taskWhere` | `only`: `t.origin = 'agent' and t.title = any(REPLY_TASK_TITLES)` (the one open reply task per contact, D3/E3b-2a); `exclude`: its negation. Any other value → 400 (strict schema). Replies queue: `ownerId=me&replyTasks=only&sort=createdAt:asc`; its badge: the same count. Call queue: `ownerId=me&type=call&type=follow_up&dueTo=<end of today IST>&replyTasks=exclude&sort=hotScore:desc`. |
+| `POST /leads/:id/calls` with `taskId` | `calls.service.ts` `logCall` | The task may be an open `call` **or `follow_up`** task (was: call only); it is completed in the same transaction. Every other rule (routing, follow-up task, contactability, DNC) is unchanged. Other types → 400 "Only a call or follow-up task can be completed by logging a call." |
+
+The call queue's Undo never needs a reverse endpoint: the outcome is only sent after the 6 s Undo window (leaving the page sends
+it at once).
 
 ## 8. Performance (B4 check)
 
