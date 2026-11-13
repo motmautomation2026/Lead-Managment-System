@@ -90,7 +90,8 @@ export interface MessageViolation {
     | "unsupported_agreement"
     | "call_days"
     | "generic_client_claim"
-    | "repeated_client_experience";
+    | "repeated_client_experience"
+    | "stale_call_thanks";
   message: string;
 }
 
@@ -112,12 +113,21 @@ export interface MessageFacts {
   agreementNoted?: boolean;
   /** AI-FIX-1 rule 2: client experiences (playbook labels) earlier messages to this contact already used. */
   usedExperiences?: string[];
+  /** AI-FIX-1 rule 3: the latest logged call is more than 7 days old (needs `now`). */
+  staleCall?: boolean;
+  /** AI-FIX-1 rule 3: this message is the final polite check (no call ask). */
+  finalCheck?: boolean;
 }
 
-export function messageFactsOf(ctx: AgentContext): MessageFacts {
+const STALE_CALL_MS = 7 * 24 * 3_600_000;
+
+export function messageFactsOf(ctx: AgentContext, now?: Date): MessageFacts {
   const situation = situationOf(ctx);
+  const lastCall = [...ctx.timeline].reverse().find((t) => t.kind === "call");
   return {
     usedExperiences: usedClientExperiences(ctx),
+    staleCall: Boolean(now && lastCall && now.getTime() - new Date(lastCall.at).getTime() > STALE_CALL_MS),
+    finalCheck: ctx.stagePlan?.angle === "final_check",
     inboundFirst: situationInboundFirst(situation),
     conversationExists: situation.conversationExists,
     ownerFirstName: ctx.lead.ownerName?.trim().split(/\s+/)[0] ?? null,
@@ -160,6 +170,15 @@ export function callDaysProblem(body: string): string | null {
     return `The message asks for a call without offering the two suggested days${vague ? ` ("${vague}")` : ""}. Ask which of the two suggested days suits them, e.g. "Would Thursday or Friday suit you for a short call?"`;
   }
   return vague ? `The message offers days and also says "${vague}"; keep only the two days.` : null;
+}
+
+/** AI-FIX-1 rule 3: thanks for a call ("Thank you for your time on the call", "Thanks for the call yesterday"), or null. */
+export function callThanks(text: string): string | null {
+  return (
+    straightQuotes(text).match(
+      /\bthank(?:s| you)(?: (?:so |very )?much)? for (?:your time (?:on|during) (?:the|our) (?:call|conversation|chat)|(?:the|our) (?:call|conversation|chat)|(?:speaking|talking) (?:with|to) (?:me|us)|taking (?:my|the|our) call)\b/i,
+    )?.[0] ?? null
+  );
 }
 
 /** E3b-2b rule 5: a general sentence about our client experiences instead of ONE named one. */
@@ -337,7 +356,10 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
   }
 
   const days = callDaysProblem(decision.body);
-  if (days) violations.push({ rule: "call_days", message: days });
+  // AI-FIX-1 rule 3: the final check asks for no call at all, so offering days is not the fix.
+  if (days && facts?.finalCheck) {
+    violations.push({ rule: "call_days", message: "The final check doesn't ask for a call. Ask one simple question whether their goal is still a priority, and offer to reconnect later." });
+  } else if (days) violations.push({ rule: "call_days", message: days });
 
   const generic = genericClientClaim(decision.body);
   if (generic) {
@@ -373,6 +395,10 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
         message: `A conversation already exists: don't introduce us again or ask for a first call (${intro.map((p) => `"${p}"`).join(", ")}).`,
       });
     }
+  }
+  const thanks = facts.staleCall ? callThanks(decision.body) : null;
+  if (thanks) {
+    violations.push({ rule: "stale_call_thanks", message: `"${thanks}": the call was more than a week ago. Don't thank them for it; start with their goal instead.` });
   }
   const repeated = mentionedExperiences(decision.body, facts.usedExperiences ?? []);
   if (repeated.length) {

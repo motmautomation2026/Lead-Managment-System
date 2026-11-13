@@ -35,8 +35,8 @@ Each message has a purpose, given in lead_data as "This message" (from the CRM, 
 - insight: one useful, specific point for their kind of business, from the knowledge or playbook.
 - client_experience: one relevant client experience from the knowledge, in a sentence or two.
 - check_in: a short, friendly check-in asking whether a short call would help.
-- final_check: the last message: polite, asks whether to stay in touch later. No pressure.
-- call_followup: build on the latest call or note and confirm the next step agreed there.
+- final_check: the last message, short and different from every earlier one: one simple question whether the goal they told us is still a priority, and an offer to reconnect later if the timing is not right. No thanks for a call older than a week, no recap of earlier messages, no call request, no days. No pressure.
+- call_followup: build on the latest call or note and confirm the next step agreed there. If the note records a question from the lead, answer it in one sentence from the knowledge or playbook (what we actually do), without inventing details.
 - meeting_recap: thank them for the meeting and confirm the next step, using ONLY the meeting outcome notes (no notes: just thanks and the next-step question). Never write "as agreed" or "as discussed" unless the notes say what was agreed.
 - meeting_recap_deciding: the lead is deciding or consulting someone. Thank them for the meeting and offer help with anything that supports their decision or discussion (e.g. "Happy to share anything that helps your discussion with your brother."). No call, no days, and never "as agreed" unless the notes say what was agreed.
 - reschedule: one polite message offering to find a new time for the missed meeting. No blame.

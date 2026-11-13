@@ -21,10 +21,10 @@ const PLAYBOOK_HANDOFF_TITLE = "AI couldn't write a message that meets the playb
 const QUESTION_RULE = "one_question";
 // Problems that are about the playbook's writing rules (E2b), not safety or facts.
 // internal_info_leak is a safety problem, not a playbook one ("AI couldn't write a safe message").
-const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", "call_days", "generic_client_claim", "repeated_client_experience", ...STYLE_RULES];
+const PLAYBOOK_RULES = ["banned_phrase", "length", QUESTION_RULE, "compound_question", "exclamation", "not_thanking_inbound", "attachment_mention", "subject_style", "contact_details", "unsupported_agreement", "call_days", "generic_client_claim", "repeated_client_experience", "stale_call_thanks", ...STYLE_RULES];
 const ruleOf = (problem: string) => problem.slice(0, problem.indexOf(":"));
 // E2f rule 7: code-checked writing problems a rewrite reliably fixes; only these earn a second regeneration.
-const FIXABLE_RULES = ["generic_client_claim", QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement", "call_days", "repeated_client_experience"];
+const FIXABLE_RULES = ["generic_client_claim", QUESTION_RULE, "compound_question", "banned_phrase", "length", "exclamation", "not_thanking_inbound", "introduction_mid_conversation", "attachment_mention", "subject_style", "contact_details", "content_contacts", "unsupported_agreement", "call_days", "repeated_client_experience", "stale_call_thanks"];
 // Grounding only runs when the code checks pass, so a grounded attempt (unsupported claim / style) is never "fixable only".
 const fixableOnly = (a: DraftAttempt) => !a.grounding && a.rules.violations.length > 0 && a.rules.violations.every((v) => FIXABLE_RULES.includes(v.rule));
 
@@ -96,7 +96,7 @@ export async function draftDecision(
     const final = thread && polished.action === "send_email" ? { ...polished, subject: threadSubject(thread.subject) } : polished;
     let rules = validateDecision(final, ctx.rules, ctx.settings, deps.now);
     // E2b rule 1 + E2c (both modes): deterministic writing checks, before grounding; recorded as rule violations.
-    const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx));
+    const messageViolations = rules.outcome === "blocked" ? [] : checkMessage(rules.finalDecision, ctx.settings, messageFactsOf(ctx, deps.now));
     if (messageViolations.length) rules = { ...rules, allowed: false, executable: false, violations: [...rules.violations, ...messageViolations] };
     let grounding: GroundingResult | null = null;
     if (rules.allowed && isSend(rules.finalDecision)) {

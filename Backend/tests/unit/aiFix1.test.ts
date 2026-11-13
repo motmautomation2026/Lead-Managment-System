@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import {
+  callThanks,
   checkMessage,
   experienceLabel,
   isListedExperienceClaim,
@@ -11,7 +12,8 @@ import {
   playbookClientExperiences,
   usedClientExperiences,
 } from "../../src/agent/messageChecks.js";
-import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages } from "../../src/agent/prompt.js";
+import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, callNoteQuestions } from "../../src/agent/prompt.js";
+import { ANGLE_RULES, CALL_ANGLES, type StagePlan } from "../../src/agent/stagePlan.js";
 import { draftDecision, type Usage } from "../../src/services/agentRunner.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { sampleContext } from "../helpers/agentContextFixture.js";
@@ -151,5 +153,92 @@ describe("AI-FIX-1 rule 2: never the same client experience twice for one lead",
     const result = await draftDecision(ctx, { model, decisionModel: "w", groundingModel: "c", prices: {}, now: NOW }, usage);
     expect(result.attempts.map((a) => a.problems.map((p) => p.split(":")[0]))).toEqual([["repeated_client_experience"], []]);
     expect(result.decision.action).toBe("send_whatsapp");
+  });
+});
+
+const plan = (angle: "final_check" | "call_followup", channel: "email" | "whatsapp" = "email"): StagePlan => ({
+  stageKey: "after_call",
+  angle,
+  allowedActions: [`send_${channel}`, "wait", "handoff", "update_stage", "stop"],
+  preferredChannel: channel,
+  reason: angle === "final_check" ? "continuing after the call" : "a rep logged a call or note since our last message",
+  fallback: { action: "wait", days: 7 },
+});
+const callOn = (at: string, detail: string) => [{ at, kind: "call", title: "Call Connected - interested_later", detail }];
+const FINAL_NOW = new Date("2026-12-09T04:40:00Z"); // Wed 9 Dec 2026, 10:10 IST: three weeks after the call
+const SAGAR_NOTE = "Spoke for 10 minutes. Gets most work through contacts and referrals. Wants regular enquiries from plants and EPC companies. Asked for examples of similar work.";
+const RESHMA_NOTE =
+  "Spoke for 15 minutes. Altem wants meetings with automation buyers in the UAE and Saudi Arabia. Their own sales team is small. Looking for outsourced SDR support. Asked how we qualify leads before passing them on.";
+const SAGAR_STEP6 =
+  "Hi Sagar,\n\nThank you for your time on the call. You mentioned that most work still comes through contacts and referrals.\n\nWould you like me to stay in touch later?";
+const GOOD_FINAL = "Hi Sagar,\n\nI wanted to check whether regular enquiries from plants and EPC companies are still a priority for your team. If the timing is not right, I am happy to reconnect later.";
+
+describe("AI-FIX-1 rule 3: the final polite check is short and different", () => {
+  it("the writer's final_check rule: goal still a priority, reconnect later; no old-call thanks, recap or call request", () => {
+    const system = buildDecisionMessages(sampleContext(), sampleContext().settings, FINAL_NOW)[0]!.content;
+    expect(system).toContain("final_check: the last message, short and different from every earlier one: one simple question whether the goal they told us is still a priority");
+    expect(ANGLE_RULES.final_check).toMatch(/No thanks for a call older than a week, no recap of earlier messages, no call request, no days/);
+    expect(CALL_ANGLES).not.toContain("final_check");
+  });
+
+  it("finds thanks for a call; other thanks are fine", () => {
+    expect(callThanks("Thank you for your time on the call.")).toBe("Thank you for your time on the call");
+    expect(callThanks("Thanks for the call yesterday, Reshma.")).toBe("Thanks for the call");
+    expect(callThanks("Thank you so much for speaking with me.")).toBe("Thank you so much for speaking with me");
+    expect(callThanks("Thank you for reaching out to MOTM.")).toBeNull();
+    expect(callThanks("Thanks for sharing the details.")).toBeNull();
+  });
+
+  it("thanks for a call more than 7 days old fails stale_call_thanks; a recent call doesn't", () => {
+    const old = sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", SAGAR_NOTE), stagePlan: plan("final_check") });
+    const facts = messageFactsOf(old, FINAL_NOW);
+    expect(facts).toMatchObject({ staleCall: true, finalCheck: true });
+    expect(checkMessage(email(SAGAR_STEP6), SETTINGS, facts).map((v) => v.rule)).toEqual(["stale_call_thanks"]);
+    expect(messageFactsOf(old).staleCall).toBe(false); // no clock, no check
+    const recent = messageFactsOf(old, new Date("2026-11-18T04:40:00Z"));
+    expect(recent.staleCall).toBe(false);
+    expect(checkMessage(email(SAGAR_STEP6), SETTINGS, recent)).toEqual([]);
+  });
+
+  it("a final check asking for a call without days fails call_days with 'no call' advice (not 'offer the days'); a goal check passes", () => {
+    const facts = messageFactsOf(sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", SAGAR_NOTE), stagePlan: plan("final_check") }), FINAL_NOW);
+    expect(checkMessage(email("Hi Sagar,\n\nShall we set up a short call?"), SETTINGS, facts)).toEqual([
+      { rule: "call_days", message: "The final check doesn't ask for a call. Ask one simple question whether their goal is still a priority, and offer to reconnect later." },
+    ]);
+    expect(checkMessage(email(GOOD_FINAL), SETTINGS, facts)).toEqual([]);
+  });
+
+  it("stale thanks is fixable: the regeneration passes", async () => {
+    const ctx = sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", SAGAR_NOTE), stagePlan: plan("final_check"), pastMessages: [] });
+    ctx.settings = { ...ctx.settings, banned_phrases: [] };
+    const model = createFakeDecisionModel({ decisions: [email(SAGAR_STEP6), email(GOOD_FINAL)] });
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const result = await draftDecision(ctx, { model, decisionModel: "w", groundingModel: "c", prices: {}, now: FINAL_NOW }, usage);
+    expect(result.attempts.map((a) => a.problems.map((p) => p.split(":")[0]))).toEqual([["stale_call_thanks"], []]);
+  });
+});
+
+describe("AI-FIX-1 rule 5: the call follow-up answers what the lead asked on the call", () => {
+  it("finds the question sentences in a call note", () => {
+    expect(callNoteQuestions(RESHMA_NOTE)).toEqual(["Asked how we qualify leads before passing them on."]);
+    expect(callNoteQuestions(SAGAR_NOTE)).toEqual(["Asked for examples of similar work."]);
+    expect(callNoteQuestions("Budget next quarter")).toEqual([]);
+    expect(callNoteQuestions(null)).toEqual([]);
+  });
+
+  it("the writer's prompt carries Reshma's question and the instruction to answer it from the knowledge", async () => {
+    const ctx = sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", RESHMA_NOTE), stagePlan: plan("call_followup") });
+    const model = createFakeDecisionModel({ decisions: [{ action: "wait", nextWakeInDays: 2, reasoning: "r" } as AgentDecision] });
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    await draftDecision(ctx, { model, decisionModel: "w", groundingModel: "c", prices: {}, now: new Date("2026-11-18T04:40:00Z") }, usage);
+    const [system, user] = model.calls[0]!.input.messages;
+    expect(user!.content).toContain(
+      'The lead asked on the call: "Asked how we qualify leads before passing them on." Answer it in one sentence using only the knowledge or playbook (say what we actually do), without inventing details; never only say it is covered or built in.',
+    );
+    expect(system!.content).toContain("If the note records a question from the lead, answer it in one sentence from the knowledge or playbook");
+    // Only for the call follow-up, and never in the checker's lead data.
+    const later = sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", RESHMA_NOTE), stagePlan: plan("final_check") });
+    expect(buildDecisionMessages(later, later.settings, FINAL_NOW)[1]!.content).not.toContain("The lead asked on the call");
+    expect(buildGroundingMessages(email("Hi Reshma,\n\nWe check need, timing and the buyer's role before passing a lead on."), ctx)![1]!.content).not.toContain("The lead asked on the call");
   });
 });

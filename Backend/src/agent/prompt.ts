@@ -198,9 +198,16 @@ function leadDataText(ctx: AgentContext, now: Date | null = null): string {
 }
 
 /** E3b-1 rules 1–3, 6: what this message is for, its channel and the days to offer (only with a stage plan). */
-function stageLines({ stagePlan: plan, latestMeeting }: AgentContext, now: Date | null): string[] {
+function stageLines({ stagePlan: plan, latestMeeting, timeline }: AgentContext, now: Date | null): string[] {
   if (!plan) return [];
   const lines = [plan.angle ? `This message: ${ANGLE_LABELS[plan.angle]} (${plan.reason})` : `This message: none now (${plan.reason})`];
+  // AI-FIX-1 rule 5: a question the lead asked on the call is answered, not just acknowledged.
+  const asked = now && plan.angle === "call_followup" ? callNoteQuestions([...timeline].reverse().find((t) => t.kind === "call" || t.kind === "note")?.detail) : [];
+  if (asked.length) {
+    lines.push(
+      `The lead asked on the call: ${asked.map((q) => `"${q}"`).join(" ")} Answer it in one sentence using only the knowledge or playbook (say what we actually do), without inventing details; never only say it is covered or built in.`,
+    );
+  }
   const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
   if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
   if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`, `Closing question: ${callQuestion(now)}`);
@@ -208,6 +215,13 @@ function stageLines({ stagePlan: plan, latestMeeting }: AgentContext, now: Date 
     lines.push(`Meeting outcome: ${words(latestMeeting.outcome)}`, `Meeting notes: ${latestMeeting.notes ?? "none"}`);
   }
   return lines;
+}
+
+const ASKED_RE = /\?|\b(?:asked|asks|wants? to know|wanted to know|enquired|inquired|wondered|question)\b/i;
+
+/** AI-FIX-1 rule 5: the sentences of a call/note that record a question from the lead ("Asked how we qualify leads…"). */
+export function callNoteQuestions(note: string | null | undefined): string[] {
+  return (note?.match(/[^.!?\n]+[.!?]*/g) ?? []).map((s) => s.trim()).filter((s) => ASKED_RE.test(s));
 }
 
 function howTheyCame(source: string): string {
