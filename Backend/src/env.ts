@@ -2,6 +2,7 @@ import "dotenv/config";
 import { z } from "zod";
 import { parsePrices } from "./agent/pricing.js";
 import { parsePublicApiBaseUrl } from "./domain/emailTracking.js";
+import { databaseDisabled } from "./noDatabase.js";
 
 // A blank `KEY=` line in .env arrives as "" — treat it as "not set".
 const blankToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
@@ -31,7 +32,8 @@ const EnvSchema = DbEnvSchema.extend({
   CORS_ORIGINS: z.string().default("http://localhost:8080,http://127.0.0.1:8080"),
   // DB-3: DATABASE_URL = Supabase TRANSACTION pooler (port 6543); DATABASE_SESSION_URL = SESSION pooler
   // (port 5432), only for session-level state (the WhatsApp session locks). Unset → DATABASE_URL (warned).
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  // DEMO-1: may be empty only in a run without a database (NORTHBEAM_NO_DATABASE=1, src/noDatabase.ts).
+  DATABASE_URL: z.string().default(""),
   DATABASE_SESSION_URL: blankToUndefined(z.string().optional()),
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
@@ -99,7 +101,9 @@ const EnvSchema = DbEnvSchema.extend({
 // its own client saved (encrypted) in the database.
 
 function loadEnv() {
-  const parsed = EnvSchema.safeParse(process.env);
+  const parsed = EnvSchema.superRefine((value, ctx) => {
+    if (!value.DATABASE_URL && !databaseDisabled()) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["DATABASE_URL"], message: "DATABASE_URL is required" });
+  }).safeParse(process.env);
   if (!parsed.success) {
     console.error("Invalid environment configuration:", parsed.error.flatten().fieldErrors);
     throw new Error("Invalid environment configuration. See .env.example.");

@@ -10,13 +10,8 @@ import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { env } from "../env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
-import { composeOutgoing } from "../agent/composeMessage.js";
-import { DECISION_JSON_SCHEMA, type AgentDecision, type SendDecision } from "../agent/decisionSchema.js";
-import { checkMessage, messageFactsOf } from "../agent/messageChecks.js";
-import { polishDecision } from "../agent/polish.js";
-import { suggestedDays } from "../agent/stagePlan.js";
-import { costUsd, parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
-import { applyGroundingAllowList, buildReplyDraftGroundingMessages, buildReplyDraftMessages, GROUNDING_JSON_SCHEMA } from "../agent/prompt.js";
+import { composeReplyDraft, writeReplyDraft } from "../agent/replyDraftWriter.js";
+import { parsePrices, priceOf, type ModelPrices } from "../agent/pricing.js";
 import type { ReplyChannel, ReplyLabel } from "../agent/replyClassification.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
@@ -38,7 +33,7 @@ import { resolveAgentModels, type DecisionModel, type Embedder } from "../provid
 import { PermanentProviderError, ProviderDeferredError, SendCancelledError } from "../providers/provider-errors.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import type { WhatsAppSendSource } from "../providers/baileys.manager.js";
-import { buildAgentContext, type AgentContext } from "./agentContext.service.js";
+import { buildAgentContext } from "./agentContext.service.js";
 import { DAY_DECISIONS_SQL, MONTH_SPEND_SQL } from "./agentRunner.service.js";
 import { enqueueEmail } from "./emailOutbound.service.js";
 import { canReadReplies, decryptInboundBody, emailReplyAad, whatsappReplyAad, type EmailReplyBody, type InboundBody } from "./inboundReplies.service.js";
@@ -410,59 +405,8 @@ async function draftSubject(outboundId: string | null): Promise<string> {
   return row ? threadSubject(row.subject) : FALLBACK_SUBJECT;
 }
 
-const ruleName = (problem: string) => (problem.startsWith("Unsupported claim") ? "unsupported_claim" : problem.slice(0, Math.max(problem.indexOf(":"), 0)) || "problem");
-
-/**
- * Rule 2: write → code checks (word limit, one question, banned phrases, contact details, "as agreed", …) →
- * the checker (facts + style) → one regeneration on any problem → still failing: no draft. Pure apart
- * from the model calls; no DB client is held. Returns check NAMES only, never quotes.
- */
-export async function writeReplyDraft(
-  ctx: AgentContext,
-  replyText: string,
-  channel: ReplyChannel,
-  deps: { model: DecisionModel; decisionModel: string; groundingModel: string; prices: ModelPrices; now: Date },
-  usage: Usage,
-): Promise<{ decision: SendDecision | null; problems: string[] }> {
-  const add = (modelName: string, r: { inputTokens: number; outputTokens: number; cachedInputTokens?: number }) => {
-    usage.inputTokens += r.inputTokens;
-    usage.outputTokens += r.outputTokens;
-    usage.costUsd += costUsd(deps.prices, modelName, r.inputTokens, r.outputTokens, r.cachedInputTokens ?? 0) ?? 0;
-  };
-  const action = channel === "email" ? "send_email" : "send_whatsapp";
-  const facts = { ...messageFactsOf(ctx), inboundFirst: false, conversationExists: true, threaded: true };
-  let problems: string[] = [];
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const decided = await deps.model.decide({
-      model: deps.decisionModel,
-      messages: buildReplyDraftMessages(ctx, replyText, channel, deps.now, attempt ? problems : undefined),
-      jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> },
-    });
-    add(deps.decisionModel, decided);
-    if (decided.json.action !== action) {
-      problems = [`wrong_action: answer with ${action}`];
-      continue;
-    }
-    const polished = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName, suggestedDays: suggestedDays(deps.now) }).decision as SendDecision;
-    const draft: SendDecision = { ...polished, assetIds: [] } as SendDecision;
-    problems = checkMessage(draft as AgentDecision, ctx.settings, facts).map((v) => `${v.rule}: ${v.message}`);
-    if (!problems.length) {
-      const checked = await deps.model.checkGrounding({
-        model: deps.groundingModel,
-        messages: buildReplyDraftGroundingMessages(draft, ctx, replyText)!,
-        jsonSchema: { name: "grounding_check", schema: GROUNDING_JSON_SCHEMA as unknown as Record<string, unknown> },
-      });
-      add(deps.groundingModel, checked);
-      const grounding = applyGroundingAllowList(checked.json, { ...ctx, stagePlan: null }, deps.now);
-      problems = [
-        ...(grounding.supported ? [] : (grounding.unsupportedClaims.length ? grounding.unsupportedClaims : ["(not specified)"]).map((c) => `Unsupported claim: ${c}`)),
-        ...(grounding.styleViolations ?? []).map((v) => `${v.rule}: "${v.quote}"`),
-      ];
-    }
-    if (!problems.length) return { decision: draft, problems: [] };
-  }
-  return { decision: null, problems: [...new Set(problems.map(ruleName))] };
-}
+// Rule 2's writer (pure apart from the model calls): agent/replyDraftWriter.ts (DB-free, DEMO-1); re-exported.
+export { writeReplyDraft } from "../agent/replyDraftWriter.js";
 
 // --- API: the draft on a reply, Send and Discard -----------------------------------
 
@@ -583,20 +527,14 @@ async function channelWindow(db: Queryable, workspaceId: string, channel: ReplyC
 
 /** The message as sent: the rep's body, the booking line when it offers a call (email), the owner's signature. */
 function composeReply(row: Awaited<ReturnType<typeof lockDraft>>, body: string) {
-  const decision = (
-    row.channel === "email"
-      ? { action: "send_email", subject: row.subject ?? FALLBACK_SUBJECT, body, assetIds: [], nextWakeInDays: 1, reasoning: "reply draft" }
-      : { action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 1, reasoning: "reply draft" }
-  ) as SendDecision;
-  return composeOutgoing(decision, {
+  return composeReplyDraft({
+    channel: row.channel,
+    subject: row.subject ?? FALLBACK_SUBJECT,
+    body,
     ownerName: row.owner_name ?? "",
     companyName: row.company_name,
     settings: { email_opt_out_text: row.email_opt_out_text, whatsapp_opt_out_text: row.whatsapp_opt_out_text },
-    // The lead wrote to us: never a first WhatsApp (no opt-out line).
-    isFirstWhatsApp: false,
-    bookingUrl: row.channel === "email" ? row.booking_url : null,
-    // "check_in" is a call angle: the booking line goes only with a reply that offers a call.
-    angle: /\bcall\b/i.test(body) ? "check_in" : null,
+    bookingUrl: row.booking_url,
   });
 }
 

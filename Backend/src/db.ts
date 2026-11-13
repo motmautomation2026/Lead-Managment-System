@@ -1,3 +1,5 @@
+// Must stay the first import (DEMO-1): refuses to load in a run without a database.
+import "./dbGuard.js";
 import { Pool, type ClientConfig, type PoolClient, type PoolConfig } from "pg";
 import { env, type DbEnvSchema } from "./env.js";
 import type { z } from "zod";
