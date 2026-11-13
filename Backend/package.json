@@ -22,6 +22,7 @@
     "test:integration:staging": "node scripts/test-integration-staging.mjs",
     "agent:preview": "tsx scripts/agent-preview.ts",
     "agent:model-test": "tsx scripts/agent-model-test.ts",
+    "agent:demo-journey": "tsx scripts/agent-demo-journey.ts",
     "db:connections": "tsx scripts/db-connections.ts",
     "db:security-check": "tsx scripts/db-security-check.ts",
     "staging:cleanup-test-workspaces": "tsx scripts/cleanup-test-workspaces.ts",

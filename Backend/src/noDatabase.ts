@@ -22,13 +22,10 @@ export function assertDatabaseAllowed(what: string): void {
   if (databaseDisabled()) throw new NoDatabaseError(what);
 }
 
-let installed = false;
-
-/** Sets the flag and makes every pg connect (pool or client) throw NoDatabaseError. Idempotent. */
-export function installNoDatabaseGuard(): void {
+/** Sets the flag and makes every pg connect (pool or client) throw NoDatabaseError. Returns the undo (tests). */
+export function installNoDatabaseGuard(): () => void {
+  const previous = { flag: process.env[NO_DATABASE_FLAG], pool: pg.Pool.prototype.connect, client: pg.Client.prototype.connect };
   process.env[NO_DATABASE_FLAG] = "1";
-  if (installed) return;
-  installed = true;
   const refuse = (what: string) =>
     function (this: unknown, callback?: unknown) {
       const error = new NoDatabaseError(what);
@@ -40,4 +37,10 @@ export function installNoDatabaseGuard(): void {
     };
   pg.Pool.prototype.connect = refuse("Something tried to open a database pool connection") as typeof pg.Pool.prototype.connect;
   pg.Client.prototype.connect = refuse("Something tried to open a database client") as typeof pg.Client.prototype.connect;
+  return () => {
+    if (previous.flag === undefined) delete process.env[NO_DATABASE_FLAG];
+    else process.env[NO_DATABASE_FLAG] = previous.flag;
+    pg.Pool.prototype.connect = previous.pool;
+    pg.Client.prototype.connect = previous.client;
+  };
 }
