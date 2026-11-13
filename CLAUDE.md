@@ -409,6 +409,10 @@ Every completed phase (0A … E3b-1b and later, incl. UX-1) is in `docs/HISTORY.
   "writer/checker,..."` (`>` also works, but not through `npm.cmd`: cmd.exe redirects it) prints the plan and the estimated cost; E3b-1b: `--only "Full Name,..."`, `--channel email|whatsapp`, `--max-cost <usd>` (default
   $0.10, at most $3; stops before the next contact once reached); `--confirm` spends, saves nothing, writes
   `scripts/output/model-test-<timestamp>.md` (per message: channel, first WhatsApp, word count).
+- Demo journey (DEMO-1): `npm run agent:demo-journey -- --input demo-local/demo-leads.json --knowledge demo-local/knowledge --out
+  demo-local/output [--confirm] [--max-cost 0.40] [--only <key>]` runs the real pipeline OFFLINE (in-memory context via
+  `agent/contextAssembly.ts`; no database: `NORTHBEAM_NO_DATABASE=1` + `installNoDatabaseGuard`; never imports a sender, never
+  sends); dry run by default; `--confirm` spends (Govinda runs it, never Claude Code). `demo-local/` (real lead data) is git-ignored.
 - Approved fact sources (prompt + grounding): knowledge, playbook, lead data (incl. call/note text, the meeting outcome notes for a
   recap, and the company facts: name, domain, website, industry, location, employees, revenue). Checker (E3b-1): describing our
   approach for any B2B sector is fine, and so is naming ONE listed client experience as described (any sector, E3b-2a-2); flagged: claims of results/experience in an unlisted sector, what a past call/meeting/proposal

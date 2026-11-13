@@ -867,3 +867,19 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   project unreachable, probably paused) for the whole phase; the two staging passes UX-1 owed are still owed. First load
   284.1 → 285.6 kB gzip. **Production:** no migration; API changes are additive (a new optional filter; one relaxed rule).
 
+- **DEMO-1 (offline demo journey; branch `ui-redesign`, local only; no migration, nothing sent, no database):**
+  Item 1: context provider — `buildAgentContext` = `loadAgentContextSource` (the same SQL) + `assembleAgentContext`
+  (`agent/contextAssembly.ts`, DB-free, knowledge search injected); `draftDecision` → `agent/draftDecision.ts`, `writeReplyDraft`
+  + `composeReplyDraft` → `agent/replyDraftWriter.ts` (re-exported from their services); `NORTHBEAM_NO_DATABASE=1`
+  (`src/noDatabase.ts`): loading `src/db.ts` throws (`dbGuard.ts`, its first import), `DATABASE_URL` may be empty, and
+  `installNoDatabaseGuard()` makes any pg connect throw. Unit test: the DB-backed and in-memory contexts from the same data
+  are deep-equal and give identical writer and checker prompts. Item 2: `npm run agent:demo-journey -- --input
+  demo-local/demo-leads.json --knowledge demo-local/knowledge --out demo-local/output [--confirm] [--max-cost 0.40] [--only <key>]`
+  (`src/demo/demoJourney.ts`): per lead, on a simulated clock with the real rules — arrival (hot score, First call task, AI
+  enrolled), first WhatsApp (+ the email version for comparison, not sent), the rep's call (simulated note) → call follow-up
+  after rep-quiet, a no-reply follow-up, a simulated reply (keyword / AI label, handoff, reply task, suggested reply) and the
+  final check as message 8 on a no-reply branch; knowledge chunked + embedded with the real code, searched in memory (top 8);
+  dry run by default (plan, prompt sizes, estimate, zero OpenAI calls); `--confirm` writes `demo-journey.md` + `.json`;
+  `demo-local/` is git-ignored. Dry-run estimate for both leads ≈ $0.35. Tests: backend unit 1275 → 1284 (identical prompt,
+  guard, dry run, max-cost, timing rules, output, first WhatsApp, import graph), frontend 572 (unchanged); staging integration
+  **not run** (staging paused; the UX-1/UX-2 passes are still owed, UX-3). **Production:** no migration; no behaviour change.
