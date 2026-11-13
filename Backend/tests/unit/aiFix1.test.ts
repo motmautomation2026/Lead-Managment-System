@@ -14,6 +14,7 @@ import {
 } from "../../src/agent/messageChecks.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, callNoteQuestions } from "../../src/agent/prompt.js";
 import { ANGLE_RULES, CALL_ANGLES, type StagePlan } from "../../src/agent/stagePlan.js";
+import { greetByFirstName, writeReplyDraft } from "../../src/agent/replyDraftWriter.js";
 import { draftDecision, type Usage } from "../../src/services/agentRunner.service.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { sampleContext } from "../helpers/agentContextFixture.js";
@@ -240,5 +241,54 @@ describe("AI-FIX-1 rule 5: the call follow-up answers what the lead asked on the
     const later = sampleContext({ timeline: callOn("2026-11-17T04:35:00.000Z", RESHMA_NOTE), stagePlan: plan("final_check") });
     expect(buildDecisionMessages(later, later.settings, FINAL_NOW)[1]!.content).not.toContain("The lead asked on the call");
     expect(buildGroundingMessages(email("Hi Reshma,\n\nWe check need, timing and the buyer's role before passing a lead on."), ctx)![1]!.content).not.toContain("The lead asked on the call");
+  });
+});
+
+const REPLY_NOW = new Date("2026-11-23T06:43:00Z"); // Mon 23 Nov 2026, 12:13 IST → Tuesday or Wednesday
+const withLead = (firstName: string) => {
+  const ctx = sampleContext({ playbook: { version: 7, body: PLAYBOOK } });
+  ctx.lead = { ...ctx.lead, firstName, ownerName: "Naitik Shah" };
+  ctx.settings = { ...ctx.settings, banned_phrases: [], email_max_words: 120, whatsapp_max_words: 60 };
+  return ctx;
+};
+const replyDeps = (model: ReturnType<typeof createFakeDecisionModel>) => ({ model, decisionModel: "w", groundingModel: "c", prices: {}, now: REPLY_NOW });
+const GCC_QUESTION = "Thanks for the details. Have you done outreach in the GCC region before?";
+const PRICE_QUESTION = "Ok. What will be the charges for this?";
+
+describe("AI-FIX-1 rule 4: an honest question still gets a suggested reply", () => {
+  it("Reshma's GCC question (email): the writer neither claims nor denies, the checker is told not to flag the walk-through, the draft passes", async () => {
+    const ctx = withLead("Reshma");
+    const answer = "Good question, Reshma. Naitik can walk you through how we would approach the GCC on a short call. Would Tuesday or Wednesday suit you for a short call?";
+    const model = createFakeDecisionModel({ decisions: [email(answer)] });
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const result = await writeReplyDraft(ctx, GCC_QUESTION, "email", replyDeps(model), usage);
+    expect(result).toEqual({ decision: expect.objectContaining({ action: "send_email", body: answer }), problems: [] });
+    const writer = model.calls.find((c) => c.kind === "decide")!.input.messages[0]!.content;
+    expect(writer).toContain("never claim it and never deny it: say briefly that the salesperson can walk them through how we would approach it on a short call");
+    expect(writer).not.toContain('Start with "Hi <first name>,"'); // email has its own greeting rule
+    const checker = model.calls.find((c) => c.kind === "grounding")!.input.messages;
+    expect(checker[0]!.content).toContain("NEVER flag saying the salesperson can walk them through, on a call, how we would approach something");
+    expect(checker[1]!.content).toContain(GCC_QUESTION);
+  });
+
+  it("Sagar's price question (WhatsApp): starts with his first name, still no price", async () => {
+    const ctx = withLead("Sagar");
+    const answer = "The charges depend on the scope and support needed, so Naitik can cover that on a short call. Would Tuesday or Wednesday suit you for a short call?";
+    const model = createFakeDecisionModel({ decisions: [whatsapp(answer)] });
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const result = await writeReplyDraft(ctx, PRICE_QUESTION, "whatsapp", replyDeps(model), usage);
+    expect(result.problems).toEqual([]);
+    expect(result.decision!.body).toBe(`Hi Sagar,\n${answer}`);
+    expect(result.decision!.body).not.toMatch(/\d|₹|rs\.?\s|inr/i);
+    const writer = model.calls[0]!.input.messages[0]!.content;
+    expect(writer).toContain('- Start with "Hi <first name>," like our other messages.');
+    expect(writer).toContain("No prices, quotes, discounts or delivery dates");
+  });
+
+  it("the greeting is added only when the first name isn't already at the start", () => {
+    expect(greetByFirstName("Hi Sagar, the charges depend on scope.", "Sagar")).toBe("Hi Sagar, the charges depend on scope.");
+    expect(greetByFirstName("Sagar, the charges depend on scope.", "Sagar")).toBe("Sagar, the charges depend on scope.");
+    expect(greetByFirstName("Good question.", "Sagar")).toBe("Hi Sagar,\nGood question.");
+    expect(greetByFirstName("Good question.", " ")).toBe("Good question.");
   });
 });

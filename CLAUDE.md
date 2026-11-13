@@ -450,3 +450,12 @@ Every completed phase (0A … E3b-1b and later, incl. UX-1) is in `docs/HISTORY.
 - Meeting recap (E3b-2a): when the meeting notes say the lead is deciding or consulting someone (`leadIsDeciding`), the angle is
   `meeting_recap_deciding` (not a call angle: no suggested days, no booking line); "as agreed" / "as discussed" need an agreement
   in the notes (`unsupported_agreement`, fixable).
+- AI-FIX-1 (both modes, decisions and reply drafts): the playbook's CLIENT EXPERIENCES bullets (`playbookClientExperiences`) are an
+  explicitly approved checker source; a faithful paraphrase of ONE ("We have worked with / done similar … work for <it>") is never
+  an unsupported claim, introduction or sector claim (`isListedExperienceClaim` drops such flags; no numbers, no plurals). Never
+  the same experience twice for a contact (`repeated_client_experience`, fixable; the writer gets "Client experiences already used
+  with this contact"). `final_check`: short, "is <goal> still a priority" + reconnect later; no recap, no call ask (a call ask fails
+  `call_days` with "doesn't ask for a call"); thanks for a call > 7 days old fails `stale_call_thanks` (fixable). `call_followup`
+  quotes a question from the call note (`callNoteQuestions`) and answers it in one sentence from the knowledge. Reply drafts never
+  claim or deny unlisted experience (the rep walks them through it on a short call; the checker never flags that); WhatsApp drafts
+  start "Hi <first name>," (`greetByFirstName`).

@@ -49,7 +49,8 @@ export async function writeReplyDraft(
       continue;
     }
     const polished = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName, suggestedDays: suggestedDays(deps.now) }).decision as SendDecision;
-    const draft: SendDecision = { ...polished, assetIds: [] } as SendDecision;
+    const body = channel === "whatsapp" ? greetByFirstName(polished.body, ctx.lead.firstName) : polished.body;
+    const draft: SendDecision = { ...polished, body, assetIds: [] } as SendDecision;
     problems = checkMessage(draft as AgentDecision, ctx.settings, facts).map((v) => `${v.rule}: ${v.message}`);
     if (!problems.length) {
       const checked = await deps.model.checkGrounding({
@@ -67,6 +68,13 @@ export async function writeReplyDraft(
     if (!problems.length) return { decision: draft, problems: [] };
   }
   return { decision: null, problems: [...new Set(problems.map(ruleName))] };
+}
+
+/** AI-FIX-1 rule 4: a WhatsApp reply draft starts with the lead's first name ("Hi Sagar,") when the writer left it out. */
+export function greetByFirstName(body: string, firstName: string): string {
+  const name = firstName.trim();
+  const opening = body.trim().split(/\s+/).slice(0, 3).join(" ").toLowerCase();
+  return !name || opening.includes(name.toLowerCase()) ? body : `Hi ${name},\n${body.trim()}`;
 }
 
 /** Rule 4: the draft as the lead receives it (the rep's Send): signature, the booking line only with an email that offers a call. */

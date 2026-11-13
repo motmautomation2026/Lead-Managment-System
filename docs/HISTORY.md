@@ -883,3 +883,18 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   `demo-local/` is git-ignored. Dry-run estimate for both leads ≈ $0.35. Tests: backend unit 1275 → 1284 (identical prompt,
   guard, dry run, max-cost, timing rules, output, first WhatsApp, import graph), frontend 572 (unchanged); staging integration
   **not run** (staging paused; the UX-1/UX-2 passes are still owed, UX-3). **Production:** no migration; no behaviour change.
+- **AI-FIX-1 (the demo journey's writing problems; branch `ui-redesign`, local only; no migration, no OpenAI call in tests):**
+  The 13 Nov 2026 demo run (Sagar Khanna, Reshma Tantry; 11 messages, first try 64 %) had five problems. Item 1: Reshma's
+  "We have done similar account-based work for / We have worked with a premium industrial automation company…" were flagged
+  by the checker LLM (not code) as unsupported + `introduction_mid_conversation` although the checker had the whole playbook:
+  its introduction rule had no client-experience exception and the list was never named as a source. Now the CLIENT
+  EXPERIENCES bullets go to the checker as an approved source, the introduction rule says it is about re-introducing us, and
+  `applyGroundingAllowList` drops a flag whose quote is a faithful paraphrase of ONE listed experience; new fixable
+  `repeated_client_experience` (Sagar's EPC company in steps 3 and 4) + an "already used" line for the writers. Item 2:
+  `final_check` rewritten (goal still a priority, reconnect later; no old-call thanks, recap or call ask), new fixable
+  `stale_call_thanks` (call > 7 days old), final-check call ask → "doesn't ask for a call"; `call_followup` quotes the lead's
+  question from the call note and answers it from the knowledge (Reshma: how we qualify leads). Item 3: reply drafts never
+  claim or deny unlisted experience (Reshma's GCC question had no draft: both attempts `unsupported_claim`) — the rep walks
+  them through it on a short call, and the checker never flags that; WhatsApp drafts start with the first name. Tests: backend
+  unit 1284 → 1303, frontend 572 (unchanged); staging integration **not run** (staging paused). **Production:** no migration;
+  prompt + check changes only.

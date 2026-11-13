@@ -456,6 +456,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     'UNSUPPORTED: turning ONE listed client experience into a plural or a pattern ("clients", "similar companies", "industrial exporters like you"). Examples: "Our published client experiences also include industrial exporters", "we have worked with similar industrial companies".',
     'UNSUPPORTED: saying the lead said, asked or mentioned something ("you mentioned…", "you said…", "as you told us…") that is not in the lead\'s own data (their enquiry, calls and notes). Example: "You mentioned TRC\'s requirement is already under discussion with us."',
     `NEVER flag a question offering days for a short call or discussion; the CRM suggests the days. Examples: ${DAY_QUESTION_EXAMPLES}.`,
+    'NEVER flag saying the salesperson can walk them through, on a call, how we would approach something (a region, sector or need): it claims no experience. Example: "Naitik can walk you through how we would approach the GCC on a short call."',
     'UNSUPPORTED: promising when we will follow up or check back; the CRM schedules follow-ups. Example (the lead will decide after talking to his brother): "I will check back next week. Would Wednesday or Thursday suit you for that?"',
     'UNSUPPORTED: "as agreed", "as discussed" or "as we agreed" when the meeting notes or the latest call/note in lead_data do not say what was agreed. Example (notes: the lead will discuss with his brother before next steps): "As agreed, I will share a short note on our valve work."',
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
@@ -498,6 +499,9 @@ export function buildReplyDraftMessages(ctx: AgentContext, replyText: string, ch
     "Rules:",
     "- Answer what the reply asks or says, using ONLY the knowledge excerpts, the playbook and the lead's data. Never invent facts, numbers, client names or results.",
     "- No prices, quotes, discounts or delivery dates, and no promises. If the reply needs prices or details you don't have, say the salesperson will cover it on a short call and ask which of the suggested days suits them.",
+    // AI-FIX-1 rule 4: an honest question about experience we don't list must still get a draft.
+    '- If the reply asks whether we have experience, clients or results that the knowledge and playbook don\'t list (a region, sector or service), never claim it and never deny it: say briefly that the salesperson can walk them through how we would approach it on a short call, and ask the closing question. Example: "Good question, Reshma. Naitik can walk you through how we would approach the GCC on a short call. Would Thursday or Friday suit you for a short call?"',
+    ...(channel === "whatsapp" ? ['- Start with "Hi <first name>," like our other messages.'] : []),
     "- Never promise when you will follow up, never say \"as agreed\" or \"as discussed\", never introduce the company again.",
     "- Plain text only. No signature, sign-off, link, email address or phone number: the system adds what is needed.",
     "- At most one question. No exclamation marks, no emojis, no long dashes.",
