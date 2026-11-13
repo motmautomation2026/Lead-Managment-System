@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
-import { whatsappTargetWords } from "./messageChecks.js";
+import { isListedExperienceClaim, playbookClientExperiences, usedClientExperiences, whatsappTargetWords } from "./messageChecks.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 import { signalsOf, type AgentSignal } from "./signals.js";
 import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, callQuestion, suggestedDays } from "./stagePlan.js";
@@ -131,6 +131,7 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     `Writing as: ${sender} at ${ctx.companyName}.`,
     `Now: ${istNow(now)} IST.`,
     `Messages used: ${used} of ${settings.max_touches_total} (${remaining} left); ${rules.recentTouchTimes.length} of ${settings.max_touches_7d} in the last 7 days.`,
+    ...usedExperiencesLine(ctx),
     ...(internal ? [INTERNAL_RULE] : []),
     // E3a rule 7: code sets a follow-up's subject.
     ...(ctx.emailThread ? ['A follow-up email to this contact stays in the same thread and needs no subject: put "-" as the subject.'] : []),
@@ -158,6 +159,12 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     { role: "system", content: system },
     { role: "user", content: user.join("\n") },
   ];
+}
+
+/** AI-FIX-1 rule 2: the client experiences earlier messages to this contact used (none: no line). */
+function usedExperiencesLine(ctx: AgentContext): string[] {
+  const used = usedClientExperiences(ctx);
+  return used.length ? [`Client experiences already used with this contact: ${used.join("; ")}. Never use one of them again: pick a different listed client experience, or none.`] : [];
 }
 
 /** The lead's own fields and website enquiry, as the agent and the grounding check see them. */
@@ -339,8 +346,13 @@ export function applyGroundingAllowList(result: GroundingResult, ctx: AgentConte
   // E3b-1b rule 3: the code-suggested day question is never a claim or an ask to describe their business.
   const days = now ? suggestedDays(now) : null;
   const dayQuestion = (text: string) => days !== null && isDayOptionQuestion(text, days);
-  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim));
-  const ignoredStyle = (result.styleViolations ?? []).filter((v) => v.rule === "asks_lead_to_describe_business" && dayQuestion(v.quote));
+  // AI-FIX-1 rule 1: a faithful paraphrase of ONE playbook client experience is neither a claim nor an introduction.
+  const experiences = playbookClientExperiences(ctx.playbook?.body);
+  const listed = (text: string) => isListedExperienceClaim(text, experiences);
+  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim) || listed(claim));
+  const ignoredStyle = (result.styleViolations ?? []).filter(
+    (v) => (v.rule === "asks_lead_to_describe_business" && dayQuestion(v.quote)) || (v.rule !== "asks_lead_to_describe_business" && listed(v.quote)),
+  );
   if (!ignored.length && !ignoredStyle.length) return result;
   const unsupportedClaims = result.unsupportedClaims.filter((claim) => !ignored.includes(claim));
   return {
@@ -379,8 +391,20 @@ function styleCheckLines(): string[] {
     "Also check the message's style. Put each problem in styleViolations with the rule and a short quote from the message (empty list when none):",
     '- asks_lead_to_describe_business: asks the lead to explain their business, industries, customers, challenges or process IN WRITING. Examples: "Could you share which industries you target?", "What challenges are you facing?". ALLOWED (not a violation): inviting a call or discussion to talk about their priorities, e.g. "Would a short call suit you to discuss your business priorities?"; and a question offering days for a short call (the CRM suggests the days), e.g. ' +
       DAY_QUESTION_EXAMPLES,
-    '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (in the user message). Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."',
+    '- introduction_mid_conversation: introduces us, thanks them for reaching out, or proposes an "introductory" or first call although conversationExists is true (in the user message). It is about introducing us again: "<our company> is…", "We are a…", "I\'m reaching out from…". Example: "I\'m Ravi from Northbeam; we help B2B firms. Could we set up an intro call?". ALLOWED (not a violation): describing the relevant part of our approach in a follow-up, e.g. "We usually start by mapping the buyers you want and then reach out to them for you."; and naming ONE approved client experience, e.g. "We have worked with <a listed client experience> where …" or "We have done similar <approach> work for <a listed client experience>."',
     '- unsupported_sector_claim: claims results, clients or experience in the lead\'s sector when no approved source says so (also list it in unsupportedClaims). Example: "We help chemical manufacturers like yours grow." ALLOWED (not a violation): describing our approach or process for their sector, e.g. "We usually start by mapping the right corporate segments and decision-makers."; and naming ONE client experience the knowledge lists, as described there (e.g. "an industrial steel trader"), whatever the lead\'s sector.',
+  ];
+}
+
+/** AI-FIX-1 rule 1: the playbook's client experiences, named as an approved source (in the cached system message: the same for every contact). */
+function approvedExperienceLines(ctx: AgentContext): string[] {
+  const experiences = playbookClientExperiences(ctx.playbook?.body);
+  if (!experiences.length) return [];
+  return [
+    "",
+    "APPROVED CLIENT EXPERIENCES (from the playbook; an approved source, like the knowledge):",
+    ...experiences.map((e) => `- ${neutralise(e)}`),
+    'SUPPORTED: a faithful paraphrase of ONE of these experiences, with its approach and its result in the same words or close to them (e.g. "got high-quality leads within several months"), e.g. "We have worked with <one experience> where <its approach> helped them <its result>." or "We have done similar <approach> work for <one experience>." "Similar … work for" one named experience is ONE experience, not a plural. This is never an introduction and never an unsupported_sector_claim.',
   ];
 }
 
@@ -421,6 +445,7 @@ export function buildGroundingMessages(decision: AgentDecision, ctx: AgentContex
     'UNSUPPORTED: promising when we will follow up or check back; the CRM schedules follow-ups. Example (the lead will decide after talking to his brother): "I will check back next week. Would Wednesday or Thursday suit you for that?"',
     'UNSUPPORTED: "as agreed", "as discussed" or "as we agreed" when the meeting notes or the latest call/note in lead_data do not say what was agreed. Example (notes: the lead will discuss with his brother before next steps): "As agreed, I will share a short note on our valve work."',
     "Return supported = true only when nothing is flagged; put each flagged claim, quoted briefly, in unsupportedClaims.",
+    ...approvedExperienceLines(ctx),
     "",
     ...styleCheckLines(),
     "",
@@ -474,6 +499,7 @@ export function buildReplyDraftMessages(ctx: AgentContext, replyText: string, ch
   const user = [
     `Writing as: ${ctx.lead.ownerName ?? "a member of the sales team"} at ${ctx.companyName}.`,
     `Now: ${istNow(now)} IST. Suggested days for a short call: ${suggestedDays(now)}. Closing question when you offer a call (word for word, no time phrase added): ${callQuestion(now)}`,
+    ...usedExperiencesLine(ctx),
     "",
     // The stage plan is for the AI's own messages, not for answering a reply.
     block("lead_data", neutralise(leadDataText({ ...ctx, stagePlan: null }, null))),

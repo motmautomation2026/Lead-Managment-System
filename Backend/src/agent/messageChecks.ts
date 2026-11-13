@@ -89,7 +89,8 @@ export interface MessageViolation {
     | "contact_details"
     | "unsupported_agreement"
     | "call_days"
-    | "generic_client_claim";
+    | "generic_client_claim"
+    | "repeated_client_experience";
   message: string;
 }
 
@@ -109,11 +110,14 @@ export interface MessageFacts {
   threaded: boolean;
   /** E3b-2a rule 6: the meeting notes or a call/note record an agreement ("agreed"), so "as agreed" may refer to it. */
   agreementNoted?: boolean;
+  /** AI-FIX-1 rule 2: client experiences (playbook labels) earlier messages to this contact already used. */
+  usedExperiences?: string[];
 }
 
 export function messageFactsOf(ctx: AgentContext): MessageFacts {
   const situation = situationOf(ctx);
   return {
+    usedExperiences: usedClientExperiences(ctx),
     inboundFirst: situationInboundFirst(situation),
     conversationExists: situation.conversationExists,
     ownerFirstName: ctx.lead.ownerName?.trim().split(/\s+/)[0] ?? null,
@@ -167,6 +171,64 @@ export const SENTENCE = /[^.!?\n]+[.!?]+/g;
 /** The first sentence of `body` with a generic client-experience claim, or null. */
 export function genericClientClaim(body: string): string | null {
   return (body.match(SENTENCE) ?? []).find((s) => GENERIC_CLIENT_CLAIM.test(s))?.trim() ?? null;
+}
+
+/** AI-FIX-1 rule 1: the playbook's CLIENT EXPERIENCES bullet lines ("A premium … company (…): what helped"), in order; [] without that section. */
+export function playbookClientExperiences(playbook: string | null | undefined): string[] {
+  const lines = (playbook ?? "").split(/\r?\n/);
+  const start = lines.findIndex((line) => /^\s*CLIENT EXPERIENCES\b/.test(line));
+  if (start < 0) return [];
+  const experiences: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const bullet = /^\s*[-•*]\s+(.+)$/.exec(line);
+    if (bullet) experiences.push(bullet[1]!.trim());
+    else if (experiences.length) break;
+  }
+  return experiences;
+}
+
+/** The experience's short name: "A premium industrial automation company (…): …" → "premium industrial automation company". */
+export function experienceLabel(experience: string): string {
+  const head = experience.split(":")[0]!.replace(/\([^)]*\)/g, " ");
+  return head.split(/\s(?:that|where|which|who)\s|,/)[0]!.replace(/^\s*(?:a|an|the)\s+/i, "").replace(/\s+/g, " ").trim();
+}
+
+// Words too common to tell experiences apart (or the lead's own business) by themselves.
+const GENERIC_EXPERIENCE_WORDS = new Set(["company", "companies", "industrial"]);
+const experienceKeys = (label: string) => tokens(label).filter((w) => !STOP_WORDS.has(w) && !GENERIC_EXPERIENCE_WORDS.has(w));
+
+/** The labels of the experiences the text names (every distinctive word of the label appears). */
+export function mentionedExperiences(text: string, labels: readonly string[]): string[] {
+  const words = new Set(tokens(text));
+  return labels.filter((label) => {
+    const keys = experienceKeys(label);
+    return keys.length > 0 && keys.every((k) => words.has(k));
+  });
+}
+
+/** Rule 2: experiences named in the earlier messages whose text the writer sees (real sends, drafts of the current playbook). */
+export function usedClientExperiences(ctx: Pick<AgentContext, "pastMessages" | "playbook">): string[] {
+  const labels = playbookClientExperiences(ctx.playbook?.body).map(experienceLabel);
+  if (!labels.length) return [];
+  const shown = ctx.pastMessages.filter((m) => m.outcome === "sent" || (m.playbookVersion !== null && m.playbookVersion === ctx.playbook?.version));
+  return labels.filter((label) => shown.some((m) => mentionedExperiences(m.body, [label]).length));
+}
+
+// How a message frames a client experience ("We have done similar … work for …"); not facts.
+const EXPERIENCE_FRAMING = new Set(["worked", "work", "done", "similar", "example", "relevant", "experience", "helped", "used"]);
+
+/**
+ * Rule 1: the quote is a faithful paraphrase of ONE listed experience: it names it, has no numbers, and
+ * every other word comes from that experience's line (or the framing words). "Similar companies" fails.
+ */
+export function isListedExperienceClaim(quote: string, experiences: readonly string[]): boolean {
+  if (/\d/.test(quote)) return false;
+  const words = tokens(quote).filter((w) => !STOP_WORDS.has(w) && !EXPERIENCE_FRAMING.has(w));
+  return experiences.some((experience) => {
+    if (!mentionedExperiences(quote, [experienceLabel(experience)]).length) return false;
+    const source = new Set(tokens(experience));
+    return words.every((w) => source.has(w));
+  });
 }
 
 /** E2c rule 1: "thank you" / "thanks" followed within 6 words by a reason for reaching out. */
@@ -311,6 +373,13 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
         message: `A conversation already exists: don't introduce us again or ask for a first call (${intro.map((p) => `"${p}"`).join(", ")}).`,
       });
     }
+  }
+  const repeated = mentionedExperiences(decision.body, facts.usedExperiences ?? []);
+  if (repeated.length) {
+    violations.push({
+      rule: "repeated_client_experience",
+      message: `An earlier message to this contact already used the client experience "${repeated[0]}". Name a different listed client experience, or none.`,
+    });
   }
   const leaks = internalLeaks(all, facts.internalTexts);
   if (leaks.length) violations.push({ rule: "internal_info_leak", message: `Repeats internal information. Do not mention: ${leaks.map((p) => `"${p}"`).join(", ")}.` });
