@@ -98,3 +98,30 @@ export async function getBookingUrl(db: Queryable, id: string): Promise<string |
 export async function setBookingUrl(db: Queryable, id: string, bookingUrl: string | null): Promise<void> {
   await db.query(`update public.profiles set booking_url = $2 where id = $1`, [id, bookingUrl]);
 }
+
+/** LL-2 rule 3: "Email me urgent alerts" and "Morning digest" (both default on; migration 059). */
+export interface AlertPrefs {
+  emailAlertsEnabled: boolean;
+  emailDigestEnabled: boolean;
+}
+
+export const alertPrefsSchema = { emailAlertsEnabled: z.boolean().optional(), emailDigestEnabled: z.boolean().optional() };
+
+export async function getAlertPrefs(db: Queryable, id: string): Promise<AlertPrefs> {
+  const row = (
+    await db.query<{ email_alerts_enabled: boolean; email_digest_enabled: boolean }>(`select email_alerts_enabled, email_digest_enabled from public.profiles where id = $1`, [id])
+  ).rows[0];
+  return { emailAlertsEnabled: row?.email_alerts_enabled ?? true, emailDigestEnabled: row?.email_digest_enabled ?? true };
+}
+
+/** Changes only the given toggles; returns the saved values. */
+export async function setAlertPrefs(db: Queryable, id: string, prefs: Partial<AlertPrefs>): Promise<AlertPrefs> {
+  const row = (
+    await db.query<{ email_alerts_enabled: boolean; email_digest_enabled: boolean }>(
+      `update public.profiles set email_alerts_enabled = coalesce($2, email_alerts_enabled), email_digest_enabled = coalesce($3, email_digest_enabled)
+        where id = $1 returning email_alerts_enabled, email_digest_enabled`,
+      [id, prefs.emailAlertsEnabled ?? null, prefs.emailDigestEnabled ?? null],
+    )
+  ).rows[0];
+  return { emailAlertsEnabled: row?.email_alerts_enabled ?? true, emailDigestEnabled: row?.email_digest_enabled ?? true };
+}

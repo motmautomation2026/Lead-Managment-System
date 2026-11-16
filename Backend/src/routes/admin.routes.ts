@@ -4,7 +4,7 @@ import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin, requireAuth } from "../authMiddleware.js";
 import { parseBody, parseParams, parseQuery, uuidParam } from "../validation/parse.js";
 import * as users from "../services/admin-users.service.js";
-import { bookingUrlSchema } from "../services/profiles.service.js";
+import { alertPrefsSchema, bookingUrlSchema } from "../services/profiles.service.js";
 
 /**
  * Admin is intentionally limited to user management only (see the
@@ -42,6 +42,8 @@ const updateUserSchema = z.object({
   active: z.boolean().optional(),
   // E3b-1 rule 5: an admin can set a salesperson's booking link.
   bookingUrl: bookingUrlSchema.optional(),
+  // LL-2 rule 3: admins see / change the same email alert toggles as Settings → Profile.
+  ...alertPrefsSchema,
 });
 adminRouter.patch(
   "/users",

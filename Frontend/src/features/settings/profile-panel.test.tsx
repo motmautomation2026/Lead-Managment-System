@@ -11,7 +11,7 @@ vi.mock("@/lib/backend-client", () => ({ backend: { me: mocks.me, updateMe: mock
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { renderInRouter } from "@/test/render-in-router";
-import { ProfilePanel } from "./profile-panel";
+import { EmailAlertsPanel, ProfilePanel } from "./profile-panel";
 import { bookingUrlField } from "./booking-url";
 
 afterEach(() => {
@@ -58,6 +58,54 @@ describe("ProfilePanel (E3b-1 booking link)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Save booking link" }));
     await waitFor(() =>
       expect(mocks.updateMe).toHaveBeenCalledWith({ bookingUrl: null }, expect.anything()),
+    );
+  });
+});
+
+describe("EmailAlertsPanel (LL-2 staff email toggles)", () => {
+  function renderAlerts(prefs: { emailAlertsEnabled?: boolean; emailDigestEnabled?: boolean }) {
+    mocks.me.mockResolvedValue({
+      id: "u1",
+      name: "Ravi",
+      email: "ravi@x.in",
+      role: "salesperson",
+      bookingUrl: null,
+      ...prefs,
+    });
+    mocks.updateMe.mockImplementation(async (input: object) => ({
+      bookingUrl: null,
+      emailAlertsEnabled: true,
+      emailDigestEnabled: true,
+      ...input,
+    }));
+    return renderInRouter(() => <EmailAlertsPanel />);
+  }
+
+  it("shows both toggles with the saved values and the login email", async () => {
+    await renderAlerts({ emailAlertsEnabled: true, emailDigestEnabled: false });
+    const alerts = screen.getByRole("switch", { name: "Email me urgent alerts" });
+    const digest = screen.getByRole("switch", { name: "Morning digest" });
+    await waitFor(() => expect(alerts.getAttribute("aria-checked")).toBe("true"));
+    expect(digest.getAttribute("aria-checked")).toBe("false");
+    expect(await screen.findByText(/Sent to ravi@x\.in/)).toBeTruthy();
+  });
+
+  it("a toggle saves only that field at once", async () => {
+    await renderAlerts({ emailAlertsEnabled: true, emailDigestEnabled: true });
+    const alerts = screen.getByRole("switch", { name: "Email me urgent alerts" });
+    await waitFor(() => expect(alerts.getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(alerts);
+    await waitFor(() =>
+      expect(mocks.updateMe).toHaveBeenCalledWith({ emailAlertsEnabled: false }, expect.anything()),
+    );
+  });
+
+  it("defaults to on when the server has no value yet", async () => {
+    await renderAlerts({});
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Morning digest" }).getAttribute("aria-checked"),
+      ).toBe("true"),
     );
   });
 });

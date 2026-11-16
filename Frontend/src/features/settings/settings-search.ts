@@ -274,6 +274,19 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     anchor: "profile-booking-url",
     keywords: "calendly call",
   },
+  // LL-2 rule 3: staff email alerts + morning digest.
+  {
+    label: "Email me urgent alerts",
+    section: "profile",
+    anchor: "profile-emailAlertsEnabled",
+    keywords: "notifications email reply escalation",
+  },
+  {
+    label: "Morning digest",
+    section: "profile",
+    anchor: "profile-emailDigestEnabled",
+    keywords: "email daily summary",
+  },
   { label: "Theme", section: "appearance", keywords: "dark light mode" },
   { label: "Density", section: "appearance", keywords: "compact comfortable" },
   {

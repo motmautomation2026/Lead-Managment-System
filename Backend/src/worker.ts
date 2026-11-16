@@ -24,6 +24,7 @@ import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workRemin
 import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runTaskReminders } from "./services/taskReminders.service.js";
 import { claimReminderWhatsappSends, processReminderWhatsappSend, runMeetingReminders } from "./services/meetingReminders.service.js";
+import { runMorningDigest, runStaffAlertEmails } from "./services/staffAlerts.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runLeadScoreSweep } from "./services/leadScore.service.js";
@@ -274,6 +275,12 @@ async function tick(): Promise<void> {
   if (taskReminders && taskReminders.due.length + taskReminders.escalated.length) {
     console.log(`[worker] Task reminders: ${taskReminders.due.length} due, ${taskReminders.escalated.length} escalated.`);
   }
+
+  // LL-2 rule 3: urgent alerts by email (one per person per tick) and the 09:00 IST morning digest; staff path, not the lead queue.
+  const staffEmails = await step("staff_alert_emails", "Staff alert emails", () => runStaffAlertEmails({ dryRun: env.WORKER_DRY_RUN }), (n) => n);
+  if (staffEmails) console.log(`[worker] Staff alert emails: ${staffEmails}.`);
+  const digests = await step("morning_digest", "Morning digest", () => runMorningDigest({ dryRun: env.WORKER_DRY_RUN }), (n) => n);
+  if (digests) console.log(`[worker] Morning digests: ${digests}.`);
 
   // P7: at most every 15 min, one admin notification per workspace per IST day per red problem.
   if (Date.now() - lastHealthAlertsAt >= HEALTH_ALERTS_EVERY_MS) {

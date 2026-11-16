@@ -370,6 +370,15 @@ export interface AdminUser {
   createdAt: string;
   /** E3b-1: the salesperson's booking page; null = none. */
   bookingUrl: string | null;
+  /** LL-2: "Email me urgent alerts" / "Morning digest" (default on). */
+  emailAlertsEnabled?: boolean;
+  emailDigestEnabled?: boolean;
+}
+
+/** LL-2 rule 3: a user's staff email toggles (Settings → My profile; admins in Users). */
+export interface AlertPrefs {
+  emailAlertsEnabled: boolean;
+  emailDigestEnabled: boolean;
 }
 
 export type WorkspaceRole = "admin" | "salesperson";
@@ -578,6 +587,8 @@ export interface AgentSettings {
   whatsappOptOutText: string;
   repQuietHours: number;
   autoEnrollNewLeads: boolean;
+  /** LL-2: 24 h + 1 h meeting reminders to the lead (fixed text, not AI); default on. Optional until migration 059. */
+  meetingRemindersEnabled?: boolean;
   /** The selling company name in AI messages; null = the workspace name. */
   companyDisplayName: string | null;
   liveScope: AgentLiveScope;
@@ -1275,21 +1286,23 @@ export const backend = {
     delete: (id: string) => del(`/saved-views/${id}`),
   },
   me: (signal?: AbortSignal) =>
-    get<{
-      id: string;
-      name: string;
-      email: string;
-      /** The global role: only /admin user management uses it (E4b); workspace roles are on Workspace. */
-      role: "admin" | "salesperson";
-      /** E3b-1: the user's booking page; null = none. */
-      bookingUrl?: string | null;
-      /** E4b: opens every workspace as admin; sees the super-admin page. */
-      isSuperAdmin?: boolean;
-      workspaces?: Workspace[];
-    }>("/me", signal),
-  /** E3b-1 rule 5: the signed-in user's own booking link. */
-  updateMe: (input: { bookingUrl: string | null }) =>
-    send<{ bookingUrl: string | null }>("PATCH", "/me", input),
+    get<
+      {
+        id: string;
+        name: string;
+        email: string;
+        /** The global role: only /admin user management uses it (E4b); workspace roles are on Workspace. */
+        role: "admin" | "salesperson";
+        /** E3b-1: the user's booking page; null = none. */
+        bookingUrl?: string | null;
+        /** E4b: opens every workspace as admin; sees the super-admin page. */
+        isSuperAdmin?: boolean;
+        workspaces?: Workspace[];
+      } & Partial<AlertPrefs>
+    >("/me", signal),
+  /** E3b-1 rule 5: the signed-in user's own booking link; LL-2: and their email alert toggles (only what is sent changes). */
+  updateMe: (input: { bookingUrl?: string | null } & Partial<AlertPrefs>) =>
+    send<{ bookingUrl: string | null } & AlertPrefs>("PATCH", "/me", input),
   /** E4b: the current workspace's directory: members + non-member owners (`member: false`). */
   profiles: (signal?: AbortSignal) =>
     get<{ data: (Omit<User, "role"> & { role: WorkspaceRole; member: boolean })[] }>(
@@ -1333,7 +1346,7 @@ export const backend = {
           password?: string;
           active?: boolean;
           bookingUrl?: string | null;
-        },
+        } & Partial<AlertPrefs>,
       ) => send<AdminUser>("PATCH", `/admin/users/${id}`, input),
     },
   },

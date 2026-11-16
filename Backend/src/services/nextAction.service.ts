@@ -158,7 +158,8 @@ export async function followUpAiStop(
     workspaceId,
     leadId,
     { type: "follow_up", title: spec.title, dueAt: endOfIstDay(), origin: "agent" },
-    opts.bell === false ? undefined : { title: `${name}: ${spec.title}`.slice(0, 300), kind: "warning" },
+    // LL-2 rule 3: AI stopped → also by email.
+    opts.bell === false ? undefined : { title: `${name}: ${spec.title}`.slice(0, 300), kind: "warning", email: true },
   );
   return task;
 }

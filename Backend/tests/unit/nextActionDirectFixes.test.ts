@@ -71,18 +71,21 @@ describe("LL-1 followUpAiStop from a reply label", () => {
 });
 
 describe("LL-1 executeHandoff", () => {
-  it("unassigned lead: unowned handoff task + admins' bell (was: nothing)", async () => {
-    const f = fakeNextActionDb({ ownerId: null, adminIds: ["a1", "a2"] });
+  const name = { match: "as name from public.leads", rows: [{ name: "Asha Rao" }] };
+
+  it("unassigned lead: unowned handoff task + admins' bell (LL-2: also emailed)", async () => {
+    const f = fakeNextActionDb({ ownerId: null, adminIds: ["a1", "a2"], extra: [name] });
     await executeHandoff(f.db, "ws-1", "lead-1", "dec-1", "Wants a price");
     expect(f.tasks).toMatchObject([{ owner_id: null, title: "AI handed off — please follow up", origin: "agent" }]);
-    expect(f.bells).toMatchObject([{ recipients: ["a1", "a2"], title: "Unassigned contact needs: AI handed off — please follow up" }]);
+    expect(f.bells).toMatchObject([{ recipients: ["a1", "a2"], title: "Asha Rao: AI handed off — please follow up" }]);
+    expect(f.queries.find((q) => q.sql.includes("insert into public.notifications"))!.params[7]).toBe("pending");
   });
 
-  it("owned lead: owner task, no bell (unchanged)", async () => {
-    const f = fakeNextActionDb({ ownerId: "owner-1" });
+  it("owned lead: owner task + the owner's bell (LL-2 rule 3: AI handed off is an urgent alert)", async () => {
+    const f = fakeNextActionDb({ ownerId: "owner-1", extra: [name] });
     await executeHandoff(f.db, "ws-1", "lead-1", "dec-1", "Wants a price");
     expect(f.tasks).toMatchObject([{ owner_id: "owner-1" }]);
-    expect(f.bells).toEqual([]);
+    expect(f.bells).toMatchObject([{ recipients: ["owner-1"], title: "Asha Rao: AI handed off — please follow up" }]);
   });
 });
 

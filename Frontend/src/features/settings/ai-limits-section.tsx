@@ -44,6 +44,7 @@ export type LimitsForm = Record<NumberField, string> & {
   sendWindowEnd: string;
   nurtureLongTerm: boolean;
   autoEnrollNewLeads: boolean;
+  meetingRemindersEnabled: boolean;
   firstChannel: AgentSettings["firstChannel"];
   companyDisplayName: string;
   decisionModel: string;
@@ -63,6 +64,7 @@ function formFrom(settings: AgentSettings): LimitsForm {
     sendWindowEnd: settings.sendWindowEnd,
     nurtureLongTerm: settings.nurtureLongTerm,
     autoEnrollNewLeads: settings.autoEnrollNewLeads,
+    meetingRemindersEnabled: settings.meetingRemindersEnabled ?? true,
     firstChannel: settings.firstChannel,
     companyDisplayName: settings.companyDisplayName ?? "",
     decisionModel: settings.decisionModel ?? "",
@@ -84,6 +86,7 @@ function toUpdate(form: LimitsForm): AgentSettingsUpdate {
     sendWindowEnd: form.sendWindowEnd,
     nurtureLongTerm: form.nurtureLongTerm,
     autoEnrollNewLeads: form.autoEnrollNewLeads,
+    meetingRemindersEnabled: form.meetingRemindersEnabled,
     firstChannel: form.firstChannel,
     companyDisplayName: form.companyDisplayName.trim() || null,
     decisionModel: form.decisionModel.trim() || null,
@@ -203,6 +206,20 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
             <Switch
               checked={form.autoEnrollNewLeads}
               onCheckedChange={(value) => set("autoEnrollNewLeads", value)}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-4 text-sm">
+            <span>
+              Meeting reminders to the lead
+              <span className="block text-xs text-muted-foreground">
+                A short fixed reminder (not AI) 24 hours and 1 hour before a scheduled meeting, by
+                email and WhatsApp. The rep's own 1-hour reminder always goes.
+              </span>
+            </span>
+            <Switch
+              id="agent-meeting-reminders"
+              checked={form.meetingRemindersEnabled}
+              onCheckedChange={(value) => set("meetingRemindersEnabled", value)}
             />
           </label>
         </div>

@@ -29,13 +29,24 @@ export async function listSalespeoplePage(query: z.infer<typeof userListSchema>)
     const pattern = b.p(containsPattern(query.q));
     b.and(`(full_name ilike ${pattern} or email ilike ${pattern})`);
   }
-  const page = await runPage<{ id: string; name: string; email: string; initials: string; active: boolean; createdAt: Date; bookingUrl: string | null }>(
+  const page = await runPage<{
+    id: string;
+    name: string;
+    email: string;
+    initials: string;
+    active: boolean;
+    createdAt: Date;
+    bookingUrl: string | null;
+    emailAlertsEnabled: boolean;
+    emailDigestEnabled: boolean;
+  }>(
     pool,
     b,
     query.sort,
     query,
     ({ where, orderBy, limit, cursorSelect }) =>
-      `select id, full_name as name, email, initials, is_active as active, created_at as "createdAt", booking_url as "bookingUrl", ${cursorSelect}
+      `select id, full_name as name, email, initials, is_active as active, created_at as "createdAt", booking_url as "bookingUrl",
+              email_alerts_enabled as "emailAlertsEnabled", email_digest_enabled as "emailDigestEnabled", ${cursorSelect}
          from public.profiles ${where} order by ${orderBy} limit ${limit}`,
   );
   return { data: page.data.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })), nextCursor: page.nextCursor };
@@ -50,8 +61,10 @@ export async function listSalespeople() {
     is_active: boolean;
     created_at: Date;
     booking_url: string | null;
+    email_alerts_enabled: boolean;
+    email_digest_enabled: boolean;
   }>(
-    `select id, full_name, email, initials, is_active, created_at, booking_url
+    `select id, full_name, email, initials, is_active, created_at, booking_url, email_alerts_enabled, email_digest_enabled
        from public.profiles
       where role = 'salesperson'
       order by created_at desc`,
@@ -64,6 +77,8 @@ export async function listSalespeople() {
     active: row.is_active,
     createdAt: row.created_at.toISOString(),
     bookingUrl: row.booking_url,
+    emailAlertsEnabled: row.email_alerts_enabled,
+    emailDigestEnabled: row.email_digest_enabled,
   }));
 }
 
@@ -103,6 +118,9 @@ export interface UpdateSalespersonInput {
   active?: boolean;
   /** E3b-1: undefined = unchanged, null = removed. */
   bookingUrl?: string | null;
+  /** LL-2 rule 3: undefined = unchanged. */
+  emailAlertsEnabled?: boolean;
+  emailDigestEnabled?: boolean;
 }
 
 export async function updateSalesperson(actor: Actor, input: UpdateSalespersonInput) {
@@ -137,7 +155,9 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
                 email = coalesce($3, email),
                 initials = case when $2::text is null then initials else $4 end,
                 is_active = coalesce($5, is_active),
-                booking_url = case when $6::boolean then $7 else booking_url end
+                booking_url = case when $6::boolean then $7 else booking_url end,
+                email_alerts_enabled = coalesce($8, email_alerts_enabled),
+                email_digest_enabled = coalesce($9, email_digest_enabled)
           where id = $1`,
         [
           input.id,
@@ -147,6 +167,8 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
           input.active ?? null,
           input.bookingUrl !== undefined,
           input.bookingUrl ?? null,
+          input.emailAlertsEnabled ?? null,
+          input.emailDigestEnabled ?? null,
         ],
       );
       if (input.name !== undefined || input.email !== undefined) {
@@ -162,6 +184,13 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
       }
       if (input.active !== undefined) {
         await recordAdminAudit(db, actor, input.active ? "user.reactivated" : "user.deactivated", "profile", input.id);
+      }
+      // LL-2: an admin changed someone else's email alert toggles.
+      if ((input.emailAlertsEnabled !== undefined || input.emailDigestEnabled !== undefined) && input.id !== actor.id) {
+        await recordAdminAudit(db, actor, "user.email_alerts_changed", "profile", input.id, {
+          emailAlertsEnabled: input.emailAlertsEnabled ?? null,
+          emailDigestEnabled: input.emailDigestEnabled ?? null,
+        });
       }
     });
   } catch (error) {

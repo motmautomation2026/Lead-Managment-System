@@ -17,7 +17,8 @@
 --                                          email source `meeting_reminder`) and the once-only marker. A new meeting
 --                                          time gets new rows (reschedule = reset).
 -- notifications.email_status               null = bell only; 'pending' = also emailed to the recipient (batched per
---                                          person per tick) → 'sent' | 'skipped' (toggle off / no mailbox) | 'failed'.
+--                                          person per tick) → 'sending' → 'sent' | 'skipped' (toggle off / no mailbox /
+--                                          dry run / older than a day) | 'failed'.
 -- system_health_alerts.problem             + 'staff_email_no_mailbox' (one admin warning per workspace).
 --
 -- Additive and re-runnable.
@@ -87,7 +88,7 @@ do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'notifications_email_status_valid') then
     alter table public.notifications
-      add constraint notifications_email_status_valid check (email_status is null or email_status in ('pending', 'sent', 'skipped', 'failed'));
+      add constraint notifications_email_status_valid check (email_status is null or email_status in ('pending', 'sending', 'sent', 'skipped', 'failed'));
   end if;
 end $$;
 create index if not exists notifications_email_pending_idx on public.notifications (workspace_id, recipient_id) where email_status = 'pending';

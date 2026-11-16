@@ -8,6 +8,7 @@ import { keys, messageFromError } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -221,6 +222,8 @@ function UserEditor({ user }: { user: AdminUser }) {
       password?: string;
       active?: boolean;
       bookingUrl?: string | null;
+      emailAlertsEnabled?: boolean;
+      emailDigestEnabled?: boolean;
     }) => backend.admin.users.update(user.id, input),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.adminUsers });
@@ -270,6 +273,23 @@ function UserEditor({ user }: { user: AdminUser }) {
         />
         {bookingError && <p className="mt-1 text-xs text-destructive">{bookingError}</p>}
       </Field>
+      {/* LL-2 rule 3: the same email toggles the user has in Settings → My profile; each saves at once. */}
+      {(
+        [
+          ["emailAlertsEnabled", "Email urgent alerts"],
+          ["emailDigestEnabled", "Morning digest"],
+        ] as const
+      ).map(([field, label]) => (
+        <div key={field} className="flex items-center justify-between gap-4">
+          <Label htmlFor={`user-${field}`}>{label}</Label>
+          <Switch
+            id={`user-${field}`}
+            checked={user[field] ?? true}
+            disabled={mutation.isPending}
+            onCheckedChange={(on) => mutation.mutate({ [field]: on })}
+          />
+        </div>
+      ))}
       <div className="flex flex-wrap gap-2 border-t pt-4">
         <Button
           disabled={!dirty || mutation.isPending || Boolean(bookingError)}

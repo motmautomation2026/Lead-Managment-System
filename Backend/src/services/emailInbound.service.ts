@@ -421,7 +421,8 @@ async function applyReply(db: Queryable, workspaceId: string, eventId: string, p
   // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).
   await attributeOutcome(db, lead.id, "reply");
   // LL-1 rule 1: the owner if an active member, else the workspace's admins.
-  await notifyResponsible(db, workspaceId, lead.id, { title: "Email reply received", detail: "Automation was switched to manual.", kind: "info" });
+  // LL-2 rule 3: a lead replied → also by email.
+  await notifyResponsible(db, workspaceId, lead.id, { title: "Email reply received", detail: "Automation was switched to manual.", kind: "info", email: true });
   await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "email_inbound", payload: { emailReplyId: eventId } });
   // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
   const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (await isReplyFollowUp(db, lead.id, lead.agent_status));

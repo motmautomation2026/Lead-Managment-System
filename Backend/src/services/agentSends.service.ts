@@ -234,7 +234,15 @@ async function composeWhatsApp(row: ClaimedSend): Promise<{ text: string; phone:
 export async function executeHandoff(db: Queryable, workspaceId: string, leadId: string, decisionId: string, reason: string): Promise<void> {
   const open = await db.query(`select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = $2 limit 1`, [leadId, HANDOFF_TASK_TITLE]);
   if (!open.rowCount) {
-    await createResponsibleTask(db, workspaceId, leadId, { type: "follow_up", title: HANDOFF_TASK_TITLE, dueAt: endOfIstDay(), origin: "agent" });
+    // LL-2 rule 3: the responsible person(s) get a bell, also by email.
+    const name = (await db.query<{ name: string | null }>(`select nullif(trim(concat_ws(' ', first_name, last_name)), '') as name from public.leads where id = $1`, [leadId])).rows[0]?.name ?? "A contact";
+    await createResponsibleTask(
+      db,
+      workspaceId,
+      leadId,
+      { type: "follow_up", title: HANDOFF_TASK_TITLE, dueAt: endOfIstDay(), origin: "agent" },
+      { title: `${name}: ${HANDOFF_TASK_TITLE}`.slice(0, 300), kind: "warning", email: true },
+    );
   }
   await setAgentStatus(db, leadId, "handed_off", "ai_handoff");
   await addTimelineEvent(db, { leadId, kind: "automation", title: `AI handed off: ${reason}`.slice(0, 300), ...AGENT_ACTOR, metadata: { decisionId } });

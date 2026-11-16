@@ -91,6 +91,9 @@ const EnvSchema = DbEnvSchema.extend({
   // E3b-2b email open tracking (API and worker): the API's public address for the open pixel
   // (https in production). Missing = tracking off; malformed = startup error (checked in loadEnv).
   PUBLIC_API_BASE_URL: blankToUndefined(z.string().optional()),
+
+  // LL-2 (worker): the CRM frontend's address for links in staff alert / digest emails. Missing = the first CORS origin.
+  APP_BASE_URL: blankToUndefined(z.string().url("APP_BASE_URL must be a full URL like https://crm.example.com.").optional()),
 });
 
 // WORKER_* tuning is validated separately in workerEnv.ts. Provider secrets
@@ -129,3 +132,6 @@ export const env = loadEnv();
 export const corsOrigins = env.CORS_ORIGINS.split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+/** LL-2: the CRM frontend's address (no trailing slash) for links in staff emails. */
+export const appBaseUrl = (env.APP_BASE_URL ?? corsOrigins[0] ?? "").replace(/\/+$/, "");

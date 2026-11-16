@@ -169,6 +169,8 @@ export async function processInboundUpsert(workspaceId: string, event: { message
           detail: matches.rowCount! > 1 ? "Automation stopped for multiple leads sharing this number." : "Automation was switched to manual.",
           kind: matches.rowCount! > 1 ? "warning" : "info",
           href: `/leads/${lead.id}`,
+          // LL-2 rule 3: a lead replied → also by email.
+          email: disposition === "matched",
         });
         await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
         // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
