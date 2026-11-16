@@ -7,6 +7,7 @@ import { insertLead, validateLeadFields } from "./leads.service.js";
 import { assignOwnerForNewLead, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 import type { RevenueRange } from "../domain/revenue.js";
 import { createTask } from "./tasks.service.js";
+import { autoEnroll } from "./runs.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 
 export type IngestOutcome =
@@ -114,7 +115,7 @@ function submissionMetadata(form: NormalizedWebsiteForm): Record<string, unknown
  *    owner comes from the workspace's revenue rules (the form's "Revenue
  *    range:" line), else its fallback owner; with neither the lead stays
  *    unassigned and every active user is notified;
- *  - no workflow enrollment (no automatic email/WhatsApp to the visitor);
+ *  - LL-1: enrolled in the published `lead_created` workflow like a manual/CSV lead (none → no-op);
  *  - a repeat submitter updates the existing lead's timeline instead of
  *    creating a second lead, and never changes its stage/lifecycle/DNC state.
  *
@@ -212,6 +213,9 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
   });
 
   await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead — call within 1 hour", `${displayName(form)} (${form.company}) submitted the website form.`);
+  // LL-1 rule 5: like a manual/CSV lead, the published lead_created workflow (none → a quiet no-op). A live AI
+  // contact is never enrolled (autoEnroll skips it; becoming live later cancels the run).
+  await autoEnroll(db, workspaceId, leadId, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (website form)");
   await onAgentEvent(db, { workspaceId, leadId, event: "lead_created" });
   await linkCompanySafely(db, workspaceId, leadId);
   return { status: "created", leadId };

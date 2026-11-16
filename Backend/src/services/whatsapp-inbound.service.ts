@@ -4,7 +4,7 @@ import type { Queryable } from "../dto.js";
 import { jidToPhoneE164 } from "../domain/phone.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
-import { createTask } from "./tasks.service.js";
+import { createResponsibleTask, notifyResponsible } from "./nextAction.service.js";
 import { extractInboundText } from "../domain/whatsappInboundText.js";
 import { encryptText } from "../security/encryption.js";
 import type { AgentMode, AgentStatus } from "../agent/rules.js";
@@ -50,22 +50,19 @@ export async function stopAutomationForReply(db: Queryable, leadId: string, reas
   );
 }
 
-/** One open reply task per contact across channels (any reply-task title counts: a label may have re-titled it). */
-export async function ensureReplyTask(db: Queryable, workspaceId: string, lead: { id: string; owner_id: string; owner_name: string | null }, title: string) {
+/**
+ * One open reply task per contact across channels (any reply-task title counts: a label may have re-titled it).
+ * LL-1: for every replying lead (AI, workflow or manual), owned by the responsible person (rule 1: the owner
+ * if an active member, else unowned); origin agent so the 2-hour reply escalation covers it. The reply's
+ * own bell (notifyResponsible) tells the owner or the admins.
+ */
+export async function ensureReplyTask(db: Queryable, workspaceId: string, leadId: string, title: string) {
   const open = await db.query(
     `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]) limit 1`,
-    [lead.id, REPLY_TASK_TITLES],
+    [leadId, REPLY_TASK_TITLES],
   );
   if (open.rowCount) return;
-  await createTask(db, null, workspaceId, {
-    leadId: lead.id,
-    ownerId: lead.owner_id,
-    ownerName: lead.owner_name,
-    type: "follow_up",
-    title,
-    dueAt: endOfIstDay().toISOString(),
-    origin: "agent",
-  });
+  await createResponsibleTask(db, workspaceId, leadId, { type: "follow_up", title, dueAt: endOfIstDay(), origin: "agent" }, false);
 }
 
 function messageTime(message: WAMessage) {
@@ -166,28 +163,19 @@ export async function processInboundUpsert(workspaceId: string, event: { message
           metadata: { messageId: id, messageType: type, duplicatePhoneMatch: matches.rowCount! > 1 },
           ...SYSTEM_ACTOR,
         });
-        if (lead.owner_id) {
-          await db.query(
-            `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-             values ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-              workspaceId,
-              lead.owner_id,
-              "WhatsApp reply received",
-              matches.rowCount! > 1 ? "Automation stopped for multiple leads sharing this number." : "Automation was switched to manual.",
-              matches.rowCount! > 1 ? "warning" : "info",
-              lead.id,
-              `/leads/${lead.id}`,
-            ],
-          );
-        }
+        // LL-1 rule 1: the owner if an active member, else the workspace's admins.
+        await notifyResponsible(db, workspaceId, lead.id, {
+          title: "WhatsApp reply received",
+          detail: matches.rowCount! > 1 ? "Automation stopped for multiple leads sharing this number." : "Automation was switched to manual.",
+          kind: matches.rowCount! > 1 ? "warning" : "info",
+          href: `/leads/${lead.id}`,
+        });
         await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
         // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
         // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
         const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (disposition === "matched" && (await isReplyFollowUp(db, lead.id, lead.agent_status)));
-        if (disposition === "matched" && lead.owner_id && wasManaged) {
-          await ensureReplyTask(db, workspaceId, { id: lead.id, owner_id: lead.owner_id, owner_name: lead.owner_name }, REPLY_TASK_TITLE);
-        }
+        // LL-1: every matched reply gets the reply task (AI, workflow or manual lead; unowned → unowned task).
+        if (disposition === "matched") await ensureReplyTask(db, workspaceId, lead.id, REPLY_TASK_TITLE);
         // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
         if (disposition === "matched") {
           // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).

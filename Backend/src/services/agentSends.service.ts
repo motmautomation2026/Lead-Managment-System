@@ -11,7 +11,7 @@ import { mentionsAttachment } from "../agent/messageChecks.js";
 import { AGENT_ASSETS_BUCKET } from "./knowledgeLibrary.service.js";
 import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
-import { createTask } from "./tasks.service.js";
+import { createResponsibleTask, followUpAiStop } from "./nextAction.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
 import { agentSendRecheck, recordAgentSendOutcome, type AgentSendOutcome } from "./agentSendState.service.js";
@@ -227,31 +227,24 @@ async function composeWhatsApp(row: ClaimedSend): Promise<{ text: string; phone:
 
 // --- Executed decisions (rule 8) -----------------------------------------------------
 
-/** One open AI handoff task per contact, for the owner, due 23:59 IST today. The reason goes on the timeline row. */
+/**
+ * One open AI handoff task per contact, due 23:59 IST today, for the responsible person (LL-1 rule 1:
+ * the owner if an active member, else unowned + the admins' bell). The reason goes on the timeline row.
+ */
 export async function executeHandoff(db: Queryable, workspaceId: string, leadId: string, decisionId: string, reason: string): Promise<void> {
-  const lead = (await db.query<{ owner_id: string | null; owner_name: string | null }>(
-    `select l.owner_id, o.full_name as owner_name from public.leads l left join public.profiles o on o.id = l.owner_id where l.id = $1`,
-    [leadId],
-  )).rows[0];
   const open = await db.query(`select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = $2 limit 1`, [leadId, HANDOFF_TASK_TITLE]);
-  if (!open.rowCount && lead?.owner_id) {
-    await createTask(db, null, workspaceId, {
-      leadId,
-      ownerId: lead.owner_id,
-      ownerName: lead.owner_name,
-      type: "follow_up",
-      title: HANDOFF_TASK_TITLE,
-      dueAt: endOfIstDay().toISOString(),
-      origin: "agent",
-    });
+  if (!open.rowCount) {
+    await createResponsibleTask(db, workspaceId, leadId, { type: "follow_up", title: HANDOFF_TASK_TITLE, dueAt: endOfIstDay(), origin: "agent" });
   }
   await setAgentStatus(db, leadId, "handed_off", "ai_handoff");
   await addTimelineEvent(db, { leadId, kind: "automation", title: `AI handed off: ${reason}`.slice(0, 300), ...AGENT_ACTOR, metadata: { decisionId } });
 }
 
-export async function executeStop(db: Queryable, leadId: string, decisionId: string, reason: string): Promise<void> {
+/** LL-1 rule 5: every stop leaves a task + bell for the responsible person (no_response → long-term nurture). */
+export async function executeStop(db: Queryable, workspaceId: string, leadId: string, decisionId: string, reason: string): Promise<void> {
   await setAgentStatus(db, leadId, "stopped", reason);
   await addTimelineEvent(db, { leadId, kind: "automation", title: "AI stopped", detail: reason.replace(/_/g, " "), ...AGENT_ACTOR, metadata: { decisionId } });
+  await followUpAiStop(db, workspaceId, leadId, reason);
 }
 
 /** Within the allow-list only (rules.ts already refused anything else), through updateLead. */

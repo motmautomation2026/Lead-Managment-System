@@ -85,3 +85,19 @@ export function batchBells(items: { workspaceId: string; notify: string[] }[]): 
 }
 
 export const sweepBellTitle = (count: number) => (count === 1 ? "1 lead needs a next step" : `${count} leads need a next step`);
+
+/**
+ * Rule 5 (AI stop, every reason): the responsible person's task. no_response always moves the lead to
+ * long-term nurture (the decision may ask for it; the forced end of the journey is the default).
+ */
+export function aiStopTask(reason: string, channel?: "whatsapp" | "email"): { title: string; moveToLongTermNurture: boolean } {
+  if (reason === "no_response") return { title: "AI journey ended without a reply — decide next step", moveToLongTermNurture: true };
+  if (reason === "not_interested" || reason === "annoyed") return { title: "Lead not interested — close or nurture", moveToLongTermNurture: false };
+  if (reason === "asked_to_stop") {
+    const on = channel === "email" ? " on email" : channel === "whatsapp" ? " on WhatsApp" : "";
+    return { title: `Lead opted out${on} — review`, moveToLongTermNurture: false };
+  }
+  return { title: `AI stopped (${reason.replace(/_/g, " ")}) — decide next step`, moveToLongTermNurture: false };
+}
+
+export const RESCHEDULE_MEETING_TITLE = "Reschedule the meeting";

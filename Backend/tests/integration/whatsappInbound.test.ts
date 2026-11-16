@@ -114,7 +114,7 @@ describeIfDb("inbound WhatsApp reply logging and AI handoff (requires TEST_DATAB
     expect(await agentTasks(leadId)).toHaveLength(1);
   });
 
-  it("a paused lead also gets the task; an ownerless one gets none", async () => {
+  it("a paused lead also gets the task; LL-1: an ownerless one gets an unowned task", async () => {
     const phone = randomPhone();
     const paused = await newLead(phone, "paused");
     await inbound(phone, { conversation: "ok" });
@@ -123,15 +123,15 @@ describeIfDb("inbound WhatsApp reply logging and AI handoff (requires TEST_DATAB
     const phone2 = randomPhone();
     const ownerless = await newLead(phone2, "active", true);
     await inbound(phone2, { conversation: "ok" });
-    expect(await agentTasks(ownerless)).toHaveLength(0);
+    expect(await agentTasks(ownerless)).toMatchObject([{ owner_id: null, title: "Lead replied on WhatsApp — respond today", status: "open" }]);
   });
 
-  it("a reply from a lead not in the AI: body stored, no agent task", async () => {
+  it("a reply from a lead not in the AI: body stored; LL-1: it gets the reply task too", async () => {
     const phone = randomPhone();
     const leadId = await newLead(phone);
     const id = await inbound(phone, { conversation: "Who is this?" });
     expect(await body(id)).toBe("Who is this?");
-    expect(await agentTasks(leadId)).toHaveLength(0);
+    expect(await agentTasks(leadId)).toMatchObject([{ title: "Lead replied on WhatsApp — respond today", status: "open" }]);
     expect((await pool.query(`select agent_status, response_state from public.leads where id = $1`, [leadId])).rows[0]).toEqual({
       agent_status: "none",
       response_state: "responded",

@@ -108,14 +108,14 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     await pool.end();
   });
 
-  it("STOP on a contact not in the AI: keyword label, WhatsApp opted out, owner notified, no AI call, agent untouched, never DNC", async () => {
+  it("STOP on a contact not in the AI: keyword label, WhatsApp opted out, owner notified, no AI call, agent untouched, never DNC; LL-1: reply task", async () => {
     const { ws, phone, leadId } = await scenario({ mode: "off", agentStatus: "none" });
     const id = await inbound(ws, phone, "STOP!");
     expect(await event(id)).toMatchObject({ lead_id: leadId, reply_label: "asked_to_stop", reply_label_source: "keyword", classification_status: "done" });
     expect(await whatsappStatus(leadId)).toBe("opted_out");
     expect(await stopNotifications(leadId)).toEqual([{ title: "Asha Rao asked us to stop messaging on WhatsApp", recipient_id: owner.id }]);
     expect(await leadRow(leadId)).toEqual({ agent_status: "none", agent_status_reason: null, lifecycle_state: "active" });
-    expect(await tasks(leadId)).toEqual([]);
+    expect(await tasks(leadId)).toEqual([{ title: "Asked to stop on WhatsApp — review today", status: "open" }]);
     const model = fake();
     expect(await classify(ws, model)).toEqual([]);
     expect(model.calls).toEqual([]);

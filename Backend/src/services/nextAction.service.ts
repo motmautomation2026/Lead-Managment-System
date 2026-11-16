@@ -9,7 +9,9 @@ import type { AutomationMode, LifecycleState, NotificationKind, TaskOrigin, Task
 import {
   batchBells,
   needsNextAction,
+  aiStopTask,
   NO_NEXT_ACTION_TIMELINE_TITLE,
+  RESCHEDULE_MEETING_TITLE,
   resolveResponsible,
   sweepBellTitle,
   sweepTask,
@@ -20,21 +22,24 @@ import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { createTask, type TaskRow } from "./tasks.service.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { liveContactSql } from "./agentSendState.service.js";
+import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
+import { endOfIstDay } from "./whatsapp-inbound.service.js";
 
 // --- Rule 1: who is responsible ----------------------------------------------------------------
 
-/** $1 workspace, $2 lead: the owner (active? member?) and the workspace's active admins. */
-export const RESPONSIBLE_SQL = `select l.owner_id, o.full_name as owner_name, coalesce(o.is_active, false) as owner_active,
-       exists (select 1 from public.workspace_members m where m.workspace_id = $1 and m.user_id = l.owner_id) as owner_member,
+/** $1 workspace, $2 lead, $3 owner hint (e.g. the meeting's owner; null = the lead's): that owner (active? member?) and the workspace's active admins. */
+export const RESPONSIBLE_SQL = `select x.owner_id, o.full_name as owner_name, coalesce(o.is_active, false) as owner_active,
+       exists (select 1 from public.workspace_members m where m.workspace_id = $1 and m.user_id = x.owner_id) as owner_member,
        array(${WORKSPACE_ADMIN_IDS_SQL}) as admin_ids
-  from public.leads l left join public.profiles o on o.id = l.owner_id
- where l.id = $2 and l.workspace_id = $1`;
+  from (select coalesce($3::uuid, l.owner_id) as owner_id from public.leads l where l.id = $2 and l.workspace_id = $1) x
+  left join public.profiles o on o.id = x.owner_id`;
 
-export async function loadResponsible(db: Queryable, workspaceId: string, leadId: string): Promise<Responsible> {
+export async function loadResponsible(db: Queryable, workspaceId: string, leadId: string, ownerHint: string | null = null): Promise<Responsible> {
   const row = (
     await db.query<{ owner_id: string | null; owner_name: string | null; owner_active: boolean; owner_member: boolean; admin_ids: string[] | null }>(RESPONSIBLE_SQL, [
       workspaceId,
       leadId,
+      ownerHint,
     ])
   ).rows[0];
   return resolveResponsible({
@@ -72,6 +77,8 @@ export interface ResponsibleTaskInput {
   title: string;
   dueAt: Date;
   origin?: TaskOrigin;
+  /** Responsible owner other than the lead's (e.g. the meeting's owner); rule 1 still applies to them. */
+  ownerHint?: string | null;
 }
 
 /**
@@ -86,7 +93,7 @@ export async function createResponsibleTask(
   task: ResponsibleTaskInput,
   bell?: Bell | false,
 ): Promise<{ task: TaskRow; responsible: Responsible }> {
-  const responsible = await loadResponsible(db, workspaceId, leadId);
+  const responsible = await loadResponsible(db, workspaceId, leadId, task.ownerHint ?? null);
   const row = await createTask(db, null, workspaceId, {
     leadId,
     ownerId: responsible.ownerId,
@@ -102,12 +109,78 @@ export async function createResponsibleTask(
   return { task: row, responsible };
 }
 
+/** A meeting that may still happen. */
+const OPEN_MEETING_STATUSES = `('tentative', 'scheduled', 'confirmed', 'rescheduled')`;
+
+// --- Rule 5: direct fixes ----------------------------------------------------------------------
+
+const LIVE_LEAD_SQL = `select lifecycle_state, first_name, last_name from public.leads
+  where id = $1 and workspace_id = $2 and merged_into_lead_id is null and lifecycle_state in ('active', 'long_term_nurture')`;
+
+/**
+ * Rule 5, AI stop (every reason, from a decision or a reply label): a task for the responsible person +
+ * bell; no_response also moves the lead to long-term nurture. Nothing for DNC / terminal / merged leads,
+ * nor when the same task is open, nor (reply labels) while the reply task is open: it already is the next action.
+ */
+export async function followUpAiStop(
+  db: Queryable,
+  workspaceId: string,
+  leadId: string,
+  reason: string,
+  opts: { channel?: "whatsapp" | "email"; skipIfReplyTask?: boolean; bell?: boolean } = {},
+): Promise<TaskRow | null> {
+  const lead = (await db.query<{ lifecycle_state: LifecycleState; first_name: string | null; last_name: string | null }>(LIVE_LEAD_SQL, [leadId, workspaceId])).rows[0];
+  if (!lead) return null;
+  const spec = aiStopTask(reason, opts.channel);
+  if (spec.moveToLongTermNurture && lead.lifecycle_state === "active") {
+    const { moveToLongTermNurture } = await import("./leads.service.js");
+    await moveToLongTermNurture(db, null, workspaceId, leadId, "AI journey ended without a reply");
+  }
+  const open = await db.query(
+    `select 1 from public.tasks where lead_id = $1 and status = 'open' and (title = $2 or ($3 and origin = 'agent' and title = any($4::text[]))) limit 1`,
+    [leadId, spec.title, opts.skipIfReplyTask ?? false, REPLY_TASK_TITLES],
+  );
+  if (open.rowCount) return null;
+  const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ").trim() || "A contact";
+  const { task } = await createResponsibleTask(
+    db,
+    workspaceId,
+    leadId,
+    { type: "follow_up", title: spec.title, dueAt: endOfIstDay(), origin: "agent" },
+    opts.bell === false ? undefined : { title: `${name}: ${spec.title}`.slice(0, 300), kind: "warning" },
+  );
+  return task;
+}
+
+/**
+ * Rule 5, meeting cancelled / no-show / failed: "Reschedule the meeting" (+1 d) for the meeting's owner
+ * (rule 1), unless another future meeting exists or the task is already open. Active / nurture leads only.
+ */
+export async function rescheduleAfterMeeting(db: Queryable, workspaceId: string, leadId: string, meeting: { id: string; ownerId: string | null }, now = new Date()): Promise<TaskRow | null> {
+  const lead = (await db.query(LIVE_LEAD_SQL, [leadId, workspaceId])).rows[0];
+  if (!lead) return null;
+  const blocked = await db.query(
+    `select 1 from public.meetings m where m.lead_id = $1 and m.id <> $2 and m.scheduled_at > $3 and m.status::text in ${OPEN_MEETING_STATUSES}
+     union all
+     select 1 from public.tasks t where t.lead_id = $1 and t.status = 'open' and t.title = $4
+     limit 1`,
+    [leadId, meeting.id, now, RESCHEDULE_MEETING_TITLE],
+  );
+  if (blocked.rowCount) return null;
+  const { task } = await createResponsibleTask(db, workspaceId, leadId, {
+    type: "schedule_meeting",
+    title: RESCHEDULE_MEETING_TITLE,
+    dueAt: new Date(now.getTime() + 86_400_000),
+    ownerHint: meeting.ownerId,
+  });
+  return task;
+}
+
 // --- Rules 2–4: the sweep -----------------------------------------------------------------------
 
 const PER_WORKSPACE = 200;
 /** P7: at most this many leads per tick in all, round-robin across workspaces. */
 const TICK_LIMIT = 1000;
-const OPEN_MEETING_STATUSES = `('tentative', 'scheduled', 'confirmed', 'rescheduled')`;
 
 /** Columns of NextActionFacts for lead `l` ⋈ agent_settings `s`; `now` is a bind parameter. */
 const factsColumns = (now: string) => `l.id, l.workspace_id, l.lifecycle_state, l.automation_mode, l.agent_status, l.agent_touch_count, s.max_touches_total,

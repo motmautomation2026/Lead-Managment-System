@@ -19,8 +19,10 @@ export function fakeNextActionDb(state: FakeLeadState) {
   const bells: { workspaceId: string; recipients: string[]; title: string; href: string | null; leadId: string | null }[] = [];
   const timeline: { title: string; detail: string | null }[] = [];
   const updates: string[] = [];
+  const queries: { sql: string; params: unknown[] }[] = [];
   const db = {
     query: async (sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
       const extra = state.extra?.find((e) => sql.includes(e.match));
       if (extra) return { rows: extra.rows, rowCount: extra.rows.length };
       if (sql.includes("as admin_ids")) {
@@ -72,5 +74,5 @@ export function fakeNextActionDb(state: FakeLeadState) {
       throw new Error(`Unexpected query: ${sql.slice(0, 120)}`);
     },
   } as unknown as Queryable;
-  return { db, tasks, bells, timeline, updates };
+  return { db, tasks, bells, timeline, updates, queries };
 }

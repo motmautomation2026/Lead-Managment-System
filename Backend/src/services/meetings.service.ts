@@ -9,6 +9,7 @@ import { routeMeetingOutcome } from "../domain/meetingRouting.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
 import { attributeOutcome } from "./messageFacts.service.js";
 import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
+import { rescheduleAfterMeeting } from "./nextAction.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead, type LeadRow } from "./leads.service.js";
 import { autoEnroll, cancelRunsForLead } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
@@ -272,6 +273,8 @@ export async function updateMeeting(db: Queryable, actor: Actor, workspaceId: st
     // or no-showing a meeting leaves a stale prep task behind.
     if (patch.status === "cancelled" || patch.status === "no_show" || patch.status === "failed") {
       await cancelOpenTasksForLead(db, actor, current.lead_id, "Meeting was cancelled", ["confirm_meeting"]);
+      // LL-1 rule 5: "Reschedule the meeting" (+1 d) for the responsible person, unless another future meeting exists.
+      await rescheduleAfterMeeting(db, workspaceId, current.lead_id, { id, ownerId: current.owner_id });
     }
   }
 

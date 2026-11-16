@@ -12,7 +12,7 @@ import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { escalationDue } from "../domain/replyDrafts.js";
 import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.js";
-import { createTask } from "./tasks.service.js";
+import { createResponsibleTask } from "./nextAction.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
 import { fairPickSql } from "./fairPick.js";
 
@@ -26,6 +26,7 @@ interface EscalationCandidate {
   id: string;
   workspace_id: string;
   lead_id: string;
+  owner_id: string | null;
   created_at: Date;
   rep_name: string | null;
   first_name: string | null;
@@ -43,7 +44,7 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
   const now = opts.now ?? new Date();
   const candidates = (
     await pool.query<EscalationCandidate>(
-      `select t.id, t.workspace_id, t.lead_id, t.created_at, coalesce(p.full_name, t.owner_name) as rep_name, l.first_name, l.last_name,
+      `select t.id, t.workspace_id, t.lead_id, t.owner_id, t.created_at, coalesce(p.full_name, t.owner_name) as rep_name, l.first_name, l.last_name,
               s.send_days, s.send_window_start::text as send_window_start, s.send_window_end::text as send_window_end
          from (select t.*, row_number() over (partition by t.workspace_id order by t.created_at) as rn
                  from public.tasks t
@@ -73,7 +74,7 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
       await db.query(
         `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
          select $1, a.user_id, $2, $3, 'warning', $4, $5 from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
-        [c.workspace_id, `${c.rep_name ?? "The owner"} hasn't answered ${name}'s reply yet (2 h)`, "The reply task is still open 2 working hours after the reply.", c.lead_id, `/contacts/${c.lead_id}`],
+        [c.workspace_id, c.owner_id ? `${c.rep_name ?? "The owner"} hasn't answered ${name}'s reply yet (2 h)` : `Nobody has answered ${name}'s reply yet (2 h, no owner)`, "The reply task is still open 2 working hours after the reply.", c.lead_id, `/contacts/${c.lead_id}`],
       );
       return true;
     });
@@ -89,9 +90,8 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
 export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } = {}): Promise<string[]> {
   return withTransaction(async (db) => {
     const meetings = (
-      await db.query<{ id: string; workspace_id: string; lead_id: string; owner_id: string | null; owner_name: string | null; title: string }>(
-        `select m.id, m.workspace_id, m.lead_id, coalesce(m.owner_id, l.owner_id) as owner_id,
-                (select full_name from public.profiles p where p.id = coalesce(m.owner_id, l.owner_id)) as owner_name, m.title
+      await db.query<{ id: string; workspace_id: string; lead_id: string; owner_id: string | null; title: string }>(
+        `select m.id, m.workspace_id, m.lead_id, coalesce(m.owner_id, l.owner_id) as owner_id, m.title
            from public.meetings m
            join public.leads l on l.id = m.lead_id and l.merged_into_lead_id is null
            join public.agent_settings rs on rs.workspace_id = m.workspace_id and m.created_at >= rs.reminders_since
@@ -112,15 +112,8 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
     ).rows;
     for (const m of meetings) {
       await db.query(`update public.meetings set outcome_task_created_at = now() where id = $1`, [m.id]);
-      if (!m.owner_id) continue;
-      await createTask(db, null, m.workspace_id, {
-        leadId: m.lead_id,
-        ownerId: m.owner_id,
-        ownerName: m.owner_name,
-        type: "follow_up",
-        title: MEETING_OUTCOME_TASK_TITLE,
-        dueAt: endOfIstDay().toISOString(),
-      });
+      // LL-1 rule 1: the meeting's (else the lead's) owner if an active member, else unowned + the admins' bell.
+      await createResponsibleTask(db, m.workspace_id, m.lead_id, { type: "follow_up", title: MEETING_OUTCOME_TASK_TITLE, dueAt: endOfIstDay(), ownerHint: m.owner_id });
     }
     return meetings.map((m) => m.id);
   });

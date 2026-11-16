@@ -21,6 +21,7 @@ import {
 } from "../agent/replyClassification.js";
 import { cancelPendingWakeups } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
+import { followUpAiStop, notifyResponsible } from "./nextAction.service.js";
 import { attributeReplyLabel } from "./messageFacts.service.js";
 import { canReadReplies } from "./inboundReplies.service.js";
 
@@ -124,6 +125,7 @@ export async function applyReplyEffects(
   if (!lead) return false;
 
   const effects = replyEffects(input.label);
+  let optOutNotified = false;
   if (effects.optOut) {
     const email = input.channel === "email";
     const reason = input.optOutReason ?? (email ? EMAIL_STOP_REASON : OPT_OUT_REASON);
@@ -149,23 +151,16 @@ export async function applyReplyEffects(
         actorSource: "automation",
         metadata: { ...ref, replyLabel: input.label },
       });
-      if (lead.owner_id) {
-        const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ").trim() || "A contact";
-        await db.query(
-          `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-           values ($1, $2, $3, $4, 'warning', $5, $6)`,
-          [
-            input.workspaceId,
-            lead.owner_id,
-            email ? `${name} unsubscribed from email` : `${name} asked us to stop messaging on WhatsApp`,
-            email
-              ? "Email is now unsubscribed for this contact. Do Not Contact was not changed."
-              : "WhatsApp is now opted out for this contact. Do Not Contact was not changed.",
-            input.leadId,
-            `/contacts/${input.leadId}`,
-          ],
-        );
-      }
+      // LL-1 rule 1: the owner if an active member, else the workspace's admins.
+      const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ").trim() || "A contact";
+      await notifyResponsible(db, input.workspaceId, input.leadId, {
+        title: email ? `${name} unsubscribed from email` : `${name} asked us to stop messaging on WhatsApp`,
+        detail: email
+          ? "Email is now unsubscribed for this contact. Do Not Contact was not changed."
+          : "WhatsApp is now opted out for this contact. Do Not Contact was not changed.",
+        kind: "warning",
+      });
+      optOutNotified = true;
     }
   }
 
@@ -181,6 +176,13 @@ export async function applyReplyEffects(
       metadata: { agentStatusFrom: lead.agent_status, agentStatusTo: "stopped", reason: stop, event: input.event ?? "reply_label", ...ref },
     });
     await cancelPendingWakeups(db, input.leadId, stop);
+    // LL-1 rule 5: a task for the responsible person, unless the open reply task already is the next action;
+    // no second bell when the opt-out bell just went out.
+    await followUpAiStop(db, input.workspaceId, input.leadId, input.label === "annoyed" ? "annoyed" : stop, {
+      channel: input.channel,
+      skipIfReplyTask: true,
+      bell: !optOutNotified,
+    });
   }
   return true;
 }

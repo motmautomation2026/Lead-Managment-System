@@ -445,7 +445,7 @@ async function executeLive(client: Queryable, wakeup: ClaimedWakeup, ctx: AgentC
     case "handoff":
       return executeHandoff(client, workspaceId, leadId, decisionId, d.title);
     case "stop":
-      return executeStop(client, leadId, decisionId, d.reason);
+      return executeStop(client, workspaceId, leadId, decisionId, d.reason);
     case "update_stage":
       await executeStageChange(client, workspaceId, leadId, decisionId, d.newStage);
       // The contact stays with the AI; look again after the shortest wake gap.

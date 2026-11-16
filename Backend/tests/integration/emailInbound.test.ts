@@ -306,7 +306,7 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     expect(await tasks(c.id)).toEqual([]);
   });
 
-  it("unsubscribe: email unsubscribed, AI stopped (asked_to_stop), owner notified, never DNC, no task", async () => {
+  it("unsubscribe: email unsubscribed, AI stopped (asked_to_stop), owner notified once, never DNC; LL-1: a review task", async () => {
     const { ws, box } = await workspace("unsub");
     const c = await contact(ws);
     box.add(unsubscribeMessage({ from: `Ravi <${c.email}>`, to: OWN }));
@@ -317,7 +317,7 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     expect(await timeline(c.id)).toEqual(expect.arrayContaining(["Unsubscribed from email", "AI Agent Stopped"]));
     const notes = await pool.query(`select title, recipient_id from public.notifications where lead_id = $1`, [c.id]);
     expect(notes.rows).toEqual([{ title: "Ravi Kumar unsubscribed from email", recipient_id: owner.id }]);
-    expect(await tasks(c.id)).toEqual([]);
+    expect(await tasks(c.id)).toEqual([{ title: "Lead opted out on email — review", status: "open", origin: "agent" }]);
   });
 
   it("E3a: a reply to a threaded AI follow-up matches that email, by In-Reply-To or only by References", async () => {
@@ -384,7 +384,8 @@ describeIfDb("D3 email replies, bounces and unsubscribes over IMAP (requires TES
     await poll(ws, box);
     const [one, two] = await events(ws);
     expect(one).toMatchObject({ kind: "reply", match_status: "matched", match_method: "sender", lead_id: c.id, reply_label: "unclassified", classification_status: "skipped" });
-    expect(await tasks(c.id)).toEqual([]); // not an AI contact
+    // LL-1: a non-AI contact's reply gets the reply task too.
+    expect(await tasks(c.id)).toEqual([{ title: "Lead replied by email — respond today", status: "open", origin: "agent" }]);
     expect(two).toMatchObject({ kind: "reply", match_status: "ambiguous", lead_id: null, body_ciphertext: null });
     expect(await timeline(a.id)).toEqual([]);
     expect(await timeline(b.id)).toEqual([]);

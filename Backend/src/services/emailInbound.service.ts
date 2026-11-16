@@ -34,6 +34,7 @@ import { attributeOutcome } from "./messageFacts.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import { ensureReplyTask, stopAutomationForReply } from "./whatsapp-inbound.service.js";
+import { notifyResponsible } from "./nextAction.service.js";
 import { notifyAdmins } from "./whatsappSafety.service.js";
 
 export const MAX_MESSAGES_PER_POLL = 50;
@@ -419,19 +420,13 @@ async function applyReply(db: Queryable, workspaceId: string, eventId: string, p
   await addTimelineEvent(db, { leadId: lead.id, kind: "email", title: "Replied by email", metadata: { emailReplyId: eventId }, ...SYSTEM_ACTOR });
   // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).
   await attributeOutcome(db, lead.id, "reply");
-  if (lead.owner_id) {
-    await db.query(
-      `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-       values ($1, $2, 'Email reply received', 'Automation was switched to manual.', 'info', $3, $4)`,
-      [workspaceId, lead.owner_id, lead.id, `/contacts/${lead.id}`],
-    );
-  }
+  // LL-1 rule 1: the owner if an active member, else the workspace's admins.
+  await notifyResponsible(db, workspaceId, lead.id, { title: "Email reply received", detail: "Automation was switched to manual.", kind: "info" });
   await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "email_inbound", payload: { emailReplyId: eventId } });
   // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
   const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (await isReplyFollowUp(db, lead.id, lead.agent_status));
-  if (lead.owner_id && wasManaged) {
-    await ensureReplyTask(db, workspaceId, { id: lead.id, owner_id: lead.owner_id, owner_name: lead.owner_name }, DEFAULT_EMAIL_REPLY_TASK_TITLE);
-  }
+  // LL-1: every matched reply gets the reply task (AI, workflow or manual lead; unowned → unowned task).
+  await ensureReplyTask(db, workspaceId, lead.id, DEFAULT_EMAIL_REPLY_TASK_TITLE);
 
   // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
   const keyword = matchReplyKeyword(text);
