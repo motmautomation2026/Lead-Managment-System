@@ -21,6 +21,7 @@ import { runAgentSends } from "./services/agentSends.service.js";
 import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.service.js";
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
+import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runLeadScoreSweep } from "./services/leadScore.service.js";
@@ -258,6 +259,13 @@ async function tick(): Promise<void> {
     if (alerted?.length) console.log(`[worker] Health alerts sent to ${alerted.length} workspace(s).`);
   }
 
+  // LL-1 safety net: at most every 15 min, a task for each active lead left without a next action (batched bells).
+  if (Date.now() - lastNextActionSweepAt >= NEXT_ACTION_SWEEP_EVERY_MS) {
+    lastNextActionSweepAt = Date.now();
+    const swept = await step("next_action_sweep", "Next-action sweep", () => runNextActionSweep(), (r) => r.length);
+    if (swept?.length) console.log(`[worker] Next-action tasks created: ${swept.length}.`);
+  }
+
   // E2: the AI's queued WhatsApp sends (its emails go through runEmailOutbound above), behind AGENT_RUNNER_ENABLED.
   const aiSends = await step("agent_sends", "AI sends", () => runAgentSends(env.AGENT_RUNNER_ENABLED, { dryRun: env.WORKER_DRY_RUN }), (r) => r.length);
   if (aiSends?.length) console.log(`[worker] AI WhatsApp sends: ${aiSends.map((s) => s.result).join(", ")}.`);
@@ -269,6 +277,8 @@ async function tick(): Promise<void> {
 const decisionModel = createOpenAIDecisionModel();
 const HEALTH_ALERTS_EVERY_MS = 15 * 60_000;
 let lastHealthAlertsAt = 0;
+const NEXT_ACTION_SWEEP_EVERY_MS = 15 * 60_000;
+let lastNextActionSweepAt = 0;
 // A loop is healthy while it finishes at least this often (the tick runs every poll interval; an AI tick can take a while).
 const EXPECTED_LOOP_SECONDS = Math.max(60, Math.ceil(env.WORKER_POLL_INTERVAL_MS / 1000) * 2);
 
