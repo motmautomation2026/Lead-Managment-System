@@ -196,12 +196,13 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
     }
   } else {
     await db.query(`update public.agent_decisions set send_status = 'failed', send_error = $2 where id = $1`, [decisionId, outcome.reason.slice(0, 1000)]);
-    await db.query(
-      `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-       select l.workspace_id, l.owner_id, $2, $3, 'warning', l.id, '/contacts/' || l.id
-         from public.leads l where l.id = $1 and l.owner_id is not null`,
-      [d.lead_id, `AI message to ${await leadName(db, d.lead_id)} failed`.slice(0, 300), outcome.reason.slice(0, 300)],
-    );
+    // LL-2 rule 5 (LL-1 rule 1): the owner if an active member, else the workspace's active admins.
+    const { notifyResponsible } = await import("./nextAction.service.js"); // dynamic: nextAction.service imports this module
+    await notifyResponsible(db, d.workspace_id, d.lead_id, {
+      title: `AI message to ${await leadName(db, d.lead_id)} failed`.slice(0, 300),
+      detail: outcome.reason.slice(0, 300),
+      kind: "warning",
+    });
   }
 }
 

@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
+import { firstCallDueAt } from "../../src/domain/reminders.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -111,12 +112,15 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
 
     const tasks = (await pool.query(`select title, owner_id, status, task_type, due_at from public.tasks where lead_id = $1`, [leadId])).rows;
     expect(tasks).toEqual([{ title: "First call", owner_id: null, status: "open", task_type: "call", due_at: expect.any(Date) }]);
-    // E3b-1 rule 4: call a website lead within the hour.
-    const dueIn = tasks[0].due_at.getTime() - Date.now();
-    expect(dueIn).toBeGreaterThan(55 * 60_000);
-    expect(dueIn).toBeLessThanOrEqual(60 * 60_000);
+    // LL-2 rule 2: 1 working hour after creation (Mon–Sat 09:30–19:00 IST).
+    const expectedDue = firstCallDueAt(new Date()).getTime();
+    expect(Math.abs(tasks[0].due_at.getTime() - expectedDue)).toBeLessThan(5 * 60_000);
 
-    const notifications = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2 and title = 'New website lead — call within 1 hour'`, [leadId, actor.id]);
+    // LL-2 rule 3: an urgent alert, also emailed (email_status pending until the worker's staff-alert step).
+    const notifications = await pool.query(
+      `select 1 from public.notifications where lead_id = $1 and recipient_id = $2 and title = 'New website lead — call within 1 working hour' and email_status = 'pending'`,
+      [leadId, actor.id],
+    );
     expect(notifications.rowCount).toBe(1);
 
     const runs = await pool.query(`select 1 from public.workflow_runs where lead_id = $1`, [leadId]);

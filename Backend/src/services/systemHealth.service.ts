@@ -33,6 +33,7 @@ export const WORKER_LOOPS = {
   agent_tick: { critical: true },
   health_alerts: { critical: false },
   next_action_sweep: { critical: false },
+  task_reminders: { critical: true },
   whatsapp_managers: { critical: true },
 } as const;
 export type WorkerLoop = keyof typeof WORKER_LOOPS;

@@ -72,8 +72,9 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
       const claimed = await db.query(`update public.tasks set escalated_at = now() where id = $1 and escalated_at is null and status = 'open' returning id`, [c.id]);
       if (!claimed.rowCount) return false;
       await db.query(
-        `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-         select $1, a.user_id, $2, $3, 'warning', $4, $5 from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
+        // LL-2 rule 3: a task escalated to the admins is also emailed (email_status pending).
+        `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href, email_status)
+         select $1, a.user_id, $2, $3, 'warning', $4, $5, 'pending' from (${WORKSPACE_ADMIN_IDS_SQL}) a`,
         [c.workspace_id, c.owner_id ? `${c.rep_name ?? "The owner"} hasn't answered ${name}'s reply yet (2 h)` : `Nobody has answered ${name}'s reply yet (2 h, no owner)`, "The reply task is still open 2 working hours after the reply.", c.lead_id, `/contacts/${c.lead_id}`],
       );
       return true;
@@ -84,8 +85,9 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
 }
 
 /**
- * Meetings 2–30 days past (older ones are history, not a reminder) with no outcome and not cancelled /
- * no-show / failed. The marker is set in the same transaction as the task, so it is once per meeting.
+ * Meetings that ended 2 hours ago (LL-2 rule 4; was 2 days) up to 30 days past (older ones are history, not a
+ * reminder) with no outcome and not cancelled / no-show / failed. The marker is set in the same transaction as
+ * the task, so it is once per meeting.
  */
 export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } = {}): Promise<string[]> {
   return withTransaction(async (db) => {
@@ -99,7 +101,7 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
             from: "public.meetings x join public.agent_settings rs on rs.workspace_id = x.workspace_id and x.created_at >= rs.reminders_since",
             where: `x.outcome is null and x.outcome_task_created_at is null
             and x.status::text not in ('cancelled', 'no_show', 'failed')
-            and x.scheduled_at < now() - interval '2 days' and x.scheduled_at > now() - interval '30 days'
+            and x.scheduled_at + make_interval(mins => x.duration_minutes) < now() - interval '2 hours' and x.scheduled_at > now() - interval '30 days'
             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
             order: "x.scheduled_at",
             limit: "$2",
@@ -113,7 +115,14 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
     for (const m of meetings) {
       await db.query(`update public.meetings set outcome_task_created_at = now() where id = $1`, [m.id]);
       // LL-1 rule 1: the meeting's (else the lead's) owner if an active member, else unowned + the admins' bell.
-      await createResponsibleTask(db, m.workspace_id, m.lead_id, { type: "follow_up", title: MEETING_OUTCOME_TASK_TITLE, dueAt: endOfIstDay(), ownerHint: m.owner_id });
+      // LL-2 rule 4: with a bell to the responsible person(s) (an unowned task already told the admins).
+      await createResponsibleTask(
+        db,
+        m.workspace_id,
+        m.lead_id,
+        { type: "follow_up", title: MEETING_OUTCOME_TASK_TITLE, dueAt: endOfIstDay(), ownerHint: m.owner_id },
+        { title: `Log the meeting outcome: ${m.title}`.slice(0, 300), kind: "info", href: `/contacts/${m.lead_id}` },
+      );
     }
     return meetings.map((m) => m.id);
   });

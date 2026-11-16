@@ -53,15 +53,26 @@ export interface Bell {
   detail?: string | null;
   kind?: NotificationKind;
   href?: string;
+  /** LL-2 rule 3: an urgent alert, also emailed to each recipient (batched per person per tick). */
+  email?: boolean;
 }
 
 /** One bell per recipient (same insert as every other bell). */
 export async function notifyUsers(db: Queryable, workspaceId: string, recipients: string[], leadId: string | null, bell: Bell): Promise<void> {
   if (!recipients.length) return;
   await db.query(
-    `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-     select $1, r, $3, $4, $5, $6, $7 from unnest($2::uuid[]) r`,
-    [workspaceId, [...new Set(recipients)], bell.title, bell.detail ?? null, bell.kind ?? "info", leadId, bell.href ?? (leadId ? `/contacts/${leadId}` : null)],
+    `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href, email_status)
+     select $1, r, $3, $4, $5, $6, $7, $8 from unnest($2::uuid[]) r`,
+    [
+      workspaceId,
+      [...new Set(recipients)],
+      bell.title,
+      bell.detail ?? null,
+      bell.kind ?? "info",
+      leadId,
+      bell.href ?? (leadId ? `/contacts/${leadId}` : null),
+      bell.email ? "pending" : null,
+    ],
   );
 }
 

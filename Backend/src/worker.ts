@@ -22,6 +22,7 @@ import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.service.js";
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runNextActionSweep } from "./services/nextAction.service.js";
+import { runTaskReminders } from "./services/taskReminders.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runLeadScoreSweep } from "./services/leadScore.service.js";
@@ -251,6 +252,12 @@ async function tick(): Promise<void> {
   if (escalated?.length) console.log(`[worker] Reply tasks escalated: ${escalated.length}.`);
   const outcomeTasks = await step("meeting_outcome_tasks", "Meeting outcome tasks", () => runMeetingOutcomeTasks(), (r) => r.length);
   if (outcomeTasks?.length) console.log(`[worker] Meeting outcome tasks: ${outcomeTasks.length}.`);
+
+  // LL-2 rule 2: "due" bells (batched per person) and the admins' overdue / first-call escalation.
+  const taskReminders = await step("task_reminders", "Task reminders", () => runTaskReminders(), (r) => r.due.length + r.escalated.length);
+  if (taskReminders && taskReminders.due.length + taskReminders.escalated.length) {
+    console.log(`[worker] Task reminders: ${taskReminders.due.length} due, ${taskReminders.escalated.length} escalated.`);
+  }
 
   // P7: at most every 15 min, one admin notification per workspace per IST day per red problem.
   if (Date.now() - lastHealthAlertsAt >= HEALTH_ALERTS_EVERY_MS) {

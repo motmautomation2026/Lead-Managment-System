@@ -9,6 +9,7 @@ import type { RevenueRange } from "../domain/revenue.js";
 import { createTask } from "./tasks.service.js";
 import { autoEnroll } from "./runs.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { FIRST_CALL_TITLE, firstCallDueAt } from "../domain/reminders.js";
 
 export type IngestOutcome =
   | { status: "created"; leadId: string }
@@ -76,19 +77,19 @@ async function findExistingLead(db: Queryable, workspaceId: string, form: Normal
  * Notifies the lead's owner when it has one (and is active), otherwise every
  * active member of the workspace (E4b rule 6) so an unassigned lead is still seen.
  */
-async function notifyAboutLead(db: Queryable, workspaceId: string, leadId: string, ownerId: string | null, title: string, detail: string) {
+async function notifyAboutLead(db: Queryable, workspaceId: string, leadId: string, ownerId: string | null, title: string, detail: string, email = false) {
   const result = await db.query(
-    `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-     select $1, p.id, $2, $3, 'info'::public.notification_kind, $4, $5
+    `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href, email_status)
+     select $1, p.id, $2, $3, 'info'::public.notification_kind, $4, $5, $7
        from public.profiles p
       where p.is_active = true
         and (case when $6::uuid is null
                   then exists (select 1 from public.workspace_members m where m.workspace_id = $1 and m.user_id = p.id)
                   else p.id = $6::uuid end)`,
-    [workspaceId, title, detail, leadId, `/leads/${leadId}`, ownerId],
+    [workspaceId, title, detail, leadId, `/leads/${leadId}`, ownerId, email ? "pending" : null],
   );
   // The owner was deactivated: tell everyone instead.
-  if (ownerId && !result.rowCount) await notifyAboutLead(db, workspaceId, leadId, null, title, detail);
+  if (ownerId && !result.rowCount) await notifyAboutLead(db, workspaceId, leadId, null, title, detail, email);
 }
 
 function displayName(form: NormalizedWebsiteForm): string {
@@ -206,13 +207,14 @@ export async function ingestWebsiteLead(db: Queryable, workspaceId: string, raw:
     ownerId: owner.ownerId,
     ownerName: owner.ownerName,
     type: "call",
-    title: "First call",
-    // E3b-1 rule 4 (speed to lead): call a website lead within the hour.
-    dueAt: new Date(Date.now() + 3_600_000).toISOString(),
+    title: FIRST_CALL_TITLE,
+    // LL-2 rule 2: 1 working hour after creation (Saturday 22:00 → Monday 10:30); escalated 1 working hour after that.
+    dueAt: firstCallDueAt(new Date()).toISOString(),
     origin: "manual",
   });
 
-  await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead — call within 1 hour", `${displayName(form)} (${form.company}) submitted the website form.`);
+  // LL-2 rule 3: an urgent alert (also emailed).
+  await notifyAboutLead(db, workspaceId, leadId, owner.ownerId, "New website lead — call within 1 working hour", `${displayName(form)} (${form.company}) submitted the website form.`, true);
   // LL-1 rule 5: like a manual/CSV lead, the published lead_created workflow (none → a quiet no-op). A live AI
   // contact is never enrolled (autoEnroll skips it; becoming live later cancels the run).
   await autoEnroll(db, workspaceId, leadId, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (website form)");
