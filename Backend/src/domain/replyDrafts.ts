@@ -1,7 +1,8 @@
 import type { ReplyChannel, ReplyLabel } from "../agent/replyClassification.js";
 import type { AgentMode } from "../agent/rules.js";
 import { wordCount } from "../agent/messageChecks.js";
-import { nextWindowTime, type SendWindow } from "./whatsappSafety.js";
+import type { SendWindow } from "./whatsappSafety.js";
+import { addWorkingTime, nextWorkingSlot } from "./workingTime.js";
 
 /**
  * E3b-2a: reply drafts for reps and the 2-hour escalation. Pure: no I/O, `now` is passed in.
@@ -97,35 +98,13 @@ export function replySendProblem(state: ContactSendState, body: string, limits: 
 
 /** When a queued reply may go: now inside the send window, else the window's next opening (shown as "Will send at …"). */
 export function replySendAt(now: Date, window: SendWindow): Date {
-  return nextWindowTime(now, window, () => 0);
+  return nextWorkingSlot(now, window);
 }
 
-// --- Rule 5: working hours (the workspace send window, IST) ---------------------------
+// --- Rule 5: working hours (LL-2: one shared definition, domain/workingTime.ts) ---------------
 
-const IST_OFFSET_MS = 330 * 60_000;
-const DAY_MS = 24 * 3_600_000;
+export { addWorkingTime };
 export const ESCALATION_WORKING_MS = 2 * 3_600_000;
-
-/** The window's closing time on the IST day of `at`. */
-function windowEndOn(at: Date, window: SendWindow): Date {
-  const [h = 0, m = 0] = window.end.split(":").map(Number);
-  const istMidnight = Math.floor((at.getTime() + IST_OFFSET_MS) / DAY_MS) * DAY_MS - IST_OFFSET_MS;
-  return new Date(istMidnight + (h * 60 + m) * 60_000);
-}
-
-/** `from` plus `ms` of working time (only inside the send window: its days and hours, IST). */
-export function addWorkingTime(from: Date, ms: number, window: SendWindow): Date {
-  let at = replySendAt(from, window);
-  let left = ms;
-  for (let guard = 0; guard < 400; guard++) {
-    const end = windowEndOn(at, window);
-    const available = end.getTime() - at.getTime();
-    if (left <= available) return new Date(at.getTime() + left);
-    left -= Math.max(available, 0);
-    at = replySendAt(new Date(end.getTime() + 1), window);
-  }
-  return at;
-}
 
 /** Rule 5: a reply task created at `createdAt` is escalated once 2 working hours have passed. */
 export function escalationDue(createdAt: Date, now: Date, window: SendWindow): boolean {
