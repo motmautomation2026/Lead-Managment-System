@@ -30,3 +30,32 @@ only when it passed; a failure is fixed or reported in INT-1, never skipped.
    `followUpAiStop`, the meeting/task check in `rescheduleAfterMeeting`, and the `unnest` notification insert in `notifyUsers`.
    The sweep should use `leads_next_action_sweep_idx` and `tasks_lead_open_idx`.
 7. [ ] One worker tick on staging with the worker running (`next_action_sweep` heartbeat appears in Settings → System health).
+
+## LL-2 — reminders, escalation and staff email (commits `faae0b1`, `7703b02`, `9f11515`, `5f14906` + docs)
+
+1. [ ] Apply `Supabase/migrations/059_reminders_escalation.sql` to staging after 058; run it a second time (re-runnable); then
+   `npm run db:security-check` (new table `meeting_reminders`: RLS on, no policies — must stay green).
+2. [ ] New integration files: `tests/integration/taskReminders.test.ts` (due bells batched + once, closed task / DNC → nothing,
+   overdue → admins emailed once, reply task not escalated, first-call escalation, rollout guard, AI-failure bell → admins),
+   `tests/integration/meetingReminders.test.ts` (24 h email queued as `meeting_reminder` + no AI touch / wake-up, 1 h rep bell + setting
+   off, booked < 1 h / DNC → nothing, PATCH reschedule → cancelled + `reminders_from` reset, outcome task 2 h after the end) and
+   `tests/integration/staffAlerts.test.ts` (`/me` toggles + 400 on empty PATCH, two bells → one email + `sent` + nothing in
+   `email_outbound_messages`, no mailbox → one admin warning, admin Users toggle). Check the test helpers' raw inserts
+   (`whatsapp_numbers`, `agent_decisions`) against the real columns and fix them if needed.
+3. [ ] Changed expectations: `leadIngest.test.ts` (first call due 1 working hour, bell title "… within 1 working hour",
+   `email_status = 'pending'`). Likely affected by the shared changes, run and fix: `agentLive` / `agentRunner` (handoff now always
+   bells the responsible person + email), `nextActionDirectFixes` (handoff bell title "<name>: AI handed off — please follow up"),
+   `workReminders` / `replyDrafts` (meeting outcome task after 2 h, not 2 days; reply escalation `email_status`), `agentSettings` API
+   (new `meetingRemindersEnabled`), `emailOutbound` (source `meeting_reminder`), `whatsappSafety` / Baileys send tests (6th source in
+   `whatsapp_outbound_exactly_one_source`), `meProfile` / admin users tests (PATCH `/me` now partial; `{}` → 400).
+4. [ ] The full staging suite (`npm run test:integration:staging`) twice in a row.
+5. [ ] SQL to verify with `explain (analyze)` on the load-seeded data (P7: < 500 ms per batch, no sequential scan on a table > 10,000
+   rows): `taskReminders.service.ts` `DUE_CANDIDATES_SQL`, `ESCALATION_CANDIDATES_SQL` (expect `tasks_due_reminder_idx` /
+   `tasks_overdue_escalation_idx`), `CLAIM_*`; `meetingReminders.service.ts` `PLAN_CANDIDATES_SQL` (`meetings_upcoming_idx`),
+   `CLAIM_WHATSAPP_SQL`, `RESET_REMINDERS_SQL`; `staffAlerts.service.ts` `CLAIM_ALERTS_SQL` (`notifications_email_pending_idx`),
+   `DIGEST_CANDIDATES_SQL` (per-member counts), `WARN_NO_MAILBOX_SQL`; the changed `runMeetingOutcomeTasks` window.
+6. [ ] One worker tick with the worker running and `WORKER_DRY_RUN=true`: heartbeats `task_reminders`, `meeting_reminders`,
+   `meeting_reminder_whatsapp`, `staff_alert_emails`, `morning_digest` appear in Settings → System health; staff emails log
+   "DRY RUN" and are marked `skipped`.
+7. [ ] With a real staging mailbox and `WORKER_DRY_RUN` off, one staff alert email and one digest to a test user's inbox (check: no
+   List-Unsubscribe header, no pixel, links open the CRM via `APP_BASE_URL`).

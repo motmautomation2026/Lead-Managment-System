@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `058`).
+  (currently `059`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `058`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `059`).
 
 ## Way of working
 
@@ -136,7 +136,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1 and LL-1) is in `docs/HISTORY.md`; read it for details of a past phase.
+Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1 and LL-2) is in `docs/HISTORY.md`; read it for details of a past phase.
 Integration checks owed by phases run without staging: `docs/crm-v2/INT-1-owed.md`.
 
 ## Safety net (LL-1)
@@ -149,8 +149,26 @@ Integration checks owed by phases run without staging: `docs/crm-v2/INT-1-owed.m
   unowned task and the workspace's active admins get the bell. Use `createResponsibleTask` / `notifyResponsible`; never add a new
   owner-only bell (`if (lead.owner_id) insert into notifications …`).
 - Paths that end automation leave a task at once (not only through the sweep): AI stop (every reason), any matched reply, an
-  unassigned handoff, a cancelled / no-show / failed meeting; website leads are enrolled in the `lead_created` workflow. Staff alerts
-  are in-app only (email to reps: LL-2).
+  unassigned handoff, a cancelled / no-show / failed meeting; website leads are enrolled in the `lead_created` workflow.
+
+## Reminders, escalation and staff email (LL-2)
+
+- Working time = Mon–Sat 09:30–19:00 IST, no Sundays, no holidays: `domain/workingTime.ts` (`WORKING_TIME` = `DEFAULT_SEND_WINDOW`,
+  `addWorkingTime`, `nextWorkingSlot`, `lastWorkingSlotAtOrBefore`). Never write another working-hours helper.
+- Tasks (worker `task_reminders`, SQL only in `services/taskReminders.service.ts`): due bell once (`tasks.due_notified_at`, batched per
+  person per tick); admins' escalation once (`tasks.escalated_at`): 1 working day overdue, website "First call" 1 working hour after due
+  (due itself = 1 working hour after creation). Reply tasks only ever get their own 2-hour escalation. Never for closed tasks or
+  DNC / terminal / merged leads; only tasks due after `agent_settings.task_reminders_since`.
+- Meeting reminders and the "Updated: …" confirmation are **service messages** (SQL only in `services/meetingReminders.service.ts`): rows
+  in `meeting_reminders` (the once-only marker; a new time = new rows), email source / WhatsApp source `meeting_reminder` with the
+  `meeting` safety rules (no send window; spacing, caps, warm-up, pause, opt-out, DNC still apply); never AI touches, never a wake-up,
+  never a `message_facts` row. Texts are fixed (`domain/reminders.ts`), never AI. `agent_settings.meeting_reminders_enabled` (default on).
+- Staff alerts: an urgent bell sets `notifications.email_status = 'pending'` (`Bell.email` in `notifyUsers`); the worker's
+  `staff_alert_emails` sends one email per person per tick and `morning_digest` one per member per IST day (SQL only in
+  `services/staffAlerts.service.ts`), through the workspace mailbox's SMTP **directly** — never `enqueueEmail` /
+  `email_outbound_messages` (lead limits, stats, facts and timelines stay lead-only), no List-Unsubscribe, no pixel, to the login email,
+  only with `profiles.email_alerts_enabled` / `email_digest_enabled`. No mailbox → bell only + one admin warning. Never WhatsApp to staff.
+  `APP_BASE_URL` (worker, optional; else the first `CORS_ORIGINS`) builds the links.
 
 ## Scale, fair ticks and system health (P7)
 
@@ -458,8 +476,8 @@ Integration checks owed by phases run without staging: `docs/crm-v2/INT-1-owed.m
   status, re-check before sending); it marks the reply task done; one send per draft.
 - Escalation (E3b-2a, `services/workReminders.service.ts`, every tick, no flag): a reply task still open 2 working hours after it
   was created (working hours = the workspace's `agent_settings` send window, IST) → one notification to the admins, once
-  (`tasks.escalated_at`), at most 20 per workspace per tick. A meeting 2–30 days past with no outcome → one owner task "Log the
-  meeting outcome" (`meetings.outcome_task_created_at`). Both only for tasks / meetings created at or after
+  (`tasks.escalated_at`), at most 20 per workspace per tick. A meeting that ended 2 hours ago (LL-2; up to 30 days past) with no
+  outcome → one task + bell "Log the meeting outcome" for the responsible person (`meetings.outcome_task_created_at`). Both only for tasks / meetings created at or after
   `agent_settings.reminders_since` (migration 052's apply time: no old-task flood on deploy).
 - Meeting recap (E3b-2a): when the meeting notes say the lead is deciding or consulting someone (`leadIsDeciding`), the angle is
   `meeting_recap_deciding` (not a call angle: no suggested days, no booking line); "as agreed" / "as discussed" need an agreement

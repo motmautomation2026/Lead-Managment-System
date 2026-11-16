@@ -917,3 +917,22 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   `emailInbound`, `replyClassification` — all owed to INT-1 (`docs/crm-v2/INT-1-owed.md`). **Production:** apply 058 (indexes:
   `create index concurrently` by hand first on a big table), run `npm run ll:sweep -- --dry-run` and decide whether to move
   `next_action_sweep_since` before the worker is deployed.
+- **LL-2 (reminders, escalation and staff email; branch `ui-redesign`, local only; migration 059 written, NOT applied; no OpenAI call;
+  the only messages to leads are fixed-text meeting reminders / "Updated" confirmations):** Item 1: migration 059 + pure
+  `domain/workingTime.ts` (Mon–Sat 09:30–19:00 IST = `DEFAULT_SEND_WINDOW`, the one definition; `addWorkingTime` moved there from
+  `replyDrafts`; holidays not supported) and `domain/reminders.ts` (first-call due, due-bell time, escalation kind, reminder schedule,
+  fixed texts). Item 2: worker `task_reminders` — due bells batched per person per tick, admins' escalation of tasks 1 working day
+  overdue and of website first calls 1 working hour after due (once, `tasks.escalated_at` reused; reply tasks keep their 2-hour
+  escalation), website first call due 1 working hour after creation, "AI message failed" bell via rule 1, meeting-outcome task 2 h after
+  the end. Item 3: worker `meeting_reminders` / `meeting_reminder_whatsapp` — lead 24 h / 1 h (email + WhatsApp on the sticky number;
+  `meeting_reminders_enabled`, default on), rep 1 h (bell + email), service messages (`meeting` safety rules, no AI limits, no wake-up,
+  no message fact), reschedule resets reminders and re-sends the confirmation "Updated: …". Item 4: urgent bells also emailed
+  (`notifications.email_status`), worker `staff_alert_emails` (one email per person per tick, workspace mailbox SMTP directly, not the
+  lead queue) + `morning_digest` 09:00 IST; Settings → My profile "Email alerts" (two switches), Users drawer switches, AI limits
+  "Meeting reminders to the lead"; `APP_BASE_URL` (new, optional). Interpretations: a WhatsApp reminder needs the lead's sticky number
+  (no reminder from a number that never talked to them); the 24 h reminder's "last window slot" = 15 min before closing; alerts older than
+  a day are not emailed; "one admin warning" = once per workspace ever; the AI handoff now always bells (was: unowned only); the
+  meeting-reminder setting sits in the AI limits card. Tests: backend unit 1341 → 1398, frontend 572 → 575; integration tests written,
+  **not run** (staging down): `taskReminders`, `meetingReminders`, `staffAlerts`, updated `leadIngest` — owed to INT-1. **Production:**
+  apply 059 before deploying API, worker and frontend (the AI limits Save sends `meetingRemindersEnabled`); staff emails need the
+  workspace's SMTP mailbox (Settings → Email); set `APP_BASE_URL` on the worker; Govinda approves the reminder texts.

@@ -1,6 +1,7 @@
 /**
  * LL-2 pure rules: when a task's "due" bell goes, when an open task escalates to the admins, the first-call
- * due time, when a meeting reminder goes, and the fixed reminder texts (no AI). SQL: services/reminders.service.ts.
+ * due time, when a meeting reminder goes, and the fixed reminder texts (no AI). SQL: services/taskReminders.service.ts,
+ * services/meetingReminders.service.ts.
  */
 import { addWorkingTime, HOUR_MS, isDateOnly, lastWorkingSlotAtOrBefore, MINUTE_MS, nextWorkingSlot, workingDayOpening } from "./workingTime.js";
 
