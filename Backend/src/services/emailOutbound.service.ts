@@ -207,6 +207,8 @@ async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { mess
     await db.query(`update public.meetings set notify_email_status = 'sent', notify_email_sent_at = now(), notify_email_error = null where id = $1`, [row.source_id]);
   } else if (row.source === "reply_draft") {
     await recordReplyDraftOutcome(db, row.source_id, { kind: "sent", providerMessageId: result.messageId, dryRun: result.dryRun });
+  } else if (row.source === "meeting_reminder") {
+    await db.query(`update public.meeting_reminders set status = 'sent', sent_at = now(), error = null where id = $1`, [row.source_id]);
   }
 }
 
@@ -219,6 +221,8 @@ async function onSourceProblem(db: Queryable, row: EmailOutboundRow, status: "pe
     await db.query(`update public.meetings set notify_email_status = $2, notify_email_error = $3 where id = $1`, [row.source_id, status, error]);
   } else if (row.source === "reply_draft") {
     await recordReplyDraftOutcome(db, row.source_id, status === "failed" ? { kind: "failed", reason: error } : { kind: "deferred", until: retryAt ?? new Date(), reason: error });
+  } else if (row.source === "meeting_reminder") {
+    await db.query(`update public.meeting_reminders set status = $2, error = $3 where id = $1`, [row.source_id, status === "failed" ? "failed" : "queued", error]);
   }
 }
 
@@ -297,6 +301,20 @@ async function staleMeetingReason(meetingId: string, now: Date): Promise<string 
   const meeting = (await pool.query<{ status: string; scheduled_at: Date }>(`select status, scheduled_at from public.meetings where id = $1`, [meetingId])).rows[0];
   if (!meeting || meeting.status === "cancelled") return "Meeting was cancelled";
   return meeting.scheduled_at.getTime() <= now.getTime() ? "Meeting time has passed" : null;
+}
+
+/** LL-2: a reminder / "Updated" email is pointless once the meeting is no longer scheduled at the time it names. */
+async function staleReminderReason(reminderId: string, now: Date): Promise<string | null> {
+  const r = (
+    await pool.query<{ meeting_status: string; scheduled_at: Date; meeting_at: Date; status: string }>(
+      `select m.status::text as meeting_status, m.scheduled_at, r.meeting_at, r.status
+         from public.meeting_reminders r join public.meetings m on m.id = r.meeting_id where r.id = $1`,
+      [reminderId],
+    )
+  ).rows[0];
+  if (!r || r.status === "cancelled" || r.meeting_status !== "scheduled") return "Meeting was cancelled";
+  if (r.scheduled_at.getTime() !== r.meeting_at.getTime()) return "Meeting time changed";
+  return r.scheduled_at.getTime() <= now.getTime() ? "Meeting time has passed" : null;
 }
 
 async function downloadAttachment(ref: AttachmentRef): Promise<Buffer> {
@@ -431,6 +449,14 @@ export async function processEmail(row: EmailOutboundRow, deps: EmailOutboundDep
     await withTransaction(async (db) => {
       await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, stale]);
       await db.query(`update public.meetings set notify_email_status = 'skipped', notify_email_error = $2 where id = $1`, [row.source_id, stale]);
+    });
+    return "cancelled";
+  }
+  const staleReminder = row.source === "meeting_reminder" ? await staleReminderReason(row.source_id, now) : null;
+  if (staleReminder) {
+    await withTransaction(async (db) => {
+      await db.query(`update public.email_outbound_messages set status = 'cancelled', last_error = $2 where id = $1`, [row.id, staleReminder]);
+      await db.query(`update public.meeting_reminders set status = 'cancelled', error = $2 where id = $1 and status <> 'cancelled'`, [row.source_id, staleReminder]);
     });
     return "cancelled";
   }

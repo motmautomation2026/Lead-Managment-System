@@ -8,7 +8,8 @@ import { automatedWindow, nextDayWindowTime, nextWindowTime, PAUSED_RETRY_MS, wa
  * inputs; nothing here reads the clock or a DB.
  */
 
-export type EmailSource = "scheduled_action" | "proposal" | "meeting" | "test" | "agent" | "reply_draft";
+/** LL-2: `meeting_reminder` = a meeting reminder / "Updated" confirmation to the lead (a service message like `meeting`). */
+export type EmailSource = "scheduled_action" | "proposal" | "meeting" | "test" | "agent" | "reply_draft" | "meeting_reminder";
 
 export { warmupDayFor, type SendWindow };
 

@@ -7,7 +7,7 @@ import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { MEETING_OUTCOMES, MEETING_STATUSES } from "../domain/enums.js";
 import { getMeetingOr404, listMeetings, recordMeetingOutcome, scheduleMeeting, updateMeeting } from "../services/meetings.service.js";
 import { syncMeetingCancelled, syncMeetingCreated, syncMeetingRescheduled } from "../services/meeting-calendar-sync.service.js";
-import { notifyMeetingScheduled } from "../services/meetingScheduledNotification.service.js";
+import { notifyMeetingScheduled, notifyMeetingUpdated } from "../services/meetingScheduledNotification.service.js";
 import * as work from "../services/workLists.service.js";
 
 export const meetingsRouter = Router();
@@ -87,6 +87,7 @@ meetingsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const patch = parseBody(updateSchema, req.body);
+    const before = await getMeetingOr404(pool, req.workspaceId!, req.params.id!);
     const meeting = await withTransaction((client) => updateMeeting(client, req.actor!, req.workspaceId!, req.params.id!, patch));
     // Same best-effort, non-transactional sync split as the create route.
     if (patch.status === "cancelled") {
@@ -94,6 +95,8 @@ meetingsRouter.patch(
     } else if (patch.at !== undefined || patch.title !== undefined || patch.durationMin !== undefined) {
       await syncMeetingRescheduled(meeting.id);
     }
+    // LL-2 rule 4: a new time → the confirmation again ("Updated: …"); reminders were reset in updateMeeting.
+    if (patch.at !== undefined && Date.parse(patch.at) !== Date.parse(before.at)) await notifyMeetingUpdated(meeting.id);
     res.json(await getMeetingOr404(pool, req.workspaceId!, meeting.id));
   }),
 );

@@ -20,7 +20,7 @@ import { PermanentProviderError, ProviderDeferredError, SendCancelledError } fro
 import { processInboundUpsert } from "../services/whatsapp-inbound.service.js";
 import { disconnectAction, isOutboundRestricted, randomSpacingMs, reconnectDelayMs, type DisconnectAction } from "../domain/baileys-policy.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
-import { decideSend, shouldAutoPause, warmupDayFor } from "../domain/whatsappSafety.js";
+import { decideSend, shouldAutoPause, warmupDayFor, type SafetySource } from "../domain/whatsappSafety.js";
 import { autoPause, loadSendStats, notifyAdmins, recordSafetyEvent } from "../services/whatsappSafety.service.js";
 import { agentSendRecheck } from "../services/agentSendState.service.js";
 import { recordWhatsAppFact } from "../services/messageFacts.service.js";
@@ -54,14 +54,24 @@ export type WhatsAppSendSource =
   /** E2: an AI decision (automated); `id` is the agent_decisions id. */
   | { type: "agent"; id: string }
   /** E3b-2a: a rep's Send of an AI reply draft (send window applies); `id` is the reply_drafts id. */
-  | { type: "reply_draft"; id: string };
+  | { type: "reply_draft"; id: string }
+  /** LL-2: a meeting reminder / "Updated" confirmation (service message: the `meeting` safety rules); `id` is the meeting_reminders id. */
+  | { type: "meeting_reminder"; id: string };
 
-export function sourceColumn(source: WhatsAppSendSource): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" | "reply_draft_id" {
+export function sourceColumn(
+  source: WhatsAppSendSource,
+): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" | "reply_draft_id" | "meeting_reminder_id" {
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
   if (source.type === "agent") return "agent_decision_id";
   if (source.type === "reply_draft") return "reply_draft_id";
+  if (source.type === "meeting_reminder") return "meeting_reminder_id";
   return "meeting_id";
+}
+
+/** LL-2: a meeting reminder is a service message: the rep-initiated `meeting` safety rules (no send window; spacing, caps, warm-up, pause). */
+export function safetySourceOf(source: WhatsAppSendSource): SafetySource {
+  return source.type === "meeting_reminder" ? "meeting" : source.type;
 }
 
 function assertNever(value: never): never {
@@ -161,6 +171,20 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
       const problem = contactSendProblem({ channel: "whatsapp", lifecycleState: row.lifecycle_state, channelStatus: row.whatsapp_status, phoneStatus: row.phone_status, address: row.phone_e164 });
       return problem ? null : row.phone_e164;
     }
+    case "meeting_reminder": {
+      // LL-2: still claimed, the meeting still scheduled at the reminder's time and not started, not DNC / merged / opted out.
+      const result = await db.query<{ phone_e164: string | null }>(
+        `select l.phone_e164
+           from public.meeting_reminders r
+           join public.meetings m on m.id = r.meeting_id and m.status = 'scheduled' and m.scheduled_at = r.meeting_at and m.scheduled_at > now()
+           join public.leads l on l.id = r.lead_id
+          where r.id = $1 and r.workspace_id = $2 and r.status = 'sending'
+            and l.lifecycle_state not in ('do_not_contact', 'merged') and ${NOT_OPTED_OUT}
+          for update of r, l`,
+        [source.id, workspaceId],
+      );
+      return result.rows[0]?.phone_e164 ?? null;
+    }
     default:
       return assertNever(source);
   }
@@ -184,6 +208,9 @@ export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSend
       break;
     case "reply_draft":
       table = "public.reply_drafts";
+      break;
+    case "meeting_reminder":
+      table = "public.meeting_reminders";
       break;
     default:
       return assertNever(source);
@@ -774,7 +801,7 @@ export class BaileysManager {
       if (signal && (await autoPause(db, this.workspaceId, this.numberId, signal))) paused = true;
       const now = this.clock();
       const decision = decideSend({
-        source: input.source.type,
+        source: safetySourceOf(input.source),
         now,
         window: { days: control.send_window_days, start: control.send_window_start, end: control.send_window_end },
         dailyCap: control.daily_cap,

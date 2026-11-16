@@ -23,6 +23,7 @@ import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.servi
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runTaskReminders } from "./services/taskReminders.service.js";
+import { claimReminderWhatsappSends, processReminderWhatsappSend, runMeetingReminders } from "./services/meetingReminders.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
 import { runLeadScoreSweep } from "./services/leadScore.service.js";
@@ -208,6 +209,21 @@ async function tick(): Promise<void> {
       );
     }
     return queuedMeetings.length;
+  }, (n) => n);
+
+  // LL-2 rule 4: plan due meeting reminders (lead 24 h / 1 h, rep 1 h), then send the queued WhatsApp ones.
+  const planned = await step("meeting_reminders", "Meeting reminders", () => runMeetingReminders(), (n) => n);
+  if (planned) console.log(`[worker] Meeting reminders planned: ${planned}.`);
+  await step("meeting_reminder_whatsapp", "Meeting reminder WhatsApp sends", async () => {
+    const queued = await withTransaction((client) => claimReminderWhatsappSends(client, env.WORKER_BATCH_SIZE));
+    await Promise.allSettled(
+      queued.map((row) =>
+        processReminderWhatsappSend(row, { dryRun: env.WORKER_DRY_RUN }).catch((err) => {
+          console.error(`[worker] Unexpected error processing meeting reminder ${row.id}:`, err);
+        }),
+      ),
+    );
+    return queued.length;
   }, (n) => n);
 
   // Knowledge-base ingestion: at most 2 documents per tick (extraction and

@@ -41,6 +41,7 @@ interface SettingsRow {
   live_since: Date | null;
   readiness_since: Date | null;
   current_playbook_version: number | null;
+  meeting_reminders_enabled: boolean;
   updated_by: string | null;
   updated_at: Date;
 }
@@ -73,6 +74,7 @@ const COLUMNS: Record<keyof SettingsUpdate, keyof SettingsRow> = {
   targetIndustryKeywords: "target_industry_keywords",
   styleExamples: "style_examples",
   firstChannel: "first_channel",
+  meetingRemindersEnabled: "meeting_reminders_enabled",
 };
 
 /** How long the off → shadow switch spreads the first wakeups of already-active leads. */
@@ -111,6 +113,7 @@ function settingsToDto(row: SettingsRow, activeLeadCount: number, liveContactCou
     readinessSince: row.readiness_since?.toISOString() ?? null,
     liveContactCount,
     currentPlaybookVersion: row.current_playbook_version,
+    meetingRemindersEnabled: row.meeting_reminders_enabled,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at.toISOString(),
     activeLeadCount,

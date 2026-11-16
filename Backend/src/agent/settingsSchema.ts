@@ -74,6 +74,8 @@ export const settingsUpdateSchema = z
     companyDisplayName: z.string().trim().min(1, "Can't be blank.").max(120).nullable(),
     // E3b-1 rule 3: the channel of a contact's first AI message when both are usable.
     firstChannel: z.enum(["whatsapp", "email"]),
+    // LL-2 rule 4: 24 h + 1 h meeting reminders to the lead (fixed text; default on).
+    meetingRemindersEnabled: z.boolean(),
   })
   .partial()
   .superRefine((value, ctx) => {

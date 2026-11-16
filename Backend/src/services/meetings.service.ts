@@ -288,7 +288,19 @@ export async function updateMeeting(db: Queryable, actor: Actor, workspaceId: st
         : null;
   if (agentEvent) await onAgentEvent(db, { workspaceId, leadId: current.lead_id, event: agentEvent, payload: { meetingId: id } });
 
+  // LL-2 rule 4: a new time cancels the reminders queued for the old one and plans them again from now
+  // (the route then sends the "Updated: …" confirmation).
+  if (meetingTimeChanged(current, patch)) {
+    const { resetMeetingReminders } = await import("./meetingReminders.service.js");
+    await resetMeetingReminders(db, id);
+  }
+
   return getMeetingOr404(db, workspaceId, id);
+}
+
+/** LL-2: the PATCH moved the meeting's time (the reschedule that resets reminders and re-sends the confirmation). */
+export function meetingTimeChanged(current: Pick<MeetingRow, "scheduled_at">, patch: Pick<UpdateMeetingInput, "at">): boolean {
+  return patch.at !== undefined && Date.parse(patch.at) !== current.scheduled_at.getTime();
 }
 
 /**

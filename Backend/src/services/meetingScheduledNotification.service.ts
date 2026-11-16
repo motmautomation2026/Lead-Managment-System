@@ -116,6 +116,48 @@ export async function notifyMeetingScheduled(meetingId: string): Promise<void> {
   ]);
 }
 
+export const UPDATED_PREFIX = "Updated: ";
+
+/**
+ * LL-2 rule 4 (reschedule): the confirmation again, same default templates and channels as notifyMeetingScheduled,
+ * worded "Updated: …", as `meeting_reminders` rows of kind `updated` (the meeting's own confirmation source is used
+ * once). Only for a still-scheduled future meeting of a lead that isn't DNC; WhatsApp also not when opted out
+ * (re-checked at send). Best-effort — never throws.
+ */
+export async function notifyMeetingUpdated(meetingId: string, now = new Date()): Promise<void> {
+  try {
+    const meeting = await getMeetingRowById(meetingId);
+    if (meeting.status !== "scheduled" || meeting.scheduled_at.getTime() <= now.getTime()) return;
+    const lead = await getLeadRowOr404(pool, meeting.workspace_id, meeting.lead_id);
+    if (lead.lifecycle_state === "do_not_contact" || lead.lifecycle_state === "merged") return;
+    const { insertUpdatedReminder } = await import("./meetingReminders.service.js");
+
+    const emailTemplate = lead.email ? await getDefaultTemplate(meeting.workspace_id, "email") : null;
+    if (emailTemplate && lead.email) {
+      const rendered = renderTemplate(emailTemplate, toRenderLead(lead), toRenderMeeting(meeting));
+      const id = await insertUpdatedReminder(pool, meeting, "email", null);
+      if (id) {
+        await enqueueEmail(pool, {
+          workspaceId: meeting.workspace_id,
+          source: "meeting_reminder",
+          sourceId: id,
+          leadId: lead.id,
+          to: lead.email,
+          subject: `${UPDATED_PREFIX}${rendered.subject?.trim() || emailTemplate.name}`,
+          html: rendered.body,
+        });
+      }
+    }
+    const whatsappTemplate = lead.phone_e164 ? await getDefaultTemplate(meeting.workspace_id, "whatsapp") : null;
+    if (whatsappTemplate) {
+      const rendered = renderTemplate(whatsappTemplate, toRenderLead(lead), toRenderMeeting(meeting));
+      await insertUpdatedReminder(pool, meeting, "whatsapp", `${UPDATED_PREFIX}${htmlToWhatsAppText(rendered.body)}`);
+    }
+  } catch (err) {
+    console.error(`[meetings] Updated confirmation for ${meetingId} failed: ${err instanceof Error ? err.name : "error"}`);
+  }
+}
+
 /** SKIP LOCKED claim with a 15-minute reclaim of stuck 'sending' rows, mirroring claimQueuedProposalWhatsappSends. */
 export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: number): Promise<MeetingRow[]> {
   const claimed = await db.query<MeetingRow>(

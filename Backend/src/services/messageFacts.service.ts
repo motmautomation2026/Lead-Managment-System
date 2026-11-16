@@ -24,13 +24,17 @@ export async function recordEmailFact(db: Queryable, emailOutboundId: string): P
      select x.workspace_id, x.lead_id, ${SOURCE_SQL("x.source")}, 'email', d.id, x.id, d.stage_key, d.angle, ${MESSAGE_NUMBER}, x.sent_at
        from public.email_outbound_messages x
        left join public.agent_decisions d on x.source = 'agent' and d.id = x.source_id
-      where x.id = $1 and x.status = 'sent' and not x.dry_run and x.lead_id is not null and x.source <> 'test'
+      -- LL-2: meeting reminders are service messages: no fact (they would take a reply's last-touch credit).
+      where x.id = $1 and x.status = 'sent' and not x.dry_run and x.lead_id is not null and x.source not in ('test', 'meeting_reminder')
      on conflict do nothing`,
     [emailOutboundId],
   );
 }
 
-/** Inside performSend's transaction, right after the row became `sent` (every WhatsApp source). */
+/**
+ * Inside performSend's transaction, right after the row became `sent` (every WhatsApp source). LL-2: a meeting
+ * reminder (meeting_reminder_id) joins no source, so its lead is null and it records no fact (service message).
+ */
 export async function recordWhatsAppFact(db: Queryable, whatsappOutboundId: string): Promise<void> {
   await db.query(
     `insert into public.message_facts (workspace_id, lead_id, source, channel, agent_decision_id, whatsapp_outbound_id, stage_key, angle, message_number, whatsapp_connection_id, whatsapp_number_id, sent_at)
