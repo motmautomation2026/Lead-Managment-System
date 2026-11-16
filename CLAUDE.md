@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `057`).
+  (currently `058`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `057`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `058`).
 
 ## Way of working
 
@@ -136,7 +136,21 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1) is in `docs/HISTORY.md`; read it for details of a past phase.
+Every completed phase (0A … E3b-1b and later, incl. UX-1 and LL-1) is in `docs/HISTORY.md`; read it for details of a past phase.
+Integration checks owed by phases run without staging: `docs/crm-v2/INT-1-owed.md`.
+
+## Safety net (LL-1)
+
+- A lead is never lost: an `active` / `long_term_nurture` lead always has an open task, a future meeting, a runnable workflow step or a
+  live AI that can still send (pure rule `domain/nextAction.ts` `needsNextAction`; SQL only in `services/nextAction.service.ts`). The
+  worker's `next_action_sweep` (every 15 min, ≤ 200 per workspace, fair) creates the missing task + one batched bell per person;
+  only for leads with activity since `agent_settings.next_action_sweep_since` (migration 058). `npm run ll:sweep -- --dry-run` sizes it.
+- Responsible person (rule 1, everywhere a task or bell goes to "the owner"): the owner if an active member of the workspace, else an
+  unowned task and the workspace's active admins get the bell. Use `createResponsibleTask` / `notifyResponsible`; never add a new
+  owner-only bell (`if (lead.owner_id) insert into notifications …`).
+- Paths that end automation leave a task at once (not only through the sweep): AI stop (every reason), any matched reply, an
+  unassigned handoff, a cancelled / no-show / failed meeting; website leads are enrolled in the `lead_created` workflow. Staff alerts
+  are in-app only (email to reps: LL-2).
 
 ## Scale, fair ticks and system health (P7)
 

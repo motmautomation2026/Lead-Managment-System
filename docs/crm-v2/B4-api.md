@@ -615,6 +615,20 @@ No new endpoint; two small changes behind the call queue and the Replies queue (
 The call queue's Undo never needs a reverse endpoint: the outcome is only sent after the 6 s Undo window (leaving the page sends
 it at once).
 
+## 7x. Safety net — LL-1
+
+No new endpoint. A worker step, a workspace setting, a CLI and new task/bell behaviour (all SQL in
+`services/nextAction.service.ts`; pure rules in `domain/nextAction.ts`).
+
+| Change | Where | Notes |
+|---|---|---|
+| `agent_settings.next_action_sweep_since` (timestamptz, not null, default now) | migration 058 | The sweep only looks at leads with activity at or after it: `last_activity_at`, `agent_status_changed_at` or a task closed (`updated_at`, status ≠ open). Existing workspaces: the time 058 was applied; new ones: their creation time. No API field yet (set by SQL). |
+| Worker step `next_action_sweep` (every 15 min, background loop in `WORKER_LOOPS`) | `runNextActionSweep` | A lead **needs a next action** when lifecycle is `active` / `long_term_nurture` (not merged), it has no open task, no future meeting (`tentative/scheduled/confirmed/rescheduled`), no runnable workflow step (run `running/waiting` with a `pending/due/executing` action, lifecycle active, automation `active`) and no live AI that can still send (`agent_status = active`, mode live + live scope, `agent_touch_count < max_touches_total`; shadow never covers). ≤ 200 leads per workspace and ≤ 1000 per tick, round-robin; each lead re-checked under a row lock. Task: active → `follow_up` "Decide the next step" due now; long-term nurture → `re_engage` "Plan re-engagement" due +45 d; timeline "No next action — task created". |
+| Responsible person (rule 1) | `loadResponsible` / `createResponsibleTask` / `notifyResponsible` | The lead's (or meeting's) owner when an active member of the workspace, else the task is **unowned** and the workspace's active admins (`WORKSPACE_ADMIN_IDS_SQL`) get the bell. |
+| Bells | `notifications` | Sweep: one per person per workspace per tick, "N leads need a next step", `href` `/tasks?status=open&q=<title>` (one title) or `/tasks?status=open`. Reply, opt-out / unsubscribe, handoff (unowned), AI stop and meeting-outcome (unowned) bells follow rule 1. |
+| Direct tasks | services | AI stop (any reason; reply-label stops only when no reply task is open): "AI journey ended without a reply — decide next step" (+ moved to long-term nurture) / "Lead not interested — close or nurture" / "Lead opted out on <channel> — review" / "AI stopped (<reason>) — decide next step". Every matched reply (WhatsApp, email; any lead): the reply task (origin `agent`, so `replyTasks=only` and the 2-hour escalation include it). Unassigned handoff: unowned handoff task. Meeting `cancelled/no_show/failed` (PATCH `/meetings/:id`): `schedule_meeting` "Reschedule the meeting" +1 d unless another future meeting exists. Website lead: `autoEnroll("lead_created")`. |
+| CLI `npm run ll:sweep -- --dry-run [--workspace <id>] [--since <date>]` | `scripts/ll-sweep.ts` | `--dry-run`: per-workspace counts only, read-only (allowed on production, to size the release). Without it: one sweep (staging only; refuses production). `--since` overrides the setting; `--workspace` repeatable. |
+
 ## 8. Performance (B4 check)
 
 `tests/integration/listPerformance.test.ts` (`RUN_PERF_TESTS=true`; skipped by default). Run on staging 2026-10-24 with a

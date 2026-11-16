@@ -898,3 +898,22 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   them through it on a short call, and the checker never flags that; WhatsApp drafts start with the first name. Tests: backend
   unit 1284 → 1303, frontend 572 (unchanged); staging integration **not run** (staging paused). **Production:** no migration;
   prompt + check changes only.
+- **LL-1 (safety net: no active lead without a next action; branch `ui-redesign`, local only; migration 058 written, NOT applied;
+  no OpenAI call, nothing sent):** LL-0 (`docs/crm-v2/LL-0-gap-report.md`, untracked) found many paths leaving an active lead with no
+  open task and nobody told. Item 1: migration 058 (`agent_settings.next_action_sweep_since` default = apply time; `tasks (lead_id)
+  where open` and `leads (workspace_id, last_activity_at)` partial indexes) + pure `domain/nextAction.ts` (`needsNextAction`,
+  `sweepTask`, `resolveResponsible`, `batchBells`, `aiStopTask`). Item 2: `services/nextAction.service.ts` (every LL-1 query) + worker
+  step `next_action_sweep` every 15 min (≤ 200 per workspace, ≤ 1000 per tick, round-robin, locked per-lead re-check): "Decide the next
+  step" (follow_up, now) or "Plan re-engagement" (re_engage, +45 d), timeline "No next action — task created", one bell per person per
+  tick; CLI `npm run ll:sweep -- --dry-run [--workspace] [--since]`. Interpretations: shadow AI never covers a lead (it sends nothing);
+  the rollout guard also counts an AI status change or a task closed after `since` (a task completed after release on an old lead is
+  the main leak, H9). Item 3: AI stop (decision or reply label) → task + bell (no_response → long-term nurture; skipped while a reply
+  task is open); every matched reply gets the reply task (unowned → admins); unassigned handoff → unowned task + admins' bell; meeting
+  cancelled / no-show / failed → "Reschedule the meeting" +1 d unless another future meeting; meeting-outcome reminder no longer skips
+  unowned meetings; website leads `autoEnroll("lead_created")` (no published workflow → no-op: the lead has only the First call task
+  and, if the AI takes it, the AI); owner-only bells (WhatsApp reply, email reply, opt-out / unsubscribe) → rule 1; reply escalation
+  says "Nobody has answered … (no owner)" for an unowned task. Tests: backend unit 1303 → 1341, frontend 572 (unchanged); integration
+  tests written, **not run** (staging down): `nextActionSweep`, `nextActionDirectFixes`, and updated expectations in `whatsappInbound`,
+  `emailInbound`, `replyClassification` — all owed to INT-1 (`docs/crm-v2/INT-1-owed.md`). **Production:** apply 058 (indexes:
+  `create index concurrently` by hand first on a big table), run `npm run ll:sweep -- --dry-run` and decide whether to move
+  `next_action_sweep_since` before the worker is deployed.
