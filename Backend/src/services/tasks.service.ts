@@ -23,9 +23,25 @@ export interface TaskRow {
   completed_at: Date | null;
   cancelled_at: Date | null;
   cancel_reason: string | null;
+  /** LL-3 (060): what created the task (TaskMarker); call_attempt = the ladder's attempt number. */
+  marker?: TaskMarker | null;
+  call_attempt?: number | null;
   created_at: Date;
   updated_at: Date;
 }
+
+/** LL-3: tasks.marker values (tasks_marker_valid). An 'onboarding' task survives the lead being marked Won. */
+export type TaskMarker =
+  | "call_attempt"
+  | "fix_phone"
+  | "interested_later_callback"
+  | "lost_recovery"
+  | "proposal_expiring"
+  | "proposal_expired"
+  | "decision_overdue"
+  | "manager_review"
+  | "onboarding"
+  | "call_ladder_end";
 
 export function taskToDto(row: TaskRow) {
   return {
@@ -43,6 +59,7 @@ export function taskToDto(row: TaskRow) {
     completedAt: row.completed_at?.toISOString(),
     cancelledAt: row.cancelled_at?.toISOString(),
     cancelReason: row.cancel_reason ?? undefined,
+    callAttempt: row.call_attempt ?? undefined,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -58,6 +75,8 @@ export interface CreateTaskInput {
   origin?: TaskOrigin;
   sourceWorkflowRunId?: string | null;
   sourceWorkflowStepId?: string | null;
+  marker?: TaskMarker | null;
+  callAttempt?: number | null;
 }
 
 /**
@@ -89,8 +108,8 @@ export async function createTask(
   const result = await db.query<TaskRow>(
     `insert into public.tasks
       (workspace_id, lead_id, owner_id, owner_name, task_type, title, due_at, origin,
-       source_workflow_run_id, source_workflow_step_id, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       source_workflow_run_id, source_workflow_step_id, created_by, created_by_name, marker, call_attempt)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      returning *`,
     [
       workspaceId,
@@ -105,6 +124,8 @@ export async function createTask(
       input.sourceWorkflowStepId ?? null,
       actor?.id ?? null,
       actor?.fullName ?? (origin === "automation" ? "Automation" : origin === "agent" ? AGENT_ACTOR_NAME : null),
+      input.marker ?? null,
+      input.callAttempt ?? null,
     ],
   );
   const task = result.rows[0]!;
@@ -258,10 +279,20 @@ export async function cancelOpenTasksForLead(
   leadId: string,
   reason: string,
   taskTypeFilter?: TaskType[],
+  opts: { markers?: TaskMarker[]; keepOnboarding?: boolean } = {},
 ): Promise<number> {
-  const filterClause = taskTypeFilter?.length ? `and task_type = any($3::public.task_type[])` : "";
   const params: unknown[] = [leadId, reason];
-  if (taskTypeFilter?.length) params.push(taskTypeFilter);
+  let filterClause = "";
+  if (taskTypeFilter?.length) {
+    params.push(taskTypeFilter);
+    filterClause += ` and task_type = any($${params.length}::public.task_type[])`;
+  }
+  if (opts.markers?.length) {
+    params.push(opts.markers);
+    filterClause += ` and marker = any($${params.length}::text[])`;
+  }
+  // LL-3: Won cancels the acquisition tasks, never the "Onboarding: <deal>" task.
+  if (opts.keepOnboarding) filterClause += ` and marker is distinct from 'onboarding'`;
   const result = await db.query<TaskRow>(
     `update public.tasks
        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2

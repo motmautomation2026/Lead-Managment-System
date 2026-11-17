@@ -56,16 +56,19 @@ export type WhatsAppSendSource =
   /** E3b-2a: a rep's Send of an AI reply draft (send window applies); `id` is the reply_drafts id. */
   | { type: "reply_draft"; id: string }
   /** LL-2: a meeting reminder / "Updated" confirmation (service message: the `meeting` safety rules); `id` is the meeting_reminders id. */
-  | { type: "meeting_reminder"; id: string };
+  | { type: "meeting_reminder"; id: string }
+  /** LL-3: the fixed "We tried calling" message after a No answer (automated: the send window applies); `id` is the tried_calling_messages id. */
+  | { type: "tried_calling"; id: string };
 
 export function sourceColumn(
   source: WhatsAppSendSource,
-): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" | "reply_draft_id" | "meeting_reminder_id" {
+): "scheduled_action_id" | "proposal_id" | "meeting_id" | "agent_decision_id" | "reply_draft_id" | "meeting_reminder_id" | "tried_calling_id" {
   if (source.type === "scheduled_action") return "scheduled_action_id";
   if (source.type === "proposal") return "proposal_id";
   if (source.type === "agent") return "agent_decision_id";
   if (source.type === "reply_draft") return "reply_draft_id";
   if (source.type === "meeting_reminder") return "meeting_reminder_id";
+  if (source.type === "tried_calling") return "tried_calling_id";
   return "meeting_id";
 }
 
@@ -185,6 +188,19 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
       );
       return result.rows[0]?.phone_e164 ?? null;
     }
+    case "tried_calling": {
+      // LL-3: still claimed, a live lead (not DNC / closed / merged), WhatsApp not opted out.
+      const result = await db.query<{ phone_e164: string | null }>(
+        `select l.phone_e164
+           from public.tried_calling_messages t
+           join public.leads l on l.id = t.lead_id and l.workspace_id = t.workspace_id
+          where t.id = $1 and t.workspace_id = $2 and t.status = 'sending'
+            and l.lifecycle_state in ('active', 'long_term_nurture') and l.merged_into_lead_id is null and ${NOT_OPTED_OUT}
+          for update of t, l`,
+        [source.id, workspaceId],
+      );
+      return result.rows[0]?.phone_e164 ?? null;
+    }
     default:
       return assertNever(source);
   }
@@ -211,6 +227,9 @@ export async function resolveLeadIdForSource(db: Queryable, source: WhatsAppSend
       break;
     case "meeting_reminder":
       table = "public.meeting_reminders";
+      break;
+    case "tried_calling":
+      table = "public.tried_calling_messages";
       break;
     default:
       return assertNever(source);

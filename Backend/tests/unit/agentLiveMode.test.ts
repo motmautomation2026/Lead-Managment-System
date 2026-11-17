@@ -188,6 +188,22 @@ describe("sendRecheck (rule 5)", () => {
     expect(cancelOf({ decisionCreatedAt: new Date(NOW.getTime() - 24 * HOUR - MIN) })).toMatch(/24 hours/);
   });
 
+  it("LL-3: a 'We tried calling' send counts toward 2 per week and 8 in total, never the 48 h gap", () => {
+    // agentSendRecheck passes it in realTouchCount + recentRealTouchTimes, not in lastRealTouchAt.
+    const tried = new Date(NOW.getTime() - HOUR);
+    expect(sendRecheck(input({ realTouchCount: 1, recentRealTouchTimes: [tried] }))).toEqual({ ok: true });
+    const aiTouch = new Date(NOW.getTime() - 72 * HOUR);
+    const weekly = sendRecheck(input({ realTouchCount: 2, lastRealTouchAt: aiTouch, recentRealTouchTimes: [aiTouch, tried] }));
+    expect(weekly).toEqual({ defer: expect.any(Date), reason: expect.any(String) });
+    expect("defer" in weekly && weekly.defer.getTime()).toBeGreaterThanOrEqual(aiTouch.getTime() + 7 * 24 * HOUR);
+    expect(cancelOf({ realTouchCount: 8, recentRealTouchTimes: [tried] })).toMatch(/8 AI messages/);
+  });
+
+  it("LL-3 rule 5: no AI send before the interested-later restart date", () => {
+    expect(cancelOf({ restartAt: new Date(NOW.getTime() + 24 * HOUR) })).toMatch(/talk again later/);
+    expect(sendRecheck(input({ restartAt: new Date(NOW.getTime() - HOUR) }))).toEqual({ ok: true });
+  });
+
   it("time-based problems defer to the next allowed time (window, gap, rep quiet hours)", () => {
     const evening = ist("2026-10-28T20:00");
     const outside = sendRecheck(input({ now: evening, decisionCreatedAt: new Date(evening.getTime() - HOUR) }));

@@ -15,6 +15,7 @@ import { SectionSkeleton } from "@/components/crm/section-skeleton";
 import { ErrorBlock } from "@/components/common/server-state";
 import { keysAreTaken } from "@/app/shortcuts";
 import { AGENT_STATUS_LABEL } from "@/features/agent/agent-labels";
+import { attemptLabel } from "@/lib/labels";
 import { hotReasonText } from "@/features/contacts/hot-score-labels";
 import { HotScorePill } from "@/features/contacts/hot-score";
 import { ActivityFeed } from "@/features/crm/activity-feed";
@@ -306,7 +307,9 @@ export function CallQueuePage() {
               {position} of {total}
             </p>
             <p className="type-small">
-              {task.title} · due <RelativeTime value={task.dueAt} />
+              {task.title}
+              {task.callAttempt ? ` · ${attemptLabel(task.callAttempt)}` : ""} · due{" "}
+              <RelativeTime value={task.dueAt} />
             </p>
           </div>
           <ContactFacts task={task} />

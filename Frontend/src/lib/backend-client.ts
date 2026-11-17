@@ -284,6 +284,14 @@ export interface LogCallInput {
         decisionOwner?: string | undefined;
       }
     | undefined;
+  /** LL-3: required when connectedOutcome === 'not_interested' (the lead becomes Lost with this reason). */
+  notInterested?:
+    | {
+        lossReason: LeadLossReason;
+        competitorName?: string | undefined;
+        projectDate?: string | undefined;
+      }
+    | undefined;
 }
 export interface CreateTaskInput {
   leadId: string;
@@ -589,6 +597,8 @@ export interface AgentSettings {
   autoEnrollNewLeads: boolean;
   /** LL-2: 24 h + 1 h meeting reminders to the lead (fixed text, not AI); default on. Optional until migration 059. */
   meetingRemindersEnabled?: boolean;
+  /** LL-3: the fixed "We tried calling" WhatsApp after a No answer; default on. */
+  triedCallingWhatsappEnabled?: boolean;
   /** The selling company name in AI messages; null = the workspace name. */
   companyDisplayName: string | null;
   liveScope: AgentLiveScope;

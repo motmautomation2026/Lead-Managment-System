@@ -28,7 +28,7 @@ import { LatestSuggestedReply } from "@/features/crm/suggested-reply-card";
 import { REPLY_TASK_TITLES } from "@/features/agent/agent-labels";
 import { RefLink } from "@/features/work/ref-link";
 import { istParts, toIsoFromIst } from "@/lib/dates";
-import { label } from "@/lib/labels";
+import { attemptLabel, label } from "@/lib/labels";
 import { messageFromError, useCancelTask, useSession, useUpdateTask } from "@/store";
 import type { TaskListItem } from "@/types";
 import { TASK_STATUS_TONE } from "./task-columns";
@@ -106,6 +106,7 @@ function TaskDetails({
         <SheetDescription className="flex flex-wrap items-center gap-2">
           <StatusPill tone={TASK_STATUS_TONE[task.status]}>{label(task.status)}</StatusPill>
           <TaskOriginBadge origin={task.origin} />
+          {task.callAttempt ? <span>{attemptLabel(task.callAttempt)}</span> : null}
         </SheetDescription>
       </SheetHeader>
       <div className="space-y-4 p-4">

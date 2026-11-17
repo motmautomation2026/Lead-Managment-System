@@ -218,6 +218,13 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     keywords: "24 hours 1 hour reminder lead meeting",
     access: "admin",
   },
+  {
+    label: '"We tried calling" WhatsApp',
+    section: "calendar",
+    anchor: "tried-calling-whatsapp",
+    keywords: "no answer unanswered call whatsapp message retry",
+    access: "admin",
+  },
   { label: "AI mode", section: "ai-agent", keywords: "off shadow live scope go-live gate" },
   {
     label: "AI send window",

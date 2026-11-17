@@ -26,6 +26,7 @@ import { linkCompanySafely } from "./companies.service.js";
 import { closeOpenDealsSafely, winSingleOpenDealSafely } from "./deals.service.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { containsPattern, leadSearchSql } from "../lists/listQuery.js";
+import { lossDetailsProblem, recoverAt, type DiscardReason, type LossDetails } from "../domain/recovery.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
@@ -66,6 +67,12 @@ export interface LeadRow {
   interested_later_decision_owner: string | null;
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
+  /** LL-3 (060). */
+  loss_competitor_name?: string | null;
+  loss_project_date?: string | Date | null;
+  recover_at?: Date | null;
+  recovered_at?: Date | null;
+  discard_reason?: DiscardReason | null;
   merged_into_lead_id: string | null;
   agent_status: AgentStatus;
   agent_status_reason: string | null;
@@ -85,6 +92,10 @@ const LEAD_SELECT = `
   from public.leads l
   left join public.profiles o on o.id = l.owner_id
 `;
+
+/** A pg `date` column (Date at local midnight, or text) as "YYYY-MM-DD". */
+export const dateOnly = (value: string | Date | null | undefined) =>
+  value == null ? undefined : typeof value === "string" ? value.slice(0, 10) : `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 
 export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof getLeadNextAction>>) {
   return {
@@ -123,6 +134,11 @@ export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof g
     interestedLaterDecisionOwner: row.interested_later_decision_owner ?? undefined,
     lossReason: row.loss_reason ?? undefined,
     lossNotes: row.loss_notes ?? undefined,
+    lossCompetitorName: row.loss_competitor_name ?? undefined,
+    lossProjectDate: dateOnly(row.loss_project_date),
+    recoverAt: row.recover_at?.toISOString(),
+    recoveredAt: row.recovered_at?.toISOString(),
+    discardReason: row.discard_reason ?? undefined,
     mergedIntoLeadId: row.merged_into_lead_id ?? undefined,
     agentStatus: row.agent_status,
     agentStatusReason: row.agent_status_reason ?? undefined,
@@ -902,8 +918,28 @@ export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string,
  * (leads_lost_has_reason), so lossReason must land in the SAME update
  * statement as lifecycle_state = 'lost', not a follow-up call.
  */
-export const markLost = (db: Queryable, actor: Actor, workspaceId: string, leadId: string, lossReason: LeadLossReason, notes?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "lost", "Lost", notes ?? lossReason, { loss_reason: lossReason, loss_notes: notes?.trim() || null });
+export async function markLost(
+  db: Queryable,
+  actor: Actor,
+  workspaceId: string,
+  leadId: string,
+  lossReason: LeadLossReason,
+  notes?: string,
+  details: LossDetails = {},
+) {
+  const now = new Date();
+  const problem = lossDetailsProblem(lossReason, details, now);
+  if (problem) throw new ValidationError(problem);
+  // LL-3 rule 6: every loss (re)sets the recovery date by reason; recovered_at cleared = once per loss.
+  return setTerminalLifecycle(db, actor, workspaceId, leadId, "lost", "Lost", notes ?? lossReason, {
+    loss_reason: lossReason,
+    loss_notes: notes?.trim() || null,
+    loss_competitor_name: lossReason === "competitor_selected" ? details.competitorName?.trim() || null : null,
+    loss_project_date: lossReason === "project_postponed" ? details.projectDate : null,
+    recover_at: recoverAt(lossReason, now, details),
+    recovered_at: null,
+  });
+}
 
 export const markDiscarded = (db: Queryable, actor: Actor, workspaceId: string, leadId: string, reason?: string) =>
   setTerminalLifecycle(db, actor, workspaceId, leadId, "discarded", "Discarded", reason);

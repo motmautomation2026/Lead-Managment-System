@@ -76,6 +76,8 @@ export interface SendRecheckInput {
   lastRepActivityAt: Date | null;
   /** E3b-1 rule 4: a fresh inbound lead's first message (rules.ts isFreshInbound) uses the first-inbound window. */
   freshInbound?: boolean;
+  /** LL-3 rule 5: 09:30 IST on the interested-later restart date; no AI message before it. */
+  restartAt?: Date | null;
 }
 
 export type SendRecheck = { ok: true; freshInbound?: boolean } | { defer: Date; reason: string } | { cancel: string };
@@ -102,6 +104,7 @@ export function sendRecheck(input: SendRecheckInput): SendRecheck {
   if (input.lastReplyAt && input.lastReplyAt.getTime() > input.decisionCreatedAt.getTime()) return { cancel: "The contact replied after this message was written." };
   if (input.channel === "email" && !imapHealthy(input.imapLastSuccessAt, now)) return { cancel: EMAIL_NO_REPLY_READING };
   if (input.hasActiveWorkflowRun) return { cancel: "The contact is in an active workflow." };
+  if (input.restartAt && input.restartAt.getTime() > now.getTime()) return { cancel: "The contact asked to talk again later (interested later restart date)." };
   if (input.realTouchCount >= input.settings.max_touches_total) return { cancel: `The contact already got ${input.settings.max_touches_total} AI messages.` };
 
   const allowed = nextAllowedSendTime(now, sendWindowSettings(input.settings, input.freshInbound), input.lastRealTouchAt, input.recentRealTouchTimes, input.lastRepActivityAt);

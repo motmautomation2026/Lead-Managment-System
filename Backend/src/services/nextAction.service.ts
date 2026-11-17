@@ -19,7 +19,7 @@ import {
   type Responsible,
 } from "../domain/nextAction.js";
 import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
-import { createTask, type TaskRow } from "./tasks.service.js";
+import { createTask, type TaskMarker, type TaskRow } from "./tasks.service.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { liveContactSql } from "./agentSendState.service.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
@@ -90,6 +90,9 @@ export interface ResponsibleTaskInput {
   origin?: TaskOrigin;
   /** Responsible owner other than the lead's (e.g. the meeting's owner); rule 1 still applies to them. */
   ownerHint?: string | null;
+  /** LL-3 marker (+ the ladder's attempt number). */
+  marker?: TaskMarker;
+  callAttempt?: number;
 }
 
 /**
@@ -113,6 +116,8 @@ export async function createResponsibleTask(
     title: task.title,
     dueAt: task.dueAt.toISOString(),
     origin: task.origin ?? "manual",
+    marker: task.marker ?? null,
+    callAttempt: task.callAttempt ?? null,
   });
   if (bell === false) return { task: row, responsible };
   const toSend = bell ?? (responsible.ownerId ? null : { title: `Unassigned contact needs: ${task.title}`, kind: "warning" as const });
@@ -244,7 +249,7 @@ export const LEAD_FACTS_SQL = `select ${factsColumns("$2")}
  where l.id = $1 and l.merged_into_lead_id is null
  for update of l`;
 
-interface FactsRow {
+export interface FactsRow {
   id: string;
   workspace_id: string;
   lifecycle_state: LifecycleState;

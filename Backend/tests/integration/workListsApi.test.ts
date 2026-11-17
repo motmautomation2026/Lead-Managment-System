@@ -214,8 +214,8 @@ describeIfDb("work lists API (requires TEST_DATABASE_URL)", () => {
         [lead],
       );
       expect(rows.find((r) => r.id === tasks["queueFollowUp"])?.status).toBe("completed");
-      // The not-connected rule's own follow-up, exactly as without the queue.
-      expect(rows.filter((r) => r.status === "open" && r.task_type === "call").map((r) => r.title)).toEqual(["Retry call after nurture touch"]);
+      // LL-3: the retry ladder's next attempt, exactly as without the queue.
+      expect(rows.filter((r) => r.status === "open" && r.task_type === "call").map((r) => r.title)).toEqual(["Call attempt 2"]);
       const refused = await call("POST", `/leads/${lead}/calls`, { connected: false, notConnectedReason: "busy", taskId: tasks["queueEmail"] });
       expect(refused.status).toBe(400);
       expect(refused.body.error?.message ?? refused.body.message).toMatch(/call or follow-up task/);

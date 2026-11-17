@@ -181,7 +181,7 @@ const calendar = {
 describe("Settings → Google Calendar: meeting reminders (UX-3, moved from AI limits)", () => {
   it("admins switch the same meetingRemindersEnabled setting, with Undo", async () => {
     await renderInRouter(() => <MeetingRemindersCard />);
-    const toggle = screen.getByRole("switch");
+    const toggle = screen.getByRole("switch", { name: /Meeting reminders to the lead/ });
     expect(toggle).toHaveAttribute("aria-checked", "true");
     fireEvent.click(toggle);
     expect(mocks.updateAgent).toHaveBeenCalledWith(
@@ -214,6 +214,17 @@ describe("Settings → Google Calendar: meeting reminders (UX-3, moved from AI l
       searchSettings("meeting reminders", { ...viewer, isAdmin: true }).map((e) => e.label),
     ).toContain("Meeting reminders to leads");
     mocks.isAdmin = true;
+  });
+
+  it('LL-3: the "We tried calling" WhatsApp switch saves triedCallingWhatsappEnabled', async () => {
+    await renderInRouter(() => <MeetingRemindersCard />);
+    const toggle = screen.getByRole("switch", { name: /We tried calling/ });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(mocks.updateAgent).toHaveBeenLastCalledWith(
+      { triedCallingWhatsappEnabled: false },
+      expect.anything(),
+    );
   });
 });
 

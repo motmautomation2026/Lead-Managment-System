@@ -253,13 +253,20 @@ leadsRouter.post(
   }),
 );
 
-const markLostSchema = z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), notes: z.string().optional() });
+// LL-3: competitor name (competitor) / project date (postponed, required — checked in markLost).
+const lossDetailsSchema = {
+  competitorName: z.string().trim().max(200).optional(),
+  projectDate: z.string().regex(/^d{4}-d{2}-d{2}$/).optional(),
+};
+const markLostSchema = z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), notes: z.string().optional(), ...lossDetailsSchema });
 
 leadsRouter.post(
   "/:id/lost",
   asyncHandler(async (req, res) => {
-    const { lossReason, notes } = parseBody(markLostSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markLost(client, req.actor!, req.workspaceId!, req.params.id!, lossReason, notes));
+    const { lossReason, notes, competitorName, projectDate } = parseBody(markLostSchema, req.body);
+    const lead = await withTransaction((client) =>
+      leadsService.markLost(client, req.actor!, req.workspaceId!, req.params.id!, lossReason, notes, { competitorName, projectDate }),
+    );
     res.json(await withNextAction(lead));
   }),
 );
@@ -344,6 +351,8 @@ const logCallSchema = z.object({
   // "Interested - Later" capture — only meaningful (and only read by
   // logCall) when connectedOutcome === 'interested_later'.
   interestedLater: interestedLaterCaptureSchema.optional(),
+  // LL-3 rule 4: only read when connectedOutcome === 'not_interested' (then required).
+  notInterested: z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), ...lossDetailsSchema }).optional(),
 });
 
 leadsRouter.get(

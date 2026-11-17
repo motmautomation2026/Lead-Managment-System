@@ -310,23 +310,34 @@ export function CalendarSection() {
 
 /**
  * UX-3 (moved from AI → Limits & schedule): the LL-2 reminders to the lead, the same `meetingRemindersEnabled`
- * agent setting (admin only). One switch, saved at once with Undo, so it needs no form or SaveBar of its own.
+ * agent setting (admin only); LL-3 adds the "We tried calling" WhatsApp switch next to it. Each switch is saved at
+ * once with Undo, so the card needs no form or SaveBar of its own.
  */
 export function MeetingRemindersCard() {
   const settings = useAgentSettings();
   const update = useUpdateAgentSettings();
   const enabled = settings.data?.meetingRemindersEnabled ?? true;
-  const save = (value: boolean, undo = true) =>
-    update.mutate(
-      { meetingRemindersEnabled: value },
-      {
-        onSuccess: () =>
-          undo
-            ? toastUndo(`Meeting reminders ${value ? "on" : "off"}`, () => save(!value, false))
-            : toast.success(`Meeting reminders ${value ? "on" : "off"}`),
-        onError: (error) => toast.error(messageFromError(error)),
-      },
-    );
+  const triedCalling = settings.data?.triedCallingWhatsappEnabled ?? true;
+  const saveSetting =
+    (key: "meetingRemindersEnabled" | "triedCallingWhatsappEnabled", name: string) =>
+    (value: boolean, undo = true): void =>
+      update.mutate(
+        { [key]: value },
+        {
+          onSuccess: () =>
+            undo
+              ? toastUndo(`${name} ${value ? "on" : "off"}`, () =>
+                  saveSetting(key, name)(!value, false),
+                )
+              : toast.success(`${name} ${value ? "on" : "off"}`),
+          onError: (error) => toast.error(messageFromError(error)),
+        },
+      );
+  const save = saveSetting("meetingRemindersEnabled", "Meeting reminders");
+  const saveTriedCalling = saveSetting(
+    "triedCallingWhatsappEnabled",
+    '"We tried calling" WhatsApp',
+  );
   return (
     <section
       className="mt-6 space-y-2 rounded-lg border p-4"
@@ -353,6 +364,24 @@ export function MeetingRemindersCard() {
             checked={enabled}
             disabled={update.isPending}
             onCheckedChange={(value) => save(value)}
+          />
+        </label>
+      )}
+      {settings.data && (
+        <label className="flex items-center justify-between gap-4 pt-2 text-sm">
+          <span>
+            "We tried calling" WhatsApp
+            <span className="block text-xs text-muted-foreground">
+              After an unanswered call, one short fixed WhatsApp (not AI) at most once a day: "I
+              tried calling you just now. When is a good time to talk?" It follows every WhatsApp
+              safety rule and counts toward the 2-per-week and 8-in-total message limits.
+            </span>
+          </span>
+          <Switch
+            id="tried-calling-whatsapp"
+            checked={triedCalling}
+            disabled={update.isPending}
+            onCheckedChange={(value) => saveTriedCalling(value)}
           />
         </label>
       )}

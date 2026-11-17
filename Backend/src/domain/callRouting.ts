@@ -7,12 +7,16 @@ import type {
   TaskType,
   WorkflowTrigger,
 } from "./enums.js";
+import { INTERESTED_LATER_CALLBACK_TITLE } from "./callAttempts.js";
+import { workingMorningOf } from "./recovery.js";
 
 export interface TaskSpec {
   type: TaskType;
   title: string;
   /** Either a fixed number of days from now, or an explicit ISO timestamp (callback). */
   dueInDays?: number;
+  /** LL-3: an exact due time (interested later: 09:30 IST on the restart date). */
+  dueAt?: Date;
 }
 
 /** "Interested - Later" capture fields — free text/date, not a closed vocabulary. */
@@ -44,35 +48,18 @@ export interface CallRoutingResult {
  * Call Not Connected -> Not Connected Nurture (product brief, "NOT CONNECTED FLOW").
  * A bad-number reason also updates phone contactability without touching
  * lifecycle — other channels may still be usable (edge case: "Wrong Number").
+ * LL-3: no task here — the retry ladder ("Call attempt N", domain/callAttempts.ts) or
+ * "Fix the phone number" is created by calls.service.ts.
  */
 export function routeNotConnected(reason: CallNotConnectedReason): CallRoutingResult {
   const result: CallRoutingResult = {
     stage: "not_connected_nurture",
     automation: "active",
-    task: { type: "call", title: "Retry call after nurture touch", dueInDays: 2 },
     workflowTrigger: "call_not_connected",
   };
   if (reason === "invalid_number") return { ...result, phoneContactStatus: "invalid" };
   if (reason === "wrong_number") return { ...result, phoneContactStatus: "wrong_number" };
   return result;
-}
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/**
- * "Reconnect using the customer's own earlier timing" — reconnect shortly
- * BEFORE the date the customer indicated, not on/after it. Falls back to
- * the old 'maybe' outcome's 30-day default when no restart date was
- * captured (the field is optional — the exact month/date is captured where
- * possible, not required).
- */
-function interestedLaterDueInDays(restartAt?: string): number {
-  const fallback = 30;
-  if (!restartAt) return fallback;
-  const restart = Date.parse(restartAt);
-  if (Number.isNaN(restart)) return fallback;
-  const days = Math.round((restart - Date.now()) / MS_PER_DAY) - 7;
-  return Math.max(days, 1);
 }
 
 /**
@@ -82,7 +69,7 @@ function interestedLaterDueInDays(restartAt?: string): number {
  * here.
  */
 export function routeConnectedOutcome(
-  outcome: Exclude<CallConnectedOutcome, "do_not_contact">,
+  outcome: Exclude<CallConnectedOutcome, "do_not_contact" | "not_interested">,
   capture?: InterestedLaterCapture,
 ): CallRoutingResult {
   switch (outcome) {
@@ -110,15 +97,16 @@ export function routeConnectedOutcome(
       };
     case "interested_later":
       // The capture (reason/restart date/next action/decision owner) is
-      // written onto the lead by the caller (calls.service.ts); routing here
-      // only decides the reconnect timing and nurture enrollment.
+      // written onto the lead by the caller (calls.service.ts). LL-3 rule 5: the
+      // restart date is required; the call-back task is due 09:30 IST on it, and
+      // the AI / workflow sends wait until then (agentWakeups, automation).
       return {
         stage: "interested_later",
         automation: "active",
         task: {
-          type: "follow_up",
-          title: "Reconnect per stated timing",
-          dueInDays: interestedLaterDueInDays(capture?.restartAt),
+          type: "call",
+          title: INTERESTED_LATER_CALLBACK_TITLE,
+          ...(capture?.restartAt ? { dueAt: workingMorningOf(capture.restartAt.slice(0, 10)) } : { dueInDays: 30 }),
         },
         workflowTrigger: "call_outcome_interested_later",
       };

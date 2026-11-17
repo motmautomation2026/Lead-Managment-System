@@ -36,6 +36,8 @@ export type ObjectionType = (typeof OBJECTION_TYPES)[number];
 
 export const LEAD_LOSS_REASONS = [
   "price_budget",
+  "no_requirement",
+  "existing_supplier",
   "internal_hiring",
   "project_postponed",
   "competitor_selected",
@@ -45,6 +47,16 @@ export const LEAD_LOSS_REASONS = [
   "other",
 ] as const;
 export type LeadLossReason = (typeof LEAD_LOSS_REASONS)[number];
+/** LL-3: the reasons offered for a new loss (older ones stay valid on old records). Mirrors domain/recovery.ts. */
+export const LOSS_REASON_CHOICES = [
+  "price_budget",
+  "no_requirement",
+  "existing_supplier",
+  "competitor_selected",
+  "no_response",
+  "project_postponed",
+  "other",
+] as const satisfies readonly LeadLossReason[];
 export const LIFECYCLE_STATES = [
   "active",
   "long_term_nurture",
@@ -195,6 +207,7 @@ export const CALL_CONNECTED_OUTCOMES = [
   "wrong_fit",
   "wrong_person",
   "do_not_contact",
+  "not_interested",
 ] as const;
 export type CallConnectedOutcome = (typeof CALL_CONNECTED_OUTCOMES)[number];
 export interface Call {

@@ -68,3 +68,65 @@ describe("LogCallDialog callback (B13)", () => {
     expect(mocks.logCall).not.toHaveBeenCalled();
   });
 });
+
+describe("LogCallDialog LL-3 outcomes", () => {
+  function renderOutcome(name: string) {
+    render(<LogCallDialog leadId="l-1" open onOpenChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connected" }));
+    fireEvent.click(screen.getByRole("button", { name }));
+  }
+  async function pickReason(name: string) {
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Not interested reason" }), {
+      key: "Enter",
+    });
+    fireEvent.click(await screen.findByRole("option", { name }));
+  }
+
+  it("Not interested needs a reason; Competitor sends the optional competitor name", async () => {
+    mocks.logCall.mockResolvedValue({});
+    renderOutcome("Not Interested");
+    expect(screen.getByRole("alert").textContent).toBe("Pick a reason.");
+    expect(screen.getByRole("button", { name: "Save call" })).toBeDisabled();
+    await pickReason("Competitor Selected");
+    fireEvent.change(screen.getByLabelText("Competitor name (optional)"), {
+      target: { value: "Acme" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save call" }));
+    });
+    await waitFor(() =>
+      expect(mocks.logCall).toHaveBeenCalledWith(
+        "l-1",
+        expect.objectContaining({
+          connectedOutcome: "not_interested",
+          notInterested: {
+            lossReason: "competitor_selected",
+            competitorName: "Acme",
+            projectDate: undefined,
+          },
+        }),
+      ),
+    );
+  });
+
+  it("Postponed requires the project date", async () => {
+    renderOutcome("Not Interested");
+    await pickReason("Project Postponed");
+    expect(screen.getByRole("alert").textContent).toBe("Pick the project date.");
+    expect(screen.getByRole("button", { name: "Save call" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Project date (required)"), {
+      target: { value: "2027-01-15" },
+    });
+    expect(screen.getByRole("button", { name: "Save call" })).toBeEnabled();
+  });
+
+  it("Interested later requires the restart date", () => {
+    renderOutcome("Interested - Later");
+    expect(screen.getByRole("alert").textContent).toBe("Pick the restart date.");
+    expect(screen.getByRole("button", { name: "Save call" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Restart date (required)"), {
+      target: { value: "2026-12-01" },
+    });
+    expect(screen.getByRole("button", { name: "Save call" })).toBeEnabled();
+  });
+});

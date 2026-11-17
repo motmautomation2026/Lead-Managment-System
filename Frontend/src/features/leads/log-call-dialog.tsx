@@ -26,8 +26,10 @@ import { messageFromError, useContact, useLeadMutations } from "@/store";
 import {
   CALL_CONNECTED_OUTCOMES,
   CALL_NOT_CONNECTED_REASONS,
+  LOSS_REASON_CHOICES,
   type CallConnectedOutcome,
   type CallNotConnectedReason,
+  type LeadLossReason,
   type WorkflowTrigger,
 } from "@/types";
 
@@ -72,6 +74,10 @@ export function LogCallDialog({
   const [interestedLaterRestartAt, setInterestedLaterRestartAt] = useState("");
   const [interestedLaterNextAction, setInterestedLaterNextAction] = useState("");
   const [interestedLaterDecisionOwner, setInterestedLaterDecisionOwner] = useState("");
+  // LL-3 "Not interested": a loss reason (the lead becomes Lost), competitor name / project date by reason.
+  const [lossReason, setLossReason] = useState<LeadLossReason | "">("");
+  const [competitorName, setCompetitorName] = useState("");
+  const [projectDate, setProjectDate] = useState("");
   const reset = () => {
     setConnected(null);
     setOutcome(null);
@@ -82,6 +88,9 @@ export function LogCallDialog({
     setInterestedLaterRestartAt("");
     setInterestedLaterNextAction("");
     setInterestedLaterDecisionOwner("");
+    setLossReason("");
+    setCompetitorName("");
+    setProjectDate("");
   };
   if (!lead) return null;
   const callbackIso =
@@ -94,7 +103,18 @@ export function LogCallDialog({
         : Date.parse(callbackIso) <= Date.now()
           ? "The callback must be in the future."
           : null;
-  const canSave = connected === false || (connected === true && outcome !== null && !callbackError);
+  // LL-3: Interested later needs the restart date; Not interested needs a reason (Postponed: the project date).
+  const captureError =
+    outcome === "interested_later" && !interestedLaterRestartAt
+      ? "Pick the restart date."
+      : outcome === "not_interested" && !lossReason
+        ? "Pick a reason."
+        : outcome === "not_interested" && lossReason === "project_postponed" && !projectDate
+          ? "Pick the project date."
+          : null;
+  const canSave =
+    connected === false ||
+    (connected === true && outcome !== null && !callbackError && !captureError);
 
   const save = async () => {
     if (connected === null) return;
@@ -115,6 +135,18 @@ export function LogCallDialog({
                 restartAt: interestedLaterRestartAt || undefined,
                 nextAction: interestedLaterNextAction.trim() || undefined,
                 decisionOwner: interestedLaterDecisionOwner.trim() || undefined,
+              },
+            }
+          : {}),
+        ...(connected && outcome === "not_interested" && lossReason
+          ? {
+              notInterested: {
+                lossReason,
+                competitorName:
+                  lossReason === "competitor_selected"
+                    ? competitorName.trim() || undefined
+                    : undefined,
+                projectDate: lossReason === "project_postponed" ? projectDate : undefined,
               },
             }
           : {}),
@@ -193,7 +225,9 @@ export function LogCallDialog({
                 </SelectContent>
               </Select>
               <p className="mt-2 text-xs text-muted-foreground">
-                The backend decides contactability, nurture enrollment, and the next action.
+                Every reason except a wrong or invalid number counts as an unanswered attempt: the
+                next call task follows the retry plan (5 attempts) and a short "we tried calling"
+                WhatsApp may go out. A wrong or invalid number creates "Fix the phone number".
               </p>
             </div>
           )}
@@ -262,10 +296,14 @@ export function LogCallDialog({
                 />
               </div>
               <div>
-                <Label className="mb-1.5 block text-xs">Expected restart date</Label>
+                <Label htmlFor="restart-date" className="mb-1.5 block text-xs">
+                  Restart date (required)
+                </Label>
                 <Input
+                  id="restart-date"
                   type="date"
-                  min={dateInputValue()}
+                  aria-invalid={!interestedLaterRestartAt}
+                  min={dateInputValue(1)}
                   value={interestedLaterRestartAt}
                   onChange={(event) => setInterestedLaterRestartAt(event.target.value)}
                 />
@@ -287,6 +325,63 @@ export function LogCallDialog({
                 />
               </div>
             </div>
+          )}
+          {outcome === "not_interested" && (
+            <div className="space-y-3 rounded-md border p-3">
+              <p className="text-xs text-muted-foreground">
+                The contact becomes Lost with this reason. The AI stops, open tasks close, and the
+                contact comes back for a re-engage task later (by reason).
+              </p>
+              <div>
+                <Label className="mb-1.5 block text-xs">Reason</Label>
+                <Select
+                  value={lossReason}
+                  onValueChange={(value) => setLossReason(value as LeadLossReason)}
+                >
+                  <SelectTrigger aria-label="Not interested reason">
+                    <SelectValue placeholder="Select a reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOSS_REASON_CHOICES.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {label(value)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {lossReason === "competitor_selected" && (
+                <div>
+                  <Label htmlFor="competitor-name" className="mb-1.5 block text-xs">
+                    Competitor name (optional)
+                  </Label>
+                  <Input
+                    id="competitor-name"
+                    value={competitorName}
+                    onChange={(event) => setCompetitorName(event.target.value)}
+                  />
+                </div>
+              )}
+              {lossReason === "project_postponed" && (
+                <div>
+                  <Label htmlFor="project-date" className="mb-1.5 block text-xs">
+                    Project date (required)
+                  </Label>
+                  <Input
+                    id="project-date"
+                    type="date"
+                    min={dateInputValue(1)}
+                    value={projectDate}
+                    onChange={(event) => setProjectDate(event.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {connected === true && captureError && outcome !== null && (
+            <p role="alert" className="text-xs text-destructive">
+              {captureError}
+            </p>
           )}
           <div>
             <Label className="mb-1.5 block text-xs">Notes</Label>

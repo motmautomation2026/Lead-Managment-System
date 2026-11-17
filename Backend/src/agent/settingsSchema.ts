@@ -76,6 +76,8 @@ export const settingsUpdateSchema = z
     firstChannel: z.enum(["whatsapp", "email"]),
     // LL-2 rule 4: 24 h + 1 h meeting reminders to the lead (fixed text; default on).
     meetingRemindersEnabled: z.boolean(),
+    // LL-3 rule 3: the fixed "We tried calling" WhatsApp after a No answer.
+    triedCallingWhatsappEnabled: z.boolean(),
   })
   .partial()
   .superRefine((value, ctx) => {

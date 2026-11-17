@@ -4,7 +4,8 @@ import type { WorkflowStepAction, WorkflowRunStatus, TaskType } from "../domain/
 import { assertPipelineStageEditable, assertValidPipelineStage } from "../domain/pipeline.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { getRunRowOr404, scheduleStepAfter, type RunRow } from "./runs.service.js";
-import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
+import { dateOnly, getLeadRowOr404, type LeadRow } from "./leads.service.js";
+import { workingMorningOf } from "../domain/recovery.js";
 import { createTask } from "./tasks.service.js";
 import { getLatestMeetingForLead, toRenderMeeting } from "./meetings.service.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
@@ -65,6 +66,8 @@ interface TemplateRow {
 export interface Eligibility {
   ok: boolean;
   reason?: string;
+  /** LL-3 rule 5: not yet — the message step waits (no attempt) until this time. */
+  deferUntil?: Date;
 }
 
 function computeEligibility(
@@ -73,6 +76,7 @@ function computeEligibility(
   run: RunRow,
   template: TemplateRow | null,
   contactStatus: string | undefined,
+  now = new Date(),
 ): Eligibility {
   if (!["running", "waiting"].includes(run.status)) {
     return { ok: false, reason: `Workflow run status is "${run.status}".` };
@@ -82,6 +86,12 @@ function computeEligibility(
   }
   if (["paused", "manual", "stopped"].includes(lead.automation_mode)) {
     return { ok: false, reason: `Lead automation mode is "${lead.automation_mode}".` };
+  }
+  // LL-3 rule 5: no workflow message before the interested-later restart date (09:30 IST).
+  const restartDate = dateOnly(lead.interested_later_restart_at);
+  if ((action.action_type === "send_email" || action.action_type === "send_whatsapp") && restartDate) {
+    const restartAt = workingMorningOf(restartDate);
+    if (restartAt.getTime() > now.getTime()) return { ok: false, reason: "Waiting for the interested-later restart date.", deferUntil: restartAt };
   }
 
   if (action.action_type === "send_email") {

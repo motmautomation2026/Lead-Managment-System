@@ -57,3 +57,27 @@ export const callAttemptTitle = (attempt: number) => `Call attempt ${attempt}`;
 export const attemptLabel = (attempt: number) => `Attempt ${attempt} of ${MAX_CALL_ATTEMPTS}`;
 export const FIX_PHONE_TITLE = "Fix the phone number";
 export const INTERESTED_LATER_CALLBACK_TITLE = "Call back — interested later";
+
+export interface TriedCallingInput {
+  enabled: boolean;
+  hasPhone: boolean;
+  lifecycle: string;
+  /** A connected call, a matched reply or a booked meeting since the message was queued. */
+  reached: boolean;
+  /** AI real sends + earlier "tried calling" sends in the last 7 days / ever (the 48 h gap does not apply). */
+  touches7d: number;
+  max7d: number;
+  touchesTotal: number;
+  maxTotal: number;
+}
+
+/** Rule 3 at send time: why the queued "We tried calling" message is dropped, or null to send it. */
+export function triedCallingCheck(f: TriedCallingInput): string | null {
+  if (!f.enabled) return "The \"We tried calling\" WhatsApp is turned off.";
+  if (!f.hasPhone) return "The contact no longer has a WhatsApp-capable phone number.";
+  if (f.lifecycle !== "active" && f.lifecycle !== "long_term_nurture") return `The contact is ${f.lifecycle.replace(/_/g, " ")}.`;
+  if (f.reached) return "The contact was reached meanwhile.";
+  if (f.touches7d >= f.max7d) return `The contact already got ${f.max7d} messages in 7 days.`;
+  if (f.touchesTotal >= f.maxTotal) return `The contact already got ${f.maxTotal} messages in total.`;
+  return null;
+}

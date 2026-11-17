@@ -1,3 +1,4 @@
+import { RESTART_AT_SQL } from "./agentWakeups.service.js";
 import type { Queryable } from "../dto.js";
 import type { LifecycleState } from "../domain/enums.js";
 import { AGENT_ACTOR_NAME } from "../agent/constants.js";
@@ -40,6 +41,7 @@ interface RecheckRow extends AgentRuleSettings {
   last_touch_at: Date | null;
   recent_touches: Date[];
   last_rep_activity_at: Date | null;
+  restart_at: Date | null;
 }
 
 /**
@@ -67,11 +69,18 @@ export async function agentSendRecheck(
                   where lead_id = l.id and match_status = 'matched' and kind in ('reply', 'unsubscribe'))) as last_reply_at,
               (select last_success_at from public.email_imap_state where workspace_id = d.workspace_id) as imap_last_success_at,
               exists (select 1 from public.workflow_runs where lead_id = l.id and status in ('running', 'waiting', 'paused')) as has_run,
-              -- Real sends only (rule 6), not this decision.
-              (select count(*)::int from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as touch_count,
+              -- Real sends only (rule 6), not this decision. LL-3: + real "We tried calling" sends (not in last_touch_at:
+              -- that message is exempt from the 48 h gap, but counts toward the 7-day and total limits).
+              ((select count(*) from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id)
+               + (select count(*) from public.tried_calling_messages t where t.lead_id = l.id and t.status = 'sent' and not t.dry_run))::int as touch_count,
               (select max(sent_at) from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as last_touch_at,
-              coalesce((select array_agg(sent_at) from public.agent_decisions
-                         where lead_id = l.id and outcome = 'sent' and id <> d.id and sent_at > now() - interval '7 days'), '{}') as recent_touches,
+              coalesce((select array_agg(x.at) from (
+                          select sent_at as at from public.agent_decisions
+                           where lead_id = l.id and outcome = 'sent' and id <> d.id and sent_at > now() - interval '7 days'
+                          union all
+                          select t.sent_at from public.tried_calling_messages t
+                           where t.lead_id = l.id and t.status = 'sent' and not t.dry_run and t.sent_at > now() - interval '7 days') x), '{}') as recent_touches,
+              ${RESTART_AT_SQL} as restart_at,
               greatest(
                 (select max(created_at) from public.calls where lead_id = l.id),
                 (select max(created_at) from public.lead_notes where lead_id = l.id)) as last_rep_activity_at
@@ -100,6 +109,7 @@ export async function agentSendRecheck(
     lastRealTouchAt: row.last_touch_at,
     recentRealTouchTimes: row.recent_touches,
     lastRepActivityAt: row.last_rep_activity_at,
+    restartAt: row.restart_at,
     freshInbound: isFreshInbound({ source: row.lead_source, createdAt: row.lead_created_at, touchCount: row.touch_count }, now),
   });
   return { ...result, phoneE164: row.phone_e164, email: row.email };

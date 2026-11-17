@@ -150,6 +150,8 @@ export const CALL_CONNECTED_OUTCOMES = [
   "wrong_fit",
   "wrong_person",
   "do_not_contact",
+  // LL-3: reason required; the lead becomes Lost through the existing Lost path (calls.service.ts).
+  "not_interested",
 ] as const;
 export type CallConnectedOutcome = (typeof CALL_CONNECTED_OUTCOMES)[number];
 

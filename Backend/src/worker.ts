@@ -24,6 +24,7 @@ import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workRemin
 import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runTaskReminders } from "./services/taskReminders.service.js";
 import { claimReminderWhatsappSends, processReminderWhatsappSend, runMeetingReminders } from "./services/meetingReminders.service.js";
+import { runTriedCallingSends } from "./services/triedCalling.service.js";
 import { runMorningDigest, runStaffAlertEmails } from "./services/staffAlerts.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
@@ -101,7 +102,10 @@ async function dispatchMessage(ctx: automationService.ActionContext): Promise<Se
 
 async function processAction(ctx: automationService.ActionContext): Promise<void> {
   if (!ctx.eligibility.ok) {
-    await withTransaction((client) => automationService.skipAction(client, ctx.action.id, ctx.eligibility.reason ?? "Not eligible."));
+    const { deferUntil, reason } = ctx.eligibility;
+    await withTransaction(async (client) => {
+      await (deferUntil ? automationService.deferAction(client, ctx.action.id, reason ?? "Not yet.", deferUntil) : automationService.skipAction(client, ctx.action.id, reason ?? "Not eligible."));
+    });
     return;
   }
 
@@ -226,6 +230,9 @@ async function tick(): Promise<void> {
     );
     return queued.length;
   }, (n) => n);
+
+  // LL-3 rule 3: the fixed "We tried calling" WhatsApp after a No answer (queued by the call request).
+  await step("tried_calling_whatsapp", "We-tried-calling WhatsApp sends", () => runTriedCallingSends({ dryRun: env.WORKER_DRY_RUN, limit: env.WORKER_BATCH_SIZE }), (n) => n);
 
   // Knowledge-base ingestion: at most 2 documents per tick (extraction and
   // embedding are the slow part, done outside any transaction).
