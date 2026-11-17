@@ -967,3 +967,27 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   count in the call queue, manual inbound lead bell "New lead — call now" + first call due now (was + 1 h, contradicting LL-2),
   meeting-reminder switch → Settings → Google Calendar. Contact page 5–7 screens → ≈ 1 (estimated from the layout). Tests: backend
   unit 1398 → 1401 (+ integration `taskReopen`, `ux3Records`), frontend 576 → 590; first load 285.7 → 285.7 kB gzip.
+- **LL-3 (calls & recovery; branch `ui-redesign`, local only; migration 060 applied twice on staging; no OpenAI call; the only new
+  message to leads is the fixed-text "We tried calling" WhatsApp):** Item 0 found: outcomes in `domain/enums.ts` (+ PG enums), no
+  plain Not interested; lead Lost (`leads.loss_reason`, drives recovery) vs deal Lost (own reason; a lost contact closes its deals with
+  `other`); AI-only follow-up limits (counted from `agent_decisions`); workflows blocked by `lifecycle_state = 'active'` in
+  `automation.service.ts`; call-outcome workflows only prompted; `interested_later_restart_at` read by nothing but the rep task; no
+  proposal validity / decision date. Item 1: migration 060 (enum values, `calls.attempt_number`, `tasks.marker` / `call_attempt`, lead
+  recovery / competitor / project date / discard reason, `proposals.valid_until` + markers, deal decision date / `stage_changed_at` /
+  review markers, `tried_calling_whatsapp_enabled`, `tried_calling_messages` = the 7th WhatsApp source, worker indexes) + pure
+  `domain/callAttempts.ts`, `domain/recovery.ts`, `domain/dealFollowUp.ts`. Item 2: Not interested → Lost (reason required),
+  Interested later (restart date required; call-back task 09:30 IST; AI wake-ups / sends and workflow message steps wait), retry
+  ladder ("Call attempt N", 5 attempts, then long-term nurture + "Decide the next step" unless covered; wrong number → "Fix the phone
+  number"), "We tried calling" WhatsApp (worker `tried_calling_whatsapp`), call-outcome workflows auto-enroll (Meeting Agreed still
+  schedule-first), "Attempt N of 5" in the queue. Item 3: Lost recovery (worker `lost_recovery`), discard reason, workflows in
+  long-term nurture. Item 4: proposal valid-until, deal next decision date (required into negotiation), worker `deal_follow_ups`
+  (expiring / expired proposal, decision date passed, 10-day manager review), Won → onboarding task. Interpretations: every
+  not-connected reason except wrong / invalid number counts as No answer; the "tried calling" message may be the first WhatsApp to a
+  lead (no safety rule forbids it: it gets the opt-out line and counts toward the 20 new chats a day) and picks a number when the lead
+  has none (that number then sticks); it is dropped (not deferred) once the AI 7-day / total limit is reached and says "earlier"
+  instead of "just now" when sent on a later day; "other" recovers after 60 days; recovery is lead-level (a deal lost with the contact
+  kept active is covered by the LL-1 safety net); the "approval pending" deal stage does not exist, so the decision date is required
+  for `negotiation` only; the manager-review task is unowned (admins' bell); proposal / deal markers only start with rows sent / moved
+  after 060 (existing deals get `stage_changed_at` = apply time). Tests: backend unit 1401 → 1438, frontend 590 → 600 (+ integration
+  `ll3Calls`, `ll3Recovery`, `ll3Deals`; updated `workListsApi`, `agentContext`, `deals`, `dncExit`). LL-1 sweep dry run: 0 leads.
+  Staging integration: first full run 4 failures (old expectations: open tasks after Won, negotiation without a decision date) → fixed (`5ad4b92`); then run A 533 / 533 green (2121 s), run B 532 / 533 (`agentAssets` "WhatsApp after the contact replied": the AI send `deferred` instead of `sent`; the file passes 3× alone) — **not green twice in a row**, reported, not re-run. **Production:** apply 060 before deploying API, worker and frontend; Govinda approves the "We tried calling" text.

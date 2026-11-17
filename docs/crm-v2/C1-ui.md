@@ -547,3 +547,29 @@ bulk **Assign owner** on Companies and Deals (`features/crm/bulk-assign.tsx`: on
 previous owner) — Meetings and Proposals have no owner change in the API, so none there; a call saved in the call queue's Connected
 dialog counts and moves the queue on (`LogCallFlow onLogged`); "Meeting reminders to the lead" moved to Settings → Google Calendar
 (admins; saves on switch with Undo; search entry "Meeting reminders to leads").
+
+## 15. Calls and recovery (LL-3)
+
+**Log call dialog** (`features/leads/log-call-dialog.tsx`): Connected outcomes + **Not interested** (reason from `LOSS_REASON_CHOICES`:
+Price / Budget · No Requirement · Existing Supplier · Competitor Selected (+ optional competitor name) · No Response · Project
+Postponed (+ required project date) · Other); saving it marks the contact Lost. **Interested - Later** needs the restart date (from
+tomorrow). Save stays disabled with one inline `role="alert"` line until the required field is there. Not connected: a hint that every
+reason except a wrong / invalid number is an unanswered attempt (retry plan, 5 attempts, "we tried calling" WhatsApp), a wrong number
+creates "Fix the phone number". The workflow prompt after a call now only appears for Meeting Agreed (the backend starts the other
+call-outcome workflows itself).
+
+**Call queue / task sheet:** a ladder task shows "Attempt N of 5" (`attemptLabel`, `lib/labels.ts`) next to its title.
+
+**Contact page:** Mark lost… uses `LostReasonDialog` (the LL-3 reasons, competitor name / project date by reason, the recovery days
+explained); a Lost contact shows "Comes back for re-engagement on <date>" until it recovers. **Discard…** opens `DiscardDialog`
+(reason required: Spam · Duplicate · Wrong Person · Not A Sales Lead · Other + required text); a discarded contact shows its reason.
+
+**Deals:** moving a deal into Negotiation — board drop / Move to…, the record page's stepper and Move stage, or Reopen at Negotiation —
+asks for the **next decision date** (`CloseDealDialog` mode `negotiation`, react-hook-form + Zod); the deal header shows "Decision
+<date>" in negotiation. Mark lost offers the LL-3 reasons + competitor name / project date (required only when the contact is marked
+lost too).
+
+**Proposals:** Send proposal has an optional **Valid until** date ("Empty = 30 days after sending.").
+
+**Settings → Google Calendar:** next to "Meeting reminders to the lead", the admin switch **"We tried calling" WhatsApp** (saves on
+switch with Undo; search entry of the same name).

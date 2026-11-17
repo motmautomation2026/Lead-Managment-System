@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `059`).
+  (currently `060`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `059`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `060`).
 
 ## Way of working
 
@@ -136,8 +136,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1 and UX-3) is in `docs/HISTORY.md`; read it for details of a past phase.
-Staging (`arejsxqjhzotmngrobhm`) is at migration `059` (INT-1, 2026-11-17); production is not.
+Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1, UX-3 and LL-3) is in `docs/HISTORY.md`; read it for details of a past phase.
+Staging (`arejsxqjhzotmngrobhm`) is at migration `060` (LL-3, 2026-11-17); production is not.
 Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
 ## Safety net (LL-1)
@@ -170,6 +170,35 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   `email_outbound_messages` (lead limits, stats, facts and timelines stay lead-only), no List-Unsubscribe, no pixel, to the login email,
   only with `profiles.email_alerts_enabled` / `email_digest_enabled`. No mailbox → bell only + one admin warning. Never WhatsApp to staff.
   `APP_BASE_URL` (worker, optional; else the first `CORS_ORIGINS`) builds the links.
+
+## Calls and recovery (LL-3)
+
+- Every call is logged; outcomes are decided in the backend (`calls.service.ts`, `domain/callRouting.ts`), React only offers them.
+  Not interested needs a loss reason and goes through `markLost`; Interested later needs a future restart date.
+- Retry ladder (`domain/callAttempts.ts`, the only place): `calls.attempt_number` = consecutive unanswered calls (every not-connected
+  reason except wrong / invalid number), reset by a connected call, a matched reply or a booked meeting. Next "Call attempt N+1":
+  + 2 working h · next working day, other half (09:30 / 14:15) · + 2 working days · + 4 working days · after 5 none (not covered →
+  long-term nurture + "Decide the next step"). Wrong / invalid number → "Fix the phone number". Working time only via
+  `domain/workingTime.ts`.
+- "We tried calling" WhatsApp (`triedCalling.service.ts`, fixed text `domain/recovery.ts` `triedCallingText`, never AI): queued by the
+  call request in `tried_calling_messages` (once per lead per IST day), sent only by the worker as WhatsApp source `tried_calling`
+  (automated rules: send window, spacing, caps, warm-up, pause, opt-out, DNC; first-message opt-out line). Dropped when the lead was
+  reached meanwhile, the setting is off or the AI 7-day / total limits are reached. Counts toward 2 per week and 8 in total (AI
+  recheck + context), never the 48 h gap. `agent_settings.tried_calling_whatsapp_enabled` (default on).
+- Interested later: no AI wake-up or AI send before 09:30 IST on the restart date (`RESTART_AT_SQL`), workflow message steps defer
+  to it; "Call back — interested later" task on that date.
+- Call-outcome workflows auto-enroll in the request (`autoEnroll`: run + first scheduled step); the worker runs them. Meeting Agreed
+  stays schedule-first (the UI enrolls after booking). Workflows also run in long-term nurture (`WORKFLOW_LIFECYCLES`).
+- Lost recovery (`leadRecovery.service.ts`, worker `lost_recovery`): `markLost` sets `recover_at` by reason — budget / no response 30 d,
+  no requirement / other 60, existing supplier 90, competitor 120, postponed = the project date (09:30 IST, working day); a new loss
+  resets it, reactivating clears it. On the date: long-term nurture + "Re-engage: <name> — lost <date>: <reason>" + urgent bell, once
+  (`recovered_at`); never for a DNC channel or opted out on both WhatsApp and email; the AI is never restarted. Discard needs a reason
+  (`leads.discard_reason`); discarded leads never recover.
+- Proposals / deals (`dealFollowUps.service.ts`, worker `deal_follow_ups`, pure `domain/dealFollowUp.ts`): `proposals.valid_until`
+  (default sent + 30 d) → tasks 3 working days before and after it; deals need `next_decision_date` to enter negotiation → owner task
+  when it passes; > 10 days without stage change / call / note / meeting / message in proposal sent / negotiation → unowned "Manager
+  review" + admins' bell, once per 10 days. Won → "Onboarding: <deal>" (marker `onboarding`, survives Won's task cancellation).
+- `tasks.marker` names what created a task (once-only checks, labels); add a value to `tasks_marker_valid` with a migration.
 
 ## Scale, fair ticks and system health (P7)
 
