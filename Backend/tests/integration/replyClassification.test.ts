@@ -211,7 +211,9 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     expect(await classify(ws, model)).toEqual([]);
   });
 
-  it("positive stays handed_off with 'Wants to talk'; low confidence → other (4A title); low-confidence stop → stop", async () => {
+  // Independent scenarios are separate tests: an inbound reply is ~37 sequential queries through the transaction pooler, so
+  // several in one test reached the 60 s limit when staging was slow.
+  it("positive stays handed_off with 'Wants to talk'; a later 'other' reply keeps the title", async () => {
     const a = await scenario();
     const idA = await inbound(a.ws, a.phone, secret("Can we talk tomorrow?"));
     await classify(a.ws, fake({ label: "positive", confidence: 0.8 }));
@@ -226,13 +228,17 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     await classify(a.ws, fake({ label: "other", confidence: 0.8 }));
     expect((await event(idA2)).reply_label).toBe("other");
     expect(await tasks(a.leadId)).toEqual([{ title: "Wants to talk — respond today", status: "open" }]);
+  });
 
+  it("low confidence → other (4A title)", async () => {
     const b = await scenario();
     const idB = await inbound(b.ws, b.phone, secret("Hmm, maybe"));
     await classify(b.ws, fake({ label: "positive", confidence: 0.4 }));
     expect(await event(idB)).toMatchObject({ reply_label: "other", reply_label_source: "ai" });
     expect(await tasks(b.leadId)).toEqual([{ title: DEFAULT_TITLE, status: "open" }]);
+  });
 
+  it("low-confidence stop → stop", async () => {
     const c = await scenario();
     const idC = await inbound(c.ws, c.phone, secret("bas karo yaar"));
     await classify(c.ws, fake({ label: "asked_to_stop", confidence: 0.3 }));
@@ -255,13 +261,17 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     expect(await classify(ws, model)).toEqual([]);
   });
 
-  it("mode off → no AI step (unclassified); budget used up → unclassified, no call", async () => {
+  it("mode off → no AI step (unclassified)", async () => {
     const off = await scenario({ mode: "off" });
     const idOff = await inbound(off.ws, off.phone, secret("Interesting, send details"));
     expect(await event(idOff)).toMatchObject({ reply_label: "unclassified", reply_label_source: "keyword", classification_status: "skipped" });
     const model = fake({ label: "positive", confidence: 0.9 });
     expect(await classify(off.ws, model)).toEqual([]);
+    expect(model.calls).toEqual([]);
+  });
 
+  it("budget used up → unclassified, no call", async () => {
+    const model = fake({ label: "positive", confidence: 0.9 });
     const broke = await scenario({ budget: 0.01 });
     const spentId = await inbound(broke.ws, broke.phone, "not interested");
     await pool.query(`update public.whatsapp_inbound_events set classification_cost_usd = 1 where message_id = $1`, [spentId]);
@@ -274,7 +284,8 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
   });
 
   it("timeline reply labels, rep correction (owner/admin only; re-titles, never undoes), stats by label", async () => {
-    const { ws, phone, leadId } = await scenario();
+    // Two independent workspaces: built in parallel (round trips, see above).
+    const [{ ws, phone, leadId }, other] = await Promise.all([scenario(), scenario()]);
     const stopId = await inbound(ws, phone, "unsubscribe");
     await pool.query(`update public.leads set agent_status = 'active', agent_status_reason = null where id = $1`, [leadId]);
     const id = await inbound(ws, phone, secret("Could you share a case study?"));
@@ -298,7 +309,6 @@ describeIfDb("WhatsApp reply labels (requires TEST_DATABASE_URL)", () => {
     expect((await put(owner, id, { label: "unclassified" })).status).toBe(400);
     expect((await put(owner, id, { label: "nope" })).status).toBe(400);
     expect((await put(owner, "no-such-message", { label: "positive" })).status).toBe(404);
-    const other = await scenario();
     expect((await put(owner, id, { label: "positive" }, other.leadId)).status).toBe(404);
 
     const ok = await put(owner, id, { label: "positive" });

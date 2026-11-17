@@ -81,14 +81,19 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     return ws;
   }
 
-  /** An uploaded PDF asset in Storage. */
-  async function asset(ws: string, title: string, channels: string[]) {
+  /** Uploads (upsert) to the staging bucket; a returned Storage error throws, network errors are retried. */
+  async function upload(path: string, file: Buffer) {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
-    const path = `${ws}/${randomUUID()}-case.pdf`;
     await withNetworkRetry(async () => {
-      const { error } = await supabaseAdmin.storage.from("agent-assets").upload(path, PDF, { contentType: "application/pdf", upsert: true });
+      const { error } = await supabaseAdmin.storage.from("agent-assets").upload(path, file, { contentType: "application/pdf", upsert: true });
       if (error) throw new Error(`upload failed: ${error.message}`);
     });
+  }
+
+  /** An uploaded PDF asset in Storage. */
+  async function asset(ws: string, title: string, channels: string[]) {
+    const path = `${ws}/${randomUUID()}-case.pdf`;
+    await upload(path, PDF);
     const row = await pool.query<{ id: string }>(
       `insert into public.agent_assets (workspace_id, title, use_when, channels, storage_path, file_name, mime_type, size_bytes)
        values ($1, $2, 'After a call with a steel trader', $3, $4, 'steel_case_v3.pdf', 'application/pdf', $5) returning id`,
@@ -189,6 +194,17 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
 
   const decisionOf = async (leadId: string) =>
     (await pool.query(`select * from public.agent_decisions where lead_id = $1 order by created_at desc limit 1`, [leadId])).rows[0];
+  /**
+   * Sends that download a 10 MB file from staging Storage: a slow or failed download is a temporary error (the row stays
+   * queued and is retried), so tick again (bounded: 4 ticks, 2 s apart) until the contact's decision is no longer queued.
+   */
+  async function settle(leadId: string, tickOnce: () => Promise<unknown>) {
+    for (let attempt = 1; ; attempt++) {
+      await tickOnce();
+      if ((await decisionOf(leadId)).send_status !== "queued" || attempt >= 4) return;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
   const sentRow = async (leadId: string, title: string) =>
     (await pool.query<{ title: string; detail: string | null }>(`select title, detail from public.timeline_events where lead_id = $1 and title like $2`, [leadId, `${title}%`])).rows[0];
 
@@ -276,12 +292,19 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     expect(await decisionOf(l.id)).toMatchObject({ send_status: "sent", sent_asset_ids: null });
   });
 
-  // Staging Storage can serve a deleted file from a cache for a while: wait (≤ ~60 s) until a download fails.
+  // Staging Storage can serve a deleted file from a cache for a while: wait (≤ ~60 s) until a download fails. The remove's
+  // own error is checked (network errors retried) and it is sent again while the file is still served (a lost delete).
   const removeFile = async (path: string) => {
     const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
-    await supabaseAdmin.storage.from("agent-assets").remove([path]);
+    const remove = () =>
+      withNetworkRetry(async () => {
+        const { error } = await supabaseAdmin.storage.from("agent-assets").remove([path]);
+        if (error) throw new Error(`remove failed: ${error.message}`);
+      });
+    await remove();
     for (const started = Date.now(); Date.now() - started < 60_000; await new Promise((r) => setTimeout(r, 2_000))) {
       if ((await supabaseAdmin.storage.from("agent-assets").download(path)).error) return;
+      await remove();
     }
     throw new Error(`Storage still serves ${path} 60 s after it was removed.`);
   };
@@ -401,10 +424,9 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   });
 
   it("E2h rule 3: an unknown size is read from Storage at decision time; a file over 10 MB is dropped", async () => {
-    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const ws = await workspace("size-decide");
     const a = await asset(ws, "Steel trading case study", ["email"]);
-    await supabaseAdmin.storage.from("agent-assets").upload(a.path, Buffer.alloc(OVER_LIMIT), { upsert: true, contentType: "application/pdf" });
+    await upload(a.path, Buffer.alloc(OVER_LIMIT));
     await pool.query(`update public.agent_assets set size_bytes = null where id = $1`, [a.id]);
     const { assetFileSize } = await import("../../src/services/knowledgeLibrary.service.js");
     expect(await assetFileSize(a.path)).toBe(OVER_LIMIT);
@@ -417,9 +439,8 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
   });
 
   it("E2h rule 3: a file that grew past 10 MB after the decision follows rule 2 on both channels, and the email never fails", async () => {
-    const { supabaseAdmin } = await import("../../src/supabaseAdmin.js");
     const ws = await workspace("size-send");
-    const grow = (path: string) => supabaseAdmin.storage.from("agent-assets").upload(path, Buffer.alloc(OVER_LIMIT), { upsert: true, contentType: "application/pdf" });
+    const grow = (path: string) => upload(path, Buffer.alloc(OVER_LIMIT));
 
     // Email, text mentions it → cancelled.
     const a = await asset(ws, "Steel trading case study", ["email"]);
@@ -428,7 +449,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await pool.query(`update public.email_outbound_messages set attachments = jsonb_set(attachments, '{0,size}', 'null') where lead_id = $1`, [e.id]);
     await grow(a.path);
     const smtp = fakeSmtp();
-    await emailTick(ws, smtp);
+    await settle(e.id, () => emailTick(ws, smtp));
     expect(smtp.sent).toHaveLength(0);
     const cancelled = await decisionOf(e.id);
     expect(cancelled).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
@@ -444,7 +465,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await pool.query(`update public.integration_connections set next_send_at = null where workspace_id = $1 and id = 'email'`, [ws]);
     // The queued time comes from this machine's clock, which can be a few ms ahead of the database's: make it due now.
     await pool.query(`update public.email_outbound_messages set next_attempt_at = now() where workspace_id = $1 and status = 'queued'`, [ws]);
-    await emailTick(ws, smtp);
+    await settle(quiet.id, () => emailTick(ws, smtp));
     expect(smtp.sent).toHaveLength(1);
     expect(smtp.sent[0]!.attachments).toEqual([]);
     const sent = await decisionOf(quiet.id);
@@ -457,7 +478,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await tick(ws, [whatsappWith([c.id])]);
     await grow(c.path);
     const { socket, send } = whatsapp(ws);
-    await sendTick(ws, send);
+    await settle(w.id, () => sendTick(ws, send));
     expect(socket.sendMessage).not.toHaveBeenCalled();
     expect(await decisionOf(w.id)).toMatchObject({ send_status: "cancelled", cancel_reason: "attachment_missing" });
   }, 180_000); // Uploads real files over 10 MB to Storage (three times).
