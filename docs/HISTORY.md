@@ -936,3 +936,20 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   **not run** (staging down): `taskReminders`, `meetingReminders`, `staffAlerts`, updated `leadIngest` — owed to INT-1. **Production:**
   apply 059 before deploying API, worker and frontend (the AI limits Save sends `meetingRemindersEnabled`); staff emails need the
   workspace's SMTP mailbox (Settings → Email); set `APP_BASE_URL` on the worker; Govinda approves the reminder texts.
+- **INT-1 (staging integration run for UX-1 … LL-2; branch `ui-redesign`, local only; staging `arejsxqjhzotmngrobhm` only; no
+  OpenAI call, nothing sent to a lead):** staging was at 057. Migrations 058 and 059 applied twice (second run no change),
+  `db:security-check` green. Every owed LL-1 / LL-2 integration file runs and passes; all failures were test bugs (raw inserts
+  against the lifecycle / workflow-draft / run-completed triggers and constraints, enum parameter casts, doubled `/api/v1` prefix,
+  owners that were not workspace members under LL-1 rule 1, a fake reply-task title, the old 2-day outcome window, `error.message`
+  shape) — commits `655c55a`, `f3e20f7`. Item 4 (`5373f46`): demo-journey first call now reads "within 1 working hour" with the
+  working-time due; admin Users drawer email switches covered by a component test. Full suite: runs before the pair 502 / 5 failed
+  and 506 / 1 failed (fixed / `agentAssets`); final pair 505 / 2 failed (`replyClassification`, two 60 s timeouts in a slow run) and
+  506 / 1 failed (`agentAssets`, a staging Storage step) — both files pass alone, every LL-1 / LL-2 file passed in every run; **not
+  green twice in a row**, treated as staging slowness. LL-1 sweep dry run: **0 leads in 0 workspaces** (default and
+  `--since 2026-01-01`). `explain (analyze)` on 20,000 load-seeded leads: every new index used, no sequential scan on a big table;
+  `SWEEP_CANDIDATES_SQL` ~970 ms and `SWEEP_COUNTS_SQL` ~870 ms over the 500 ms target (nested-loop anti-join on future meetings),
+  `DIGEST_CANDIDATES_SQL` ~210 ms, the rest < 30 ms; no migration 060; load seed removed. One worker tick
+  (`WORKER_DRY_RUN=true`, `AGENT_RUNNER_ENABLED=false`): 25 heartbeats, no step error, LL steps 0 items (the read-only IMAP poll
+  processed 17 replies from the MOTM mailbox). One real urgent-alert email and one digest sent to one staff login (inbox check
+  by a person still owed). Tests: backend unit 1398, frontend 575 → 576. Still open: sweep query time, the two flaky files,
+  `leads.service.ts` manual inbound bell "call within 1 hour" (not working hours), `APP_BASE_URL` unset on staging.

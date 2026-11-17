@@ -136,8 +136,9 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1 and LL-2) is in `docs/HISTORY.md`; read it for details of a past phase.
-Integration checks owed by phases run without staging: `docs/crm-v2/INT-1-owed.md`.
+Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2 and INT-1) is in `docs/HISTORY.md`; read it for details of a past phase.
+Staging (`arejsxqjhzotmngrobhm`) is at migration `059` (INT-1, 2026-11-17); production is not.
+Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
 ## Safety net (LL-1)
 
