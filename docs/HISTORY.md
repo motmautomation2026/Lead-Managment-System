@@ -991,3 +991,19 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   after 060 (existing deals get `stage_changed_at` = apply time). Tests: backend unit 1401 → 1438, frontend 590 → 600 (+ integration
   `ll3Calls`, `ll3Recovery`, `ll3Deals`; updated `workListsApi`, `agentContext`, `deals`, `dncExit`). LL-1 sweep dry run: 0 leads.
   Staging integration: first full run 4 failures (old expectations: open tasks after Won, negotiation without a decision date) → fixed (`5ad4b92`); then run A 533 / 533 green (2121 s), run B 532 / 533 (`agentAssets` "WhatsApp after the contact replied": the AI send `deferred` instead of `sent`; the file passes 3× alone) — **not green twice in a row**, reported, not re-run. **Production:** apply 060 before deploying API, worker and frontend; Govinda approves the "We tried calling" text.
+- **LL-3b (LL-3 review fixes; branch `ui-redesign`, local only; no migration; no OpenAI call, nothing sent):** Rule 1 (Govinda,
+  18 Nov): the "We tried calling" WhatsApp still counts toward 2 per week (shared with the AI) and skips the 48 h gap, but no longer
+  toward the AI's 8 in total (removed from `touch_count` / `agentTouchCount`; still in `recent_touches`); own cap 3 per lead, ever
+  (`MAX_TRIED_CALLING_MESSAGES`). Rule 2: the LL-2 due bell + overdue escalation also for rule-9 deal tasks (`DEAL_FOLLOW_UP_MARKERS`,
+  e.g. "Onboarding: …") on a Won lead. Rule 3: the safety net's "Plan re-engagement" uses the loss reason's recovery date
+  (`domain/recovery.ts` `reengagementDueAt`, lost date shared as `LOST_AT_SQL`) while that loss is unrecovered and the date is ahead;
+  once recovered (its "Re-engage" task exists) or past, + 45 days. Rule 4: lead Lost → its open deals close with the lead's loss reason
+  (deals share the `lead_loss_reason` enum: no mapping needed) + "competitor: <name>" in the notes. Rule 5: "Valid until" editable
+  after sending in the proposal sheet (`ProposalValidUntil`; PATCH guarded: admin / proposal or contact owner, timeline row). Rule 6:
+  the manager review stays unowned; it did not show anywhere for admins but the bell (Home cards were owner = me only) → an admin's
+  Home overdue + "Decide the next step" cards include unowned tasks (Manager review lands in overdue: due at creation), Tasks owner
+  option `none` labelled "Admins (no owner)". Item 2 (`agentAssets` run B): not the clock — every window in that file is 24 h × 7
+  days and its lead is not fresh-inbound; likeliest cause a transient Storage download in the WhatsApp attachment send (any
+  non-provider error → "Temporary error, will retry" → `deferred`); no other integration test asserts a send without a 24 h window,
+  a fixed `now` or a mocked sender; the file was left unchanged (reported, not a test bug). Tests: backend unit 1438 → 1442, frontend
+  600 → 603 (+ integration cases in `taskReminders`, `deals`, `dealsC4Api`, `ll3Deals`).

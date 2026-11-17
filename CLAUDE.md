@@ -136,7 +136,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1, UX-3 and LL-3) is in `docs/HISTORY.md`; read it for details of a past phase.
+Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1, UX-3, LL-3 and LL-3b) is in `docs/HISTORY.md`; read it for details of a past phase.
 Staging (`arejsxqjhzotmngrobhm`) is at migration `060` (LL-3, 2026-11-17); production is not.
 Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
@@ -159,7 +159,8 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
 - Tasks (worker `task_reminders`, SQL only in `services/taskReminders.service.ts`): due bell once (`tasks.due_notified_at`, batched per
   person per tick); admins' escalation once (`tasks.escalated_at`): 1 working day overdue, website "First call" 1 working hour after due
   (due itself = 1 working hour after creation). Reply tasks only ever get their own 2-hour escalation. Never for closed tasks or
-  DNC / terminal / merged leads; only tasks due after `agent_settings.task_reminders_since`.
+  DNC / terminal / merged leads (except rule-9 deal tasks, e.g. "Onboarding: …", on a Won lead — LL-3b); only tasks due after
+  `agent_settings.task_reminders_since`.
 - Meeting reminders and the "Updated: …" confirmation are **service messages** (SQL only in `services/meetingReminders.service.ts`): rows
   in `meeting_reminders` (the once-only marker; a new time = new rows), email source / WhatsApp source `meeting_reminder` with the
   `meeting` safety rules (no send window; spacing, caps, warm-up, pause, opt-out, DNC still apply); never AI touches, never a wake-up,
@@ -182,9 +183,11 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   `domain/workingTime.ts`.
 - "We tried calling" WhatsApp (`triedCalling.service.ts`, fixed text `domain/recovery.ts` `triedCallingText`, never AI): queued by the
   call request in `tried_calling_messages` (once per lead per IST day), sent only by the worker as WhatsApp source `tried_calling`
-  (automated rules: send window, spacing, caps, warm-up, pause, opt-out, DNC; first-message opt-out line). Dropped when the lead was
-  reached meanwhile, the setting is off or the AI 7-day / total limits are reached. Counts toward 2 per week and 8 in total (AI
-  recheck + context), never the 48 h gap. `agent_settings.tried_calling_whatsapp_enabled` (default on).
+  (automated rules: send window, spacing, caps, warm-up, pause, opt-out, DNC; first-message opt-out line). Follow-up limits (LL-3b,
+  decided by Govinda): counts toward the 2 per week shared with the AI (AI recheck + context `recentTouchTimes`), never the 48 h gap,
+  never the AI's 8 in total; its own cap is 3 per lead, ever (`MAX_TRIED_CALLING_MESSAGES`, both numbers together). Dropped when the
+  lead was reached meanwhile, the setting is off, 2 per week or its own cap is reached. `agent_settings.tried_calling_whatsapp_enabled`
+  (default on).
 - Interested later: no AI wake-up or AI send before 09:30 IST on the restart date (`RESTART_AT_SQL`), workflow message steps defer
   to it; "Call back — interested later" task on that date.
 - Call-outcome workflows auto-enroll in the request (`autoEnroll`: run + first scheduled step); the worker runs them. Meeting Agreed
@@ -193,11 +196,16 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   no requirement / other 60, existing supplier 90, competitor 120, postponed = the project date (09:30 IST, working day); a new loss
   resets it, reactivating clears it. On the date: long-term nurture + "Re-engage: <name> — lost <date>: <reason>" + urgent bell, once
   (`recovered_at`); never for a DNC channel or opted out on both WhatsApp and email; the AI is never restarted. Discard needs a reason
-  (`leads.discard_reason`); discarded leads never recover.
+  (`leads.discard_reason`); discarded leads never recover. The LL-1 "Plan re-engagement" uses the same date (`reengagementDueAt`)
+  while that loss is unrecovered and the date is ahead, else + 45 days (one re-engagement per loss). Lead Lost → its open deals close
+  with the lead's loss reason (same enum) + "competitor: <name>" in the notes; other closes keep `other`.
 - Proposals / deals (`dealFollowUps.service.ts`, worker `deal_follow_ups`, pure `domain/dealFollowUp.ts`): `proposals.valid_until`
   (default sent + 30 d) → tasks 3 working days before and after it; deals need `next_decision_date` to enter negotiation → owner task
   when it passes; > 10 days without stage change / call / note / meeting / message in proposal sent / negotiation → unowned "Manager
   review" + admins' bell, once per 10 days. Won → "Onboarding: <deal>" (marker `onboarding`, survives Won's task cancellation).
+  These rule-9 tasks (`DEAL_FOLLOW_UP_MARKERS`) keep the LL-2 due bell + overdue escalation on a Won lead. "Valid until" stays
+  editable after sending (proposal sheet; `PATCH /proposals/:id` admin / proposal or contact owner only, timeline row). Unowned
+  tasks (Manager review, inactive owner) show on every admin's Home overdue / next-step cards and under Tasks owner "Admins (no owner)".
 - `tasks.marker` names what created a task (once-only checks, labels); add a value to `tasks_marker_valid` with a migration.
 
 ## Scale, fair ticks and system health (P7)
