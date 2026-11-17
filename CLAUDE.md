@@ -136,7 +136,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 
 ## Completed so far
 
-Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2 and INT-1) is in `docs/HISTORY.md`; read it for details of a past phase.
+Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1 and UX-3) is in `docs/HISTORY.md`; read it for details of a past phase.
 Staging (`arejsxqjhzotmngrobhm`) is at migration `059` (INT-1, 2026-11-17); production is not.
 Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
@@ -357,6 +357,10 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   with Undo where reversible; a dialog opened from a menu item uses `afterMenuClose`. Call queue `/tasks/calls` sends a call
   only after its Undo window (`POST /leads/:id/calls` + `taskId`, call or follow-up task); Replies `/tasks/replies` =
   `replyTasks=only` (B4 §7w).
+- UX-3 (records + Home, `docs/crm-v2/C1-ui.md` §14): contact, company and deal pages use `RecordShell` (sticky header with the
+  primary actions, one Activity feed with the composer on top, collapsible right rail remembered per record type; phones: rail =
+  tabs) — no new stacked tabs on record pages. Activity chips are groups of server kinds (`ACTIVITY_FILTERS`). Complete always offers
+  Undo (`POST /tasks/:id/reopen`, which never re-fires LL-2 bells). Home "My day" counts come only from `GET /home/summary`.
 - Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
   manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
   contact owner, `agent_status` or automation.

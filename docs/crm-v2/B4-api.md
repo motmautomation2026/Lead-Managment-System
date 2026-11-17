@@ -160,6 +160,15 @@ proposals: { awaitingDecision }, ai: { mode, draftsToReview } | null }`. Tasks/m
 completed ones are done). `ai` is null while the agent mode is `off`; `draftsToReview` = unrated `draft` decisions in the
 workspace (the AI Activity list is workspace-wide).
 
+**UX-3 "My day"** adds (same response, no new endpoint): `tasks.overdueTop[5]` (my overdue tasks, `dueAt:asc`),
+`replies: { count, top[5] }` (= `/tasks/list?ownerId=me&replyTasks=only`, oldest first — the Replies queue), `calls: { count,
+top[5] }` (= the call queue: my open `call` + `follow_up` tasks due before the end of today's IST day, `replyTasks=exclude`,
+`hotScore:desc`), `nextSteps: { count, top[5] }` (my open tasks matching "Decide the next step", LL-1), and for **admins of the
+workspace only** (else `null`): `team: [{ id, name, openTasks, overdue, replies }]` (active members, busiest first, ≤ 50 —
+`TEAM_ROW_SQL`, `tasks_owner_open_due_idx`) and `flags: [{ code, text }]` (this workspace's red problems from `workspaceHealth`
+— `stuck_queue`, `paused_channel`, `ai_budget` — plus `staff_email_no_mailbox` while the LL-2 warning was raised and no SMTP
+mailbox is sending).
+
 ## 7d. Workflows list — `GET /workflows` (C6b)
 
 Same response as before (every workflow with every version and its steps, `activeLeads`, `failures`), now built in **4 queries**
@@ -640,7 +649,7 @@ Working time (one definition, `domain/workingTime.ts`): Mon–Sat 09:30–19:00 
 | `GET /me` + `emailAlertsEnabled`, `emailDigestEnabled` (booleans, default true) | `me.routes.ts` | `profiles.email_alerts_enabled` / `email_digest_enabled`. |
 | `PATCH /me` `{ bookingUrl?, emailAlertsEnabled?, emailDigestEnabled? }` (strict, at least one field, else 400) | `me.routes.ts` | Was `{ bookingUrl }` (required). Changes only the fields sent; returns `{ bookingUrl, emailAlertsEnabled, emailDigestEnabled }`. |
 | `GET /admin/users` rows + `emailAlertsEnabled`, `emailDigestEnabled`; `PATCH /admin/users[/:id]` accepts both | `admin.routes.ts` | An admin changing someone else's toggles is audited (`user.email_alerts_changed`). |
-| `GET/PUT /agent/settings` + `meetingRemindersEnabled` (boolean, default true) | `agent_settings.meeting_reminders_enabled` | 24 h + 1 h reminders to the lead. Admin-only like every agent setting. UI: Settings → AI limits. |
+| `GET/PUT /agent/settings` + `meetingRemindersEnabled` (boolean, default true) | `agent_settings.meeting_reminders_enabled` | 24 h + 1 h reminders to the lead. Admin-only like every agent setting. UI: Settings → Google Calendar → Meeting reminders (UX-3; was AI limits). |
 | `agent_settings.task_reminders_since` (default = 059 apply time) | migration 059 | Due bells and escalation only for tasks due at or after it. No API field. |
 | `PATCH /meetings/:id` with a new `at` | `meetings.routes.ts` | Queued reminders of the old time cancelled (and their queued emails), `meetings.reminders_from = now`, then the confirmation again as "Updated: …" (default Meeting Scheduled templates; `meeting_reminders` kind `updated`). |
 | Worker `task_reminders` (every tick) | `runTaskReminders` | Due bell: timed task 15 min before, date-only (00:00 / 23:59 IST) at 09:30 that day; one bell per person per tick ("N tasks due now", `/tasks?status=open`; one task: "Due now: <task> — <lead>", `/contacts/<id>`); `tasks.due_notified_at`. Escalation to the active admins, once (`tasks.escalated_at`), emailed: overdue 9.5 working h → "Overdue: <task> — <owner>"; "First call" 1 working h after due → "New lead not called yet: <name> — <owner>". Reply tasks excluded (own 2 h escalation). Active / long-term-nurture leads only; open tasks only; ≤ 200 per step per tick, fair. |
@@ -650,6 +659,17 @@ Working time (one definition, `domain/workingTime.ts`): Mon–Sat 09:30–19:00 
 | "Log the meeting outcome" | `runMeetingOutcomeTasks` | 2 hours after the meeting's end (was 2 days), with a bell to the responsible person. |
 | `notifications.email_status` (`null` bell only, `pending` → `sending` → `sent` / `skipped` / `failed`) | migration 059 | Urgent (emailed): new website lead, lead replied, task escalated (reply / overdue / first call), meeting in 1 hour, AI stopped, AI handed off. |
 | Worker `staff_alert_emails` (every tick) + `morning_digest` (09:00–12:00 IST, Mon–Sat) | `staffAlerts.service.ts` | One email per person per workspace per tick from the workspace mailbox's SMTP straight (never `email_outbound_messages`, so never in lead limits / stats / facts / timeline), to the login email; no List-Unsubscribe, no pixel; `WORKER_DRY_RUN` → skipped; toggle off / inactive / > 1 day old → skipped. No mailbox or paused → bell only + one admin bell per workspace ("Staff email alerts are off: no mailbox", `system_health_alerts` `staff_email_no_mailbox`). Digest once per member per IST day (`workspace_members.digest_sent_on`): calls due today / overdue, replies waiting, meetings today, "Decide the next step", overdue; empty → not sent. Links: `APP_BASE_URL` (else the first `CORS_ORIGINS`). |
+
+## 7z. Records, Home and leftovers — UX-3
+
+| Change | Where | Notes |
+|---|---|---|
+| `POST /tasks/:id/reopen` | `tasks.routes.ts`, `tasks.service.ts` `reopenTask` | Undo for Complete. Owner of the task or an admin, else 403; a cancelled task 409 "Only a completed task can be reopened."; an open task is returned unchanged (idempotent); 404 unknown. Sets `status = open`, `completed_at = null`; timeline "Task Reopened" (audited like complete / cancel). `due_notified_at` / `escalated_at` are kept, so the LL-2 due bell and escalation never fire again. Returns the task DTO. |
+| `POST /leads/:id/notes` + optional `dealId` | `leads.routes.ts`, `leads.service.ts` `addNote` | A note written on a deal page: still the contact's note, with `related_deal_id` so it is in the deal's (and its company's) feed. The deal must belong to the contact (400 otherwise). |
+| Activity groups (`kind` on the three timelines) | `timeline.service.ts` | Notes and calls are grouped by kind first (also when written on a deal), then deal rows, AI rows, by kind. New event kind `meeting_reminder` → `meetings`. |
+| Meeting reminder timeline rows | `meetingReminders.service.ts` `recordReminderSent` (email: `onSourceSent`; WhatsApp: `processReminderWhatsappSend`) | One row per reminder / "Updated" message that really went to the lead (never a dry run, never the rep's own reminder): kind `meeting_reminder`, "Meeting reminder sent (24 h before)" / "(1 h before)" / "Meeting update sent", detail "By email" / "On WhatsApp", `related_meeting_id`, actor System. Not in the AI's context timeline (its kinds list), never a touch or a fact. |
+| `GET /home/summary` "My day" fields | `home.service.ts` | See §7c. |
+| Manual lead bell + first call | `leads.service.ts` `createLead` | A rep-added website / inbound-form lead: bell "New lead — call now" (was "New website lead — call within 1 hour") and its "First call" due now like every manual / CSV lead (LL-2; was + 1 h). |
 
 ## 8. Performance (B4 check)
 

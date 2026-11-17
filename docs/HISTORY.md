@@ -953,3 +953,17 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   processed 17 replies from the MOTM mailbox). One real urgent-alert email and one digest sent to one staff login (inbox check
   by a person still owed). Tests: backend unit 1398, frontend 575 → 576. Still open: sweep query time, the two flaky files,
   `leads.service.ts` manual inbound bell "call within 1 hour" (not working hours), `APP_BASE_URL` unset on staging.
+- **UX-3 (records + Home + leftovers; branch `ui-redesign`, local only; staging only, nothing sent, no OpenAI):** Item 0: the two
+  flaky files fixed without weakening them — `replyClassification` (an inbound reply is ~37 sequential pooler queries at ~40 ms;
+  independent scenarios split into their own tests, independent workspaces built in parallel; no timeout raised) and `agentAssets`
+  (checked Storage upload / remove errors with retry, a bounded re-tick while a 10 MB download fails temporarily, the remove re-sent
+  while Storage still serves the file); each 3× alone green, full suite **green twice in a row** (510 / 510). Item 1–2: `RecordShell`
+  for contact / company / deal (sticky header + primary actions, composer + one paged Activity feed with 7 chip groups, collapsible
+  rail remembered per record type, phones: tabs; deal stage stepper; breadcrumbs back to the list's filters; peek → ⌘K Recent).
+  Backend: notes on a deal (`dealId`), notes / calls grouped by kind first, meeting reminders sent to the lead as timeline rows (kind
+  `meeting_reminder`, never in the AI context). Item 3: `GET /home/summary` "My day" (replies, calls, meetings, next-step tasks,
+  overdue; admins: team row + red flags incl. no mailbox). Item 4: `POST /tasks/:id/reopen` + Undo on every Complete (LL-2 bells
+  never repeat), bulk Assign owner on Companies and Deals (not Meetings / Proposals: no owner change in the API), Connected calls
+  count in the call queue, manual inbound lead bell "New lead — call now" + first call due now (was + 1 h, contradicting LL-2),
+  meeting-reminder switch → Settings → Google Calendar. Contact page 5–7 screens → ≈ 1 (estimated from the layout). Tests: backend
+  unit 1398 → 1401 (+ integration `taskReopen`, `ux3Records`), frontend 576 → 590; first load 285.7 → 285.7 kB gzip.

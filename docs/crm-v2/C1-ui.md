@@ -505,3 +505,45 @@ through the audited "Show message" (owner + admins only), the Suggested reply ca
 (also from anywhere on the page into the list), `Enter` open (peek), `x` select, `Esc` close; call queue `1`–`5`, `s`, `p`;
 `?` lists them all (`LOCAL_SHORTCUTS`).
 
+
+## 14. Records and Home (UX-3)
+
+**One record layout** (`components/crm/record-shell.tsx` `RecordShell`) for contact, company and deal — replaces `RecordLayout`'s
+tabs on those pages:
+- **Sticky header** (`<header>`, stays on screen while the page scrolls): breadcrumb (`features/crm/record-breadcrumb.tsx`:
+  "Contacts › Neha Joshi"; the list link carries the filters the list last had in this tab — `useListUrlState` remembers each list's
+  search in `sessionStorage` `motmflow.list.<path>`), identity, owner (inline editable), status pills, primary actions.
+  Contact: stage, lifecycle (when not active), hot band (reasons on click), "AI: <status>", "WhatsApp · <number>", opted-out /
+  bounced / unsubscribed / DNC warnings · Log call · Note · Task · Meeting · Proposal · More (Log email / WhatsApp, Enroll in
+  workflow, Won / Lost / Discard / Nurture or Reactivate, DNC, Delete). Deal: stage pill, amount, close date, contact, company, owner,
+  the **stage stepper** (open stage → `POST /deals/:id/stage` at once, Won / Lost → `CloseDealDialog`, unchanged) · Move stage ·
+  Mark won · Mark lost (or Reopen) · Log call · Note · More (Create task, Schedule meeting, Send proposal). Company: domain, industry ·
+  city, owner, contacts, open deals + value · Add contact · Note · More (Create deal, Merge for admins).
+- **Main column = one Activity feed** (`ActivityFeed`, newest first, one B4 page at a time, Load more; D2 reply visibility
+  unchanged) with the **composer** on top (`features/crm/record-composer.tsx`): Note (no dialog; on a deal saved on its contact with
+  `dealId`, on a company about a picked contact of the company) or Call (No answer / Busy / Wrong number logged at once; Connected… →
+  the full Log call dialog). The header's "Note" focuses it. The contact page shows its **Next** step (task or workflow step,
+  Complete / Reschedule) above the composer. Chips (`ACTIVITY_FILTERS`, each = server kinds): All · Calls · Messages · Notes · AI ·
+  Meetings & proposals (meetings, proposals, LL-2 reminders sent to the lead) · System (system, tasks, deals).
+- **Right rail** of collapsible cards (`RailCard`: title, badge, header action, `defaultOpen`); open / closed per record type in
+  `localStorage` `motmflow.rail.<contact|company|deal>`; a card's content mounts only while open, so each card loads its own data in
+  parallel and never blocks the header. Contact: About · Company · Open deals · Next tasks (complete inline with Undo) · AI
+  (open suggested reply + the AI panel) · Hot-score reasons · WhatsApp number (admins: move) · Meetings & proposals and Automation
+  (closed by default). Deal: About · Contact · Company · Next tasks · Meetings & proposals · Other deals (closed). Company: About ·
+  Contacts (top 5 + View all) · Open deals (+ All deals) · Tasks, meetings & proposals · Possible duplicates (admins, closed).
+  `AssociationCard bare` and `RecordWorkCards bare` render inside a rail card.
+- **Phones / below lg**: the rail cards become tabs under the header ("Activity" first).
+- Peek (`record-peek.tsx`) now also records the record in the ⌘K palette's Recent list.
+
+**Home "My day"** (`features/home/home-page.tsx`, `GET /home/summary`, B4 §7c): greeting + IST date; cards with the backend's count and
+top 5, each linking to its queue: Replies waiting (`/tasks/replies`), Calls due today / overdue (`/tasks/calls`), Meetings today
+(Join; "N need an outcome"), Decide the next step (`/tasks?q=Decide the next step`), Overdue tasks, Due today; empty cards say what's
+good ("No replies waiting."). Admins: a red-flags strip (System health problems of this workspace + the LL-2 "no mailbox" warning,
+with the place to fix it) and the Team table (open tasks · overdue · replies waiting per rep). Then My pipeline, Proposals awaiting
+decision, AI drafts (agent on), Conversion. No counting in React.
+
+**Leftovers:** Complete has Undo everywhere (`toastUndo` → `POST /tasks/:id/reopen`; Tasks bulk Complete asks first only above 20);
+bulk **Assign owner** on Companies and Deals (`features/crm/bulk-assign.tsx`: one PATCH per row, confirm above 20, Undo restores each
+previous owner) — Meetings and Proposals have no owner change in the API, so none there; a call saved in the call queue's Connected
+dialog counts and moves the queue on (`LogCallFlow onLogged`); "Meeting reminders to the lead" moved to Settings → Google Calendar
+(admins; saves on switch with Undo; search entry "Meeting reminders to leads").
