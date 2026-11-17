@@ -23,6 +23,7 @@ import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
+import { ProposalValidUntil } from "@/features/work/proposal-valid-until";
 import { ViewDocumentButton } from "@/features/work/proposal-document";
 import { RefLink } from "@/features/work/ref-link";
 import { ContactFilter, DealFilterChip } from "@/features/work/work-filters";
@@ -33,6 +34,7 @@ import { useListPrefs } from "@/lib/list-prefs";
 import {
   useCompany,
   useCreateProposal,
+  useIsAdmin,
   useProposalCount,
   useProposalList,
   useProposalSummary,
@@ -64,7 +66,8 @@ const EMPTY_TEXT: Record<string, string> = {
 export function ProposalsPage() {
   const [state, set] = useListUrlState(proposalsSearchSchema);
   const prefs = useListPrefs("proposals", state.columns, DEFAULT_COLUMNS);
-  const { users } = useSession();
+  const { users, currentUser } = useSession();
+  const isAdmin = useIsAdmin();
   const params = useMemo(() => toApiParams(state), [state]);
   // A bare /proposals is rewritten to Open first (useListViews); don't fetch "all" meanwhile.
   const landing = Object.keys(state).length === 0;
@@ -244,6 +247,19 @@ export function ProposalsPage() {
                       id: "sent",
                       label: "Sent",
                       value: sheet.sentDate ? <RelativeTime value={sheet.sentDate} /> : null,
+                    },
+                    {
+                      id: "validUntil",
+                      label: "Valid until",
+                      value: (
+                        <ProposalValidUntil
+                          key={sheet.id}
+                          proposal={sheet}
+                          canEdit={
+                            isAdmin || (Boolean(sheet.ownerId) && sheet.ownerId === currentUser?.id)
+                          }
+                        />
+                      ),
                     },
                     {
                       id: "followUp",

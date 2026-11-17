@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Queryable } from "../../src/dto.js";
-import { assembleAgentContext, type AgentContextSource } from "../../src/agent/contextAssembly.js";
+import { assembleAgentContext, TRIED_CALLING_ACTION, type AgentContextSource } from "../../src/agent/contextAssembly.js";
 import { buildDecisionMessages, buildGroundingMessages } from "../../src/agent/prompt.js";
 import { buildAgentContext } from "../../src/services/agentContext.service.js";
 import { settings as baseSettings } from "../helpers/agentContextFixture.js";
@@ -105,5 +105,13 @@ describe("DEMO-1 rule 2: context provider", () => {
     expect(fromDb.stagePlan?.angle).toBe("call_followup");
     expect(fromDb.knowledge.chunks).toEqual([{ id: "k1", title: "KB Approach", text: "We qualify every lead by phone first." }]);
     expect(writer(fromDb)[1]!.content).toContain("We qualify every lead by phone first.");
+  });
+
+  it("LL-3b: the AI still has all 8: tried-calling sends never count toward its total (7-day limit only)", async () => {
+    const tried = ["2026-11-16T05:30:00Z", "2026-11-17T05:30:00Z", "2026-11-17T06:30:00Z"].map((at) => ({ action: TRIED_CALLING_ACTION, at: new Date(at) }));
+    const base = await assembleAgentContext(structuredClone(source), NOW, async () => []);
+    const withTried = await assembleAgentContext({ ...structuredClone(source), sends: [...source.sends, ...tried] }, NOW, async () => []);
+    expect(withTried.rules.lead.agentTouchCount).toBe(base.rules.lead.agentTouchCount);
+    expect(withTried.rules.recentTouchTimes.length).toBe(base.rules.recentTouchTimes.length + 3);
   });
 });

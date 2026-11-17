@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { triedCallingCheck, type TriedCallingInput } from "../../src/domain/callAttempts.js";
+import { MAX_TRIED_CALLING_MESSAGES, triedCallingCheck, type TriedCallingInput } from "../../src/domain/callAttempts.js";
 import { decideSend, DEFAULT_SEND_WINDOW, OPT_OUT_LINE, type SafetyInput } from "../../src/domain/whatsappSafety.js";
 import { safetySourceOf, sourceColumn } from "../../src/providers/baileys.manager.js";
 import { ENQUEUE_SQL, FACTS_SQL } from "../../src/services/triedCalling.service.js";
@@ -9,10 +9,10 @@ import { WORKER_LOOPS } from "../../src/services/systemHealth.service.js";
 const ist = (local: string) => new Date(`${local}:00+05:30`);
 
 describe("LL-3 'We tried calling' WhatsApp — send-time check", () => {
-  const ok: TriedCallingInput = { enabled: true, hasPhone: true, lifecycle: "active", reached: false, touches7d: 0, max7d: 2, touchesTotal: 0, maxTotal: 8 };
+  const ok: TriedCallingInput = { enabled: true, hasPhone: true, lifecycle: "active", reached: false, touches7d: 0, max7d: 2, triedCallingSent: 0 };
   it("sends for a live lead with room in the limits", () => {
     expect(triedCallingCheck(ok)).toBeNull();
-    expect(triedCallingCheck({ ...ok, lifecycle: "long_term_nurture", touches7d: 1, touchesTotal: 7 })).toBeNull();
+    expect(triedCallingCheck({ ...ok, lifecycle: "long_term_nurture", touches7d: 1, triedCallingSent: 2 })).toBeNull();
   });
   it("dropped: setting off, reached meanwhile, closed lead, no phone", () => {
     expect(triedCallingCheck({ ...ok, enabled: false })).toMatch(/turned off/);
@@ -21,9 +21,31 @@ describe("LL-3 'We tried calling' WhatsApp — send-time check", () => {
     expect(triedCallingCheck({ ...ok, lifecycle: "lost" })).toMatch(/lost/);
     expect(triedCallingCheck({ ...ok, hasPhone: false })).toMatch(/phone/);
   });
-  it("counts toward 2 per week and 8 in total (no 48 h gap input at all)", () => {
+  it("counts toward 2 per week; its own cap of 3 per lead replaces the 8-total limit (no 48 h gap input at all)", () => {
     expect(triedCallingCheck({ ...ok, touches7d: 2 })).toMatch(/2 messages in 7 days/);
-    expect(triedCallingCheck({ ...ok, touchesTotal: 8 })).toMatch(/8 messages in total/);
+    expect(triedCallingCheck({ ...ok, triedCallingSent: 3 })).toMatch(/3 "We tried calling" messages/);
+  });
+
+  /** One unanswered call a day at 11:00 IST; `aiSends` = earlier AI send times. Returns the tried-calling send times. */
+  const simulate = (days: string[], aiSends: Date[] = []) => {
+    const sent: Date[] = [];
+    for (const day of days) {
+      const now = ist(`${day}T11:00`);
+      const weekAgo = now.getTime() - 7 * 86_400_000;
+      const touches7d = [...aiSends, ...sent].filter((t) => t.getTime() > weekAgo && t <= now).length;
+      if (!triedCallingCheck({ ...ok, touches7d, triedCallingSent: sent.length })) sent.push(now);
+    }
+    return sent;
+  };
+  it("5 unanswered calls on 5 days (spread over weeks) → at most 3 messages", () => {
+    expect(MAX_TRIED_CALLING_MESSAGES).toBe(3);
+    expect(simulate(["2026-11-02", "2026-11-10", "2026-11-18", "2026-11-26", "2026-12-04"])).toHaveLength(3);
+    // On 5 consecutive days the 2-per-week limit drops it earlier.
+    expect(simulate(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"])).toHaveLength(2);
+  });
+  it("2 per week is shared with AI sends", () => {
+    expect(simulate(["2026-11-18"], [ist("2026-11-16T10:00"), ist("2026-11-17T10:00")])).toHaveLength(0);
+    expect(simulate(["2026-11-18", "2026-11-19"], [ist("2026-11-17T10:00")])).toHaveLength(1);
   });
 });
 

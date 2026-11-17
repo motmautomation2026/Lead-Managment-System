@@ -241,10 +241,17 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
       const { lead, wonId, openId } = await contactWithWonAndOpenDeal();
       await close(lead.id);
       const rows = await dealsOf(lead.id);
-      expect(rows.find((d) => d.id === openId)).toMatchObject({ stage: "lost", loss_reason: "other", loss_notes: `Contact ${state}` });
+      // LL-3b rule 4: a Lost contact's deals take its loss reason; the other closes keep "other".
+      expect(rows.find((d) => d.id === openId)).toMatchObject({ stage: "lost", loss_reason: state === "lost" ? "no_urgency" : "other", loss_notes: `Contact ${state}` });
       expect(rows.find((d) => d.id === wonId)).toMatchObject({ stage: "won", loss_reason: null });
     }
   }, LOOP_TIMEOUT_MS);
+
+  it("LL-3b: contact lost to a competitor → its open deals close with that reason and the competitor's name", async () => {
+    const { lead, openId } = await contactWithWonAndOpenDeal();
+    await tx((c) => leads.markLost(c, actor, ws, lead.id, "competitor_selected", undefined, { competitorName: "Acme Rival" }));
+    expect((await dealsOf(lead.id)).find((d) => d.id === openId)).toMatchObject({ stage: "lost", loss_reason: "competitor_selected", loss_notes: "Contact lost — competitor: Acme Rival" });
+  });
 
   it("the old Won button wins the deal only when there is exactly one open deal", async () => {
     const one = await contact();

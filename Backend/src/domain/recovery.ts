@@ -77,6 +77,27 @@ export function recoverAt(reason: LeadLossReason, lostAt: Date, details: LossDet
   return workingMorningOf(addDaysToDate(istDate(lostAt), days));
 }
 
+export interface LossFacts {
+  reason: LeadLossReason;
+  lostAt: Date;
+  projectDate: string | null;
+  /** The Lost recovery already ran for this loss (its "Re-engage: …" task exists). */
+  recovered: boolean;
+}
+
+/**
+ * LL-3b rule 3: when the safety net's "Plan re-engagement" (long-term nurture) is due. A lead with an unrecovered loss
+ * gets the loss reason's recovery date (rule 6) while it is still ahead; otherwise (no loss, already recovered — one
+ * re-engagement per loss — or the date has passed) the flat nurture cadence of 45 days.
+ */
+export function reengagementDueAt(now: Date, loss: LossFacts | null): Date {
+  if (loss && !loss.recovered) {
+    const at = recoverAt(loss.reason, loss.lostAt, { projectDate: loss.projectDate });
+    if (at > now) return at;
+  }
+  return new Date(now.getTime() + 45 * 86_400_000);
+}
+
 /** "Re-engage: Asha Rao — lost 2026-11-17: Competitor (Acme)". */
 export function recoveryTaskTitle(name: string, lostAt: Date, reason: LeadLossReason, competitorName?: string | null): string {
   const why = reason === "competitor_selected" && competitorName ? `${LOSS_REASON_LABELS[reason]} (${competitorName})` : LOSS_REASON_LABELS[reason];

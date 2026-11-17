@@ -64,12 +64,15 @@ export interface TriedCallingInput {
   lifecycle: string;
   /** A connected call, a matched reply or a booked meeting since the message was queued. */
   reached: boolean;
-  /** AI real sends + earlier "tried calling" sends in the last 7 days / ever (the 48 h gap does not apply). */
+  /** AI real sends + earlier "tried calling" sends in the last 7 days (the 48 h gap does not apply). */
   touches7d: number;
   max7d: number;
-  touchesTotal: number;
-  maxTotal: number;
+  /** Earlier real "tried calling" sends to the lead, ever (own cap; not the AI's total limit). */
+  triedCallingSent: number;
 }
+
+/** LL-3b rule 1: at most this many "We tried calling" messages per lead, ever (both numbers together). */
+export const MAX_TRIED_CALLING_MESSAGES = 3;
 
 /** Rule 3 at send time: why the queued "We tried calling" message is dropped, or null to send it. */
 export function triedCallingCheck(f: TriedCallingInput): string | null {
@@ -78,6 +81,6 @@ export function triedCallingCheck(f: TriedCallingInput): string | null {
   if (f.lifecycle !== "active" && f.lifecycle !== "long_term_nurture") return `The contact is ${f.lifecycle.replace(/_/g, " ")}.`;
   if (f.reached) return "The contact was reached meanwhile.";
   if (f.touches7d >= f.max7d) return `The contact already got ${f.max7d} messages in 7 days.`;
-  if (f.touchesTotal >= f.maxTotal) return `The contact already got ${f.maxTotal} messages in total.`;
+  if (f.triedCallingSent >= MAX_TRIED_CALLING_MESSAGES) return `The contact already got ${MAX_TRIED_CALLING_MESSAGES} "We tried calling" messages.`;
   return null;
 }

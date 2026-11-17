@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { recoverAt } from "../../src/domain/recovery.js";
 import {
   batchBells,
   needsNextAction,
@@ -65,6 +66,18 @@ describe("LL-1 rule 3: sweep task", () => {
   });
   it("long-term nurture → re_engage 'Plan re-engagement' due +45 d", () => {
     expect(sweepTask("long_term_nurture", now)).toEqual({ type: "re_engage", title: "Plan re-engagement", dueAt: new Date("2026-12-31T10:00:00Z") });
+  });
+  it("LL-3b: long-term nurture after a loss → the loss reason's recovery date (same as the Lost recovery), once per loss", () => {
+    const lostAt = new Date("2026-11-02T06:00:00Z");
+    const competitor = { reason: "competitor_selected" as const, lostAt, projectDate: null, recovered: false };
+    // Same date as Lost recovery rule 6 (recoverAt): 120 days for a competitor, not the flat 45.
+    expect(sweepTask("long_term_nurture", now, competitor).dueAt).toEqual(recoverAt("competitor_selected", lostAt));
+    expect(sweepTask("long_term_nurture", now, { ...competitor, reason: "project_postponed", projectDate: "2027-03-01" }).dueAt).toEqual(new Date("2027-03-01T04:00:00Z"));
+    // Already recovered (its "Re-engage: …" task exists) → no second re-engagement for that loss: the flat 45 days.
+    expect(sweepTask("long_term_nurture", now, { ...competitor, recovered: true }).dueAt).toEqual(new Date("2026-12-31T10:00:00Z"));
+    // The reason's date has passed → the flat 45 days, never a task due in the past.
+    expect(sweepTask("long_term_nurture", now, { ...competitor, reason: "price_budget", lostAt: new Date("2026-09-01T06:00:00Z") }).dueAt).toEqual(new Date("2026-12-31T10:00:00Z"));
+    expect(sweepTask("active", now, competitor).dueAt).toEqual(now);
   });
 });
 

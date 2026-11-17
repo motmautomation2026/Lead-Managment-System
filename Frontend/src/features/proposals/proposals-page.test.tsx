@@ -53,7 +53,11 @@ vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => false,
-  useSession: () => ({ users: [{ id: "u-1", name: "Asha Owner", active: true }] }),
+  useSession: () => ({
+    users: [{ id: "u-1", name: "Asha Owner", active: true }],
+    currentUser: null,
+  }),
+  useUpdateProposal: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useAutomations: () => ({ templates: [] }),
   useCompany: (id: string | undefined) => ({ data: id ? { id, name: "Acme" } : undefined }),
   useCompanySearch: () => ({ data: undefined }),

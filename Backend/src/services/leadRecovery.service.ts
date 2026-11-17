@@ -10,7 +10,7 @@ import type { Queryable } from "../dto.js";
 import type { LeadLossReason } from "../domain/enums.js";
 import { recoveryTaskTitle } from "../domain/recovery.js";
 import { fairPickSql } from "./fairPick.js";
-import { createResponsibleTask } from "./nextAction.service.js";
+import { createResponsibleTask, LOST_AT_SQL } from "./nextAction.service.js";
 import { moveToLongTermNurture } from "./leads.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 
@@ -28,7 +28,7 @@ export const RECOVERY_DUE_SQL = `select l.id, l.workspace_id from public.leads l
 
 /** $1 lead, $2 now: the locked re-check + what the task needs. lost_at = the latest "Lost" timeline row. */
 export const RECOVERY_LEAD_SQL = `select l.id, l.workspace_id, l.first_name, l.last_name, l.loss_reason, l.loss_competitor_name,
-       coalesce((select max(t.occurred_at) from public.timeline_events t where t.lead_id = l.id and t.title = 'Lost'), l.updated_at) as lost_at,
+       ${LOST_AT_SQL} as lost_at,
        exists (select 1 from public.lead_contact_channels c where c.lead_id = l.id and c.status = 'do_not_contact') as dnc_channel,
        (exists (select 1 from public.lead_contact_channels c where c.lead_id = l.id and c.channel = 'whatsapp' and c.status = 'opted_out')
         and exists (select 1 from public.lead_contact_channels c where c.lead_id = l.id and c.channel = 'email' and c.status = 'unsubscribed')) as opted_out_both

@@ -69,10 +69,9 @@ export async function agentSendRecheck(
                   where lead_id = l.id and match_status = 'matched' and kind in ('reply', 'unsubscribe'))) as last_reply_at,
               (select last_success_at from public.email_imap_state where workspace_id = d.workspace_id) as imap_last_success_at,
               exists (select 1 from public.workflow_runs where lead_id = l.id and status in ('running', 'waiting', 'paused')) as has_run,
-              -- Real sends only (rule 6), not this decision. LL-3: + real "We tried calling" sends (not in last_touch_at:
-              -- that message is exempt from the 48 h gap, but counts toward the 7-day and total limits).
-              ((select count(*) from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id)
-               + (select count(*) from public.tried_calling_messages t where t.lead_id = l.id and t.status = 'sent' and not t.dry_run))::int as touch_count,
+              -- Real sends only (rule 6), not this decision. LL-3b: "We tried calling" sends count toward the 7-day limit only
+              -- (recent_touches), never the total or the 48 h gap (last_touch_at).
+              (select count(*)::int from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as touch_count,
               (select max(sent_at) from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as last_touch_at,
               coalesce((select array_agg(x.at) from (
                           select sent_at as at from public.agent_decisions

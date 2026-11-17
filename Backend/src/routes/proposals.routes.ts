@@ -138,7 +138,7 @@ proposalsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const patch = parseBody(updateSchema, req.body);
-    const proposal = await withTransaction((client) => updateProposal(client, req.workspaceId!, req.params.id!, patch));
+    const proposal = await withTransaction((client) => updateProposal(client, req.actor!, req.workspaceId!, req.params.id!, patch));
     res.json(proposal);
   }),
 );

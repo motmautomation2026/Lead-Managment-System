@@ -192,7 +192,7 @@ describeIfDb("deals C4 API (requires TEST_DATABASE_URL)", () => {
       expect(await timelineTitles(leadId)).toContainEqual({ title: "Moved to Long-Term Nurture", detail: "Deal lost: Nurture deal" });
     });
 
-    it("lost: contact lost with the deal's reason and notes; its other open deals close as lost (existing rule)", async () => {
+    it("lost: contact lost with the deal's reason and notes; its other open deals close as lost with that reason (LL-3b)", async () => {
       const leadId = await contact("Lost Co");
       const d1 = (await call("POST", "/deals", { leadId })).body.id;
       const d2 = (await call("POST", "/deals", { leadId })).body.id;
@@ -202,7 +202,7 @@ describeIfDb("deals C4 API (requires TEST_DATABASE_URL)", () => {
       expect(await stageOf(d1)).toBe("lost");
       expect(await stageOf(d2)).toBe("lost");
       const other = (await pool.query(`select loss_reason, loss_notes from public.deals where id = $1`, [d2])).rows[0];
-      expect(other).toEqual({ loss_reason: "other", loss_notes: "Contact lost" });
+      expect(other).toEqual({ loss_reason: "price_budget", loss_notes: "Contact lost" });
       expect((await timelineTitles(leadId)).map((t) => t.title)).toContain("Lost");
     });
 

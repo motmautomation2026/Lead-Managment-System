@@ -4,12 +4,14 @@
  * domain/reminders.ts. Once-only by markers: tasks.due_notified_at (due bell) and tasks.escalated_at (escalation;
  * reply tasks keep their own 2-working-hour escalation in workReminders.service.ts and never come here).
  * Only tasks due at or after agent_settings.task_reminders_since (migration 059: no flood on release); only for
- * active / long-term-nurture leads (never DNC / terminal / merged); only open tasks.
+ * active / long-term-nurture leads (never DNC / terminal / merged), except rule-9 deal tasks ("Onboarding: …") on a Won
+ * lead (LL-3b); only open tasks.
  */
 import { withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { batchBells } from "../domain/nextAction.js";
+import { DEAL_FOLLOW_UP_MARKERS } from "../domain/dealFollowUp.js";
 import { dueBellAt, dueBellTitle, escalationBellTitle, taskEscalation, type TaskEscalation } from "../domain/reminders.js";
 import { fairPickSql } from "./fairPick.js";
 import { notifyUsers } from "./nextAction.service.js";
@@ -27,7 +29,9 @@ const TASK_COLUMNS = `t.id, t.workspace_id, t.lead_id, t.owner_id, t.title, t.du
 
 const TASK_JOINS = `from public.tasks t
   join public.leads l on l.id = t.lead_id and l.workspace_id = t.workspace_id
-   and l.lifecycle_state in ('active', 'long_term_nurture') and l.merged_into_lead_id is null
+   and (l.lifecycle_state in ('active', 'long_term_nurture')
+        or (l.lifecycle_state = 'won' and t.marker in (${DEAL_FOLLOW_UP_MARKERS.map((m) => `'${m}'`).join(", ")})))
+   and l.merged_into_lead_id is null
   left join public.profiles o on o.id = t.owner_id`;
 
 const GUARDED_FROM = `public.tasks x join public.agent_settings s on s.workspace_id = x.workspace_id and x.due_at >= s.task_reminders_since`;

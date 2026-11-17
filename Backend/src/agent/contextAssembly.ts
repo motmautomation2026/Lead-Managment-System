@@ -76,7 +76,7 @@ export interface AgentContextSource {
   websiteMessage: string | null;
   /** lead_contact_channels rows. */
   channels: { channel: string; status: string }[];
-  /** The touches that count for the contact's effective mode (real sends; in shadow also allowed drafts; LL-3: + TRIED_CALLING_ACTION rows). */
+  /** The touches that count for the contact's effective mode (real sends; in shadow also allowed drafts; LL-3: + TRIED_CALLING_ACTION rows, 7-day limit only). */
   sends: { action: string; at: Date }[];
   /** The latest call or note a rep logged. */
   lastRepActivityAt: Date | null;
@@ -138,10 +138,9 @@ export async function assembleAgentContext(source: AgentContextSource, now: Date
   const company = resolveCompany(leadRow.linked_company, leadRow.merge_target);
   const deals: AgentDealRow[] = leadRow.deals.map((d) => ({ ...d, updatedAt: new Date(d.updatedAt), stageSince: new Date(d.stageSince) }));
 
-  // LL-3: "We tried calling" sends count toward the 7-day and total limits only (not the 48 h gap, the journey or channels).
+  // LL-3/LL-3b: "We tried calling" sends count toward the 7-day limit only (not the total, the 48 h gap, the journey or channels).
   const allSends = source.sends;
   const sends = allSends.filter((s) => s.action !== TRIED_CALLING_ACTION);
-  const triedCalling = allSends.length - sends.length;
   const status = (channel: string) => source.channels.find((c) => c.channel === channel)?.status ?? null;
   const weekAgo = now.getTime() - 7 * 24 * 3600 * 1000;
   const senderAddress = source.senderAddress || null;
@@ -155,7 +154,7 @@ export async function assembleAgentContext(source: AgentContextSource, now: Date
       pipelineStage: leadRow.pipeline_stage,
       email: leadRow.email,
       phoneE164: leadRow.phone_e164,
-      agentTouchCount: (shadow ? sends.length : leadRow.agent_touch_count) + triedCalling,
+      agentTouchCount: shadow ? sends.length : leadRow.agent_touch_count,
       agentLastTouchAt: shadow ? latest(sends.map((s) => s.at)) : leadRow.agent_last_touch_at,
       ownerId: leadRow.owner_id,
       ownerName: leadRow.owner_name,
@@ -286,5 +285,5 @@ export function trimToCap(context: AgentContext, cap: number): AgentContext {
   };
 }
 
-/** LL-3: the `action` of a "We tried calling" WhatsApp in the context's sends (counts toward the 7-day and total limits only). */
+/** LL-3: the `action` of a "We tried calling" WhatsApp in the context's sends (counts toward the 7-day limit only). */
 export const TRIED_CALLING_ACTION = "tried_calling";

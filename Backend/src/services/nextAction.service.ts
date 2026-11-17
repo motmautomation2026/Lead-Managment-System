@@ -5,7 +5,7 @@
  */
 import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
-import type { AutomationMode, LifecycleState, NotificationKind, TaskOrigin, TaskType } from "../domain/enums.js";
+import type { AutomationMode, LeadLossReason, LifecycleState, NotificationKind, TaskOrigin, TaskType } from "../domain/enums.js";
 import {
   batchBells,
   needsNextAction,
@@ -244,7 +244,12 @@ export const SWEEP_COUNTS_SQL = `select l.workspace_id, w.name as workspace_name
  order by w.name`;
 
 /** The per-lead re-check inside the write transaction (lead row locked): $1 lead, $2 now. */
-export const LEAD_FACTS_SQL = `select ${factsColumns("$2")}
+/** The lead's latest "Lost" (timeline), for `l`. Shared with the Lost recovery (leadRecovery.service.ts). */
+export const LOST_AT_SQL = `coalesce((select max(t.occurred_at) from public.timeline_events t where t.lead_id = l.id and t.title = 'Lost'), l.updated_at)`;
+
+export const LEAD_FACTS_SQL = `select ${factsColumns("$2")},
+       l.loss_reason, to_char(l.loss_project_date, 'YYYY-MM-DD') as loss_project_date, l.recovered_at is not null as recovered,
+       ${LOST_AT_SQL} as lost_at
   from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
  where l.id = $1 and l.merged_into_lead_id is null
  for update of l`;
@@ -261,6 +266,11 @@ export interface FactsRow {
   open_tasks: number;
   future_meeting: boolean;
   workflow_step_pending: boolean;
+  /** LEAD_FACTS_SQL only (LL-3b rule 3). */
+  loss_reason?: LeadLossReason | null;
+  loss_project_date?: string | null;
+  recovered?: boolean;
+  lost_at?: Date;
 }
 
 export function factsOf(row: FactsRow): NextActionFacts {
@@ -290,7 +300,8 @@ export interface SweepOptions {
 export async function sweepLead(db: Queryable, leadId: string, now: Date): Promise<{ workspaceId: string; taskId: string; notify: string[]; title: string } | null> {
   const row = (await db.query<FactsRow>(LEAD_FACTS_SQL, [leadId, now])).rows[0];
   if (!row || !needsNextAction(factsOf(row))) return null;
-  const spec = sweepTask(row.lifecycle_state, now);
+  const loss = row.loss_reason && row.lost_at ? { reason: row.loss_reason, lostAt: row.lost_at, projectDate: row.loss_project_date ?? null, recovered: Boolean(row.recovered) } : null;
+  const spec = sweepTask(row.lifecycle_state, now, loss);
   const { task, responsible } = await createResponsibleTask(db, row.workspace_id, leadId, spec, false);
   await addTimelineEvent(db, { leadId, kind: "task", title: NO_NEXT_ACTION_TIMELINE_TITLE, detail: spec.title, ...AUTOMATION_ACTOR, relatedTaskId: task.id });
   return { workspaceId: row.workspace_id, taskId: task.id, notify: responsible.notify, title: spec.title };

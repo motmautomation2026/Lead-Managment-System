@@ -3,8 +3,8 @@
  * responsible for it. The SQL that reads these facts lives in services/nextAction.service.ts.
  */
 import type { AutomationMode, LifecycleState, TaskType } from "./enums.js";
+import { reengagementDueAt, type LossFacts } from "./recovery.js";
 
-const DAY_MS = 86_400_000;
 
 export interface NextActionFacts {
   lifecycle: LifecycleState;
@@ -43,10 +43,10 @@ export const DECIDE_NEXT_STEP_TITLE = "Decide the next step";
 export const PLAN_REENGAGEMENT_TITLE = "Plan re-engagement";
 export const NO_NEXT_ACTION_TIMELINE_TITLE = "No next action — task created";
 
-/** Rule 3: the sweep's task. Long-term nurture: re_engage due +45 d (LL-3 makes it reason-based). */
-export function sweepTask(lifecycle: LifecycleState, now: Date): { type: TaskType; title: string; dueAt: Date } {
+/** Rule 3: the sweep's task. Long-term nurture: re_engage, due by the loss reason (LL-3b) or +45 d (recovery.ts). */
+export function sweepTask(lifecycle: LifecycleState, now: Date, loss: LossFacts | null = null): { type: TaskType; title: string; dueAt: Date } {
   return lifecycle === "long_term_nurture"
-    ? { type: "re_engage", title: PLAN_REENGAGEMENT_TITLE, dueAt: new Date(now.getTime() + 45 * DAY_MS) }
+    ? { type: "re_engage", title: PLAN_REENGAGEMENT_TITLE, dueAt: reengagementDueAt(now, loss) }
     : { type: "follow_up", title: DECIDE_NEXT_STEP_TITLE, dueAt: now };
 }
 

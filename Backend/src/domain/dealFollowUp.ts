@@ -55,3 +55,6 @@ export const PROPOSAL_EXPIRED_TITLE = "Proposal expired — revise or close";
 export const decisionOverdueTitle = (deal: string) => `Decision date passed: ${deal}`.slice(0, 300);
 export const managerReviewTitle = (deal: string) => `Manager review: ${deal}`.slice(0, 300);
 export const onboardingTitle = (deal: string) => `Onboarding: ${deal}`.slice(0, 300);
+
+/** LL-3b rule 2: task markers of rule 9; on a Won lead these still get the due bell and overdue escalation. */
+export const DEAL_FOLLOW_UP_MARKERS = ["onboarding", "proposal_expiring", "proposal_expired", "decision_overdue", "manager_review"] as const;

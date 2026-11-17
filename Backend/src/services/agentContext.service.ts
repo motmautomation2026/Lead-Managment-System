@@ -232,7 +232,7 @@ export async function loadAgentContextSource(db: Queryable, workspaceId: string,
         where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp')
           and (outcome = 'sent' or ($3::boolean and outcome = 'draft' and coalesce((rules_result ->> 'allowed')::boolean, false)))
        union all
-       -- LL-3: the fixed "We tried calling" WhatsApp counts toward the 7-day and total limits (contextAssembly).
+       -- LL-3: the fixed "We tried calling" WhatsApp counts toward the 7-day limit only (contextAssembly).
        select '${TRIED_CALLING_ACTION}', t.sent_at from public.tried_calling_messages t
         where t.lead_id = $1 and t.workspace_id = $2 and t.status = 'sent' and not t.dry_run`,
       [leadId, workspaceId, shadow],

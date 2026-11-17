@@ -2,7 +2,7 @@ import type { Queryable } from "../dto.js";
 import { withTransaction } from "../db.js";
 import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, DoNotContactError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
 import type { EmailSendStatus, LeadLossReason, ProposalStatus, WhatsappSendStatus } from "../domain/enums.js";
 import { allowedNextProposalStatuses, LOSS_REASON_PROPOSAL_STATUSES, routeProposalStatus } from "../domain/proposalRouting.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
@@ -198,9 +198,18 @@ export interface UpdateProposalInput {
   validUntil?: string;
 }
 
-/** Plain field edits — use updateProposalStatus for status transitions (outcome routing). */
-export async function updateProposal(db: Queryable, workspaceId: string, id: string, patch: UpdateProposalInput) {
-  await getProposalRowOr404(db, workspaceId, id);
+/**
+ * Plain field edits — use updateProposalStatus for status transitions (outcome routing). LL-3b rule 5: "Valid until"
+ * (also after sending) only by an admin or the proposal's / contact's owner, with a timeline row.
+ */
+export async function updateProposal(db: Queryable, actor: Actor, workspaceId: string, id: string, patch: UpdateProposalInput) {
+  const current = await getProposalRowOr404(db, workspaceId, id);
+  const oldValidUntil = dateOnly(current.valid_until) ?? null;
+  const validUntilChanged = patch.validUntil !== undefined && patch.validUntil !== oldValidUntil;
+  if (validUntilChanged && actor.role !== "admin" && current.owner_id !== actor.id) {
+    const lead = await getLeadRowOr404(db, workspaceId, current.lead_id);
+    if (lead.owner_id !== actor.id) throw new ForbiddenError("Only the owner or an admin can change the proposal's valid-until date.");
+  }
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -212,13 +221,23 @@ export async function updateProposal(db: Queryable, workspaceId: string, id: str
   if (patch.fileName !== undefined) push("document_reference", patch.fileName || null);
   if (patch.amount !== undefined) push("amount", patch.amount);
   if (patch.notes !== undefined) push("notes", patch.notes);
-  if (patch.validUntil !== undefined) {
+  if (validUntilChanged) {
     push("valid_until", patch.validUntil);
     sets.push("expiry_warned_at = null", "expired_task_at = null");
   }
   if (sets.length === 0) return getProposalOr404(db, workspaceId, id);
   params.push(id);
   await db.query(`update public.proposals set ${sets.join(", ")} where id = $${i}`, params);
+  if (validUntilChanged) {
+    await addTimelineEvent(db, {
+      leadId: current.lead_id,
+      kind: "proposal",
+      title: "Proposal valid until changed",
+      detail: `${current.title}: ${oldValidUntil ?? "none"} → ${patch.validUntil}`,
+      ...actorEvent(actor),
+      relatedProposalId: id,
+    });
+  }
   return getProposalOr404(db, workspaceId, id);
 }
 

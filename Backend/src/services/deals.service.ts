@@ -268,11 +268,20 @@ export async function moveLinkedDealSafely(
   });
 }
 
-/** Contact lost / discarded / DNC / merged → its open deals are lost (design §2.2). */
+/**
+ * Contact lost / discarded / DNC / merged → its open deals are lost (design §2.2). LL-3b: a Lost contact's deals take
+ * its loss reason (same enum, no mapping) and the competitor name in the notes; other closes keep "other".
+ */
 export async function closeOpenDealsSafely(db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, state: LifecycleState): Promise<void> {
   await dealSafely(db, "close deals", leadId, async () => {
+    const lead =
+      state === "lost"
+        ? (await db.query<{ loss_reason: LeadLossReason | null; loss_competitor_name: string | null }>(`select loss_reason, loss_competitor_name from public.leads where id = $1`, [leadId])).rows[0]
+        : undefined;
+    const lossReason = lead?.loss_reason ?? DEAL_CLOSED_LOSS_REASON;
+    const lossNotes = [`Contact ${state.replace(/_/g, " ")}`, lead?.loss_competitor_name && `competitor: ${lead.loss_competitor_name}`].filter(Boolean).join(" — ");
     for (const id of await openDealIds(db, leadId)) {
-      await moveDealStage(db, actor, workspaceId, id, "lost", { manual: false, lossReason: DEAL_CLOSED_LOSS_REASON, lossNotes: `Contact ${state.replace(/_/g, " ")}` });
+      await moveDealStage(db, actor, workspaceId, id, "lost", { manual: false, lossReason, lossNotes });
     }
   });
 }

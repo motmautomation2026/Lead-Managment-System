@@ -368,7 +368,8 @@ export function TasksPage() {
 
   const ownerOptions = [
     { value: "me", label: "Me" },
-    { value: "none", label: "No owner" },
+    // LL-3b: an unowned task is the admins' (inactive owner, "Manager review").
+    { value: "none", label: "Admins (no owner)" },
     ...users.map((u) => ({ value: u.id, label: u.name })),
   ];
   const quickFilters: FilterDef[] = [

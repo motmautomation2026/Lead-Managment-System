@@ -95,7 +95,10 @@ describe("LL-2 due bells", () => {
   it("the SQL: open tasks only, active / nurture leads only (never DNC / terminal / merged), rollout guard, fair pick", () => {
     for (const sql of [DUE_CANDIDATES_SQL, ESCALATION_CANDIDATES_SQL]) {
       expect(sql).toContain("x.status = 'open'");
-      expect(sql).toContain("l.lifecycle_state in ('active', 'long_term_nurture') and l.merged_into_lead_id is null");
+      expect(sql).toContain("l.lifecycle_state in ('active', 'long_term_nurture')");
+      expect(sql).toContain("l.merged_into_lead_id is null");
+      // LL-3b rule 2: "Onboarding: …" (and the other rule-9 deal tasks) on a Won lead still ring.
+      expect(sql).toContain("or (l.lifecycle_state = 'won' and t.marker in ('onboarding', 'proposal_expiring', 'proposal_expired', 'decision_overdue', 'manager_review')))");
       expect(sql).toContain("x.due_at >= s.task_reminders_since");
       expect(sql).toContain("row_number() over (partition by x.workspace_id");
     }

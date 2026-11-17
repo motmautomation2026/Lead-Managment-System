@@ -89,6 +89,7 @@ export {
   useRecordMeetingOutcome,
   useCreateProposal,
   useSetProposalStatus,
+  useUpdateProposal,
 } from "./work-hooks";
 export {
   useRunList,

@@ -109,6 +109,8 @@ export function HomePage() {
 function HomeCards({ data }: { data: HomeSummary }) {
   const { tasks, meetings, deals, proposals, ai, replies, calls, nextSteps } = data;
   const me = { ownerId: ["me"] };
+  // LL-3b: admins (team row present) also see unowned tasks in "Decide the next step" and overdue (home.service.ts).
+  const meOrAdmins = { ownerId: data.team ? ["me", "none"] : ["me"] };
   return (
     <div className="space-y-6">
       {data.flags && <RedFlags flags={data.flags} />}
@@ -215,7 +217,7 @@ function HomeCards({ data }: { data: HomeSummary }) {
           link={
             <Link
               to="/tasks"
-              search={{ view: "mine", ...me, q: "Decide the next step" }}
+              search={{ view: "mine", ...meOrAdmins, q: "Decide the next step" }}
               className="hover:underline"
             >
               All next-step tasks
@@ -232,7 +234,7 @@ function HomeCards({ data }: { data: HomeSummary }) {
           link={
             <Link
               to="/tasks"
-              search={{ view: "overdue", ...me, due: "overdue" }}
+              search={{ view: "overdue", ...meOrAdmins, due: "overdue" }}
               className="hover:underline"
             >
               All overdue tasks

@@ -231,6 +231,13 @@ describe("HomePage (UX-3 My day)", () => {
     mocks.summary = { data: summary({ team: [], flags: [] }), isLoading: false, error: null };
     await renderPage();
     expect(screen.getByText("No red flags in this workspace.")).toBeTruthy();
+    // LL-3b: an admin's next-step and overdue cards also link to unowned tasks (e.g. "Manager review").
+    expect(hrefOf("All overdue tasks")).toBe(
+      '/tasks?view=overdue&ownerId=["me","none"]&due=overdue',
+    );
+    expect(hrefOf("All next-step tasks")).toBe(
+      '/tasks?view=mine&ownerId=["me","none"]&q=Decide+the+next+step',
+    );
   });
 
   it("hides the AI card while the agent is off; quick actions open the create dialogs", async () => {

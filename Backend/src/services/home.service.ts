@@ -4,6 +4,7 @@
  * B38: today's meetings exclude cancelled / no-show / failed (and completed) meetings.
  * UX-3: replies waiting (Replies queue), calls due today / overdue (call queue), "Decide the next step" tasks
  * (LL-1), overdue tasks — each a count + the top 5; admins also get a team row and this workspace's red flags.
+ * LL-3b: an admin's "Decide the next step" and overdue cards also count unowned tasks (the admins' work, e.g. "Manager review").
  */
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
@@ -50,10 +51,11 @@ export async function getHomeSummary(db: Queryable, actor: Actor, workspaceId: s
   const todayMeetings = { ...mine, when: "today" as const, status: [...HOME_MEETING_STATUSES] };
   const replies = { ...mine, replyTasks: "only" as const };
   const calls = { ...mine, type: ["call" as const, "follow_up" as const], dueTo: istDayEndIso(new Date()), replyTasks: "exclude" as const };
-  const decide = { ...mine, q: DECIDE_NEXT_STEP_TITLE };
-  const overdueTasks = { ...mine, due: "overdue" as const };
-  const top = (filters: Record<string, unknown>, sort: string) => listWorkTasks(db, actor, workspaceId, taskListSchema.parse({ ...filters, sort, limit: TOP }));
   const admin = actor.role === "admin";
+  const mineOrUnowned = { ownerId: admin ? ["me", "none"] : ["me"] };
+  const decide = { ...mineOrUnowned, q: DECIDE_NEXT_STEP_TITLE };
+  const overdueTasks = { ...mineOrUnowned, due: "overdue" as const };
+  const top = (filters: Record<string, unknown>, sort: string) => listWorkTasks(db, actor, workspaceId, taskListSchema.parse({ ...filters, sort, limit: TOP }));
 
   const [
     overdue,

@@ -3,8 +3,8 @@
  * - The call request only queues a row (`tried_calling_messages`, one per lead per IST day = the once-per-day marker);
  *   the worker sends it on the lead's sticky number (or picks one, which then sticks) through `sendWhatsApp` → the
  *   automated WhatsApp safety rules (send window, spacing, caps, warm-up, pause, opt-out, DNC).
- * - Fixed text (domain/recovery.ts `triedCallingText`), never AI. Exempt from the AI's 48 h gap, but it counts toward the
- *   AI's 7-day and total limits (agentSendState / agentContext add these sends) and is not sent once they are reached.
+ * - Fixed text (domain/recovery.ts `triedCallingText`), never AI. Exempt from the AI's 48 h gap and total limit, but it counts
+ *   toward the 7-day limit shared with the AI (agentSendState / agentContext add these sends). Own cap: 3 per lead, ever (LL-3b).
  * - Dropped when the lead was reached meanwhile (connected call, matched reply, meeting booked) or the setting is off.
  */
 import { pool } from "../db.js";
@@ -50,12 +50,12 @@ export const CLAIM_SQL = `update public.tried_calling_messages
      for update skip locked)
   returning id, workspace_id, lead_id, created_at`;
 
-/** $1 message id. Everything the send decision needs (AI limits: real AI sends + earlier real tried-calling sends). */
+/** $1 message id. Everything the send decision needs (7-day limit: real AI sends + earlier real tried-calling sends; own cap: tried-calling only). */
 export const FACTS_SQL = `select t.id, t.workspace_id, t.lead_id, t.rep_name, t.created_at, coalesce(c.created_at, t.created_at) as called_at,
        l.first_name, l.phone_e164, l.lifecycle_state::text as lifecycle_state,
        coalesce(nullif(trim(s.company_display_name), ''), w.name) as workspace_name,
        coalesce(s.tried_calling_whatsapp_enabled, true) as enabled,
-       coalesce(s.max_touches_7d, 2) as max_touches_7d, coalesce(s.max_touches_total, 8) as max_touches_total,
+       coalesce(s.max_touches_7d, 2) as max_touches_7d,
        (exists (select 1 from public.calls k where k.lead_id = l.id and k.connected and k.created_at > t.created_at)
         or exists (select 1 from public.whatsapp_inbound_events i where i.lead_id = l.id and i.received_at > t.created_at)
         or exists (select 1 from public.email_inbound_events e where e.lead_id = l.id and e.match_status = 'matched'
@@ -65,8 +65,7 @@ export const FACTS_SQL = `select t.id, t.workspace_id, t.lead_id, t.rep_name, t.
            and d.sent_at > now() - interval '7 days')
         + (select count(*) from public.tried_calling_messages x where x.lead_id = l.id and x.status = 'sent' and not x.dry_run
            and x.sent_at > now() - interval '7 days'))::int as touches_7d,
-       ((select count(*) from public.agent_decisions d where d.lead_id = l.id and d.outcome = 'sent')
-        + (select count(*) from public.tried_calling_messages x where x.lead_id = l.id and x.status = 'sent' and not x.dry_run))::int as touches_total
+       (select count(*) from public.tried_calling_messages x where x.lead_id = l.id and x.status = 'sent' and not x.dry_run)::int as tried_calling_sent
   from public.tried_calling_messages t
   join public.leads l on l.id = t.lead_id and l.workspace_id = t.workspace_id
   join public.workspaces w on w.id = t.workspace_id
@@ -87,10 +86,9 @@ export interface TriedCallingFacts {
   workspace_name: string;
   enabled: boolean;
   max_touches_7d: number;
-  max_touches_total: number;
   reached: boolean;
   touches_7d: number;
-  touches_total: number;
+  tried_calling_sent: number;
 }
 
 export async function claimTriedCallingSends(db: Queryable, limit: number): Promise<{ id: string; workspace_id: string }[]> {
@@ -111,8 +109,7 @@ export async function processTriedCallingSend(id: string, deps: { send?: typeof 
       reached: f.reached,
       touches7d: f.touches_7d,
       max7d: f.max_touches_7d,
-      touchesTotal: f.touches_total,
-      maxTotal: f.max_touches_total,
+      triedCallingSent: f.tried_calling_sent,
     });
     if (problem) {
       await set("cancelled", problem);

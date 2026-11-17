@@ -15,6 +15,7 @@ import {
   type CreateProposalInput,
   type CreateTaskInput,
   type UpdateMeetingInput,
+  type UpdateProposalInput,
   type UpdateTaskInput,
 } from "@/lib/backend-client";
 import { sendingPollInterval } from "@/lib/proposal-sending";
@@ -178,6 +179,10 @@ export const useRecordMeetingOutcome = () =>
 
 export const useCreateProposal = () =>
   useWorkWrite((input: CreateProposalInput) => backend.proposals.create(input));
+export const useUpdateProposal = () =>
+  useWorkWrite(({ id, input }: { id: string; input: UpdateProposalInput }) =>
+    backend.proposals.update(id, input),
+  );
 export const useSetProposalStatus = () =>
   useWorkWrite(
     ({

@@ -349,6 +349,8 @@ export interface UpdateProposalInput {
   fileName?: string | undefined;
   amount?: number | undefined;
   notes?: string | undefined;
+  /** "YYYY-MM-DD"; owner / admin only (LL-3b). */
+  validUntil?: string | undefined;
 }
 export interface CreateWorkflowInput {
   name: string;
