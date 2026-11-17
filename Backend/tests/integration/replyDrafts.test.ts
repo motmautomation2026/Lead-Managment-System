@@ -441,12 +441,13 @@ describeIfDb("E3b-2a reply drafts (requires TEST_DATABASE_URL)", () => {
     expect(new Set(notes.rows.map((n) => n.title))).toEqual(new Set(["E3b2a Owner hasn't answered Asha Rao's reply yet (2 h)"]));
   });
 
-  it("meeting outcome task: once per meeting, only 2 days after it", async () => {
+  it("meeting outcome task: once per meeting, only 2 hours after its end (LL-2 rule 4)", async () => {
     const { ws, leadId } = await scenario();
     const insert = (when: string) =>
       pool.query(`insert into public.meetings (workspace_id, lead_id, owner_id, title, scheduled_at, status) values ($1, $2, $3, 'Intro', now() - $4::interval, 'scheduled') returning id`, [ws, leadId, owner.id, when]);
-    const old = await insert("3 days");
-    await insert("1 day");
+    // 30-minute meetings: started 3 h ago → ended 2.5 h ago (task); started 1 h ago → ended 30 min ago (not yet).
+    const old = await insert("3 hours");
+    await insert("1 hour");
     const { runMeetingOutcomeTasks } = await import("../../src/services/workReminders.service.js");
     expect(await runMeetingOutcomeTasks({ workspaceIds: [ws] })).toEqual([old.rows[0].id]);
     expect(await runMeetingOutcomeTasks({ workspaceIds: [ws] })).toEqual([]);

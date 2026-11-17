@@ -218,7 +218,7 @@ describeIfDb("work lists API (requires TEST_DATABASE_URL)", () => {
       expect(rows.filter((r) => r.status === "open" && r.task_type === "call").map((r) => r.title)).toEqual(["Retry call after nurture touch"]);
       const refused = await call("POST", `/leads/${lead}/calls`, { connected: false, notConnectedReason: "busy", taskId: tasks["queueEmail"] });
       expect(refused.status).toBe(400);
-      expect(refused.body.error ?? refused.body.message).toMatch(/call or follow-up task/);
+      expect(refused.body.error?.message ?? refused.body.message).toMatch(/call or follow-up task/);
       await pool.query(`delete from public.tasks where lead_id = $1`, [lead]);
     });
   });

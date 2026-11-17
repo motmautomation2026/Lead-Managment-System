@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { addTestMember, createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 import { connectedNumber } from "../helpers/whatsappNumbers.js";
 import { createFakeDecisionModel } from "../helpers/fakeDecisionModel.js";
 import { fakeEmbedder } from "../helpers/fakeEmbedder.js";
@@ -39,6 +39,8 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
   /** A live workspace (scope test_contacts), every window open, WhatsApp connected, SMTP configured, IMAP healthy. */
   async function workspace(label: string) {
     const ws = await createTestWorkspace(pool, `live-${label}`);
+    // LL-1 rule 1: tasks and bells go to the owner only while they are an active member of the workspace.
+    await addTestMember(pool, ws, adminId, "admin");
     await pool.query(`insert into public.agent_playbooks (workspace_id, version, body, created_by_name) values ($1, 1, 'Be helpful.', 'Test')`, [ws]);
     await pool.query(
       `update public.agent_settings
