@@ -225,7 +225,8 @@ describeIfDb("business flows (requires TEST_DATABASE_URL)", () => {
     expect(routedLead.automation_mode).toBe("stopped");
 
     const tasks = await listTasks(pool, workspaceId, { leadId: lead.id });
-    expect(tasks.every((task) => task.status !== "open")).toBe(true);
+    // LL-3 rule 9: only the deal's "Onboarding: …" task stays open after Won.
+    expect(tasks.every((task) => task.status !== "open" || task.title.startsWith("Onboarding: "))).toBe(true);
 
     const timeline = await listTimelineForLead(pool, workspaceId, lead.id);
     expect(timeline.some((event) => event.title === "Won")).toBe(true);

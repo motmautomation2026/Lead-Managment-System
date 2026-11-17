@@ -201,8 +201,9 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
     expect(deal).toMatchObject({ stage: "won", amount: "50000.00" });
     expect(deal!.closed_at).not.toBeNull();
     expect((await leadRow(lead.id)).lifecycle_state).toBe("won");
-    const openTasks = await pool.query(`select count(*)::int as n from public.tasks where lead_id = $1 and status = 'open'`, [lead.id]);
-    expect(openTasks.rows[0].n).toBe(0);
+    // LL-3 rule 9: Won leaves only the deal's onboarding task open.
+    const openTasks = await pool.query(`select marker from public.tasks where lead_id = $1 and status = 'open'`, [lead.id]);
+    expect(openTasks.rows).toEqual([{ marker: "onboarding" }]);
   });
 
   it("rejected / expired → deal lost with the proposal's reason; the contact goes to long-term nurture as today", async () => {

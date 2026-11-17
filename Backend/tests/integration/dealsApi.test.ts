@@ -221,7 +221,7 @@ describeIfDb("deals API (requires TEST_DATABASE_URL)", () => {
     const deal = (await call("POST", "/deals", { leadId: solo })).body.id;
     expect((await call("POST", `/deals/${deal}/stage`, { stage: "lost" })).status).toBe(400);
     expect((await call("POST", `/deals/${deal}/stage`, { stage: "qualified" })).status).toBe(409);
-    const moved = await call("POST", `/deals/${deal}/stage`, { stage: "negotiation" });
+    const moved = await call("POST", `/deals/${deal}/stage`, { stage: "negotiation", nextDecisionDate: "2030-01-15" });
     expect(moved.body).toMatchObject({ stage: "negotiation", closedAt: null });
     const lost = await call("POST", `/deals/${deal}/stage`, { stage: "lost", lossReason: "price_budget", lossNotes: "too high" });
     expect(lost.body).toMatchObject({ stage: "lost", lossReason: "price_budget", lossNotes: "too high" });
@@ -245,7 +245,7 @@ describeIfDb("deals API (requires TEST_DATABASE_URL)", () => {
     expect(await listIds({ q: "Foreign", status: "all" })).toEqual([]);
     expect((await call("GET", `/deals/${otherDeal}`)).status).toBe(404);
     expect((await call("PATCH", `/deals/${otherDeal}`, { name: "x" })).status).toBe(404);
-    expect((await call("POST", `/deals/${otherDeal}/stage`, { stage: "negotiation" })).status).toBe(404);
+    expect((await call("POST", `/deals/${otherDeal}/stage`, { stage: "negotiation", nextDecisionDate: "2030-01-15" })).status).toBe(404);
     expect((await call("GET", "/deals/count", undefined, rep, otherWs)).body).toEqual({ count: 1 });
     const board = (await call("GET", "/deals/board", undefined, rep, otherWs)).body.data;
     expect(board[0]).toMatchObject({ stage: "qualified", count: 1 });
