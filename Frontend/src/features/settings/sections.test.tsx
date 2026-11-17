@@ -133,6 +133,29 @@ describe("Settings → User accounts (UX-1)", () => {
       expect(mocks.usersUpdate).toHaveBeenLastCalledWith("u-1", { active: false }),
     );
   });
+
+  it("LL-2 rule 3: an admin switches a user's urgent-alert and digest emails from the drawer", async () => {
+    mocks.usersList.mockResolvedValue({
+      data: [{ ...user("u-1", "Rep One"), emailAlertsEnabled: true, emailDigestEnabled: false }],
+      nextCursor: null,
+    });
+    mocks.usersUpdate.mockResolvedValue(user("u-1", "Rep One"));
+    await renderInRouter(() => <UsersPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Rep One" }));
+    const drawer = await screen.findByRole("dialog", { name: "Rep One" });
+    const alerts = within(drawer).getByRole("switch", { name: "Email urgent alerts" });
+    const digest = within(drawer).getByRole("switch", { name: "Morning digest" });
+    expect(alerts).toHaveAttribute("aria-checked", "true");
+    expect(digest).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(alerts);
+    await waitFor(() =>
+      expect(mocks.usersUpdate).toHaveBeenLastCalledWith("u-1", { emailAlertsEnabled: false }),
+    );
+    fireEvent.click(digest);
+    await waitFor(() =>
+      expect(mocks.usersUpdate).toHaveBeenLastCalledWith("u-1", { emailDigestEnabled: true }),
+    );
+  });
 });
 
 const calendar = {

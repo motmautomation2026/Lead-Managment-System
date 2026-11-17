@@ -17,6 +17,7 @@ import { DRAFT_DEBOUNCE_MS, draftSkipReason } from "../domain/replyDrafts.js";
 import { leadScore, type LeadScore } from "../domain/leadScore.js";
 import { corporateDomain } from "../domain/companyNormalize.js";
 import { normalizePhoneE164 } from "../domain/phone.js";
+import { addWorkingTime } from "../domain/workingTime.js";
 import { threadSubject } from "../domain/emailSafety.js";
 import { chunkText, countTokens } from "../knowledge/chunkText.js";
 import { extractText } from "../knowledge/extractText.js";
@@ -553,7 +554,7 @@ export async function runDemoJourney(deps: DemoDeps): Promise<DemoResult> {
     const wake1 = wakeFor("lead_created", startAt, settings);
     s1.happened.push(
       `Hot score ${score.score} (${score.band}); reasons: ${score.reasons.join(", ") || "none"}.${scoreEmail !== lead.email ? " (The demo email address is a stand-in; scored as the real corporate domain.)" : ""}`,
-      `Task created for ${input.workspace.ownerName}: "First call" (call), due ${ist(new Date(startAt.getTime() + HOUR))}; notification "New website lead — call within 1 hour".`,
+      `Task created for ${input.workspace.ownerName}: "First call" (call), due ${ist(addWorkingTime(startAt, HOUR))}; notification "New website lead — call within 1 working hour".`,
       `AI enrolled (AI live test contact, live mode); first AI wake-up at ${ist(wake1.dueAt)}.`,
     );
     s1.status = "done";
