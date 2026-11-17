@@ -205,6 +205,18 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
   }
+  /**
+   * One WhatsApp send that downloads its attachment from staging Storage. A failed download is a temporary error (the row
+   * is deferred and retried), so a deferral must say so, and the send is retried once (bounded). Any other result is returned.
+   */
+  async function sendRetryingOnce(ws: string, send: WhatsAppSender, decisionId: string) {
+    const first = await sendTick(ws, send);
+    if (first[0]?.result !== "deferred") return first;
+    const { send_error } = (await pool.query<{ send_error: string | null }>(`select send_error from public.agent_decisions where id = $1`, [decisionId])).rows[0]!;
+    expect(send_error).toMatch(/^Temporary error, will retry: /);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    return sendTick(ws, send);
+  }
   const sentRow = async (leadId: string, title: string) =>
     (await pool.query<{ title: string; detail: string | null }>(`select title, detail from public.timeline_events where lead_id = $1 and title like $2`, [leadId, `${title}%`])).rows[0];
 
@@ -264,7 +276,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     expect(d.asset_ids).toEqual([a.id]);
 
     const { socket, send } = whatsapp(ws);
-    expect(await sendTick(ws, send)).toEqual([{ id: d.id, result: "sent" }]);
+    expect(await sendRetryingOnce(ws, send, d.id)).toEqual([{ id: d.id, result: "sent" }]);
     expect(socket.sendMessage).toHaveBeenCalledTimes(1);
     const content = socket.sendMessage.mock.calls[0]![1] as unknown as { document: Buffer; fileName: string; mimetype: string; caption: string };
     expect(content.fileName).toBe("Steel trading case study.pdf");
@@ -285,7 +297,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     expect(d.quality_checks.at(-1).attachmentsRemoved).toEqual([{ assetId: a.id, reason: "whatsapp_no_reply", title: "Steel trading case study" }]);
 
     const { socket, send } = whatsapp(ws);
-    await sendTick(ws, send);
+    await sendRetryingOnce(ws, send, d.id);
     const content = socket.sendMessage.mock.calls[0]![1] as { text?: string; document?: Buffer };
     expect(content.document).toBeUndefined();
     expect(content.text).toContain("Hi Asha");
@@ -336,7 +348,7 @@ describeIfDb("E2g AI attachments (requires TEST_DATABASE_URL)", () => {
     await pool.query(`delete from public.agent_assets where id = $1`, [waAsset.id]);
     await supabaseAdmin.storage.from("agent-assets").remove([waAsset.path]);
     const { socket, send } = whatsapp(ws);
-    await sendTick(ws, send);
+    await sendRetryingOnce(ws, send, (await decisionOf(w.id)).id);
     expect((socket.sendMessage.mock.calls[0]![1] as { document?: Buffer }).document).toBeUndefined();
     const waDecision = await decisionOf(w.id);
     expect(waDecision).toMatchObject({ send_status: "sent", sent_asset_ids: null });
