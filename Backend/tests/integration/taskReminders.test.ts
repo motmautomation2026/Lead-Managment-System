@@ -44,21 +44,27 @@ describeIfDb("LL-2 task reminders + escalation (requires TEST_DATABASE_URL)", ()
   }
 
   async function lead(ws: string, over: { ownerId?: string | null; lifecycle?: string } = {}) {
-    return (
+    // Lost / DNC leads are created active and moved afterwards: the lifecycle trigger writes dnc_events for the lead row.
+    const lifecycle = over.lifecycle ?? "active";
+    const terminal = lifecycle === "lost" || lifecycle === "do_not_contact";
+    const id = (
       await pool.query<{ id: string }>(
-        `insert into public.leads (workspace_id, first_name, last_name, company, source, email, owner_id, lifecycle_state, dnc_reason, dnc_at)
-         values ($1, 'Asha', 'Rao', 'Acme', 'referral', $2, $3, $4, case when $4 = 'do_not_contact' then 'test' end, case when $4 = 'do_not_contact' then now() end)
+        `insert into public.leads (workspace_id, first_name, last_name, company, source, email, owner_id, lifecycle_state)
+         values ($1, 'Asha', 'Rao', 'Acme', 'referral', $2, $3, $4)
          returning id`,
-        [ws, `ll2-${randomUUID()}@example.com`, over.ownerId === undefined ? owner.id : over.ownerId, over.lifecycle ?? "active"],
+        [ws, `ll2-${randomUUID()}@example.com`, over.ownerId === undefined ? owner.id : over.ownerId, terminal ? "active" : lifecycle],
       )
     ).rows[0]!.id;
+    if (lifecycle === "lost") await pool.query(`update public.leads set lifecycle_state = 'lost', loss_reason = 'no_response' where id = $1`, [id]);
+    if (lifecycle === "do_not_contact") await pool.query(`update public.leads set lifecycle_state = 'do_not_contact', dnc_reason = 'test', dnc_at = now() where id = $1`, [id]);
+    return id;
   }
 
   async function task(ws: string, leadId: string, over: { title?: string; dueAt: Date; ownerId?: string | null; origin?: string; status?: string }) {
     return (
       await pool.query<{ id: string }>(
         `insert into public.tasks (workspace_id, lead_id, owner_id, task_type, title, due_at, origin, status, completed_at)
-         values ($1, $2, $3, 'call', $4, $5, $6, $7, case when $7 = 'completed' then now() end) returning id`,
+         values ($1, $2, $3, 'call', $4, $5, $6, ($7::text)::public.task_status, case when $7::text = 'completed' then now() end) returning id`,
         [ws, leadId, over.ownerId === undefined ? owner.id : over.ownerId, over.title ?? "Call back", over.dueAt, over.origin ?? "manual", over.status ?? "open"],
       )
     ).rows[0]!.id;
@@ -94,7 +100,8 @@ describeIfDb("LL-2 task reminders + escalation (requires TEST_DATABASE_URL)", ()
     const ws = await workspace();
     const leadId = await lead(ws);
     await task(ws, leadId, { dueAt: ist("2026-11-16T10:00") });
-    await task(ws, leadId, { title: "Reply on WhatsApp", origin: "agent", dueAt: ist("2026-11-16T10:00") });
+    // A real reply-task title (REPLY_TASK_TITLES): those are escalated by their own 2-hour rule, never here.
+    await task(ws, leadId, { title: "Wants to talk — respond today", origin: "agent", dueAt: ist("2026-11-16T10:00") });
     const res = await tick(ws, ist("2026-11-17T10:05"));
     expect(res.escalated.map((e) => e.kind)).toEqual(["overdue"]);
     await tick(ws, ist("2026-11-17T12:00"));

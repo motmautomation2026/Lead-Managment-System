@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import { createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
+import { addTestMember, createTestWorkspace, deleteCreatedTestWorkspaces } from "../helpers/testWorkspaces.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -79,6 +79,8 @@ describeIfDb("inbound WhatsApp reply logging and AI handoff (requires TEST_DATAB
     await pool.query(`update public.profiles set is_active = true, full_name = 'WA4A Owner' where id = $1`, [ownerId]);
     ws = randomUUID();
     await createTestWorkspace(pool, "wa4a", { id: ws });
+    // LL-1 rule 1: the reply task goes to the owner only while they are an active member of the workspace.
+    await addTestMember(pool, ws, ownerId, "salesperson");
     await pool.query(`update public.agent_settings set mode = 'shadow' where workspace_id = $1`, [ws]);
   });
 

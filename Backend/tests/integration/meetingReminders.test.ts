@@ -44,15 +44,18 @@ describeIfDb("LL-2 meeting reminders (requires TEST_DATABASE_URL)", () => {
 
   async function lead(ws: string, over: { lifecycle?: string; sticky?: boolean } = {}) {
     const number = over.sticky === false ? null : (await pool.query<{ id: string }>(`select id from public.whatsapp_numbers where workspace_id = $1 limit 1`, [ws])).rows[0]?.id ?? null;
-    return (
+    // A DNC lead is created active and moved afterwards: the lifecycle trigger writes dnc_events for the lead row.
+    const lifecycle = over.lifecycle ?? "active";
+    const id = (
       await pool.query<{ id: string }>(
-        `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, lifecycle_state, whatsapp_number_id, dnc_reason, dnc_at)
-         values ($1, 'Asha', 'Rao', 'Acme', 'referral', $2, '+91 90000 00001', '+919000000001', $3, $4, $5,
-                 case when $4 = 'do_not_contact' then 'test' end, case when $4 = 'do_not_contact' then now() end)
+        `insert into public.leads (workspace_id, first_name, last_name, company, source, email, phone, phone_e164, owner_id, lifecycle_state, whatsapp_number_id)
+         values ($1, 'Asha', 'Rao', 'Acme', 'referral', $2, '+91 90000 00001', '+919000000001', $3, $4, $5)
          returning id`,
-        [ws, `ll2-${randomUUID()}@example.com`, owner.id, over.lifecycle ?? "active", number],
+        [ws, `ll2-${randomUUID()}@example.com`, owner.id, lifecycle === "do_not_contact" ? "active" : lifecycle, number],
       )
     ).rows[0]!.id;
+    if (lifecycle === "do_not_contact") await pool.query(`update public.leads set lifecycle_state = 'do_not_contact', dnc_reason = 'test', dnc_at = now() where id = $1`, [id]);
+    return id;
   }
 
   async function meeting(ws: string, leadId: string, at: Date, bookedAt: Date) {
@@ -115,7 +118,7 @@ describeIfDb("LL-2 meeting reminders (requires TEST_DATABASE_URL)", () => {
     const m = await meeting(ws, leadId, new Date(Date.now() + 23.5 * HOUR), new Date(Date.now() - 3 * 86_400_000));
     await plan(ws, new Date());
     const newAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
-    const res = await api.call(owner, ws, "PATCH", `/api/v1/meetings/${m}`, { at: newAt });
+    const res = await api.call(owner, ws, "PATCH", `/meetings/${m}`, { at: newAt });
     expect(res.status).toBe(200);
     const rows = await reminders(m);
     expect(rows.filter((r) => r.kind === "24h").every((r) => r.status === "cancelled" || r.status === "sent")).toBe(true);

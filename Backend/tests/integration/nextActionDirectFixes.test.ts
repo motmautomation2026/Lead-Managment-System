@@ -154,8 +154,10 @@ describeIfDb("LL-1 direct fixes (requires TEST_DATABASE_URL)", () => {
   it("website lead with the AI off → enrolled in the published lead_created workflow", async () => {
     const ws = await createTestWorkspace(pool, "ll1-fixes");
     const workflow = await pool.query<{ id: string }>(`insert into public.workflows (workspace_id, name, trigger, status) values ($1, $2, 'lead_created', 'active') returning id`, [ws, `LL1 ${randomUUID()}`]);
-    const version = await pool.query<{ id: string }>(`insert into public.workflow_versions (workflow_id, version_number, status, published_at) values ($1, 1, 'published', now()) returning id`, [workflow.rows[0]!.id]);
+    // Steps can only be written while the version is a draft (trigger); publish afterwards.
+    const version = await pool.query<{ id: string }>(`insert into public.workflow_versions (workflow_id, version_number, status) values ($1, 1, 'draft') returning id`, [workflow.rows[0]!.id]);
     await pool.query(`insert into public.workflow_steps (workflow_version_id, step_order, delay_days, action, config) values ($1, 0, 1, 'create_call_task', 'Call them')`, [version.rows[0]!.id]);
+    await pool.query(`update public.workflow_versions set status = 'published', published_at = now() where id = $1`, [version.rows[0]!.id]);
     const { ingestWebsiteLead } = await import("../../src/services/leadIngest.service.js");
     const outcome = await tx((db) =>
       ingestWebsiteLead(db, ws, { name: "Web Visitor", email: `ll1w-${randomUUID()}@example.com`, phone: randomPhone(), company: "Web Ltd", message: "Hello" } as never),

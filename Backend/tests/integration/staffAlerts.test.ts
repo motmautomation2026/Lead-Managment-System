@@ -51,13 +51,13 @@ describeIfDb("LL-2 staff email alerts (requires TEST_DATABASE_URL)", () => {
 
   it("Profile toggles: GET /me shows them (default on), PATCH /me changes only what is sent", async () => {
     const ws = await workspace();
-    const me = await api.call(rep, ws, "GET", "/api/v1/me");
+    const me = await api.call(rep, ws, "GET", "/me");
     expect(me.body).toMatchObject({ emailAlertsEnabled: true, emailDigestEnabled: true });
-    const res = await api.call(rep, ws, "PATCH", "/api/v1/me", { emailDigestEnabled: false });
+    const res = await api.call(rep, ws, "PATCH", "/me", { emailDigestEnabled: false });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ emailAlertsEnabled: true, emailDigestEnabled: false });
-    expect((await api.call(rep, ws, "PATCH", "/api/v1/me", {})).status).toBe(400);
-    await api.call(rep, ws, "PATCH", "/api/v1/me", { emailDigestEnabled: true });
+    expect((await api.call(rep, ws, "PATCH", "/me", {})).status).toBe(400);
+    await api.call(rep, ws, "PATCH", "/me", { emailDigestEnabled: true });
   });
 
   it("two urgent bells → one email to the login email; marked sent; nothing in the lead email queue", async () => {
@@ -89,9 +89,9 @@ describeIfDb("LL-2 staff email alerts (requires TEST_DATABASE_URL)", () => {
 
   it("admins change the toggles for a salesperson in Users (audited)", async () => {
     const ws = await workspace();
-    const res = await api.call(admin, ws, "PATCH", `/api/v1/admin/users/${rep.id}`, { emailAlertsEnabled: false });
+    const res = await api.call(admin, ws, "PATCH", `/admin/users/${rep.id}`, { emailAlertsEnabled: false });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ emailAlertsEnabled: false });
-    await api.call(admin, ws, "PATCH", `/api/v1/admin/users/${rep.id}`, { emailAlertsEnabled: true });
+    await api.call(admin, ws, "PATCH", `/admin/users/${rep.id}`, { emailAlertsEnabled: true });
   });
 });

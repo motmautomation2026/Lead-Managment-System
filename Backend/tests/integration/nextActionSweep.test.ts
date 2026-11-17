@@ -39,15 +39,19 @@ describeIfDb("LL-1 next-action sweep (requires TEST_DATABASE_URL)", () => {
   }
 
   async function lead(ws: string, over: { ownerId?: string | null; lifecycle?: string; agentStatus?: string; touches?: number; automation?: string; lastActivity?: string } = {}) {
+    // Lost / DNC leads are created active and moved afterwards: the lifecycle trigger writes dnc_events for the lead row.
+    const lifecycle = over.lifecycle ?? "active";
+    const terminal = lifecycle === "lost" || lifecycle === "do_not_contact";
     const row = await pool.query<{ id: string }>(
-      `insert into public.leads (workspace_id, first_name, last_name, company, source, email, owner_id, lifecycle_state, agent_status, agent_touch_count, automation_mode, last_activity_at,
-                                 loss_reason, dnc_reason, dnc_at)
-       values ($1, 'Lena', 'Lost', 'Acme', 'referral', $2, $3, $4, $5, $6, $7, coalesce($8::timestamptz, now()),
-               case when $4 = 'lost' then 'no_response' end, case when $4 = 'do_not_contact' then 'test' end, case when $4 = 'do_not_contact' then now() end)
+      `insert into public.leads (workspace_id, first_name, last_name, company, source, email, owner_id, lifecycle_state, agent_status, agent_touch_count, automation_mode, last_activity_at)
+       values ($1, 'Lena', 'Lost', 'Acme', 'referral', $2, $3, $4, $5, $6, $7, coalesce($8::timestamptz, now()))
        returning id`,
-      [ws, `ll1-${randomUUID()}@example.com`, over.ownerId === undefined ? owner.id : over.ownerId, over.lifecycle ?? "active", over.agentStatus ?? "none", over.touches ?? 0, over.automation ?? "manual", over.lastActivity ?? null],
+      [ws, `ll1-${randomUUID()}@example.com`, over.ownerId === undefined ? owner.id : over.ownerId, terminal ? "active" : lifecycle, over.agentStatus ?? "none", over.touches ?? 0, over.automation ?? "manual", over.lastActivity ?? null],
     );
-    return row.rows[0]!.id;
+    const id = row.rows[0]!.id;
+    if (lifecycle === "lost") await pool.query(`update public.leads set lifecycle_state = 'lost', loss_reason = 'no_response' where id = $1`, [id]);
+    if (lifecycle === "do_not_contact") await pool.query(`update public.leads set lifecycle_state = 'do_not_contact', dnc_reason = 'test', dnc_at = now() where id = $1`, [id]);
+    return id;
   }
 
   const sweep = async (ws: string) => (await import("../../src/services/nextAction.service.js")).runNextActionSweep({ workspaceIds: [ws] });
@@ -100,16 +104,16 @@ describeIfDb("LL-1 next-action sweep (requires TEST_DATABASE_URL)", () => {
   it("workflow run with a pending step → nothing; completed run → task; pending step on a manual lead → task", async () => {
     const ws = await workspace();
     const workflow = await pool.query<{ id: string }>(`insert into public.workflows (workspace_id, name, trigger, status) values ($1, $2, 'manual_enrollment', 'active') returning id`, [ws, `LL1 ${randomUUID()}`]);
-    const version = await pool.query<{ id: string }>(`insert into public.workflow_versions (workflow_id, version_number, status, published_at) values ($1, 1, 'published', now()) returning id`, [workflow.rows[0]!.id]);
+    // Steps can only be written while the version is a draft (trigger); publish afterwards.
+    const version = await pool.query<{ id: string }>(`insert into public.workflow_versions (workflow_id, version_number, status) values ($1, 1, 'draft') returning id`, [workflow.rows[0]!.id]);
     const step = await pool.query<{ id: string }>(`insert into public.workflow_steps (workflow_version_id, step_order, delay_days, action) values ($1, 0, 2, 'send_email') returning id`, [version.rows[0]!.id]);
+    await pool.query(`update public.workflow_versions set status = 'published', published_at = now() where id = $1`, [version.rows[0]!.id]);
     const enrol = async (leadId: string, status: string, pending: boolean) => {
-      const run = await pool.query<{ id: string }>(`insert into public.workflow_runs (workspace_id, workflow_id, workflow_version_id, lead_id, status) values ($1, $2, $3, $4, $5) returning id`, [
-        ws,
-        workflow.rows[0]!.id,
-        version.rows[0]!.id,
-        leadId,
-        status,
-      ]);
+      const run = await pool.query<{ id: string }>(
+        `insert into public.workflow_runs (workspace_id, workflow_id, workflow_version_id, lead_id, status, completed_at)
+         values ($1, $2, $3, $4, $5, case when $6::boolean then now() end) returning id`,
+        [ws, workflow.rows[0]!.id, version.rows[0]!.id, leadId, status, status === "completed"],
+      );
       if (pending) {
         await pool.query(
           `insert into public.scheduled_actions (workspace_id, lead_id, workflow_run_id, workflow_step_id, action_type, scheduled_for, status) values ($1, $2, $3, $4, 'send_email', now() + interval '2 days', 'pending')`,
