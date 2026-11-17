@@ -22,9 +22,9 @@ export interface NextActionFacts {
   };
 }
 
-/** (a) a workflow step will still run: lifecycle active and automation not manual/paused/stopped (they skip every step). */
+/** (a) a workflow step will still run: lifecycle active / long-term nurture (LL-3) and automation not manual/paused/stopped. */
 export function coveredByWorkflow(f: NextActionFacts): boolean {
-  return f.workflowStepPending && f.lifecycle === "active" && f.automationMode === "active";
+  return f.workflowStepPending && (f.lifecycle === "active" || f.lifecycle === "long_term_nurture") && f.automationMode === "active";
 }
 
 /** (b) the AI can still send: active, live, touches left (not waiting only because every journey message is used). */

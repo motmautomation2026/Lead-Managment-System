@@ -117,7 +117,7 @@ export async function loadSourceEligibility(db: Queryable, workspaceId: string, 
            join public.leads l on l.id = a.lead_id
            join public.workflow_runs r on r.id = a.workflow_run_id
           where a.id = $1 and a.workspace_id = $2 and a.status = 'executing'
-            and l.lifecycle_state = 'active' and l.automation_mode not in ('manual','paused','stopped')
+            and l.lifecycle_state in ('active', 'long_term_nurture') and l.automation_mode not in ('manual','paused','stopped')
             and r.status in ('running','waiting')
           for update of a, l, r`,
         [source.id, workspaceId],

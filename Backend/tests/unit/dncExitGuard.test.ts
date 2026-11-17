@@ -25,7 +25,7 @@ function fakeDb(lifecycles: Record<string, string>) {
 const guarded = [
   ["markWon", (db: never, id: string) => markWon(db, actor, WS, id)],
   ["markLost", (db: never, id: string) => markLost(db, actor, WS, id, "price_budget")],
-  ["markDiscarded", (db: never, id: string) => markDiscarded(db, actor, WS, id)],
+  ["markDiscarded", (db: never, id: string) => markDiscarded(db, actor, WS, id, "spam")],
   ["moveToLongTermNurture", (db: never, id: string) => moveToLongTermNurture(db, actor, WS, id)],
   ["mergeLead (source)", (db: never, id: string) => mergeLead(db, actor, WS, id, "target")],
 ] as const;

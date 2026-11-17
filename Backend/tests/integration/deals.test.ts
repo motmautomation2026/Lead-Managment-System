@@ -231,7 +231,7 @@ describeIfDb("deals (requires TEST_DATABASE_URL)", () => {
     const target = await contact();
     const closers: [string, (leadId: string) => Promise<unknown>][] = [
       ["lost", (id) => tx((c) => leads.markLost(c, actor, ws, id, "no_urgency"))],
-      ["discarded", (id) => tx((c) => leads.markDiscarded(c, actor, ws, id, "test"))],
+      ["discarded", (id) => tx((c) => leads.markDiscarded(c, actor, ws, id, "other", "test"))],
       ["do not contact", (id) => tx((c) => leads.markDnc(c, actor, ws, id, { reason: "asked" }))],
       ["do not contact", (id) => tx((c) => calls.logCall(c, actor, ws, id, { connected: true, connectedOutcome: "do_not_contact" }))],
       ["merged", (id) => tx((c) => leads.mergeLead(c, actor, ws, id, target.id))],

@@ -26,7 +26,7 @@ import { linkCompanySafely } from "./companies.service.js";
 import { closeOpenDealsSafely, winSingleOpenDealSafely } from "./deals.service.js";
 import type { AgentStatus } from "../agent/rules.js";
 import { containsPattern, leadSearchSql } from "../lists/listQuery.js";
-import { lossDetailsProblem, recoverAt, type DiscardReason, type LossDetails } from "../domain/recovery.js";
+import { DISCARD_REASON_LABELS, lossDetailsProblem, recoverAt, type DiscardReason, type LossDetails } from "../domain/recovery.js";
 import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
@@ -941,8 +941,13 @@ export async function markLost(
   });
 }
 
-export const markDiscarded = (db: Queryable, actor: Actor, workspaceId: string, leadId: string, reason?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "discarded", "Discarded", reason);
+/** LL-3 rule 7: a discard reason is required ("other" also needs the text). Discarded leads never recover. */
+export async function markDiscarded(db: Queryable, actor: Actor, workspaceId: string, leadId: string, discardReason: DiscardReason, notes?: string) {
+  const text = notes?.trim();
+  if (discardReason === "other" && !text) throw new ValidationError("Say why the contact is discarded.");
+  const detail = [DISCARD_REASON_LABELS[discardReason], text].filter(Boolean).join(" — ");
+  return setTerminalLifecycle(db, actor, workspaceId, leadId, "discarded", "Discarded", detail, { discard_reason: discardReason });
+}
 
 export async function moveToLongTermNurture(db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string) {
   const current = await getLeadRowOr404(db, workspaceId, leadId);
@@ -967,8 +972,9 @@ export async function reactivateLead(db: Queryable, actor: Actor, workspaceId: s
   }
   if (current.lifecycle_state === "active") return current;
 
+  // LL-3 rule 6: reopening cancels a pending Lost recovery.
   await db.query(
-    `update public.leads set lifecycle_state = 'active', automation_mode = 'manual', last_activity_at = now() where id = $1`,
+    `update public.leads set lifecycle_state = 'active', automation_mode = 'manual', last_activity_at = now(), recover_at = null where id = $1`,
     [leadId],
   );
   await addTimelineEvent(db, { leadId, kind: "system", title: "Reactivated", detail: reason, ...actorEvent(actor) });

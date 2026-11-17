@@ -25,6 +25,7 @@ import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runTaskReminders } from "./services/taskReminders.service.js";
 import { claimReminderWhatsappSends, processReminderWhatsappSend, runMeetingReminders } from "./services/meetingReminders.service.js";
 import { runTriedCallingSends } from "./services/triedCalling.service.js";
+import { runLostRecovery } from "./services/leadRecovery.service.js";
 import { runMorningDigest, runStaffAlertEmails } from "./services/staffAlerts.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
@@ -233,6 +234,9 @@ async function tick(): Promise<void> {
 
   // LL-3 rule 3: the fixed "We tried calling" WhatsApp after a No answer (queued by the call request).
   await step("tried_calling_whatsapp", "We-tried-calling WhatsApp sends", () => runTriedCallingSends({ dryRun: env.WORKER_DRY_RUN, limit: env.WORKER_BATCH_SIZE }), (n) => n);
+
+  // LL-3 rule 6: Lost leads whose recovery date came → long-term nurture + "Re-engage" task + bell.
+  await step("lost_recovery", "Lost recovery", () => runLostRecovery(), (r) => r.length);
 
   // Knowledge-base ingestion: at most 2 documents per tick (extraction and
   // embedding are the slow part, done outside any transaction).

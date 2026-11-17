@@ -37,6 +37,7 @@ export const WORKER_LOOPS = {
   meeting_reminders: { critical: true },
   meeting_reminder_whatsapp: { critical: true },
   tried_calling_whatsapp: { critical: true },
+  lost_recovery: { critical: false },
   staff_alert_emails: { critical: true },
   morning_digest: { critical: false },
   whatsapp_managers: { critical: true },

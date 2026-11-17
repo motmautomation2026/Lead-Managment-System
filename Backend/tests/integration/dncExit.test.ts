@@ -94,7 +94,7 @@ describeIfDb("Do Not Contact exit guard (requires TEST_DATABASE_URL)", () => {
         case "markLost":
           return leads.markLost(client, actor, WORKSPACE_ID, lead.id, "price_budget");
         case "markDiscarded":
-          return leads.markDiscarded(client, actor, WORKSPACE_ID, lead.id);
+          return leads.markDiscarded(client, actor, WORKSPACE_ID, lead.id, "spam");
         case "moveToLongTermNurture":
           return leads.moveToLongTermNurture(client, actor, WORKSPACE_ID, lead.id);
         case "mergeLead":

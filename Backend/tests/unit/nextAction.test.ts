@@ -35,12 +35,14 @@ describe("LL-1 rule 2: needsNextAction", () => {
     expect(needsNextAction({ ...base, futureMeeting: true })).toBe(false);
   });
 
-  it("workflow: a pending step covers it only while it can run (active lifecycle, automation active)", () => {
+  it("workflow: a pending step covers it only while it can run (active / long-term nurture lifecycle, automation active)", () => {
     expect(needsNextAction({ ...base, workflowStepPending: true })).toBe(false);
     for (const automationMode of ["manual", "paused", "stopped"] as const) {
       expect(needsNextAction({ ...base, workflowStepPending: true, automationMode })).toBe(true);
     }
-    expect(needsNextAction({ ...base, lifecycle: "long_term_nurture", workflowStepPending: true })).toBe(true);
+    // LL-3 rule 8: workflows run in long-term nurture too.
+    expect(needsNextAction({ ...base, lifecycle: "long_term_nurture", workflowStepPending: true })).toBe(false);
+    expect(needsNextAction({ ...base, lifecycle: "long_term_nurture", workflowStepPending: true, automationMode: "stopped" })).toBe(true);
   });
 
   it("AI: active + live + touches left covers it", () => {

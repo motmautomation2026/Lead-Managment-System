@@ -47,6 +47,15 @@ export const LEAD_LOSS_REASONS = [
   "other",
 ] as const;
 export type LeadLossReason = (typeof LEAD_LOSS_REASONS)[number];
+/** LL-3 rule 7: a discard reason is required ("other" also needs the text). */
+export const DISCARD_REASONS = [
+  "spam",
+  "duplicate",
+  "wrong_person",
+  "not_a_sales_lead",
+  "other",
+] as const;
+export type DiscardReason = (typeof DISCARD_REASONS)[number];
 /** LL-3: the reasons offered for a new loss (older ones stay valid on old records). Mirrors domain/recovery.ts. */
 export const LOSS_REASON_CHOICES = [
   "price_budget",
@@ -164,6 +173,12 @@ export interface Lead {
   interestedLaterDecisionOwner?: string;
   lossReason?: LeadLossReason;
   lossNotes?: string;
+  /** LL-3: competitor (reason competitor_selected), project date (postponed), Lost recovery date, discard reason. */
+  lossCompetitorName?: string;
+  lossProjectDate?: string;
+  recoverAt?: string;
+  recoveredAt?: string;
+  discardReason?: DiscardReason;
   mergedIntoLeadId?: string;
   /** AI agent state (read-only; managed from Settings → AI agent). */
   agentStatus: AgentStatus;

@@ -20,7 +20,14 @@ import {
 import { dateInputValue, toIsoFromIst } from "@/lib/dates";
 import { label } from "@/lib/labels";
 import { useSession } from "@/store";
-import { LEAD_LOSS_REASONS, TASK_TYPES, type LeadLossReason, type TaskType } from "@/types";
+import {
+  DISCARD_REASONS,
+  LOSS_REASON_CHOICES,
+  TASK_TYPES,
+  type DiscardReason,
+  type LeadLossReason,
+  type TaskType,
+} from "@/types";
 
 // Dialogs shared by the contact record page (and the old lead page until C6).
 
@@ -109,6 +116,8 @@ export function LostReasonDialog({
   onLossReason,
   notes,
   onNotes,
+  details,
+  onDetails,
   onOpenChange,
   onConfirm,
 }: {
@@ -117,9 +126,13 @@ export function LostReasonDialog({
   onLossReason: (value: LeadLossReason | "") => void;
   notes: string;
   onNotes: (value: string) => void;
+  /** LL-3: competitor name (Competitor) / project date (Postponed, required). */
+  details: { competitorName: string; projectDate: string };
+  onDetails: (value: { competitorName: string; projectDate: string }) => void;
   onOpenChange: (value: boolean) => void;
   onConfirm: () => void;
 }) {
+  const needsDate = lossReason === "project_postponed" && !details.projectDate;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -137,7 +150,98 @@ export function LostReasonDialog({
                 <SelectValue placeholder="Select a reason" />
               </SelectTrigger>
               <SelectContent>
-                {LEAD_LOSS_REASONS.map((value) => (
+                {LOSS_REASON_CHOICES.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {label(value)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {lossReason === "competitor_selected" && (
+            <div>
+              <Label htmlFor="lost-competitor" className="mb-1.5 block text-xs">
+                Competitor name (optional)
+              </Label>
+              <Input
+                id="lost-competitor"
+                value={details.competitorName}
+                onChange={(event) => onDetails({ ...details, competitorName: event.target.value })}
+              />
+            </div>
+          )}
+          {lossReason === "project_postponed" && (
+            <div>
+              <Label htmlFor="lost-project-date" className="mb-1.5 block text-xs">
+                Project date (required)
+              </Label>
+              <Input
+                id="lost-project-date"
+                type="date"
+                min={dateInputValue(1)}
+                value={details.projectDate}
+                onChange={(event) => onDetails({ ...details, projectDate: event.target.value })}
+              />
+            </div>
+          )}
+          <div>
+            <Label className="mb-1.5 block text-xs">Notes (optional)</Label>
+            <Textarea rows={3} value={notes} onChange={(event) => onNotes(event.target.value)} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The contact comes back for a re-engage task later: Budget and No response after 30 days,
+            No requirement and Other after 60, Existing supplier after 90, Competitor after 120,
+            Postponed on the project date.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!lossReason || needsDate} onClick={onConfirm}>
+            Confirm
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** LL-3 rule 7: a discard reason is required; "Other" also needs the text. Discarded contacts never come back. */
+export function DiscardDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (value: boolean) => void;
+  onConfirm: (reason: DiscardReason, text: string) => void;
+}) {
+  const [reason, setReason] = useState<DiscardReason | "">("");
+  const [text, setText] = useState("");
+  const close = (value: boolean) => {
+    onOpenChange(value);
+    if (!value) {
+      setReason("");
+      setText("");
+    }
+  };
+  const ready = reason !== "" && (reason !== "other" || text.trim() !== "");
+  return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Discard contact</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="mb-1.5 block text-xs">Reason</Label>
+            <Select value={reason} onValueChange={(value) => setReason(value as DiscardReason)}>
+              <SelectTrigger aria-label="Discard reason">
+                <SelectValue placeholder="Select a reason" />
+              </SelectTrigger>
+              <SelectContent>
+                {DISCARD_REASONS.map((value) => (
                   <SelectItem key={value} value={value}>
                     {label(value)}
                   </SelectItem>
@@ -146,19 +250,30 @@ export function LostReasonDialog({
             </Select>
           </div>
           <div>
-            <Label className="mb-1.5 block text-xs">Notes (optional)</Label>
-            <Textarea rows={3} value={notes} onChange={(event) => onNotes(event.target.value)} />
+            <Label htmlFor="discard-text" className="mb-1.5 block text-xs">
+              {reason === "other" ? "Why (required)" : "Details (optional)"}
+            </Label>
+            <Textarea
+              id="discard-text"
+              rows={3}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+            />
           </div>
           <p className="text-xs text-muted-foreground">
-            Drives the reactivation approach used later - required to close a lead as Lost.
+            A discarded contact is closed for good: no tasks, no messages, no re-engagement.
           </p>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={() => close(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" disabled={!lossReason} onClick={onConfirm}>
-            Confirm
+          <Button
+            variant="destructive"
+            disabled={!ready}
+            onClick={() => reason && onConfirm(reason, text.trim())}
+          >
+            Discard
           </Button>
         </DialogFooter>
       </DialogContent>

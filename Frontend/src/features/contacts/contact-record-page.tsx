@@ -54,7 +54,12 @@ import { ActivityFeed } from "@/features/crm/activity-feed";
 import type { ContactRecordSearch } from "./contact-helpers";
 import { LeadJourneyCard } from "@/features/leads/lead-journey-card";
 import { EnrollWorkflowDialog } from "@/features/leads/scheduled-followups";
-import { LostReasonDialog, NextActionDialog, ReasonDialog } from "@/features/leads/lead-dialogs";
+import {
+  DiscardDialog,
+  LostReasonDialog,
+  NextActionDialog,
+  ReasonDialog,
+} from "@/features/leads/lead-dialogs";
 import { OutcomeDialog } from "@/features/work/meeting-outcome-dialog";
 import { LogCallFlow } from "@/features/work/log-call-flow";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
@@ -64,7 +69,7 @@ import { useCreateDealDialog, useCreateTaskDialog } from "@/app/add-lead-context
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
 import { BackendError } from "@/lib/backend-client";
 import { toastUndo } from "@/lib/toast-undo";
-import { fmtDateTime, isOverdue, relDay } from "@/lib/format";
+import { fmtDate, fmtDateTime, isOverdue, relDay } from "@/lib/format";
 import { label } from "@/lib/labels";
 import { nurtureTriggerForStage } from "@/lib/pipeline";
 import { currentStepText } from "@/features/automations/run-labels";
@@ -225,6 +230,11 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
   const [lostOpen, setLostOpen] = useState(false);
   const [lossReason, setLossReason] = useState<LeadLossReason | "">("");
   const [lossNotes, setLossNotes] = useState("");
+  const [lossDetails, setLossDetails] = useState<{ competitorName: string; projectDate: string }>({
+    competitorName: "",
+    projectDate: "",
+  });
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -568,13 +578,7 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
                 Mark won
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setLostOpen(true)}>Mark lost…</DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() =>
-                  void mutate(() => actions.setLifecycle(id, "discard"), "Contact discarded")
-                }
-              >
-                Discard
-              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setDiscardOpen(true)}>Discard…</DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() =>
                   void mutate(
@@ -784,10 +788,21 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
       {contact.lifecycleState === "lost" && contact.lossReason && (
         <div className="type-body">
           Loss reason: <StatusBadge value={contact.lossReason} />
+          {contact.lossCompetitorName && <span> · {contact.lossCompetitorName}</span>}
           {contact.lossNotes && (
             <p className="pt-1 type-small text-muted-foreground">{contact.lossNotes}</p>
           )}
+          {contact.recoverAt && !contact.recoveredAt && (
+            <p className="pt-1 type-small text-muted-foreground">
+              Comes back for re-engagement on {fmtDate(contact.recoverAt)}
+            </p>
+          )}
         </div>
+      )}
+      {contact.lifecycleState === "discarded" && contact.discardReason && (
+        <p className="type-body">
+          Discarded: <StatusBadge value={contact.discardReason} />
+        </p>
       )}
     </>
   );
@@ -1080,19 +1095,31 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
         onLossReason={setLossReason}
         notes={lossNotes}
         onNotes={setLossNotes}
+        details={lossDetails}
+        onDetails={setLossDetails}
         onOpenChange={setLostOpen}
         onConfirm={() =>
           void mutate(async () => {
-            await actions.setLifecycle(
-              id,
-              "lost",
-              lossNotes.trim() || undefined,
-              lossReason || undefined,
-            );
+            await actions.setLifecycle(id, "lost", lossNotes.trim() || undefined, {
+              lossReason: lossReason || undefined,
+              competitorName: lossDetails.competitorName.trim() || undefined,
+              projectDate: lossDetails.projectDate || undefined,
+            });
             setLostOpen(false);
             setLossReason("");
             setLossNotes("");
+            setLossDetails({ competitorName: "", projectDate: "" });
           }, "Contact marked Lost")
+        }
+      />
+      <DiscardDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        onConfirm={(discardReason, text) =>
+          void mutate(async () => {
+            await actions.setLifecycle(id, "discard", text || undefined, { discardReason });
+            setDiscardOpen(false);
+          }, "Contact discarded")
         }
       />
       <ConfirmDialog

@@ -16,6 +16,7 @@ import {
   LEAD_LOSS_REASONS,
 } from "../domain/enums.js";
 import * as leadsService from "../services/leads.service.js";
+import { DISCARD_REASONS } from "../domain/recovery.js";
 import { leadToDto } from "../services/leads.service.js";
 import { getLeadNextAction } from "../services/tasks.service.js";
 import { listTimelineForLead } from "../services/timeline.service.js";
@@ -256,7 +257,7 @@ leadsRouter.post(
 // LL-3: competitor name (competitor) / project date (postponed, required — checked in markLost).
 const lossDetailsSchema = {
   competitorName: z.string().trim().max(200).optional(),
-  projectDate: z.string().regex(/^d{4}-d{2}-d{2}$/).optional(),
+  projectDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 };
 const markLostSchema = z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), notes: z.string().optional(), ...lossDetailsSchema });
 
@@ -271,11 +272,14 @@ leadsRouter.post(
   }),
 );
 
+// LL-3 rule 7: the discard reason is required; "other" also needs the text (checked in markDiscarded).
+const discardSchema = z.object({ discardReason: z.enum(DISCARD_REASONS), reason: z.string().trim().max(2000).optional() });
+
 leadsRouter.post(
   "/:id/discard",
   asyncHandler(async (req, res) => {
-    const { reason } = parseBody(optionalReasonSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markDiscarded(client, req.actor!, req.workspaceId!, req.params.id!, reason));
+    const { discardReason, reason } = parseBody(discardSchema, req.body);
+    const lead = await withTransaction((client) => leadsService.markDiscarded(client, req.actor!, req.workspaceId!, req.params.id!, discardReason, reason));
     res.json(await withNextAction(lead));
   }),
 );

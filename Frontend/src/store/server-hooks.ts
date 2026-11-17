@@ -23,6 +23,15 @@ import {
   type UpdateWorkflowInput,
 } from "@/lib/backend-client";
 import { initials } from "@/lib/format";
+import type { DiscardReason } from "@/types";
+
+/** LL-3: what Lost (reason + competitor / project date) and Discard (reason) carry besides the text. */
+export interface LifecycleExtra {
+  lossReason?: LeadLossReason | undefined;
+  competitorName?: string | undefined;
+  projectDate?: string | undefined;
+  discardReason?: DiscardReason | undefined;
+}
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type {
   AutomationMode,
@@ -178,20 +187,22 @@ export function useLeadMutations() {
       id,
       action,
       reason,
-      lossReason,
+      extra,
     }: {
       id: string;
       action: "won" | "lost" | "discard" | "reactivate" | "long_term_nurture";
       reason?: string | undefined;
-      /** Required by the backend when action === 'lost'. */
-      lossReason?: LeadLossReason | undefined;
+      extra?: LifecycleExtra | undefined;
     }) =>
       action === "won"
         ? backend.leads.markWon(id, reason)
         : action === "lost"
-          ? backend.leads.markLost(id, lossReason!, reason)
+          ? backend.leads.markLost(id, extra!.lossReason!, reason, {
+              competitorName: extra?.competitorName,
+              projectDate: extra?.projectDate,
+            })
           : action === "discard"
-            ? backend.leads.discard(id, reason)
+            ? backend.leads.discard(id, extra!.discardReason!, reason)
             : action === "long_term_nurture"
               ? backend.leads.longTermNurture(id, reason)
               : backend.leads.reactivate(id, reason),
@@ -242,8 +253,8 @@ export function useLeadMutations() {
       id: string,
       action: "won" | "lost" | "discard" | "reactivate" | "long_term_nurture",
       reason?: string,
-      lossReason?: LeadLossReason,
-    ) => lifecycle.mutateAsync({ id, action, reason, lossReason }),
+      extra?: LifecycleExtra,
+    ) => lifecycle.mutateAsync({ id, action, reason, extra }),
     clearWhatsAppOptOut: (id: string, reason: string) =>
       contactability.mutateAsync({ id, reason, channel: "whatsapp" }),
     clearEmailStatus: (id: string, reason: string) =>

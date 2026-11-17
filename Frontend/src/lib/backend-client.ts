@@ -34,6 +34,7 @@ import type {
   Contactability,
   Lead,
   LeadLossReason,
+  DiscardReason,
   LeadNote,
   LeadSource,
   LifecycleState,
@@ -267,6 +268,11 @@ export interface LeadFilters {
   search?: string;
   limit?: number;
   offset?: number;
+}
+/** LL-3: competitor name (competitor_selected) / project date (project_postponed, required). */
+export interface LossDetails {
+  competitorName?: string | undefined;
+  projectDate?: string | undefined;
 }
 export interface LogCallInput {
   connected: boolean;
@@ -1546,10 +1552,11 @@ export const backend = {
     reactivateFromDnc: (id: string, reason: string) =>
       send<Lead>("POST", `/leads/${id}/dnc/reactivate`, { reason }),
     markWon: (id: string, reason?: string) => send<Lead>("POST", `/leads/${id}/won`, { reason }),
-    markLost: (id: string, lossReason: LeadLossReason, notes?: string) =>
-      send<Lead>("POST", `/leads/${id}/lost`, { lossReason, notes }),
-    discard: (id: string, reason?: string) =>
-      send<Lead>("POST", `/leads/${id}/discard`, { reason }),
+    markLost: (id: string, lossReason: LeadLossReason, notes?: string, details: LossDetails = {}) =>
+      send<Lead>("POST", `/leads/${id}/lost`, { lossReason, notes, ...details }),
+    /** LL-3 rule 7: the reason is required; "other" also needs `reason` (the text). */
+    discard: (id: string, discardReason: DiscardReason, reason?: string) =>
+      send<Lead>("POST", `/leads/${id}/discard`, { discardReason, reason }),
     reactivate: (id: string, reason?: string) =>
       send<Lead>("POST", `/leads/${id}/reactivate`, { reason }),
     longTermNurture: (id: string, reason?: string) =>

@@ -63,6 +63,9 @@ interface TemplateRow {
   is_active: boolean;
 }
 
+/** LL-3 rule 8: the lifecycles a workflow step runs in. */
+export const WORKFLOW_LIFECYCLES: readonly string[] = ["active", "long_term_nurture"];
+
 export interface Eligibility {
   ok: boolean;
   reason?: string;
@@ -81,7 +84,8 @@ function computeEligibility(
   if (!["running", "waiting"].includes(run.status)) {
     return { ok: false, reason: `Workflow run status is "${run.status}".` };
   }
-  if (lead.lifecycle_state !== "active") {
+  // LL-3 rule 8: workflows also run in long-term nurture.
+  if (!WORKFLOW_LIFECYCLES.includes(lead.lifecycle_state)) {
     return { ok: false, reason: `Lead lifecycle is "${lead.lifecycle_state}".` };
   }
   if (["paused", "manual", "stopped"].includes(lead.automation_mode)) {
@@ -391,7 +395,7 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
   const leadRow = await getLeadRowOr404(db, action.workspace_id, action.lead_id);
   const lead = leadRow as LeadRow & { owner_name: string | null };
 
-  if (lead.lifecycle_state !== "active" || !["running", "waiting"].includes(run.status)) {
+  if (!WORKFLOW_LIFECYCLES.includes(lead.lifecycle_state) || !["running", "waiting"].includes(run.status)) {
     const reason = `Lead/run no longer eligible at execution time (lifecycle=${lead.lifecycle_state}, run=${run.status}).`;
     const context = await skipAction(db, actionId, reason);
     return { action: context.action, run: await getRunRowOr404(db, action.workspace_id, run.id), skipped: true };
@@ -412,6 +416,10 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
       sourceWorkflowRunId: run.id,
       sourceWorkflowStepId: action.workflow_step_id,
     });
+  } else if (action.action_type === "change_lead_stage" && lead.lifecycle_state === "long_term_nurture") {
+    // The pipeline stage is fixed while in long-term nurture (assertPipelineStageEditable): the step is skipped.
+    const context = await skipAction(db, actionId, "The pipeline stage can't change in long-term nurture.");
+    return { action: context.action, run: await getRunRowOr404(db, action.workspace_id, run.id), skipped: true };
   } else if (action.action_type === "change_lead_stage") {
     if (!config) throw new ValidationError("This change_lead_stage step has no target stage configured.");
     assertValidPipelineStage(config);

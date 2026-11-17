@@ -216,7 +216,7 @@ const CANDIDATE_WHERE = `l.lifecycle_state in ('active', 'long_term_nurture') an
    and ($2::uuid[] is null or l.workspace_id = any($2::uuid[]))
    and not exists (select 1 from public.tasks t where t.lead_id = l.id and t.status = 'open')
    and not exists (select 1 from public.meetings m where m.lead_id = l.id and m.scheduled_at > $1 and m.status::text in ${OPEN_MEETING_STATUSES})
-   and not (l.lifecycle_state = 'active' and l.automation_mode = 'active'
+   and not (l.lifecycle_state in ('active', 'long_term_nurture') and l.automation_mode = 'active'
             and exists (select 1 from public.workflow_runs r join public.scheduled_actions a on a.workflow_run_id = r.id
                          where r.lead_id = l.id and r.status in ('running', 'waiting') and a.status in ('pending', 'due', 'executing')))
    and not (l.agent_status = 'active' and l.agent_touch_count < s.max_touches_total and s.mode = 'live' and ${liveContactSql("s.live_scope", "s.live_since")})
