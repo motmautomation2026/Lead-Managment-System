@@ -18,6 +18,7 @@ import { LogCallFlow } from "@/features/work/log-call-flow";
 import { label } from "@/lib/labels";
 import { messageFromError, useCompany, useContact, useDeal, useLeadMutations } from "@/store";
 import { ActivityFeed } from "./activity-feed";
+import { useRememberRecent } from "./recent";
 
 export type PeekType = "contact" | "company" | "deal";
 
@@ -100,6 +101,16 @@ function State({ query }: { query: { isLoading: boolean; error: unknown } }) {
 
 function ContactPeek({ id }: { id: string }) {
   const query = useContact(id);
+  // UX-3 rule 4: a record opened from a peek is in the palette's Recent too.
+  useRememberRecent(
+    "contact",
+    query.data?.id,
+    query.data
+      ? `${query.data.firstName} ${query.data.lastName}`.trim() ||
+          query.data.email ||
+          "Unnamed contact"
+      : "",
+  );
   const createTask = useCreateTaskDialog();
   const { addNote } = useLeadMutations();
   const [callOpen, setCallOpen] = useState(false);
@@ -196,6 +207,7 @@ function ContactPeek({ id }: { id: string }) {
 function CompanyPeek({ id }: { id: string }) {
   const query = useCompany(id);
   const c = query.data;
+  useRememberRecent("company", c?.id, c?.name ?? "");
   if (!c) return <State query={query} />;
   return (
     <div>
@@ -227,6 +239,7 @@ function CompanyPeek({ id }: { id: string }) {
 function DealPeek({ id }: { id: string }) {
   const query = useDeal(id);
   const d = query.data;
+  useRememberRecent("deal", d?.id, d?.name ?? "");
   if (!d) return <State query={query} />;
   return (
     <div>

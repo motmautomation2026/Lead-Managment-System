@@ -81,6 +81,8 @@ export interface SettingEntry {
   tab?: string;
   anchor?: string;
   keywords?: string;
+  /** Narrower than its section (e.g. an admin-only card in a section everyone opens). */
+  access?: SettingsAccess;
 }
 export const SETTING_ENTRIES: SettingEntry[] = [
   { label: "Add a member", section: "team", anchor: "team-add", keywords: "invite user role" },
@@ -209,6 +211,13 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     keywords: "credentials secret redirect",
   },
   { label: "Connect Google Calendar", section: "calendar", keywords: "meet link" },
+  {
+    label: "Meeting reminders to leads",
+    section: "calendar",
+    anchor: "meeting-reminders",
+    keywords: "24 hours 1 hour reminder lead meeting",
+    access: "admin",
+  },
   { label: "AI mode", section: "ai-agent", keywords: "off shadow live scope go-live gate" },
   {
     label: "AI send window",
@@ -312,7 +321,7 @@ export function searchSettings(query: string, v: SettingsViewer, max = 8): Setti
     keywords: s.group,
   }));
   return [...sections, ...SETTING_ENTRIES]
-    .filter((e) => open.has(e.section))
+    .filter((e) => open.has(e.section) && (!e.access || canOpen(e.access, v)))
     .filter((e) => {
       const text = `${e.label} ${e.keywords ?? ""}`.toLowerCase();
       return words.every((w) => text.includes(w));

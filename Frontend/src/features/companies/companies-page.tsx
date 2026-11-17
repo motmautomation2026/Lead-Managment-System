@@ -19,6 +19,7 @@ import {
   useCompanyIndustries,
   useIsAdmin,
   useSession,
+  useUpdateCompany,
 } from "@/store";
 import type { CompanyListItem } from "@/types";
 import {
@@ -32,6 +33,7 @@ import {
   COMPANY_VIEW_SPEC,
 } from "./companies-search";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { useBulkAssignOwner } from "@/features/crm/bulk-assign";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
@@ -57,6 +59,14 @@ export function CompaniesPage() {
   const list = useCompanies({ ...params, limit: prefs.limit });
   const count = useCompaniesCount(params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
+  const updateOwner = useUpdateCompany();
+  // UX-3: bulk Assign owner (PATCH /companies/:id ownerId); Undo restores each previous owner.
+  const assign = useBulkAssignOwner({
+    listKey: JSON.stringify(params),
+    rows,
+    noun: ["company", "companies"],
+    write: (id, ownerId) => updateOwner.mutateAsync({ id, input: { ownerId } }),
+  });
   const industries = useCompanyIndustries();
   const duplicates = useCompanyDuplicatesCount({}, isAdmin);
 
@@ -183,6 +193,9 @@ export function CompaniesPage() {
             prefs.rememberColumns(columns);
             void set({ columns });
           }}
+          selectedIds={assign.selected}
+          onSelectionChange={assign.setSelected}
+          bulkActions={assign.bulkActions}
           pageSize={prefs.pageSize}
           onPageSizeChange={prefs.setPageSize}
           hasNextPage={list.hasNextPage}
@@ -194,6 +207,7 @@ export function CompaniesPage() {
           emptyState={emptyState}
         />
       </div>
+      {assign.confirmDialog}
       {state.peek && (
         <Suspense fallback={null}>
           <RecordPeek

@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SavedView, TaskListItem, TaskListParams, WorkflowTrigger } from "@/types";
 
 const mocks = vi.hoisted(() => ({
+  reopen: vi.fn(),
+  backendReopen: vi.fn(),
   listParams: [] as TaskListParams[],
   countParams: [] as TaskListParams[],
   rows: [] as TaskListItem[],
@@ -55,7 +57,13 @@ vi.mock("@/app/add-lead-context", () => ({
   useCreateTaskDialog: () => ({ open: mocks.openCreate }),
 }));
 vi.mock("@/lib/backend-client", () => ({
-  backend: { tasks: { complete: mocks.backendComplete, update: mocks.backendUpdate } },
+  backend: {
+    tasks: {
+      complete: mocks.backendComplete,
+      update: mocks.backendUpdate,
+      reopen: mocks.backendReopen,
+    },
+  },
 }));
 // Stand-ins for the dialogs LogCallFlow mounts: they expose the prompts it wires (B12).
 vi.mock("@/features/leads/log-call-dialog", () => ({
@@ -135,6 +143,7 @@ vi.mock("@/store", () => ({
     return { data: { count: params.due === "overdue" ? 3 : params.due === "today" ? 2 : 9 } };
   },
   useCompleteTask: () => ({ mutate: mocks.complete }),
+  useReopenTask: () => ({ mutate: mocks.reopen }),
   useUpdateTask: () => ({ mutateAsync: mocks.update, isPending: false }),
   useCancelTask: () => ({ mutateAsync: mocks.cancel, isPending: false }),
   useCreateMeeting: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -309,10 +318,19 @@ describe("TasksPage", () => {
     );
   });
 
-  it("Done completes a plain task; a call task opens Log call instead", async () => {
+  it("Done completes a plain task with Undo (reopen); a call task opens Log call instead", async () => {
     await renderPage();
     fireEvent.click(screen.getByRole("checkbox", { name: "Mark Send the deck done" }));
     expect(mocks.complete).toHaveBeenCalledWith("t-1", expect.anything());
+    // UX-3: success toasts with Undo → POST /tasks/:id/reopen.
+    (mocks.complete.mock.calls[0]![1] as { onSuccess: () => void }).onSuccess();
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    expect(message).toBe("“Send the deck” completed");
+    options.action.onClick();
+    expect(mocks.reopen).toHaveBeenCalledWith("t-1", expect.anything());
     fireEvent.click(screen.getByRole("checkbox", { name: "Mark First call done" }));
     expect(mocks.complete).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("call for task t-2")).toBeTruthy();
@@ -404,21 +422,27 @@ describe("TasksPage", () => {
     expect(await screen.findByText("call for task t-1")).toBeTruthy();
   });
 
-  it("bulk Complete and Reassign confirm with the count and summarise failures", async () => {
+  it("bulk Complete (no confirm up to 20, Undo reopens) and Reassign (confirm) summarise failures", async () => {
     mocks.backendComplete.mockResolvedValue({});
+    mocks.backendReopen.mockResolvedValue({});
     mocks.backendUpdate
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error("Task is closed"));
     await renderPage();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
-    const confirm = await screen.findByRole("dialog", { name: "Complete tasks" });
-    expect(confirm).toHaveTextContent("Mark 2 tasks as done?");
     await act(async () => {
-      fireEvent.click(within(confirm).getByRole("button", { name: "Complete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete" }));
     });
+    expect(screen.queryByRole("dialog", { name: "Complete tasks" })).toBeNull();
     await waitFor(() => expect(mocks.backendComplete).toHaveBeenCalledTimes(2));
-    expect(mocks.toast.success).toHaveBeenCalledWith("2 tasks completed");
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    expect(message).toBe("2 tasks completed");
+    await act(async () => options.action.onClick());
+    await waitFor(() => expect(mocks.backendReopen).toHaveBeenCalledTimes(2));
+    expect(mocks.toast.success).toHaveBeenCalledWith("2 tasks reopened");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
     fireEvent.keyDown(screen.getByLabelText("Reassign to"), { key: "Enter" });

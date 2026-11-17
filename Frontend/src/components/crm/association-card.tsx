@@ -20,6 +20,7 @@ export function AssociationCard({
   addLabel = "Add",
   emptyText = "None yet.",
   footer,
+  bare = false,
 }: {
   title: string;
   count?: number;
@@ -29,22 +30,11 @@ export function AssociationCard({
   emptyText?: string;
   /** Below the items, e.g. a "View all" link to the pre-filtered list page. */
   footer?: ReactNode;
+  /** UX-3 record rail: only the items (the rail card shows the title and the add action). */
+  bare?: boolean;
 }) {
-  return (
-    <Card className="p-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="type-section-title">
-          {title}
-          <span className="ml-1.5 num font-normal text-muted-foreground">
-            ({count ?? items.length})
-          </span>
-        </h3>
-        {onAdd && (
-          <Button variant="ghost" size="sm" onClick={onAdd} aria-label={`${addLabel} ${title}`}>
-            <Plus /> {addLabel}
-          </Button>
-        )}
-      </div>
+  const body = (
+    <>
       {items.length === 0 ? (
         <p className="type-body text-muted-foreground">{emptyText}</p>
       ) : (
@@ -63,6 +53,25 @@ export function AssociationCard({
         </ul>
       )}
       {footer && <div className="mt-2">{footer}</div>}
+    </>
+  );
+  if (bare) return body;
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="type-section-title">
+          {title}
+          <span className="ml-1.5 num font-normal text-muted-foreground">
+            ({count ?? items.length})
+          </span>
+        </h3>
+        {onAdd && (
+          <Button variant="ghost" size="sm" onClick={onAdd} aria-label={`${addLabel} ${title}`}>
+            <Plus /> {addLabel}
+          </Button>
+        )}
+      </div>
+      {body}
     </Card>
   );
 }

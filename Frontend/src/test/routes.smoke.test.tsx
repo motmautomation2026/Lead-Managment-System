@@ -43,7 +43,12 @@ vi.mock("@/store", () => ({
   }),
   useHomeSummary: () => ({
     data: {
-      tasks: { overdue: 0, dueToday: 0, next: [] },
+      tasks: { overdue: 0, dueToday: 0, next: [], overdueTop: [] },
+      replies: { count: 0, top: [] },
+      calls: { count: 0, top: [] },
+      nextSteps: { count: 0, top: [] },
+      team: null,
+      flags: null,
       meetings: { today: [], todayCount: 0, needsOutcome: 0 },
       deals: { openCount: 0, openAmount: 0, stages: [] },
       proposals: { awaitingDecision: 0 },
@@ -85,7 +90,7 @@ async function renderScreen(Screen: () => ReactNode) {
 
 describe("zero-record route states", () => {
   it.each([
-    [HomePage, "No open tasks. Nice."],
+    [HomePage, "No replies waiting."],
     [AiActivityPage, "No AI decisions match these filters."],
   ])("renders an empty backend dataset", async (Screen, expectedText) => {
     const view = await renderScreen(Screen);

@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from "react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo } from "react";
+import { useLocation, useNavigate, useSearch } from "@tanstack/react-router";
 import type { z } from "zod";
 
 /** Drops empty values so shared URLs stay short ("", [], undefined, null). */
@@ -20,6 +20,9 @@ function compact(search: Record<string, unknown>) {
 export function useListUrlState<S extends z.ZodTypeAny>(schema: S) {
   const raw = useSearch({ strict: false });
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // UX-3: record breadcrumbs return to the list with these filters.
+  useEffect(() => rememberListSearch(pathname, raw), [pathname, raw]);
   const state = useMemo(() => {
     const parsed = schema.safeParse(raw);
     return (parsed.success ? parsed.data : schema.parse({})) as z.infer<S>;
@@ -36,4 +39,26 @@ export function useListUrlState<S extends z.ZodTypeAny>(schema: S) {
   );
 
   return [state, set] as const;
+}
+
+const listKey = (pathname: string) => `motmflow.list.${pathname}`;
+
+/** The list's last search params for this tab (sessionStorage; unreadable storage = none). */
+export function rememberListSearch(pathname: string, search: Record<string, unknown>) {
+  try {
+    window.sessionStorage.setItem(listKey(pathname), JSON.stringify(search));
+  } catch {
+    // Storage unavailable: the breadcrumb opens the plain list.
+  }
+}
+
+export function lastListSearch(pathname: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(window.sessionStorage.getItem(listKey(pathname)) ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

@@ -12,7 +12,15 @@ import { SaveBar } from "@/components/crm/save-bar";
 import { SectionHeader } from "@/components/crm/section-layout";
 import { SectionSkeleton } from "@/components/crm/section-skeleton";
 import { StatusCard } from "@/components/crm/status-card";
-import { keys, messageFromError } from "@/store";
+import { Switch } from "@/components/ui/switch";
+import {
+  keys,
+  messageFromError,
+  useAgentSettings,
+  useIsAdmin,
+  useUpdateAgentSettings,
+} from "@/store";
+import { toastUndo } from "@/lib/toast-undo";
 import { useWorkspace } from "@/store/workspace-context";
 
 /**
@@ -287,6 +295,7 @@ function Notice({ children }: { children: ReactNode }) {
 /** Settings → Channels → Google Calendar. */
 export function CalendarSection() {
   const { currentWorkspaceId } = useWorkspace();
+  const isAdmin = useIsAdmin();
   return (
     <>
       <SectionHeader
@@ -294,6 +303,59 @@ export function CalendarSection() {
         description="A meeting scheduled in the CRM creates an event with a Meet link on this workspace's calendar and invites its participants."
       />
       {currentWorkspaceId && <GoogleCalendarPanel workspaceId={currentWorkspaceId} />}
+      {isAdmin && currentWorkspaceId && <MeetingRemindersCard />}
     </>
+  );
+}
+
+/**
+ * UX-3 (moved from AI → Limits & schedule): the LL-2 reminders to the lead, the same `meetingRemindersEnabled`
+ * agent setting (admin only). One switch, saved at once with Undo, so it needs no form or SaveBar of its own.
+ */
+export function MeetingRemindersCard() {
+  const settings = useAgentSettings();
+  const update = useUpdateAgentSettings();
+  const enabled = settings.data?.meetingRemindersEnabled ?? true;
+  const save = (value: boolean, undo = true) =>
+    update.mutate(
+      { meetingRemindersEnabled: value },
+      {
+        onSuccess: () =>
+          undo
+            ? toastUndo(`Meeting reminders ${value ? "on" : "off"}`, () => save(!value, false))
+            : toast.success(`Meeting reminders ${value ? "on" : "off"}`),
+        onError: (error) => toast.error(messageFromError(error)),
+      },
+    );
+  return (
+    <section
+      className="mt-6 space-y-2 rounded-lg border p-4"
+      aria-labelledby="meeting-reminders-title"
+    >
+      <h3 id="meeting-reminders-title" className="type-section-title">
+        Meeting reminders
+      </h3>
+      {settings.isLoading ? (
+        <SectionSkeleton label="Loading meeting reminders" />
+      ) : settings.error ? (
+        <p className="text-sm text-destructive">{messageFromError(settings.error)}</p>
+      ) : (
+        <label className="flex items-center justify-between gap-4 text-sm">
+          <span>
+            Meeting reminders to the lead
+            <span className="block text-xs text-muted-foreground">
+              A short fixed reminder (not AI) 24 hours and 1 hour before a scheduled meeting, by
+              email and WhatsApp. The rep's own 1-hour reminder always goes.
+            </span>
+          </span>
+          <Switch
+            id="meeting-reminders"
+            checked={enabled}
+            disabled={update.isPending}
+            onCheckedChange={(value) => save(value)}
+          />
+        </label>
+      )}
+    </section>
   );
 }

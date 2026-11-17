@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   openCreate: vi.fn(),
   views: [] as SavedView[],
   duplicatesEnabled: [] as boolean[],
+  updateCompany: vi.fn(async (_id: string, _input: unknown) => ({})),
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 const row = (id: string, name: string, extra: Partial<CompanyListItem> = {}): CompanyListItem => ({
@@ -38,7 +40,14 @@ const row = (id: string, name: string, extra: Partial<CompanyListItem> = {}): Co
   ...extra,
 });
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: mocks.toast }));
+vi.mock("@/lib/backend-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/backend-client")>()),
+  backend: { companies: { update: mocks.updateCompany } },
+}));
+vi.mock("@/store/workspace-context", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "ws-1" }),
+}));
 vi.mock("@/app/add-lead-context", () => ({
   useCreateCompanyDialog: () => ({ open: mocks.openCreate }),
 }));
@@ -48,7 +57,16 @@ vi.mock("@/features/crm/record-peek", () => ({
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => mocks.isAdmin,
-  useSession: () => ({ users: [{ id: "u-1", name: "Asha Owner", active: true }] }),
+  useSession: () => ({
+    users: [
+      { id: "u-1", name: "Asha Owner", active: true },
+      { id: "u-2", name: "Ravi Rep", active: true },
+    ],
+    userName: (id: string) => (id === "u-2" ? "Ravi Rep" : "Asha Owner"),
+  }),
+  useUpdateCompany: () => ({
+    mutateAsync: ({ id, input }: { id: string; input: unknown }) => mocks.updateCompany(id, input),
+  }),
   useCompanies: (params: CompanyListParams) => {
     mocks.listParams.push(params);
     return {
@@ -134,6 +152,29 @@ afterEach(() => {
 });
 
 describe("CompaniesPage", () => {
+  it("UX-3 bulk Assign owner: one PATCH per company, no confirm up to 20, Undo restores each owner", async () => {
+    await renderPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all loaded rows" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Assign owner/ }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ravi Rep" }));
+    await waitFor(() => expect(mocks.updateCompany).toHaveBeenCalledTimes(2));
+    expect(mocks.updateCompany).toHaveBeenCalledWith("co-1", { ownerId: "u-2" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalled());
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { onClick: () => void } },
+    ];
+    expect(message).toBe("2 companies assigned to Ravi Rep");
+    options.action.onClick();
+    await waitFor(() =>
+      expect(mocks.updateCompany).toHaveBeenCalledWith("co-2", { ownerId: "u-1" }),
+    );
+  });
+
   it("reads filters and sort from the URL and sends them to GET /companies", async () => {
     await renderPage({
       industry: ["Steel"],

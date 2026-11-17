@@ -38,6 +38,7 @@ export function LogCallDialog({
   onOpenChange,
   onEnrollPrompt,
   onScheduleMeetingPrompt,
+  onLogged,
 }: {
   leadId: string;
   /** When set, saving this call also completes the open 'call' task that prompted it. */
@@ -54,6 +55,8 @@ export function LogCallDialog({
    * meeting is actually scheduled (see onEnrollPrompt).
    */
   onScheduleMeetingPrompt?: (pendingTrigger?: WorkflowTrigger) => void;
+  /** UX-3: the call was saved (the call queue counts it and moves on). */
+  onLogged?: (() => void) | undefined;
 }) {
   const { logCall, isPending } = useLeadMutations();
   // By id, never from the cached leads list (B11).
@@ -118,6 +121,7 @@ export function LogCallDialog({
         taskId,
       });
       toast.success(connected ? `Call logged - ${label(outcome)}` : "Call logged - Not Connected");
+      onLogged?.();
       onOpenChange(false);
       reset();
       // Schedule-first, enroll-after: when both are pending (Meeting Agreed),

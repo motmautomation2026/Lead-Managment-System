@@ -14,7 +14,7 @@ import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useListUrlState } from "@/lib/use-list-url-state";
 import { useListPrefs } from "@/lib/list-prefs";
 import { cn } from "@/lib/utils";
-import { useCompany, useDeals, useDealsCount, useSession } from "@/store";
+import { useCompany, useDeals, useDealsCount, useSession, useUpdateDeal } from "@/store";
 import { DEAL_STAGES, type DealListItem } from "@/types";
 import { DEAL_COLUMNS } from "./deal-columns";
 import { DEAL_STAGE_LABELS } from "./deal-labels";
@@ -31,6 +31,7 @@ import {
   DEAL_VIEW_SPEC,
 } from "./deals-search";
 import { usePrefetchRecord } from "@/features/crm/prefetch";
+import { useBulkAssignOwner } from "@/features/crm/bulk-assign";
 import { SavedViewTabs } from "@/features/crm/saved-view-tabs";
 import { toSavedViewBody } from "@/features/crm/saved-views";
 import { useListViews } from "@/features/crm/use-list-views";
@@ -58,6 +59,14 @@ export function DealsPage() {
   const list = useDeals({ ...params, limit: prefs.limit }, !board);
   const count = useDealsCount(board ? boardParams : params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
+  const updateOwner = useUpdateDeal();
+  // UX-3: bulk Assign owner (PATCH /deals/:id ownerId); Undo restores each previous owner.
+  const assign = useBulkAssignOwner({
+    listKey: JSON.stringify(params),
+    rows,
+    noun: ["deal", "deals"],
+    write: (id, ownerId) => updateOwner.mutateAsync({ id, input: { ownerId } }),
+  });
   const filterCompany = useCompany(state.companyId);
 
   // The search box writes `q` once typing settles (only when the text changed, so
@@ -204,6 +213,9 @@ export function DealsPage() {
               prefs.rememberColumns(columns);
               void set({ columns });
             }}
+            selectedIds={assign.selected}
+            onSelectionChange={assign.setSelected}
+            bulkActions={assign.bulkActions}
             pageSize={prefs.pageSize}
             onPageSizeChange={prefs.setPageSize}
             hasNextPage={list.hasNextPage}
@@ -216,6 +228,7 @@ export function DealsPage() {
           />
         )}
       </div>
+      {assign.confirmDialog}
       {state.peek && (
         <Suspense fallback={null}>
           <RecordPeek type="deal" id={state.peek} onClose={() => void set({ peek: undefined })} />

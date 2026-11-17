@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   openTask: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
   feedKinds: [] as unknown[],
+  addNote: vi.fn(async () => undefined),
 }));
 
 vi.mock("sonner", () => ({ toast: mocks.toast }));
@@ -69,6 +70,7 @@ vi.mock("@/store", () => ({
     ]);
   },
   useContactTimeline: () => page([]),
+  useLeadMutations: () => ({ addNote: mocks.addNote, logCall: vi.fn() }),
   useCompanyTimeline: () => page([]),
   useUpdateDeal: () => ({ mutateAsync: mocks.update, isPending: false }),
   useMoveDealStage: () => ({ mutateAsync: mocks.move, isPending: false }),
@@ -181,13 +183,18 @@ async function renderPage() {
   return router;
 }
 
-const openTab = (name: string) => {
-  const tab = screen.getByRole("tab", { name });
-  fireEvent.mouseDown(tab);
-  fireEvent.click(tab);
+const openMore = async () => {
+  const header = within(screen.getByRole("banner"));
+  fireEvent.pointerDown(header.getByRole("button", { name: /^More/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  return screen.findByRole("menu");
 };
 
 beforeEach(() => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   mocks.deal = baseDeal();
   mocks.error = null;
   mocks.feedKinds = [];
@@ -204,31 +211,59 @@ afterEach(() => {
 });
 
 describe("DealRecordPage", () => {
-  it("header, overview facts, related cards and the stage bar", async () => {
+  it("sticky header: breadcrumb, identity, stage stepper; rail cards", async () => {
     await renderPage();
     expect(await screen.findByRole("heading", { name: "Acme rollout" })).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Ravi Kumar" })[0]).toHaveAttribute(
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByRole("link", { name: "Deals" })).toHaveAttribute("href", "/deals");
+    expect(header.getByRole("link", { name: "Ravi Kumar" })).toHaveAttribute(
       "href",
       "/contacts/l-1",
     );
-    expect(screen.getAllByRole("link", { name: "Acme" })[0]).toHaveAttribute(
-      "href",
-      "/companies/co-1",
+    expect(header.getByRole("link", { name: "Acme" })).toHaveAttribute("href", "/companies/co-1");
+    for (const name of ["Move stage", "Mark won", "Mark lost", "Log call", "Note", "More"]) {
+      expect(header.getByRole("button", { name: new RegExp(`^${name}`) })).toBeTruthy();
+    }
+    const bar = header.getByRole("list", { name: "Deal stage" });
+    expect(within(bar).getByRole("button", { name: "Negotiation" })).toHaveAttribute(
+      "aria-current",
+      "step",
     );
-    // Overview: next meeting, latest proposal, recent activity (5).
-    expect(screen.getByText(/Intro call ·/)).toBeTruthy();
-    expect(screen.getByText("SEO retainer")).toBeTruthy();
+    // Main column: the deal's feed.
     expect(screen.getByText("Proposal emailed")).toBeTruthy();
-    // Other deals of this contact exclude this one.
+    // Other deals: collapsed by default, this deal excluded.
+    const rail = within(screen.getByRole("complementary", { name: "Details" }));
+    fireEvent.click(rail.getByRole("button", { name: /^Other deals of this contact/ }));
     expect(screen.getByRole("link", { name: "Acme phase 2" })).toHaveAttribute(
       "href",
       "/deals/d-2",
     );
     expect(screen.queryByRole("link", { name: "Acme rollout" })).toBeNull();
-    const bar = screen.getByRole("list", { name: "Deal stage" });
-    expect(within(bar).getByRole("button", { name: "Negotiation" })).toHaveAttribute(
-      "aria-current",
-      "step",
+  });
+
+  it("breadcrumb returns to the deals list with its last filters", async () => {
+    window.sessionStorage.setItem(
+      "motmflow.list./deals",
+      JSON.stringify({ view: "mine", stage: ["qualified"] }),
+    );
+    await renderPage();
+    const link = within(
+      await screen.findByRole("navigation", { name: "Record breadcrumb" }),
+    ).getByRole("link", { name: "Deals" });
+    expect(link.getAttribute("href")).toMatch(/^\/deals\?/);
+    expect(link.getAttribute("href")).toContain("view=mine");
+    expect(link.getAttribute("href")).toContain("qualified");
+  });
+
+  it("composer: a note on a deal is saved on its contact with the deal id", async () => {
+    await renderPage();
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Note/ }));
+    const box = screen.getByRole("textbox", { name: "New note" });
+    expect(box).toHaveFocus();
+    fireEvent.change(box, { target: { value: "PO expected Friday" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() =>
+      expect(mocks.addNote).toHaveBeenCalledWith("l-1", "PO expected Friday", "d-1"),
     );
   });
 
@@ -261,7 +296,7 @@ describe("DealRecordPage", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Won" })).toBeNull();
     fireEvent.keyDown(menu, { key: "Escape" });
 
-    fireEvent.click(screen.getByRole("button", { name: /Schedule meeting/ }));
+    fireEvent.click(within(await openMore()).getByRole("menuitem", { name: /Schedule meeting/ }));
     const dialog = await screen.findByRole("dialog", { name: "Schedule meeting" });
     fireEvent.click(within(dialog).getByRole("button", { name: /Schedule|Save/ }));
     await waitFor(() =>
@@ -290,14 +325,10 @@ describe("DealRecordPage", () => {
     );
   });
 
-  it("tabs: Activity (deal feed with kind chips incl. Proposals) and Meetings & proposals", async () => {
+  it("feed chips and the Meetings & proposals / Next tasks rail cards", async () => {
     await renderPage();
-    openTab("Activity");
-    fireEvent.click(await screen.findByRole("button", { name: "Proposals" }));
-    await waitFor(() => expect(mocks.feedKinds).toContainEqual(["proposals"]));
-    openTab("Meetings & proposals");
-    const meetings = await screen.findByRole("heading", { name: /Meetings/ });
-    expect(meetings).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Meetings & proposals" }));
+    await waitFor(() => expect(mocks.feedKinds).toContainEqual(["meetings", "proposals"]));
     expect(screen.getAllByText("SEO retainer").length).toBeGreaterThan(0);
     // C6a: the deal's tasks/meetings/proposals from the list endpoints, with View all links.
     expect(screen.getByText("Chase the PO")).toBeTruthy();
@@ -312,7 +343,7 @@ describe("DealRecordPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change status of SEO retainer" }));
     expect(await screen.findByRole("dialog", { name: "Change proposal status" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: /Create task/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     expect(mocks.openTask).toHaveBeenCalledWith({
       contact: expect.objectContaining({ id: "l-1" }),
     });

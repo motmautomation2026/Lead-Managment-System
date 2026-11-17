@@ -56,6 +56,7 @@ import {
   refreshWork,
   useCompany,
   useCompleteTask,
+  useReopenTask,
   useSession,
   useTaskCount,
   useTaskList,
@@ -122,6 +123,7 @@ export function TasksPage() {
   const client = useQueryClient();
   const { currentWorkspaceId: ws } = useWorkspace();
   const complete = useCompleteTask();
+  const reopen = useReopenTask();
 
   const params = useMemo(() => toApiParams(state), [state]);
   // A bare /tasks is rewritten to the My open view first (useListViews); don't fetch "all" meanwhile.
@@ -207,7 +209,14 @@ export function TasksPage() {
     if (task.type === "schedule_meeting")
       return setMeetingFor({ leadId: task.contact.id, taskId: task.id });
     complete.mutate(task.id, {
-      onSuccess: () => toast.success("Task completed"),
+      // UX-3: Undo reopens it (POST /tasks/:id/reopen).
+      onSuccess: () =>
+        toastUndo(`“${task.title}” completed`, () =>
+          reopen.mutate(task.id, {
+            onSuccess: () => toast.success("Task reopened"),
+            onError: (error) => toast.error(error.message),
+          }),
+        ),
       onError: (error) => toast.error(error.message),
     });
   };
@@ -310,6 +319,14 @@ export function TasksPage() {
     else toast.success("Change undone");
   };
 
+  /** UX-3: Undo for a bulk Complete reopens every task it completed. */
+  const reopenAll = async (ids: string[]) => {
+    const { failed } = await eachTask(ids, (id) => backend.tasks.reopen(id));
+    await refreshWork(client, ws);
+    if (failed) toast.error(`Couldn't reopen ${tasksText(failed)}`);
+    else toast.success(`${tasksText(ids.length)} reopened`);
+  };
+
   const bulk = async (kind: "complete" | "reassign" | "reschedule") => {
     setBulkBusy(true);
     const ids = selected;
@@ -323,9 +340,10 @@ export function TasksPage() {
         before.set(id, { ownerId: t.ownerId });
       if (kind === "reschedule") before.set(id, { dueAt: t.dueAt });
     }
+    const completed: string[] = [];
     const { failed, first } = await eachTask(ids, (id) =>
       kind === "complete"
-        ? backend.tasks.complete(id)
+        ? backend.tasks.complete(id).then(() => void completed.push(id))
         : kind === "reassign"
           ? backend.tasks.update(id, { ownerId: bulkOwner })
           : backend.tasks.update(id, { dueAt: shiftedDue(byId.get(id)!.dueAt, bulkDays) }),
@@ -337,7 +355,9 @@ export function TasksPage() {
     const verb =
       kind === "complete" ? "completed" : kind === "reassign" ? "reassigned" : "rescheduled";
     if (failed === 0) {
-      if (before.size > 0) toastUndo(`${tasksText(ok)} ${verb}`, () => void restore(before));
+      if (kind === "complete")
+        toastUndo(`${tasksText(ok)} ${verb}`, () => void reopenAll(completed));
+      else if (before.size > 0) toastUndo(`${tasksText(ok)} ${verb}`, () => void restore(before));
       else toast.success(`${tasksText(ok)} ${verb}`);
     } else
       toast.error(
@@ -491,7 +511,15 @@ export function TasksPage() {
           onSelectionChange={setSelected}
           bulkActions={
             <>
-              <Button size="sm" variant="outline" onClick={() => setConfirm("complete")}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={bulkBusy}
+                onClick={() =>
+                  // UX-3: Complete can be undone, so it only asks first above 20 tasks.
+                  selected.length > 20 ? setConfirm("complete") : void bulk("complete")
+                }
+              >
                 Complete
               </Button>
               <DropdownMenu>

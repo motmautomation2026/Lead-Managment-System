@@ -16,7 +16,14 @@ import {
  * tasks, upcoming meetings and open proposals from the list endpoints, with counts and
  * "View all" links to the pre-filtered pages.
  */
-export function RecordWorkCards({ companyId }: { companyId: string }) {
+export function RecordWorkCards({
+  companyId,
+  bare = false,
+}: {
+  companyId: string;
+  /** UX-3 record rail: inside one rail card, each list under a small heading. */
+  bare?: boolean;
+}) {
   const filter = { companyId };
   const taskParams = { ...filter, status: "open" as const, limit: 5 };
   const meetingParams = { ...filter, when: "upcoming" as const, limit: 5 };
@@ -30,9 +37,10 @@ export function RecordWorkCards({ companyId }: { companyId: string }) {
   const rows = <T,>(list: { data?: { pages: { data: T[] }[] } | undefined }) =>
     list.data?.pages[0]?.data ?? [];
 
+  const Card = bare ? BareCard : AssociationCard;
   return (
-    <>
-      <AssociationCard
+    <div className={bare ? "space-y-4" : "contents"}>
+      <Card
         title="Open tasks"
         {...(taskCount !== undefined ? { count: taskCount } : {})}
         emptyText="No open tasks."
@@ -53,7 +61,7 @@ export function RecordWorkCards({ companyId }: { companyId: string }) {
           meta: <RelativeTime value={t.dueAt} className={t.isOverdue ? "text-destructive" : ""} />,
         }))}
       />
-      <AssociationCard
+      <Card
         title="Upcoming meetings"
         {...(meetingCount !== undefined ? { count: meetingCount } : {})}
         emptyText="No upcoming meetings."
@@ -74,7 +82,7 @@ export function RecordWorkCards({ companyId }: { companyId: string }) {
           meta: <RelativeTime value={m.at} />,
         }))}
       />
-      <AssociationCard
+      <Card
         title="Open proposals"
         {...(proposalCount !== undefined ? { count: proposalCount } : {})}
         emptyText="No open proposals."
@@ -95,6 +103,20 @@ export function RecordWorkCards({ companyId }: { companyId: string }) {
           meta: <StatusBadge value={p.status} />,
         }))}
       />
-    </>
+    </div>
+  );
+}
+
+function BareCard(props: Parameters<typeof AssociationCard>[0]) {
+  return (
+    <section className="space-y-1">
+      <h3 className="type-label">
+        {props.title}
+        {props.count !== undefined && (
+          <span className="ml-1 num font-normal text-muted-foreground">({props.count})</span>
+        )}
+      </h3>
+      <AssociationCard {...props} bare />
+    </section>
   );
 }

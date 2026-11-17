@@ -124,8 +124,11 @@ export function useLeadMutations() {
     onSuccess: (lead) => refresh(lead.id),
   });
   const note = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: string }) => backend.leads.addNote(id, body),
-    onSuccess: (_, vars) => refresh(vars.id),
+    mutationFn: ({ id, body, dealId }: { id: string; body: string; dealId?: string | undefined }) =>
+      backend.leads.addNote(id, body, dealId),
+    // A deal note also shows in the deal's (and its company's) feed.
+    onSuccess: (_, vars) =>
+      vars.dealId ? refreshDeal(client, currentWorkspaceId) : refresh(vars.id),
   });
   const remove = useMutation({
     mutationFn: (id: string) => backend.leads.delete(id),
@@ -227,7 +230,7 @@ export function useLeadMutations() {
     importLeadsCsv: (rows: ImportLeadRow[]) => importCsv.mutateAsync(rows),
     updateLead: (id: string, input: UpdateLeadInput) => update.mutateAsync({ id, input }),
     deleteLead: (id: string) => remove.mutateAsync(id),
-    addNote: (id: string, body: string) => note.mutateAsync({ id, body }),
+    addNote: (id: string, body: string, dealId?: string) => note.mutateAsync({ id, body, dealId }),
     setAutomation: (id: string, mode: AutomationMode, reason?: string) =>
       automation.mutateAsync({ id, mode, reason }),
     markDnc: (id: string, reason: string) => dnc.mutateAsync({ id, reason }),

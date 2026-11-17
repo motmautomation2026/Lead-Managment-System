@@ -6,7 +6,7 @@ import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
 import { parseBody, parseQuery, queryBoolean, uuidParam } from "../validation/parse.js";
 import { TASK_STATUSES, TASK_TYPES } from "../domain/enums.js";
-import { cancelTask, completeTask, createTask, listTasks, taskToDto, updateTask } from "../services/tasks.service.js";
+import { cancelTask, completeTask, createTask, listTasks, reopenTask, taskToDto, updateTask } from "../services/tasks.service.js";
 import * as work from "../services/workLists.service.js";
 
 export const tasksRouter = Router();
@@ -83,6 +83,15 @@ tasksRouter.post(
   "/:id/complete",
   asyncHandler(async (req, res) => {
     const task = await withTransaction((client) => completeTask(client, req.actor!, req.workspaceId!, req.params.id!));
+    res.json(taskToDto(task));
+  }),
+);
+
+/** UX-3: Undo for Complete (owner or admin). */
+tasksRouter.post(
+  "/:id/reopen",
+  asyncHandler(async (req, res) => {
+    const task = await withTransaction((client) => reopenTask(client, req.actor!, req.workspaceId!, req.params.id!));
     res.json(taskToDto(task));
   }),
 );

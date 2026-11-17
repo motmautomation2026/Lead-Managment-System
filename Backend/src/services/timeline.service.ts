@@ -120,13 +120,14 @@ export async function listTimelineForLead(db: Queryable, workspaceId: string, le
 /** Activity filter groups, the same chips as the record pages' Activity tab. */
 export const ACTIVITY_TYPES = ["notes", "calls", "meetings", "proposals", "tasks", "messages", "ai", "deals", "system"] as const;
 
-// One group per row, first match wins: deal rows, then AI agent rows, then by kind. `agent` binds AGENT_ACTOR_NAME.
+// One group per row, first match wins: notes and calls by kind (UX-3: also when written on a deal), deal rows, then AI
+// agent rows, then by kind. `agent` binds AGENT_ACTOR_NAME.
 const activityTypeSql = (agent: string) => `case
-  when t.related_deal_id is not null then 'deals'
-  when t.actor_name = ${agent} then 'ai'
   when t.event_kind = 'note' then 'notes'
   when t.event_kind = 'call' then 'calls'
-  when t.event_kind = 'meeting' then 'meetings'
+  when t.related_deal_id is not null then 'deals'
+  when t.actor_name = ${agent} then 'ai'
+  when t.event_kind in ('meeting', 'meeting_reminder') then 'meetings'
   when t.event_kind = 'proposal' then 'proposals'
   when t.event_kind = 'task' then 'tasks'
   when t.event_kind in ('email', 'whatsapp') then 'messages'

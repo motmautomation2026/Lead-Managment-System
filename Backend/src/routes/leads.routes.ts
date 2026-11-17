@@ -196,13 +196,13 @@ leadsRouter.get(
   }),
 );
 
-const addNoteSchema = z.object({ body: z.string().min(1) });
+const addNoteSchema = z.object({ body: z.string().min(1), dealId: z.string().uuid().optional() });
 
 leadsRouter.post(
   "/:id/notes",
   asyncHandler(async (req, res) => {
-    const { body } = parseBody(addNoteSchema, req.body);
-    const note = await withTransaction((client) => leadsService.addNote(client, req.actor!, req.workspaceId!, req.params.id!, body));
+    const { body, dealId } = parseBody(addNoteSchema, req.body);
+    const note = await withTransaction((client) => leadsService.addNote(client, req.actor!, req.workspaceId!, req.params.id!, body, dealId));
     res.status(201).json(note);
   }),
 );

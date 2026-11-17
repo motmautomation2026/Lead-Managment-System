@@ -19,79 +19,106 @@ import { CompanyPicker } from "@/features/companies/company-picker";
 import { DealStagePill } from "@/features/deals/deal-stage-pill";
 import { RecordLink } from "@/features/crm/record-link";
 
-/** Right panel: the contact's company and deals. */
-export function ContactAssociations({ contact }: { contact: ContactDetail }) {
-  const company = useCompany(contact.company?.id);
-  const [changeOpen, setChangeOpen] = useState(false);
+/**
+ * The contact's company and deals. UX-3 rail: `show` renders one of them `bare` (the rail card has the
+ * title); `changeOpen` / `onChangeOpen` let the rail card's own "Change" action open the dialog.
+ */
+export function ContactAssociations({
+  contact,
+  show,
+  changeOpen: changeOpenProp,
+  onChangeOpen,
+}: {
+  contact: ContactDetail;
+  show?: "company" | "deals";
+  changeOpen?: boolean;
+  onChangeOpen?: (open: boolean) => void;
+}) {
+  const company = useCompany(show === "deals" ? undefined : contact.company?.id);
+  const [changeOpenState, setChangeOpenState] = useState(false);
+  const changeOpen = changeOpenProp ?? changeOpenState;
+  const setChangeOpen = onChangeOpen ?? setChangeOpenState;
   const createDeal = useCreateDealDialog();
   const c = company.data;
+  const bare = Boolean(show);
+  const deals = show === "deals" ? contact.deals.filter((d) => !d.closedAt) : contact.deals;
 
   return (
     <>
-      <AssociationCard
-        title="Company"
-        count={contact.company ? 1 : 0}
-        addLabel="Change"
-        onAdd={() => setChangeOpen(true)}
-        emptyText={
-          contact.companyText
-            ? `“${contact.companyText}” isn't linked to a company record yet.`
-            : "No company."
-        }
-        items={
-          contact.company
-            ? [
-                {
-                  id: contact.company.id,
-                  title: (
-                    <RecordLink type="company" id={contact.company.id} className="hover:underline">
-                      {contact.company.name}
-                    </RecordLink>
-                  ),
-                  subtitle:
-                    [contact.company.domain, c?.industry].filter(Boolean).join(" · ") || null,
-                  meta: c ? (
-                    <span className="type-small text-muted-foreground">
-                      {c.contactCount} contact{c.contactCount === 1 ? "" : "s"}
-                    </span>
-                  ) : null,
-                },
-              ]
-            : []
-        }
-      />
-      <AssociationCard
-        title="Deals"
-        addLabel="Create deal"
-        onAdd={() =>
-          createDeal.open({
-            contact: { id: contact.id, name: `${contact.firstName} ${contact.lastName}`.trim() },
-            stay: true,
-          })
-        }
-        emptyText="No deals yet."
-        items={contact.deals.map((d) => ({
-          id: d.id,
-          title: (
-            <RecordLink type="deal" id={d.id} className="hover:underline">
-              {d.name}
-            </RecordLink>
-          ),
-          subtitle: (
-            <span className="inline-flex items-center gap-2">
-              <DealStagePill stage={d.stage} />
-              <Money amount={d.amount} currency={d.currency} compact />
-            </span>
-          ),
-          meta: d.closedAt ? (
-            <span className="type-small text-muted-foreground">
-              Closed <RelativeTime value={d.closedAt} />
-            </span>
-          ) : (
-            <span className="type-small text-muted-foreground">Open</span>
-          ),
-        }))}
-      />
+      {show !== "deals" && (
+        <AssociationCard
+          bare={bare}
+          title="Company"
+          count={contact.company ? 1 : 0}
+          addLabel="Change"
+          onAdd={() => setChangeOpen(true)}
+          emptyText={
+            contact.companyText
+              ? `“${contact.companyText}” isn't linked to a company record yet.`
+              : "No company."
+          }
+          items={
+            contact.company
+              ? [
+                  {
+                    id: contact.company.id,
+                    title: (
+                      <RecordLink
+                        type="company"
+                        id={contact.company.id}
+                        className="hover:underline"
+                      >
+                        {contact.company.name}
+                      </RecordLink>
+                    ),
+                    subtitle:
+                      [contact.company.domain, c?.industry].filter(Boolean).join(" · ") || null,
+                    meta: c ? (
+                      <span className="type-small text-muted-foreground">
+                        {c.contactCount} contact{c.contactCount === 1 ? "" : "s"}
+                      </span>
+                    ) : null,
+                  },
+                ]
+              : []
+          }
+        />
+      )}
+      {show !== "company" && (
+        <AssociationCard
+          bare={bare}
+          title="Deals"
+          addLabel="Create deal"
+          onAdd={() =>
+            createDeal.open({
+              contact: { id: contact.id, name: `${contact.firstName} ${contact.lastName}`.trim() },
+              stay: true,
+            })
+          }
+          emptyText={show === "deals" ? "No open deals." : "No deals yet."}
+          items={deals.map((d) => ({
+            id: d.id,
+            title: (
+              <RecordLink type="deal" id={d.id} className="hover:underline">
+                {d.name}
+              </RecordLink>
+            ),
+            subtitle: (
+              <span className="inline-flex items-center gap-2">
+                <DealStagePill stage={d.stage} />
+                <Money amount={d.amount} currency={d.currency} compact />
+              </span>
+            ),
+            meta: d.closedAt ? (
+              <span className="type-small text-muted-foreground">
+                Closed <RelativeTime value={d.closedAt} />
+              </span>
+            ) : (
+              <span className="type-small text-muted-foreground">Open</span>
+            ),
+          }))}
+        />
+      )}
 
       <Dialog open={changeOpen} onOpenChange={setChangeOpen}>
         <DialogContent className="sm:max-w-sm">

@@ -55,7 +55,11 @@ vi.mock("@/features/crm/record-peek", () => ({
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useIsAdmin: () => false,
-  useSession: () => ({ users: [{ id: "u-1", name: "Asha Owner", active: true }] }),
+  useSession: () => ({
+    users: [{ id: "u-1", name: "Asha Owner", active: true }],
+    userName: () => "Asha Owner",
+  }),
+  useUpdateDeal: () => ({ mutateAsync: vi.fn() }),
   useCompany: (id: string | undefined) => ({ data: id ? { id, name: "Acme" } : undefined }),
   useCompanySearch: () => ({ data: undefined }),
   useCreateCompany: () => ({ mutateAsync: vi.fn(), isPending: false }),

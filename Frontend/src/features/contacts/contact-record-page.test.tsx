@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
   runParams: [] as unknown[],
   stepParams: [] as unknown[],
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  addNote: vi.fn(async () => undefined),
+  logCall: vi.fn(async () => ({})),
+  wide: false,
+  completeTask: vi.fn(async () => undefined),
+  reopenTask: vi.fn(async () => undefined),
 }));
 
 const baseContact = (): ContactDetail =>
@@ -85,6 +90,8 @@ vi.mock("@/app/add-lead-context", async (importOriginal) => ({
   useCreateTaskDialog: () => ({ open: mocks.openTask }),
 }));
 vi.mock("@/features/agent/lead-ai-panel", () => ({ LeadAiPanel: () => <div>AI panel</div> }));
+// UX-3: jsdom has no matchMedia (phone layout: rail = tabs); `mocks.wide` renders the laptop layout.
+vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => mocks.wide }));
 vi.mock("@/store", () => ({
   messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
   useSession: () => ({
@@ -102,8 +109,8 @@ vi.mock("@/store", () => ({
   useLeadMutations: () => ({
     isPending: false,
     updateLead: mocks.updateLead,
-    addNote: noop,
-    logCall: noop,
+    addNote: mocks.addNote,
+    logCall: mocks.logCall,
     logCommunication: noop,
     setLifecycle: noop,
     setAutomation: noop,
@@ -140,7 +147,8 @@ vi.mock("@/store", () => ({
     },
   }),
   useProposalList: () => ({ data: { pages: [{ data: mocks.proposals, nextCursor: null }] } }),
-  useCompleteTask: () => ({ mutateAsync: noop }),
+  useCompleteTask: () => ({ mutateAsync: mocks.completeTask }),
+  useReopenTask: () => ({ mutateAsync: mocks.reopenTask }),
   useCancelTask: () => ({ mutateAsync: noop }),
   useCreateTask: () => ({ mutateAsync: noop }),
   useUpdateTask: () => ({ mutateAsync: noop }),
@@ -199,6 +207,9 @@ vi.mock("@/store", () => ({
     };
   },
   useCompanyTimeline: () => ({ data: undefined, isLoading: false, error: null }),
+  useLatestReplyDraft: () => ({ data: { draft: null } }),
+  useInboundReply: () => ({ data: undefined, isLoading: false, error: null }),
+  useCorrectReplyLabel: () => ({ mutate: vi.fn(), isPending: false }),
   useDealTimeline: () => ({ data: undefined, isLoading: false, error: null }),
   useCompanySearch: (input: string) => ({
     data:
@@ -242,7 +253,7 @@ async function renderPage(link?: ContactRecordSearch) {
   render(<RouterProvider router={router} />);
   await screen.findByRole("heading", { name: "Asha Rao" });
 }
-// Below lg (jsdom) the record is one column of tabs.
+// Below lg (jsdom) the rail cards are tabs under the header.
 const openTab = (name: string) => {
   const tab = screen.getByRole("tab", { name });
   fireEvent.mouseDown(tab);
@@ -250,6 +261,8 @@ const openTab = (name: string) => {
 };
 
 beforeEach(() => {
+  mocks.wide = false;
+  window.localStorage.clear();
   mocks.contact = baseContact();
   mocks.timeline = [];
   mocks.tasks = [];
@@ -260,7 +273,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ContactRecordPage", () => {
+describe("ContactRecordPage (UX-3 record layout)", () => {
   it("D2: a Read reply link opens Activity filtered to messages", async () => {
     await renderPage({ tab: "activity", activity: "messages", reply: "latest" });
     expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
@@ -271,29 +284,69 @@ describe("ContactRecordPage", () => {
     expect(mocks.timelineKinds.at(-1)).toEqual(["messages"]);
   });
 
-  it("renders the header and every panel", async () => {
+  it("sticky header: breadcrumb, identity, pills and the primary actions", async () => {
+    mocks.contact = {
+      ...baseContact(),
+      hotScore: 72,
+      hotBand: "hot",
+      hotReasons: [],
+      agentStatus: "active",
+      whatsappNumber: { id: "n-1", label: "Sales 1" },
+    };
     await renderPage();
-    expect(screen.getByText(/^CTO ·/)).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Tata Motors" })[0]).toHaveAttribute(
+    const crumbs = screen.getByRole("navigation", { name: "Record breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Contacts" })).toHaveAttribute(
       "href",
-      "/companies/co-1",
+      "/contacts",
     );
-    expect(screen.getByRole("tab", { name: "About" })).toBeTruthy();
-    // Overview (default): journey + next action + tasks.
-    expect(screen.getByText("Next action")).toBeTruthy();
-    expect(screen.getByText("Open tasks")).toBeTruthy();
+    expect(within(crumbs).getByText("Asha Rao")).toBeTruthy();
+    expect(screen.getByText(/^CTO ·/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Hot lead, score 72/ })).toBeTruthy();
+    expect(screen.getByText("AI: Active")).toBeTruthy();
+    expect(screen.getByText("WhatsApp · Sales 1")).toBeTruthy();
+    const header = within(screen.getByRole("banner"));
+    for (const name of ["Log call", "Note", "Task", "Meeting", "Proposal", "More"]) {
+      expect(header.getByRole("button", { name: new RegExp(`^${name}`) })).toBeTruthy();
+    }
+    // Activity is the main column; the rail cards are tabs on phones.
+    for (const name of ["Activity", "About", "Company", "Open deals", "Next tasks", "AI"]) {
+      expect(screen.getByRole("tab", { name })).toBeTruthy();
+    }
+    expect(
+      screen.getByText("No next action assigned. Every active contact needs one."),
+    ).toBeTruthy();
+  });
 
+  it("inline owner in the header saves through PATCH /leads/:id", async () => {
+    const { ownerId: _id, ownerName: _name, ...unowned } = baseContact();
+    mocks.contact = unowned as ContactDetail;
+    mocks.updateLead.mockResolvedValue({});
+    await renderPage();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Owner" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Rep One" }));
+    await waitFor(() => expect(mocks.updateLead).toHaveBeenCalledWith("c-1", { ownerId: "u-1" }));
+    expect(mocks.toast.success).toHaveBeenCalledWith("Owner updated");
+  });
+
+  it("panels: About, company, deals, meetings & proposals, automation", async () => {
+    await renderPage();
     openTab("About");
     expect(screen.getByText("asha@tata.test")).toBeTruthy();
-    openTab("Notes");
-    expect(screen.getByText("Called about fleet")).toBeTruthy();
+    openTab("Company");
+    expect(screen.getByText("3 contacts")).toBeTruthy();
+    openTab("Open deals");
+    expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
+      "href",
+      "/deals/d-1",
+    );
+    openTab("AI");
+    expect(screen.getByText("AI panel")).toBeTruthy();
     openTab("Meetings & proposals");
     expect(screen.getByText("Discovery call")).toBeTruthy();
     expect(screen.getByText(/Deal: Tata – Fleet/)).toBeTruthy();
     openTab("Automation");
     expect(screen.getByText("Workflow runs")).toBeTruthy();
     expect(screen.getByText("Nurture · V2")).toBeTruthy();
-    expect(screen.getByText(/Current step: Send Email/)).toBeTruthy();
     expect(mocks.runParams).toContainEqual({ contactId: "c-1", limit: 20 });
     expect(mocks.stepParams).toContainEqual({
       contactId: "c-1",
@@ -304,13 +357,6 @@ describe("ContactRecordPage", () => {
       "href",
       "/automations/runs?contactId=c-1",
     );
-    openTab("Associations");
-    expect(screen.getByText("3 contacts")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
-      "href",
-      "/deals/d-1",
-    );
-    expect(screen.getByText("AI panel")).toBeTruthy();
   });
 
   it("inline edit saves through PATCH /leads/:id and shows backend errors inline", async () => {
@@ -325,21 +371,14 @@ describe("ContactRecordPage", () => {
       expect(mocks.updateLead).toHaveBeenCalledWith("c-1", { email: "asha@other.test" }),
     );
     expect(await screen.findByText("That email belongs to another contact.")).toBeTruthy();
-
-    // Same rules as Create contact: an invalid email never reaches the API.
     mocks.updateLead.mockClear();
     fireEvent.change(input, { target: { value: "nope" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Enter a valid email address.")).toBeTruthy();
     expect(mocks.updateLead).not.toHaveBeenCalled();
-
-    mocks.updateLead.mockResolvedValueOnce({});
-    fireEvent.change(input, { target: { value: "asha@tata.test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalledWith("Email saved"));
   });
 
-  it("DNC: contact actions are disabled and the banner offers removal", async () => {
+  it("DNC: contact actions are disabled, the header warns and the banner offers removal", async () => {
     mocks.contact = {
       ...baseContact(),
       doNotContact: true,
@@ -348,14 +387,56 @@ describe("ContactRecordPage", () => {
     };
     await renderPage();
     expect(screen.getByRole("status")).toHaveTextContent("Do Not Contact. Asked us to stop");
-    for (const name of ["Log call", "Meeting", "Task", "Proposal", "Log email / WhatsApp"]) {
-      expect(screen.getByRole("button", { name: new RegExp(`^${name}`) })).toBeDisabled();
+    const header = within(screen.getByRole("banner"));
+    for (const name of ["Log call", "Meeting", "Task", "Proposal"]) {
+      expect(header.getByRole("button", { name: new RegExp(`^${name}`) })).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: /^Note/ })).toBeEnabled();
+    expect(header.getByRole("button", { name: /^Note/ })).toBeEnabled();
+    expect(header.getAllByText("Do Not Contact")).toHaveLength(1);
+    // No quick call from the composer either.
+    expect(screen.queryByRole("button", { name: "Call" })).toBeNull();
     expect(screen.getByRole("button", { name: "Remove suppression" })).toBeTruthy();
   });
 
-  it("work sections: list endpoints by contact, View all links, Task quick action, Change status (C6a)", async () => {
+  it("composer: a note without a dialog; a call that did not connect; Connected opens the dialog", async () => {
+    mocks.contact = {
+      ...baseContact(),
+      nextAction: {
+        taskId: "t-9",
+        type: "call",
+        title: "First call",
+        dueAt: "2026-10-26T04:30:00.000Z",
+        ownerId: "u-1",
+        ownerName: "Rep One",
+      },
+    } as ContactDetail;
+    await renderPage();
+    expect(screen.getByText("First call")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Note/ }));
+    const box = screen.getByRole("textbox", { name: "New note" });
+    expect(box).toHaveFocus();
+    fireEvent.change(box, { target: { value: "  Wants the deck  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() =>
+      expect(mocks.addNote).toHaveBeenCalledWith("c-1", "Wants the deck", undefined),
+    );
+    expect(mocks.toast.success).toHaveBeenCalledWith("Note added");
+
+    fireEvent.click(screen.getByRole("button", { name: "Call" }));
+    fireEvent.click(screen.getByRole("button", { name: "No answer" }));
+    await waitFor(() =>
+      expect(mocks.logCall).toHaveBeenCalledWith("c-1", {
+        connected: false,
+        notConnectedReason: "no_answer",
+        notes: undefined,
+        taskId: "t-9",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connected…" }));
+    expect(await screen.findByRole("dialog", { name: "Log call - Asha Rao" })).toBeTruthy();
+  });
+
+  it("next tasks: list endpoint by contact, complete inline, View all, Task action", async () => {
     mocks.tasks = [
       {
         id: "t-1",
@@ -367,91 +448,124 @@ describe("ContactRecordPage", () => {
         isOverdue: true,
       },
     ];
-    mocks.proposals = [
-      {
-        id: "p-1",
-        title: "Fleet proposal",
-        status: "sent",
-        currency: "INR",
-        updatedAt: "2026-10-20T10:00:00.000Z",
-        deal: null,
-        allowedNextStatuses: ["accepted", "rejected"],
-        lossReasonStatuses: ["rejected"],
-      },
-    ];
     await renderPage();
+    openTab("Next tasks");
     expect(screen.getByText("Send the deck")).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "View all" })[0]).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "View all tasks" })).toHaveAttribute(
       "href",
       "/tasks?contactId=c-1&view=everyone",
     );
-    fireEvent.click(screen.getByRole("button", { name: /^Task/ }));
+    // UX-3: Complete inline with Undo (POST /tasks/:id/reopen).
+    fireEvent.click(screen.getByRole("button", { name: "Complete Send the deck" }));
+    await waitFor(() => expect(mocks.completeTask).toHaveBeenCalledWith("t-1"));
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    expect(message).toBe("“Send the deck” completed");
+    expect(options.action.label).toBe("Undo");
+    options.action.onClick();
+    await waitFor(() => expect(mocks.reopenTask).toHaveBeenCalledWith("t-1"));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Task/ }));
     expect(mocks.openTask).toHaveBeenCalledWith({ contact: { id: "c-1", name: "Asha Rao" } });
-
-    openTab("Meetings & proposals");
-    const links = screen
-      .getAllByRole("link", { name: "View all" })
-      .map((l) => l.getAttribute("href"));
-    expect(links).toContain("/meetings?contactId=c-1&view=everyone&sort=at%3Adesc");
-    expect(links).toContain("/proposals?contactId=c-1&view=everyone");
-    fireEvent.click(screen.getByRole("button", { name: "Change status" }));
-    const dialog = await screen.findByRole("dialog", { name: "Change proposal status" });
-    fireEvent.keyDown(within(dialog).getByLabelText("New status"), { key: "Enter" });
-    expect(
-      within(screen.getByRole("listbox"))
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Accepted", "Rejected"]);
   });
 
-  it("dialogs get the contact by id, never from the leads list (B11)", async () => {
-    await renderPage();
-    fireEvent.click(screen.getByRole("button", { name: /^Log call/ }));
-    expect(await screen.findByRole("dialog", { name: "Log call - Asha Rao" })).toBeTruthy();
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    // Meeting and proposal dialogs are mounted with the contact's id (or a ContactPicker, C6a);
-    // the old leads-list hook no longer exists (src/test/removed-code.test.ts guards it).
-  });
-
-  it("Create deal opens the app-wide dialog for this contact; deal rows link to the deal", async () => {
-    await renderPage();
-    openTab("Associations");
-    expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
-      "href",
-      "/deals/d-1",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Create deal Deals" }));
-    expect(mocks.openDeal).toHaveBeenCalledWith({
-      contact: { id: "c-1", name: "Asha Rao" },
-      stay: true,
-    });
-  });
-
-  it("activity: paginated feed, chips filter server-side, Load more", async () => {
+  it("activity: paginated feed, chips group server kinds, Load more", async () => {
     mocks.timeline = [
       event("1", "notes", "Note added"),
       event("2", "deals", "Deal created", { relatedDealId: "d-1" }),
+      event("3", "meetings", "Meeting reminder sent"),
     ];
     await renderPage();
-    openTab("Activity");
     expect(screen.getByText("Note added")).toBeTruthy();
     expect(mocks.timelineKinds.at(-1)).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Deals" }));
-    expect(mocks.timelineKinds.at(-1)).toEqual(["deals"]);
+    expect(
+      within(screen.getByRole("group", { name: "Activity type" }))
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["All", "Calls", "Messages", "Notes", "AI", "Meetings & proposals", "System"]);
+    fireEvent.click(screen.getByRole("button", { name: "System" }));
+    expect(mocks.timelineKinds.at(-1)).toEqual(["system", "tasks", "deals"]);
     expect(screen.getByText("Deal created")).toBeTruthy();
     expect(screen.queryByText("Note added")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Meetings & proposals" }));
+    expect(mocks.timelineKinds.at(-1)).toEqual(["meetings", "proposals"]);
+    expect(screen.getByText("Meeting reminder sent")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Calls" }));
     expect(screen.getByText("Nothing of this type yet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(mocks.fetchNextPage).toHaveBeenCalled();
   });
 
+  it("D2 visibility unchanged: replies show 'Show message' only to readers", async () => {
+    const reply = (canRead: boolean) => ({
+      channel: "whatsapp" as const,
+      messageId: "wa-1",
+      hasText: true,
+      canRead,
+      canCorrect: canRead,
+      label: null,
+      labelSource: null,
+      labelBy: null,
+      classifying: false,
+    });
+    mocks.timeline = [event("1", "messages", "WhatsApp reply received", { reply: reply(true) })];
+    await renderPage();
+    expect(screen.getByRole("button", { name: "Show message" })).toBeTruthy();
+    cleanup();
+    mocks.timeline = [event("1", "messages", "WhatsApp reply received", { reply: reply(false) })];
+    await renderPage();
+    expect(screen.queryByRole("button", { name: "Show message" })).toBeNull();
+    expect(screen.getByText("Only the contact owner and admins can read replies.")).toBeTruthy();
+  });
+
+  it("laptop: right rail cards collapse and the choice is remembered", async () => {
+    mocks.wide = true;
+    await renderPage();
+    expect(screen.queryByRole("tab")).toBeNull();
+    const about = screen.getByRole("button", { name: "About" });
+    expect(about).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("asha@tata.test")).toBeTruthy();
+    // Collapsed by default: Meetings & proposals, Automation (their lists mount only when opened).
+    const rail = within(screen.getByRole("complementary", { name: "Details" }));
+    expect(rail.getByRole("button", { name: /^Meetings & proposals/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByText("Discovery call")).toBeNull();
+    fireEvent.click(about);
+    expect(about).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("asha@tata.test")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("motmflow.rail.contact") ?? "{}")).toEqual({
+      about: false,
+    });
+    cleanup();
+    await renderPage();
+    expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("dialogs get the contact by id, never from the leads list (B11)", async () => {
+    await renderPage();
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Log call/ }));
+    expect(await screen.findByRole("dialog", { name: "Log call - Asha Rao" })).toBeTruthy();
+  });
+
+  it("Create deal opens the app-wide dialog for this contact", async () => {
+    await renderPage();
+    openTab("Open deals");
+    fireEvent.click(screen.getByRole("button", { name: "Create deal" }));
+    expect(mocks.openDeal).toHaveBeenCalledWith({
+      contact: { id: "c-1", name: "Asha Rao" },
+      stay: true,
+    });
+  });
+
   it("Change company picks a company record and saves its name (the backend relinks)", async () => {
     mocks.updateLead.mockResolvedValue({});
     await renderPage();
-    openTab("Associations");
-    fireEvent.click(screen.getByRole("button", { name: "Change Company" }));
+    openTab("Company");
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     const dialog = await screen.findByRole("dialog", { name: "Change company" });
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Company" }));

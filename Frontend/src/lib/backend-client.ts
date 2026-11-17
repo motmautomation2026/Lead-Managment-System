@@ -1520,7 +1520,8 @@ export const backend = {
       send<{ data: ImportLeadsResult }>("POST", "/leads/import", { rows }),
     update: (id: string, fields: UpdateLeadInput) => send<Lead>("PATCH", `/leads/${id}`, fields),
     delete: (id: string) => del(`/leads/${id}`),
-    addNote: (id: string, body: string) => send<LeadNote>("POST", `/leads/${id}/notes`, { body }),
+    addNote: (id: string, body: string, dealId?: string) =>
+      send<LeadNote>("POST", `/leads/${id}/notes`, dealId ? { body, dealId } : { body }),
     notes: (id: string, signal?: AbortSignal) =>
       get<{ data: LeadNote[] }>(`/leads/${id}/notes`, signal),
     contactability: (id: string, signal?: AbortSignal) =>
@@ -1565,6 +1566,8 @@ export const backend = {
     create: (input: CreateTaskInput) => send<Task>("POST", "/tasks", input),
     update: (id: string, input: UpdateTaskInput) => send<Task>("PATCH", `/tasks/${id}`, input),
     complete: (id: string) => send<Task>("POST", `/tasks/${id}/complete`),
+    /** UX-3: Undo for Complete (owner or admin). */
+    reopen: (id: string) => send<Task>("POST", `/tasks/${id}/reopen`),
     cancel: (id: string, reason?: string) => send<Task>("POST", `/tasks/${id}/cancel`, { reason }),
   },
   meetings: {

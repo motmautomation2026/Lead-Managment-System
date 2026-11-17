@@ -1,6 +1,6 @@
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
 import { assertAssignableUser } from "./profiles.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import type { TaskOrigin, TaskType } from "../domain/enums.js";
@@ -183,6 +183,29 @@ export async function completeTask(db: Queryable, actor: Actor, workspaceId: str
     leadId: task.lead_id,
     kind: "task",
     title: "Task Completed",
+    detail: task.title,
+    ...actorEvent(actor),
+    relatedTaskId: task.id,
+  });
+  return task;
+}
+
+/**
+ * UX-3 Undo for Complete: a completed task back to open (owner or admin; audited on the timeline like
+ * complete / cancel). The LL-2 once-only markers (`due_notified_at`, `escalated_at`) stay set, so a
+ * reopened task never gets its due bell or escalation again. An open task is returned unchanged.
+ */
+export async function reopenTask(db: Queryable, actor: Actor, workspaceId: string, id: string): Promise<TaskRow> {
+  const existing = await getTaskOr404(db, workspaceId, id);
+  if (actor.role !== "admin" && existing.owner_id !== actor.id) throw new ForbiddenError("Only the task's owner or an admin can reopen it.");
+  if (existing.status === "open") return existing;
+  if (existing.status !== "completed") throw new ConflictError("Only a completed task can be reopened.");
+  const result = await db.query<TaskRow>(`update public.tasks set status = 'open', completed_at = null where id = $1 and status = 'completed' returning *`, [id]);
+  const task = result.rows[0] ?? (await getTaskOr404(db, workspaceId, id));
+  await addTimelineEvent(db, {
+    leadId: task.lead_id,
+    kind: "task",
+    title: "Task Reopened",
     detail: task.title,
     ...actorEvent(actor),
     relatedTaskId: task.id,

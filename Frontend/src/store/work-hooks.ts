@@ -161,6 +161,9 @@ export function useCompleteTask() {
   });
 }
 
+/** UX-3: Undo for Complete. */
+export const useReopenTask = () => useWorkWrite((id: string) => backend.tasks.reopen(id));
+
 export const useCreateMeeting = () =>
   useWorkWrite((input: CreateMeetingInput) => backend.meetings.create(input));
 export const useUpdateMeeting = () =>

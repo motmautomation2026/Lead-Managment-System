@@ -16,6 +16,7 @@ export function LogCallFlow({
   dealId,
   open,
   onOpenChange,
+  onLogged,
 }: {
   leadId: string;
   /** Saving the call also completes this open call task. */
@@ -24,6 +25,8 @@ export function LogCallFlow({
   dealId?: string | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** UX-3: the call was saved. */
+  onLogged?: (() => void) | undefined;
 }) {
   const [meetingOpen, setMeetingOpen] = useState(false);
   const [pendingTrigger, setPendingTrigger] = useState<WorkflowTrigger | undefined>(undefined);
@@ -41,6 +44,7 @@ export function LogCallFlow({
           taskId={taskId}
           open
           onOpenChange={onOpenChange}
+          onLogged={onLogged}
           onEnrollPrompt={(trigger) => setEnroll({ open: true, trigger })}
           onScheduleMeetingPrompt={(trigger) => {
             setPendingTrigger(trigger);

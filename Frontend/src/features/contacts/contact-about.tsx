@@ -181,9 +181,14 @@ const EMAIL_BLOCKED_TEXT: Record<string, string> = {
 export function ContactAbout({
   contact,
   contactability,
+  omit = [],
+  only,
 }: {
   contact: ContactDetail;
   contactability: Contactability[];
+  /** UX-3 rail: property ids shown in another card (omit) or the only ones of this card (only). */
+  omit?: string[];
+  only?: string[];
 }) {
   const { users } = useSession();
   const { updateLead } = useLeadMutations();
@@ -339,7 +344,9 @@ export function ContactAbout({
   ];
   return (
     <>
-      <PropertyList items={items} />
+      <PropertyList
+        items={items.filter((item) => (only ? only.includes(item.id) : !omit.includes(item.id)))}
+      />
       {isAdmin && (
         <ClearOptOutDialog
           contactId={contact.id}

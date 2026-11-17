@@ -20,6 +20,7 @@ import { fairPickSql } from "./fairPick.js";
 import { loadResponsible, notifyUsers } from "./nextAction.service.js";
 import { sendWhatsApp } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
+import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
 
 /** P7: meetings looked at per tick (soonest first, round-robin across workspaces). */
 const TICK_LIMIT = 200;
@@ -221,6 +222,7 @@ export async function processReminderWhatsappSend(row: ReminderRow, deps: { send
     }
     await (deps.send ?? sendWhatsApp)(row.workspace_id, { source: { type: "meeting_reminder", id: row.id }, to: phone, body: row.body });
     await set("sent", null, ", sent_at = now()");
+    await recordReminderSent(pool, row.id, "whatsapp");
     return "sent";
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -242,4 +244,30 @@ export async function processReminderWhatsappSend(row: ReminderRow, deps: { send
     await set("failed", message);
     return "failed";
   }
+}
+
+const REMINDER_TITLE: Record<string, string> = {
+  "24h": "Meeting reminder sent (24 h before)",
+  "1h": "Meeting reminder sent (1 h before)",
+  updated: "Meeting update sent",
+};
+
+/**
+ * UX-3: a reminder / "Updated" message that really went to the lead (never a dry run, never the rep's own reminder) gets
+ * one timeline row under Meetings & proposals. Its own event kind `meeting_reminder` keeps it out of the AI's context
+ * timeline (agentContext TIMELINE_KINDS): a service message is never a touch.
+ */
+export async function recordReminderSent(db: Queryable, reminderId: string, channel: "email" | "whatsapp"): Promise<void> {
+  const r = (await db.query<{ lead_id: string; meeting_id: string; kind: string }>(`select lead_id, meeting_id, kind from public.meeting_reminders where id = $1`, [reminderId]))
+    .rows[0];
+  const title = r && REMINDER_TITLE[r.kind];
+  if (!r || !title) return;
+  await addTimelineEvent(db, {
+    leadId: r.lead_id,
+    kind: "meeting_reminder",
+    title,
+    detail: channel === "email" ? "By email" : "On WhatsApp",
+    ...SYSTEM_ACTOR,
+    relatedMeetingId: r.meeting_id,
+  });
 }

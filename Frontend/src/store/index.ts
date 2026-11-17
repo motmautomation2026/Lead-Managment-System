@@ -83,6 +83,7 @@ export {
   useUpdateTask,
   useCancelTask,
   useCompleteTask,
+  useReopenTask,
   useCreateMeeting,
   useUpdateMeeting,
   useRecordMeetingOutcome,

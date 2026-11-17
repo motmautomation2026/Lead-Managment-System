@@ -61,7 +61,7 @@ export function ActivityFeed({
   onDraftDone?: (action: "sent" | "discarded") => void;
 }) {
   const [filter, setFilter] = useState<ActivityFilter>(initialFilter);
-  const kind = filter === "all" ? [] : [filter];
+  const kind = [...(ACTIVITY_FILTERS.find((f) => f.id === filter)?.kinds ?? [])];
   // All hooks run; the ones without an id stay disabled.
   const contactFeed = useContactTimeline(source.contactId ?? "", kind);
   const companyFeed = useCompanyTimeline(source.companyId ?? "", kind);

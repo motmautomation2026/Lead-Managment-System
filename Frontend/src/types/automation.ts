@@ -48,7 +48,14 @@ export interface ScheduledActionListParams {
 
 /** GET /home/summary: the signed-in user's day (IST, computed by the backend). */
 export interface HomeSummary {
-  tasks: { overdue: number; dueToday: number; next: TaskListItem[] };
+  tasks: { overdue: number; dueToday: number; next: TaskListItem[]; overdueTop: TaskListItem[] };
+  /** UX-3 My day: count + the top 5 of each queue. */
+  replies: { count: number; top: TaskListItem[] };
+  calls: { count: number; top: TaskListItem[] };
+  nextSteps: { count: number; top: TaskListItem[] };
+  /** Admins only (null for salespeople). */
+  team: { id: string; name: string; openTasks: number; overdue: number; replies: number }[] | null;
+  flags: { code: string; text: string }[] | null;
   meetings: { today: MeetingListItem[]; todayCount: number; needsOutcome: number };
   deals: {
     openCount: number;

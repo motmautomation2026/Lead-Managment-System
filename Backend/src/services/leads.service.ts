@@ -226,6 +226,14 @@ export function validateLeadFields(input: LeadFieldsInput): ValidatedLeadFields 
   };
 }
 
+/**
+ * UX-3: the owner's bell for a lead a rep added by hand. LL-2: its first call is due now, so an inbound
+ * enquiry entered manually says "call now" (the website-form ingest has its own 1-working-hour bell).
+ */
+export function manualLeadBellTitle(source: string): string {
+  return source === "website" || source === "inbound_form" ? "New lead — call now" : "New lead assigned to you";
+}
+
 export async function createLead(db: Queryable, actor: Actor, workspaceId: string, input: CreateLeadInput): Promise<LeadRow> {
   const fields = validateLeadFields(input);
   if (input.ownerId) await assertAssignableUser(db, workspaceId, input.ownerId);
@@ -249,12 +257,10 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
     ...actorEvent(actor),
   });
   await recordAssignment(db, id, assignment, actorEvent(actor));
-  // E3b-1 rule 4 (speed to lead): an inbound enquiry gets its first call within the hour.
-  const inbound = fields.source === "website" || fields.source === "inbound_form";
   if (ownerId && ownerId !== actor.id) {
     const who = `${fields.firstName} ${fields.lastName}`.trim();
     const detail = `${actor.fullName} added ${who} (${fields.company})${assignment.reason ? ` - ${assignment.reason}` : ""}.`;
-    await notifyOwner(db, workspaceId, ownerId, inbound ? "New website lead — call within 1 hour" : "New lead assigned to you", detail, id, `/leads/${id}`);
+    await notifyOwner(db, workspaceId, ownerId, manualLeadBellTitle(fields.source), detail, id, `/leads/${id}`);
   }
 
   // Every new lead needs a next action from the moment it exists (Rule: an
@@ -267,7 +273,8 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
     ownerName: assignment.ownerName,
     type: "call",
     title: "First call",
-    dueAt: inbound ? new Date(Date.now() + 3_600_000).toISOString() : addDaysIso(0),
+    // LL-2: a manually added (or CSV) lead's first call is due now, whatever its source.
+    dueAt: addDaysIso(0),
     origin: "manual",
   });
 
@@ -704,9 +711,14 @@ export async function deleteLead(db: Queryable, actor: Actor, workspaceId: strin
   await db.query(`delete from public.leads where id = $1`, [id]);
 }
 
-export async function addNote(db: Queryable, actor: Actor, workspaceId: string, leadId: string, body: string) {
+export async function addNote(db: Queryable, actor: Actor, workspaceId: string, leadId: string, body: string, dealId?: string) {
   if (!body.trim()) throw new ValidationError("Note body is required.");
   await getLeadRowOr404(db, workspaceId, leadId);
+  // UX-3: a note written on a deal page is the contact's note that also shows in that deal's feed.
+  if (dealId) {
+    const deal = await db.query(`select 1 from public.deals where id = $1 and lead_id = $2 and workspace_id = $3`, [dealId, leadId, workspaceId]);
+    if (deal.rowCount === 0) throw new ValidationError("That deal doesn't belong to this contact.");
+  }
 
   const result = await db.query<{ id: string; created_at: Date }>(
     `insert into public.lead_notes (lead_id, author_id, author_name, body)
@@ -720,6 +732,7 @@ export async function addNote(db: Queryable, actor: Actor, workspaceId: string, 
     title: "Note Added",
     detail: body.trim(),
     ...actorEvent(actor),
+    ...(dealId ? { relatedDealId: dealId } : {}),
   });
   await onAgentEvent(db, { workspaceId, leadId, event: "note_added" });
   return { id: result.rows[0]!.id, author: actor.fullName, at: result.rows[0]!.created_at.toISOString(), body: body.trim() };

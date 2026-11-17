@@ -34,6 +34,7 @@ import { defaultTransportCache, type TransportCache } from "../providers/email.p
 import { isMissingStorageObject, MissingStorageObjectError } from "../providers/storageErrors.js";
 import { ASSET_GONE_REASON, ASSET_TOO_BIG_REASON, ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js";
 import { mentionsAttachment } from "../agent/messageChecks.js";
+import { recordReminderSent } from "./meetingReminders.service.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { autoPauseEmail, loadEmailConnection, loadEmailStats, mailboxOf, recordEmailEvent } from "./emailConnection.service.js";
 import { tryAdvanceToSent } from "./proposals.service.js";
@@ -209,6 +210,7 @@ async function onSourceSent(db: Queryable, row: EmailOutboundRow, result: { mess
     await recordReplyDraftOutcome(db, row.source_id, { kind: "sent", providerMessageId: result.messageId, dryRun: result.dryRun });
   } else if (row.source === "meeting_reminder") {
     await db.query(`update public.meeting_reminders set status = 'sent', sent_at = now(), error = null where id = $1`, [row.source_id]);
+    if (!result.dryRun) await recordReminderSent(db, row.source_id, "email");
   }
 }
 

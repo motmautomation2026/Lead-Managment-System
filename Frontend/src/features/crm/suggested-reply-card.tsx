@@ -104,9 +104,17 @@ export function SuggestedReplyCard({
 }
 
 /** The reply task's Sheet: the contact's open (else latest sent) suggested reply; nothing for others than the owner and admins. */
-export function LatestSuggestedReply({ contactId }: { contactId: string }) {
+export function LatestSuggestedReply({
+  contactId,
+  openOnly = false,
+}: {
+  contactId: string;
+  /** UX-3 record rail: only a draft still waiting to be sent. */
+  openOnly?: boolean;
+}) {
   const query = useLatestReplyDraft(contactId, true);
-  const draft = query.data?.draft;
+  const latest = query.data?.draft;
+  const draft = openOnly && latest?.status !== "open" ? null : latest;
   // Keyed by id so a new draft (a newer reply) starts from its own text.
   return draft ? <SuggestedReplyCard key={draft.id} contactId={contactId} draft={draft} /> : null;
 }

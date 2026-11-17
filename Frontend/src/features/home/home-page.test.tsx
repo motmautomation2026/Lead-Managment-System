@@ -37,6 +37,15 @@ vi.mock("@/store", () => ({
 
 import { HomePage } from "./home-page";
 
+const taskItem = (id: string, title: string, contact: string, isOverdue = false) =>
+  ({
+    id,
+    title,
+    dueAt: "2026-10-25T04:30:00.000Z",
+    isOverdue,
+    contact: { id: `l-${id}`, name: contact },
+  }) as HomeSummary["tasks"]["next"][number];
+
 const summary = (over: Partial<HomeSummary> = {}): HomeSummary => ({
   tasks: {
     overdue: 3,
@@ -50,7 +59,16 @@ const summary = (over: Partial<HomeSummary> = {}): HomeSummary => ({
         contact: { id: "l-1", name: "Ravi Kumar" },
       } as HomeSummary["tasks"]["next"][number],
     ],
+    overdueTop: [taskItem("t-2", "Chase the PO", "Ravi Kumar", true)],
   },
+  replies: {
+    count: 2,
+    top: [taskItem("t-3", "Lead replied on WhatsApp — respond today", "Mira Shah")],
+  },
+  calls: { count: 4, top: [taskItem("t-4", "First call", "Neha Joshi")] },
+  nextSteps: { count: 1, top: [taskItem("t-5", "Decide the next step", "Arun Rao")] },
+  team: null,
+  flags: null,
   meetings: {
     today: [
       {
@@ -91,6 +109,10 @@ async function renderPage() {
     routeTree: root.addChildren([
       createRoute({ getParentRoute: () => root, path: "/", component: HomePage }),
       page("/tasks"),
+      page("/tasks/calls"),
+      page("/tasks/replies"),
+      page("/settings/email"),
+      page("/settings/whatsapp"),
       page("/meetings"),
       page("/deals"),
       page("/proposals"),
@@ -114,31 +136,101 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("HomePage (C6b)", () => {
-  it("shows the backend's counts and links each to the matching list", async () => {
+describe("HomePage (UX-3 My day)", () => {
+  it("greeting + date; each card's count, top items and link to its queue", async () => {
     await renderPage();
-    const overdue = screen.getByRole("link", { name: "Overdue tasks" }).closest("div.rounded-md");
-    expect(overdue).toHaveTextContent("3Overdue");
-    expect(hrefOf("Overdue tasks")).toBe('/tasks?view=overdue&ownerId=["me"]&due=overdue');
-    expect(hrefOf("Due today")).toBe('/tasks?view=today&ownerId=["me"]&due=today');
-    expect(hrefOf("Meetings needing an outcome")).toContain("when=needs_outcome");
-    expect(
-      within(screen.getByRole("list", { name: "Open deals per stage" })).getAllByRole("listitem"),
-    ).toHaveLength(2);
-    expect(hrefOf("Open the board")).toContain("layout=board");
-    expect(hrefOf("View proposals")).toContain("group=awaiting_decision");
-    expect(screen.getByRole("link", { name: "View proposals" }).parentElement).toHaveTextContent(
-      "6",
+    expect(screen.getByText(/^Good (morning|afternoon|evening), Asha · /)).toBeTruthy();
+    const card = (title: string) =>
+      screen.getByText(title).closest("div.rounded-xl, div.rounded-lg")!;
+    expect(screen.getByLabelText("2 replies waiting")).toBeTruthy();
+    expect(within(card("Replies waiting") as HTMLElement).getByText("Mira Shah")).toBeTruthy();
+    expect(hrefOf("Open the Replies queue")).toBe("/tasks/replies");
+    expect(screen.getByLabelText("4 calls due today / overdue")).toBeTruthy();
+    expect(hrefOf("Start calling")).toBe("/tasks/calls");
+    expect(screen.getByLabelText("1 decide the next step")).toBeTruthy();
+    expect(hrefOf("All next-step tasks")).toBe(
+      '/tasks?view=mine&ownerId=["me"]&q=Decide+the+next+step',
     );
-    expect(hrefOf("Review in AI Activity")).toBe("/ai-activity?outcome=draft&rating=unrated");
-    expect(
-      screen.getByRole("link", { name: "Review in AI Activity" }).parentElement,
-    ).toHaveTextContent("7");
-    expect(screen.getByText("Send the deck")).toBeTruthy();
+    expect(screen.getByLabelText("3 overdue tasks")).toBeTruthy();
+    expect(screen.getByText("Chase the PO")).toBeTruthy();
+    expect(hrefOf("All overdue tasks")).toBe('/tasks?view=overdue&ownerId=["me"]&due=overdue');
+    expect(hrefOf("Due today")).toBe('/tasks?view=today&ownerId=["me"]&due=today');
+    expect(hrefOf("All meetings today")).toBe('/meetings?view=today&when=today&ownerId=["me"]');
+    expect(hrefOf("4 need an outcome")).toContain("when=needs_outcome");
     expect(screen.getByRole("link", { name: "Join Discovery" })).toHaveAttribute(
       "href",
       "https://meet.example/abc",
     );
+    expect(
+      within(screen.getByRole("list", { name: "Open deals per stage" })).getAllByRole("listitem"),
+    ).toHaveLength(2);
+    expect(hrefOf("View proposals")).toContain("group=awaiting_decision");
+    expect(hrefOf("Review in AI Activity")).toBe("/ai-activity?outcome=draft&rating=unrated");
+    // A salesperson's summary has no team row and no red flags.
+    expect(screen.queryByRole("table", { name: "Team" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Red flags" })).toBeNull();
+  });
+
+  it("empty cards say what's good", async () => {
+    mocks.summary = {
+      data: summary({
+        tasks: { overdue: 0, dueToday: 0, next: [], overdueTop: [] },
+        meetings: { today: [], todayCount: 0, needsOutcome: 0 },
+        deals: { openCount: 0, openAmount: 0, stages: [] },
+        replies: { count: 0, top: [] },
+        calls: { count: 0, top: [] },
+        nextSteps: { count: 0, top: [] },
+      }),
+      isLoading: false,
+      error: null,
+    };
+    await renderPage();
+    for (const text of [
+      "No replies waiting.",
+      "No calls due. You're up to date.",
+      "No meetings left today.",
+      "No contacts waiting for a next step.",
+      "Nothing overdue. Nice.",
+      "No open deals",
+    ])
+      expect(screen.getByText(text)).toBeTruthy();
+  });
+
+  it("admins: the team row and this workspace's red flags (incl. no mailbox)", async () => {
+    mocks.summary = {
+      data: summary({
+        team: [
+          { id: "u-2", name: "Ravi Rep", openTasks: 9, overdue: 2, replies: 1 },
+          { id: "u-3", name: "Neha Rep", openTasks: 3, overdue: 0, replies: 0 },
+        ],
+        flags: [
+          { code: "stuck_queue", text: "Messages are stuck in the send queue." },
+          { code: "staff_email_no_mailbox", text: "Staff email alerts are off: no mailbox." },
+        ],
+      }),
+      isLoading: false,
+      error: null,
+    };
+    await renderPage();
+    const team = screen.getByRole("table", { name: "Team" });
+    expect(
+      within(team)
+        .getAllByRole("row")
+        .map((r) => r.textContent),
+    ).toEqual(["RepOpen tasksOverdueReplies waiting", "Ravi Rep921", "Neha Rep300"]);
+    expect(within(team).getByRole("link", { name: "Ravi Rep" }).getAttribute("href")).toContain(
+      "ownerId",
+    );
+    const flags = screen.getByRole("region", { name: "Red flags" });
+    expect(flags).toHaveTextContent("Messages are stuck in the send queue.");
+    expect(within(flags).getByRole("link", { name: "Settings → Email" })).toHaveAttribute(
+      "href",
+      "/settings/email",
+    );
+    cleanup();
+    mocks.summary = { data: summary({ team: [], flags: [] }), isLoading: false, error: null };
+    await renderPage();
+    expect(screen.getByText("No red flags in this workspace.")).toBeTruthy();
   });
 
   it("hides the AI card while the agent is off; quick actions open the create dialogs", async () => {
@@ -151,22 +243,6 @@ describe("HomePage (C6b)", () => {
     expect(mocks.openContact).toHaveBeenCalled();
     expect(mocks.openTask).toHaveBeenCalled();
     expect(mocks.openDeal).toHaveBeenCalled();
-  });
-
-  it("empty: no tasks, meetings or deals", async () => {
-    mocks.summary = {
-      data: summary({
-        tasks: { overdue: 0, dueToday: 0, next: [] },
-        meetings: { today: [], todayCount: 0, needsOutcome: 0 },
-        deals: { openCount: 0, openAmount: 0, stages: [] },
-      }),
-      isLoading: false,
-      error: null,
-    };
-    await renderPage();
-    expect(screen.getByText("No open tasks. Nice.")).toBeTruthy();
-    expect(screen.getByText("No meetings left today.")).toBeTruthy();
-    expect(screen.getByText("No open deals")).toBeTruthy();
   });
 
   it("E3b-2b: the Conversion card shows the main number and the plain funnel; no leads → plain words", async () => {

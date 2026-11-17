@@ -8,11 +8,12 @@ import {
   ClipboardList,
   FileText,
   Phone,
+  Plus,
   RotateCcw,
+  StickyNote,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,12 +25,12 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { AssociationCard } from "@/components/crm/association-card";
 import { EmptyState } from "@/components/crm/empty-state";
 import { Money } from "@/components/crm/money";
-import { PageHeader } from "@/components/crm/page-header";
-import { PropertyList } from "@/components/crm/property-list";
-import { RecordLayout } from "@/components/crm/record-layout";
+import { RecordShell, type RailCard } from "@/components/crm/record-shell";
 import { RelativeTime } from "@/components/crm/relative-time";
 import { UserAvatar } from "@/components/crm/user-avatar";
 import { ActivityFeed } from "@/features/crm/activity-feed";
+import { RecordBreadcrumb } from "@/features/crm/record-breadcrumb";
+import { RecordComposer } from "@/features/crm/record-composer";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
 import { useCreateTaskDialog } from "@/app/add-lead-context";
 import { LogCallFlow } from "@/features/work/log-call-flow";
@@ -107,6 +108,7 @@ function DealRecord({ deal }: { deal: DealDetail }) {
   const [proposalOpen, setProposalOpen] = useState(false);
   const [statusFor, setStatusFor] = useState<ProposalListItem | null>(null);
   const closed = isClosedStage(deal.stage);
+  const dnc = deal.contact.lifecycle === "do_not_contact";
   const otherDeals = useDeals({ leadId: deal.contact.id, status: "all", limit: 6 });
   const others = (otherDeals.data?.pages[0]?.data ?? []).filter((d) => d.id !== deal.id);
 
@@ -120,38 +122,8 @@ function DealRecord({ deal }: { deal: DealDetail }) {
       .catch((error: unknown) => toast.error(messageFromError(error)));
   };
 
-  const heading = (
-    <div className="min-w-0 space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="type-page-title break-words">{deal.name}</h1>
-        <DealStagePill stage={deal.stage} />
-      </div>
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 type-body text-muted-foreground">
-        <span className="font-medium text-foreground">
-          {deal.amount === null ? (
-            "No amount"
-          ) : (
-            <Money amount={deal.amount} currency={deal.currency} />
-          )}
-        </span>
-        <span>
-          {deal.expectedCloseDate ? `Close ${closeDate(deal.expectedCloseDate)}` : "No close date"}
-        </span>
-        <RecordLink type="contact" id={deal.contact.id} className="text-primary hover:underline">
-          {deal.contact.name || "Unnamed contact"}
-        </RecordLink>
-        {deal.company && (
-          <RecordLink type="company" id={deal.company.id} className="text-primary hover:underline">
-            {deal.company.name}
-          </RecordLink>
-        )}
-      </p>
-      <div className="flex items-center gap-1.5">
-        <UserAvatar name={deal.owner?.name} size="sm" />
-        <DealOwnerSelect deal={deal} className="h-7 w-auto gap-1.5 text-xs" />
-      </div>
-    </div>
-  );
+  const focusNote = () =>
+    document.querySelector<HTMLTextAreaElement>('[aria-label="New note"]')?.focus();
 
   const actions = (
     <>
@@ -161,12 +133,6 @@ function DealRecord({ deal }: { deal: DealDetail }) {
         </Button>
       ) : (
         <>
-          <Button size="sm" variant="outline" onClick={() => setCloseMode("won")}>
-            <Check /> Mark won
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setCloseMode("lost")}>
-            <X /> Mark lost
-          </Button>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="outline">
@@ -181,71 +147,87 @@ function DealRecord({ deal }: { deal: DealDetail }) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button size="sm" variant="outline" onClick={() => setCloseMode("won")}>
+            <Check /> Mark won
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setCloseMode("lost")}>
+            <X /> Mark lost
+          </Button>
         </>
       )}
-      <Button size="sm" variant="outline" onClick={() => setCallOpen(true)}>
+      <Button size="sm" variant="outline" onClick={() => setCallOpen(true)} disabled={dnc}>
         <Phone /> Log call
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => createTask.open({ contact: deal.contact })}
-      >
-        <ClipboardList /> Create task
+      <Button size="sm" variant="outline" onClick={focusNote}>
+        <StickyNote /> Note
       </Button>
-      <Button size="sm" variant="outline" onClick={() => setMeetingOpen(true)}>
-        <CalendarPlus /> Schedule meeting
-      </Button>
-      <Button size="sm" variant="outline" onClick={() => setProposalOpen(true)}>
-        <FileText /> Send proposal
-      </Button>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline">
+            More <ChevronDown />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => createTask.open({ contact: deal.contact })}>
+            <ClipboardList /> Create task
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={dnc} onSelect={() => setMeetingOpen(true)}>
+            <CalendarPlus /> Schedule meeting
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={dnc} onSelect={() => setProposalOpen(true)}>
+            <FileText /> Send proposal
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </>
   );
 
-  const nextMeeting = deal.meetings
-    .filter((m) => new Date(m.at).getTime() > Date.now() && m.status !== "cancelled")
-    .sort((a, b) => a.at.localeCompare(b.at))[0];
-  const latestProposal = deal.proposals[0];
-
-  const overview = (
-    <div className="space-y-4">
-      <Card className="p-4">
-        <h2 className="mb-1 type-section-title">Key facts</h2>
-        <PropertyList
-          items={[
-            { id: "stage", label: "Stage", value: <DealStagePill stage={deal.stage} /> },
-            {
-              id: "amount",
-              label: "Amount",
-              value:
-                deal.amount === null ? null : (
-                  <Money amount={deal.amount} currency={deal.currency} />
-                ),
-            },
-            { id: "close", label: "Expected close", value: closeDate(deal.expectedCloseDate) },
-            { id: "interest", label: "Service interest", value: deal.serviceInterest },
-            {
-              id: "nextMeeting",
-              label: "Next meeting",
-              value: nextMeeting ? `${nextMeeting.title} · ${fmtDateTime(nextMeeting.at)}` : null,
-            },
-            {
-              id: "latestProposal",
-              label: "Latest proposal",
-              value: latestProposal ? (
-                <span className="inline-flex flex-wrap items-center gap-2">
-                  {latestProposal.title}
-                  <StatusBadge value={latestProposal.status} />
-                </span>
-              ) : null,
-            },
-          ]}
-        />
-      </Card>
-      <section className="space-y-2">
-        <h2 className="type-section-title">Recent activity</h2>
-        <ActivityFeed dealId={deal.id} limit={5} />
-      </section>
+  const header = (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="type-page-title break-words">{deal.name}</h1>
+            <DealStagePill stage={deal.stage} />
+          </div>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 type-small text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {deal.amount === null ? (
+                "No amount"
+              ) : (
+                <Money amount={deal.amount} currency={deal.currency} />
+              )}
+            </span>
+            <span>
+              {deal.expectedCloseDate
+                ? `Close ${closeDate(deal.expectedCloseDate)}`
+                : "No close date"}
+            </span>
+            <RecordLink
+              type="contact"
+              id={deal.contact.id}
+              className="text-primary hover:underline"
+            >
+              {deal.contact.name || "Unnamed contact"}
+            </RecordLink>
+            {deal.company && (
+              <RecordLink
+                type="company"
+                id={deal.company.id}
+                className="text-primary hover:underline"
+              >
+                {deal.company.name}
+              </RecordLink>
+            )}
+            <span className="inline-flex items-center gap-1.5">
+              <UserAvatar name={deal.owner?.name} size="sm" />
+              <DealOwnerSelect deal={deal} className="h-7 w-auto gap-1.5 text-xs" />
+            </span>
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">{actions}</div>
+      </div>
+      <StageProgress stage={deal.stage} onPick={goTo} disabled={move.isPending} />
     </div>
   );
 
@@ -260,155 +242,220 @@ function DealRecord({ deal }: { deal: DealDetail }) {
     </Link>
   );
 
+  const taskRows = rows(tasks);
+  const meetingRows = rows(meetings);
+  const proposalRows = rows(proposals);
   const meetingsAndProposals = (
     <div className="space-y-4">
-      <AssociationCard
-        title="Open tasks"
-        onAdd={() => createTask.open({ contact: deal.contact })}
-        addLabel="Create"
-        emptyText="No open tasks for this deal's contact."
-        footer={viewAll("/tasks", "tasks")}
-        items={rows(tasks).map((t) => ({
-          id: t.id,
-          title: t.title,
-          subtitle: (
-            <RelativeTime value={t.dueAt} className={t.isOverdue ? "text-destructive" : ""} />
-          ),
-          meta: t.ownerName ?? "No owner",
-        }))}
-      />
-      <AssociationCard
-        title="Meetings"
-        onAdd={() => setMeetingOpen(true)}
-        addLabel="Schedule"
-        emptyText="No meetings linked to this deal."
-        footer={viewAll("/meetings", "meetings")}
-        items={rows(meetings).map((m) => ({
-          id: m.id,
-          title: m.title,
-          subtitle: fmtDateTime(m.at),
-          meta: (
-            <span className="inline-flex flex-wrap justify-end gap-1">
-              <StatusBadge value={m.status} />
-              {m.outcome && <StatusBadge value={m.outcome} />}
-              {m.notifyEmailStatus && m.notifyEmailStatus !== "not_applicable" && (
-                <EmailStatusPill status={m.notifyEmailStatus} error={m.notifyEmailError} />
-              )}
-            </span>
-          ),
-        }))}
-      />
-      <AssociationCard
-        title="Proposals"
-        onAdd={() => setProposalOpen(true)}
-        addLabel="Send"
-        emptyText="No proposals linked to this deal."
-        footer={viewAll("/proposals", "proposals")}
-        items={rows(proposals).map((p) => ({
-          id: p.id,
-          title: p.title,
-          subtitle:
-            p.amount === undefined ? null : <Money amount={p.amount} currency={p.currency} />,
-          meta: (
-            <span className="inline-flex flex-wrap items-center justify-end gap-1">
-              <StatusBadge value={p.status} />
-              {p.emailSendStatus !== "not_applicable" && (
-                <EmailStatusPill status={p.emailSendStatus} error={p.emailSendError} />
-              )}
-              <ViewDocumentButton proposal={p} className="h-7" />
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7"
-                onClick={() => setStatusFor(p)}
-                aria-label={`Change status of ${p.title}`}
-              >
-                Change
-              </Button>
-            </span>
-          ),
-        }))}
-      />
+      <section className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="type-label">Meetings</h3>
+          <Button size="sm" variant="ghost" onClick={() => setMeetingOpen(true)} disabled={dnc}>
+            <Plus /> Schedule
+          </Button>
+        </div>
+        <AssociationCard
+          bare
+          title="Meetings"
+          emptyText="No meetings linked to this deal."
+          footer={viewAll("/meetings", "meetings")}
+          items={meetingRows.map((m) => ({
+            id: m.id,
+            title: m.title,
+            subtitle: fmtDateTime(m.at),
+            meta: (
+              <span className="inline-flex flex-wrap justify-end gap-1">
+                <StatusBadge value={m.status} />
+                {m.outcome && <StatusBadge value={m.outcome} />}
+                {m.notifyEmailStatus && m.notifyEmailStatus !== "not_applicable" && (
+                  <EmailStatusPill status={m.notifyEmailStatus} error={m.notifyEmailError} />
+                )}
+              </span>
+            ),
+          }))}
+        />
+      </section>
+      <section className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="type-label">Proposals</h3>
+          <Button size="sm" variant="ghost" onClick={() => setProposalOpen(true)} disabled={dnc}>
+            <Plus /> Send
+          </Button>
+        </div>
+        <AssociationCard
+          bare
+          title="Proposals"
+          emptyText="No proposals linked to this deal."
+          footer={viewAll("/proposals", "proposals")}
+          items={proposalRows.map((p) => ({
+            id: p.id,
+            title: p.title,
+            subtitle:
+              p.amount === undefined ? null : <Money amount={p.amount} currency={p.currency} />,
+            meta: (
+              <span className="inline-flex flex-wrap items-center justify-end gap-1">
+                <StatusBadge value={p.status} />
+                {p.emailSendStatus !== "not_applicable" && (
+                  <EmailStatusPill status={p.emailSendStatus} error={p.emailSendError} />
+                )}
+                <ViewDocumentButton proposal={p} className="h-7" />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  onClick={() => setStatusFor(p)}
+                  aria-label={`Change status of ${p.title}`}
+                >
+                  Change
+                </Button>
+              </span>
+            ),
+          }))}
+        />
+      </section>
     </div>
   );
 
-  const right = (
-    <>
-      <AssociationCard
-        title="Contact"
-        count={1}
-        items={[
-          {
-            id: deal.contact.id,
+  const rail: RailCard[] = [
+    { id: "about", title: "About", content: <DealAbout deal={deal} /> },
+    {
+      id: "contact",
+      title: "Contact",
+      content: (
+        <AssociationCard
+          bare
+          title="Contact"
+          items={[
+            {
+              id: deal.contact.id,
+              title: (
+                <RecordLink type="contact" id={deal.contact.id} className="hover:underline">
+                  {deal.contact.name || "Unnamed contact"}
+                </RecordLink>
+              ),
+              subtitle:
+                [deal.contact.email, deal.contact.phone].filter(Boolean).join(" · ") || null,
+              meta: <StatusBadge value={deal.contact.lifecycle} />,
+            },
+          ]}
+        />
+      ),
+    },
+    {
+      id: "company",
+      title: "Company",
+      content: (
+        <AssociationCard
+          bare
+          title="Company"
+          emptyText="No company."
+          items={
+            deal.company
+              ? [
+                  {
+                    id: deal.company.id,
+                    title: (
+                      <RecordLink type="company" id={deal.company.id} className="hover:underline">
+                        {deal.company.name}
+                      </RecordLink>
+                    ),
+                  },
+                ]
+              : []
+          }
+        />
+      ),
+    },
+    {
+      id: "tasks",
+      title: "Next tasks",
+      badge: taskRows.length,
+      action: (
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="Create task"
+          onClick={() => createTask.open({ contact: deal.contact })}
+        >
+          <Plus /> Task
+        </Button>
+      ),
+      content: (
+        <AssociationCard
+          bare
+          title="Open tasks"
+          emptyText="No open tasks for this deal's contact."
+          footer={viewAll("/tasks", "tasks")}
+          items={taskRows.map((t) => ({
+            id: t.id,
+            title: t.title,
+            subtitle: (
+              <RelativeTime value={t.dueAt} className={t.isOverdue ? "text-destructive" : ""} />
+            ),
+            meta: t.ownerName ?? "No owner",
+          }))}
+        />
+      ),
+    },
+    {
+      id: "meetings",
+      title: "Meetings & proposals",
+      badge: meetingRows.length + proposalRows.length,
+      content: meetingsAndProposals,
+    },
+    {
+      id: "others",
+      title: "Other deals of this contact",
+      badge: others.length,
+      defaultOpen: false,
+      content: (
+        <AssociationCard
+          bare
+          title="Other deals of this contact"
+          emptyText="No other deals."
+          items={others.map((d) => ({
+            id: d.id,
             title: (
-              <RecordLink type="contact" id={deal.contact.id} className="hover:underline">
-                {deal.contact.name || "Unnamed contact"}
+              <RecordLink type="deal" id={d.id} className="hover:underline">
+                {d.name}
               </RecordLink>
             ),
-            subtitle: [deal.contact.email, deal.contact.phone].filter(Boolean).join(" · ") || null,
-            meta: <StatusBadge value={deal.contact.lifecycle} />,
-          },
-        ]}
-      />
-      <AssociationCard
-        title="Company"
-        count={deal.company ? 1 : 0}
-        emptyText="No company."
-        items={
-          deal.company
-            ? [
-                {
-                  id: deal.company.id,
-                  title: (
-                    <RecordLink type="company" id={deal.company.id} className="hover:underline">
-                      {deal.company.name}
-                    </RecordLink>
-                  ),
-                },
-              ]
-            : []
-        }
-      />
-      <AssociationCard
-        title="Other deals of this contact"
-        count={others.length}
-        emptyText="No other deals."
-        items={others.map((d) => ({
-          id: d.id,
-          title: (
-            <RecordLink type="deal" id={d.id} className="hover:underline">
-              {d.name}
-            </RecordLink>
-          ),
-          subtitle: DEAL_STAGE_LABELS[d.stage],
-          meta: <Money amount={d.amount} currency={d.currency} compact />,
-        }))}
-      />
-    </>
-  );
+            subtitle: DEAL_STAGE_LABELS[d.stage],
+            meta: <Money amount={d.amount} currency={d.currency} compact />,
+          }))}
+        />
+      ),
+    },
+  ];
 
   return (
-    <div className="pb-10">
-      <PageHeader title={deal.name} heading={heading} actions={actions} />
-      <div className="space-y-3 px-4 pt-4 sm:px-6">
-        <StageProgress stage={deal.stage} onPick={goTo} disabled={move.isPending} />
-        {deal.stage === "lost" && (
-          <div className="rounded-md border border-danger/25 bg-danger-soft px-4 py-3 type-body text-danger-soft-foreground">
-            <span className="font-medium">Lost: {label(deal.lossReason)}</span>
-            {deal.lossNotes && <span className="block whitespace-pre-wrap">{deal.lossNotes}</span>}
-          </div>
-        )}
-      </div>
-      <RecordLayout
-        left={<DealAbout deal={deal} />}
-        tabs={[
-          { id: "overview", label: "Overview", content: overview },
-          { id: "activity", label: "Activity", content: <ActivityFeed dealId={deal.id} /> },
-          { id: "meetings", label: "Meetings & proposals", content: meetingsAndProposals },
-        ]}
-        defaultTab="overview"
-        right={right}
-        rightLabel="Related"
+    <>
+      <RecordShell
+        railKey="deal"
+        breadcrumb={<RecordBreadcrumb list="/deals" label="Deals" name={deal.name} />}
+        header={header}
+        banner={
+          deal.stage === "lost" && (
+            <div className="mx-4 mt-3 rounded-md border border-danger/25 bg-danger-soft px-4 py-3 type-body text-danger-soft-foreground sm:mx-6">
+              <span className="font-medium">Lost: {label(deal.lossReason)}</span>
+              {deal.lossNotes && (
+                <span className="block whitespace-pre-wrap">{deal.lossNotes}</span>
+              )}
+            </div>
+          )
+        }
+        main={
+          <>
+            <RecordComposer
+              contactId={deal.contact.id}
+              dealId={deal.id}
+              canCall={!dnc}
+              onConnected={() => setCallOpen(true)}
+            />
+            <ActivityFeed dealId={deal.id} />
+          </>
+        }
+        rail={rail}
       />
 
       <CloseDealDialog
@@ -453,7 +500,7 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           })
         }
       />
-    </div>
+    </>
   );
 }
 

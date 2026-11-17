@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   calendarDisconnect: vi.fn(),
   whatsappGet: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
+  remindersOn: true,
+  updateAgent: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: mocks.toast }));
@@ -23,6 +25,11 @@ vi.mock("@/store", async () => {
     messageFromError: (error: unknown) => (error instanceof Error ? error.message : "Failed"),
     useIsAdmin: () => mocks.isAdmin,
     useSession: () => ({ users: [] }),
+    useAgentSettings: () => ({
+      data: { meetingRemindersEnabled: mocks.remindersOn },
+      isLoading: false,
+    }),
+    useUpdateAgentSettings: () => ({ mutate: mocks.updateAgent, isPending: false }),
   };
 });
 vi.mock("@/lib/backend-client", () => ({
@@ -44,7 +51,8 @@ vi.mock("@/lib/backend-client", () => ({
 
 import { renderInRouter } from "@/test/render-in-router";
 import { UsersPanel } from "./users-panel";
-import { GoogleCalendarPanel } from "./calendar-section";
+import { CalendarSection, GoogleCalendarPanel, MeetingRemindersCard } from "./calendar-section";
+import { searchSettings } from "./settings-search";
 import { WhatsAppPanel } from "./whatsapp-section";
 
 const user = (id: string, name: string, active = true) => ({
@@ -169,6 +177,45 @@ const calendar = {
   connectedEmail: "cal@motm.test",
   lastError: null,
 };
+
+describe("Settings → Google Calendar: meeting reminders (UX-3, moved from AI limits)", () => {
+  it("admins switch the same meetingRemindersEnabled setting, with Undo", async () => {
+    await renderInRouter(() => <MeetingRemindersCard />);
+    const toggle = screen.getByRole("switch");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(mocks.updateAgent).toHaveBeenCalledWith(
+      { meetingRemindersEnabled: false },
+      expect.anything(),
+    );
+    (mocks.updateAgent.mock.calls[0]![1] as { onSuccess: () => void }).onSuccess();
+    const [message, options] = mocks.toast.success.mock.calls.at(-1) as [
+      string,
+      { action: { onClick: () => void } },
+    ];
+    expect(message).toBe("Meeting reminders off");
+    options.action.onClick();
+    expect(mocks.updateAgent).toHaveBeenLastCalledWith(
+      { meetingRemindersEnabled: true },
+      expect.anything(),
+    );
+  });
+
+  it("salespeople don't see it; Settings search finds it for admins only", async () => {
+    mocks.isAdmin = false;
+    mocks.calendarGet.mockResolvedValue(calendar);
+    await renderInRouter(() => <CalendarSection />);
+    expect(screen.queryByText("Meeting reminders to the lead")).toBeNull();
+    const viewer = { isAdmin: false, canManageUsers: false, isSuperAdmin: false };
+    expect(searchSettings("meeting reminders", viewer).map((e) => e.label)).not.toContain(
+      "Meeting reminders to leads",
+    );
+    expect(
+      searchSettings("meeting reminders", { ...viewer, isAdmin: true }).map((e) => e.label),
+    ).toContain("Meeting reminders to leads");
+    mocks.isAdmin = true;
+  });
+});
 
 describe("Settings → Google Calendar (UX-1)", () => {
   it("a status card, credentials behind a save bar, Disconnect confirmed", async () => {

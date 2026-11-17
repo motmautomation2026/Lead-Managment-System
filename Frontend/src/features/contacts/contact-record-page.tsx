@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ClipboardList,
   FileText,
+  Plus,
   MessageSquare,
   Phone,
   StickyNote,
@@ -42,8 +43,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorBlock, LoadingBlock } from "@/components/common/server-state";
 import { StatusBadge, TaskOriginBadge } from "@/components/common/status-badge";
-import { PageHeader } from "@/components/crm/page-header";
-import { RecordLayout } from "@/components/crm/record-layout";
+import { RecordShell, type RailCard } from "@/components/crm/record-shell";
+import { StatusPill } from "@/components/crm/status-pill";
 import { UserAvatar } from "@/components/crm/user-avatar";
 import { EmptyState } from "@/components/crm/empty-state";
 import { RelativeTime } from "@/components/crm/relative-time";
@@ -59,9 +60,10 @@ import { LogCallFlow } from "@/features/work/log-call-flow";
 import { ProposalStatusDialog } from "@/features/work/proposal-status-dialog";
 import { ViewDocumentButton } from "@/features/work/proposal-document";
 import { ScheduleMeetingFlow } from "@/features/work/schedule-meeting-flow";
-import { useCreateTaskDialog } from "@/app/add-lead-context";
+import { useCreateDealDialog, useCreateTaskDialog } from "@/app/add-lead-context";
 import { SendProposalDialog } from "@/features/proposals/components/send-proposal-dialog";
 import { BackendError } from "@/lib/backend-client";
+import { toastUndo } from "@/lib/toast-undo";
 import { fmtDateTime, isOverdue, relDay } from "@/lib/format";
 import { label } from "@/lib/labels";
 import { nurtureTriggerForStage } from "@/lib/pipeline";
@@ -75,6 +77,7 @@ import {
   useLeadMutations,
   useCancelTask,
   useCompleteTask,
+  useReopenTask,
   useCreateProposal,
   useCreateTask,
   useMeetingList,
@@ -97,8 +100,21 @@ import { ContactAssociations } from "./contact-associations";
 import { RecordLink } from "@/features/crm/record-link";
 import { useRememberRecent } from "@/features/crm/recent";
 import { EmailStatusPill } from "@/features/meetings/meeting-status-icons";
+import { RecordBreadcrumb } from "@/features/crm/record-breadcrumb";
+import { RecordComposer } from "@/features/crm/record-composer";
+import { InlineOwner } from "@/features/crm/row-controls";
+import { LatestSuggestedReply } from "@/features/crm/suggested-reply-card";
+import { AGENT_STATUS_LABEL, AGENT_STATUS_TONE } from "@/features/agent/agent-labels";
+import { HotScorePill } from "./hot-score";
+import { cn } from "@/lib/utils";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
+/** D3: email statuses that block sending (header warning pills). */
+const EMAIL_BLOCKED: Record<string, string> = {
+  permanent_bounce: "Bounced",
+  invalid: "Invalid",
+  unsubscribed: "Unsubscribed",
+};
 
 /** Runs a write with a success/error toast; resolves true when it succeeded. */
 const mutate = async (work: () => Promise<unknown>, success: string) => {
@@ -116,12 +132,10 @@ const mutate = async (work: () => Promise<unknown>, success: string) => {
 export function ContactRecordPage({
   contactId,
   link = {},
-  onTabChange,
 }: {
   contactId: string;
-  /** D2 deep link (route search): tab, Activity filter, scroll to the newest reply. */
+  /** D2 deep link (route search): Activity filter, scroll to the newest reply (`tab` is ignored since UX-3). */
   link?: ContactRecordSearch;
-  onTabChange?: () => void;
 }) {
   const query = useContact(contactId);
   const contact = query.data;
@@ -156,27 +170,13 @@ export function ContactRecordPage({
       </div>
     );
   }
-  return <ContactRecord contact={query.data} link={link} onTabChange={onTabChange} />;
+  return <ContactRecord contact={query.data} link={link} />;
 }
 
-function ContactRecord({
-  contact,
-  link,
-  onTabChange,
-}: {
-  contact: ContactDetail;
-  link: ContactRecordSearch;
-  onTabChange?: (() => void) | undefined;
-}) {
+function ContactRecord({ contact, link }: { contact: ContactDetail; link: ContactRecordSearch }) {
   const id = contact.id;
-  // Following a deep link (again) switches the tab; picking a tab is local state.
+  // Following a deep link (again) remounts the feed with its Activity filter and reply focus.
   const linkKey = `${link.tab ?? ""}|${link.activity ?? ""}|${link.reply ?? ""}`;
-  const [tab, setTab] = useState(link.tab ?? "overview");
-  const [seenLink, setSeenLink] = useState(linkKey);
-  if (seenLink !== linkKey) {
-    setSeenLink(linkKey);
-    if (link.tab) setTab(link.tab);
-  }
   const navigate = useNavigate();
   const { users, userName } = useSession();
   const actions = useLeadMutations();
@@ -198,16 +198,19 @@ function ContactRecord({
   const meetingList = useMeetingList({ contactId: contact.id, sort: "at:desc", limit: 10 });
   const proposalList = useProposalList({ contactId: contact.id, limit: 10 });
   const completeTaskMutation = useCompleteTask();
+  const reopenTask = useReopenTask();
   const cancelTask = useCancelTask();
   const createTaskMutation = useCreateTask();
   const updateTask = useUpdateTask();
   const recordOutcome = useRecordMeetingOutcome();
   const createProposal = useCreateProposal();
   const createTask = useCreateTaskDialog();
+  const createDeal = useCreateDealDialog();
+  const [changeCompanyOpen, setChangeCompanyOpen] = useState(false);
   const [statusFor, setStatusFor] = useState<ProposalListItem | null>(null);
 
   const [callOpen, setCallOpen] = useState(false);
-  const [callTaskId, setCallTaskId] = useState<string | undefined>(undefined);
+  const [dialogTaskId, setDialogTaskId] = useState<string | undefined>(undefined);
   const [meetingOpen, setMeetingOpen] = useState(false);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [enrollTrigger, setEnrollTrigger] = useState<WorkflowTrigger | undefined>(undefined);
@@ -233,7 +236,7 @@ function ContactRecord({
     setEnrollOpen(true);
   };
   const openCall = (taskId?: string) => {
-    setCallTaskId(taskId);
+    setDialogTaskId(taskId);
     setCallOpen(true);
   };
 
@@ -246,10 +249,17 @@ function ContactRecord({
     .filter((a) => ["pending", "due"].includes(a.status))
     .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
 
-  const completeTask = (task: { id: string; type: string }) => {
+  const completeTask = (task: { id: string; type: string; title: string }) => {
     if (task.type === "call") return openCall(task.id);
     if (task.type === "schedule_meeting") return setMeetingOpen(true);
-    void mutate(() => completeTaskMutation.mutateAsync(task.id), "Task completed");
+    void completeTaskMutation.mutateAsync(task.id).then(
+      () =>
+        toastUndo(
+          `“${task.title}” completed`,
+          () => void mutate(() => reopenTask.mutateAsync(task.id), "Task reopened"),
+        ),
+      (error: unknown) => toast.error(messageFromError(error)),
+    );
   };
 
   const quick = (icon: ReactNode, text: string, onClick: () => void, blockedByDnc = true) => (
@@ -262,297 +272,6 @@ function ContactRecord({
     >
       {icon} {text}
     </Button>
-  );
-
-  const heading = (
-    <div className="flex min-w-0 items-start gap-3">
-      <UserAvatar name={name} className="size-12 text-base" />
-      <div className="min-w-0">
-        <h1 className="type-page-title break-words">{name}</h1>
-        <p className="type-body text-muted-foreground">
-          {contact.jobTitle}
-          {contact.jobTitle && (contact.company || contact.companyText) && " · "}
-          {contact.company ? (
-            <RecordLink
-              type="company"
-              id={contact.company.id}
-              className="text-primary hover:underline"
-            >
-              {contact.company.name}
-            </RecordLink>
-          ) : (
-            contact.companyText
-          )}
-          {!contact.jobTitle && !contact.company && !contact.companyText && "–"}
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <StatusBadge value={contact.pipelineStage} />
-          <StatusBadge value={contact.lifecycleState} />
-          <Select
-            value={contact.ownerId ?? ""}
-            onValueChange={(ownerId) =>
-              void mutate(() => actions.updateLead(id, { ownerId }), "Owner updated")
-            }
-          >
-            <SelectTrigger className="h-7 w-auto gap-1.5 text-xs" aria-label="Owner">
-              <UserAvatar name={contact.ownerName} size="sm" className="size-5" />
-              <SelectValue placeholder="Unassigned" />
-            </SelectTrigger>
-            <SelectContent>
-              {users
-                .filter((u) => u.active || u.id === contact.ownerId)
-                .map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    </div>
-  );
-
-  const quickActions = (
-    <>
-      {quick(<Phone />, "Log call", () => openCall(undefined))}
-      {quick(<StickyNote />, "Note", () => setNoteOpen(true), false)}
-      {quick(<CalendarPlus />, "Meeting", () => setMeetingOpen(true))}
-      {quick(<ClipboardList />, "Task", () => createTask.open({ contact: { id, name } }))}
-      {quick(<FileText />, "Proposal", () => setProposalOpen(true))}
-      {quick(<MessageSquare />, "Log email / WhatsApp", () => setMessageOpen(true))}
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button size="sm" variant="outline">
-            More <ChevronDown />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {active ? (
-            <>
-              <DropdownMenuItem
-                onSelect={() =>
-                  void mutate(() => actions.setLifecycle(id, "won"), "Contact marked Won")
-                }
-              >
-                Mark won
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setLostOpen(true)}>Mark lost…</DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() =>
-                  void mutate(() => actions.setLifecycle(id, "discard"), "Contact discarded")
-                }
-              >
-                Discard
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() =>
-                  void mutate(
-                    () => actions.setLifecycle(id, "long_term_nurture"),
-                    "Moved to Long-Term Nurture",
-                  )
-                }
-              >
-                Long-term nurture
-              </DropdownMenuItem>
-            </>
-          ) : (
-            !dnc &&
-            contact.lifecycleState !== "merged" && (
-              <DropdownMenuItem
-                onSelect={() =>
-                  void mutate(() => actions.setLifecycle(id, "reactivate"), "Contact reactivated")
-                }
-              >
-                Reactivate
-              </DropdownMenuItem>
-            )
-          )}
-          <DropdownMenuSeparator />
-          {dnc ? (
-            <DropdownMenuItem onSelect={() => setReactivateOpen(true)}>
-              Remove DNC…
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem onSelect={() => setDncOpen(true)}>Mark DNC…</DropdownMenuItem>
-          )}
-          <DropdownMenuItem className="text-destructive" onSelect={() => setDeleteOpen(true)}>
-            Delete forever…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
-  );
-
-  const overview = (
-    <div className="space-y-4">
-      <LeadJourneyCard
-        runs={runs}
-        scheduledActions={scheduled}
-        pipelineStage={contact.pipelineStage}
-        doNotContact={dnc}
-        onCallClick={() =>
-          openCall(contact.nextAction?.type === "call" ? contact.nextAction.taskId : undefined)
-        }
-        onEnrollClick={() =>
-          openEnroll(nurtureTriggerForStage(contact.pipelineStage, contact.objectionType))
-        }
-      />
-      <Card className={contact.nextAction || nextAutomationStep ? "" : "border-warning/50"}>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <div>
-            <div className="type-label">Next action</div>
-            {contact.nextAction ? (
-              <>
-                <div className="type-section-title">{contact.nextAction.title}</div>
-                <div className="type-small text-muted-foreground">
-                  {label(contact.nextAction.type)} · due{" "}
-                  <span className={isOverdue(contact.nextAction.dueAt) ? "text-destructive" : ""}>
-                    {relDay(contact.nextAction.dueAt)}
-                  </span>{" "}
-                  · {contact.nextAction.ownerName ?? userName(contact.nextAction.ownerId)}
-                </div>
-              </>
-            ) : nextAutomationStep ? (
-              <>
-                <div className="type-section-title">
-                  Automated: {label(nextAutomationStep.actionType)}
-                </div>
-                <div className="type-small text-muted-foreground">
-                  Workflow step · due {relDay(nextAutomationStep.scheduledFor)}
-                </div>
-              </>
-            ) : (
-              <div className="type-body">
-                {dnc
-                  ? "Contact is suppressed - no next action required."
-                  : "No next action assigned. Every active contact needs one."}
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {contact.nextAction && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  completeTask({ id: contact.nextAction!.taskId, type: contact.nextAction!.type })
-                }
-              >
-                <Check /> Complete
-              </Button>
-            )}
-            <Button size="sm" onClick={() => setNextActionOpen(true)} disabled={dnc}>
-              {contact.nextAction ? "Reschedule" : "Set next action"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      {contact.pipelineStage === "interested_later" && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="type-section-title">Interested - Later</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1 type-small text-muted-foreground">
-            {contact.interestedLaterReason && <p>Reason: {contact.interestedLaterReason}</p>}
-            {contact.interestedLaterRestartAt && (
-              <p>Expected restart: {contact.interestedLaterRestartAt}</p>
-            )}
-            {contact.interestedLaterNextAction && (
-              <p>Next action: {contact.interestedLaterNextAction}</p>
-            )}
-            {contact.interestedLaterDecisionOwner && (
-              <p>Decision owner: {contact.interestedLaterDecisionOwner}</p>
-            )}
-            {!contact.interestedLaterReason && !contact.interestedLaterRestartAt && (
-              <p>Captured from the call outcome. Log a call to update it.</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-      {contact.pipelineStage === "objection_nurture" && contact.objectionType && (
-        <Card>
-          <CardContent className="py-4 type-body">
-            Objection: <StatusBadge value={contact.objectionType} />
-          </CardContent>
-        </Card>
-      )}
-      {contact.lifecycleState === "lost" && contact.lossReason && (
-        <Card>
-          <CardContent className="py-4 type-body">
-            Loss reason: <StatusBadge value={contact.lossReason} />
-            {contact.lossNotes && (
-              <p className="pt-1 type-small text-muted-foreground">{contact.lossNotes}</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="type-section-title">Open tasks</CardTitle>
-          <Link
-            to="/tasks"
-            search={{ contactId: id, view: "everyone" }}
-            className="type-small text-primary hover:underline"
-          >
-            View all
-          </Link>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {openTasks.length === 0 && (
-            <p className="type-body text-muted-foreground">No open tasks.</p>
-          )}
-          {openTasks.map((task) => (
-            <div
-              key={task.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
-            >
-              <div className="min-w-0">
-                <div className="type-body">{task.title}</div>
-                <div className="flex flex-wrap items-center gap-1.5 type-small text-muted-foreground">
-                  {label(task.type)} ·{" "}
-                  <span className={task.isOverdue ? "text-destructive" : ""}>
-                    {relDay(task.dueAt)}
-                  </span>
-                  <TaskOriginBadge origin={task.origin} />
-                </div>
-              </div>
-              <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => completeTask(task)}>
-                  Complete
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    void mutate(() => cancelTask.mutateAsync({ id: task.id }), "Task cancelled")
-                  }
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const notes = (
-    <div className="space-y-3">
-      <NoteForm onSave={(body) => mutate(() => actions.addNote(id, body), "Note added")} />
-      {extras.notes.length === 0 && <EmptyState title="No notes yet" />}
-      {extras.notes.map((item) => (
-        <Card key={item.id}>
-          <CardContent className="py-3">
-            <div className="type-body whitespace-pre-wrap">{item.body}</div>
-            <div className="pt-1 type-small text-muted-foreground">
-              {item.author} · {relDay(item.at)}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
   );
 
   const meetingsAndProposals = (
@@ -688,6 +407,16 @@ function ContactRecord({
 
   const automation = (
     <div className="space-y-4">
+      <LeadJourneyCard
+        runs={runs}
+        scheduledActions={scheduled}
+        pipelineStage={contact.pipelineStage}
+        doNotContact={dnc}
+        onCallClick={() => openCall(callTaskId)}
+        onEnrollClick={() =>
+          openEnroll(nurtureTriggerForStage(contact.pipelineStage, contact.objectionType))
+        }
+      />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="type-section-title">Automation control</CardTitle>
@@ -793,65 +522,439 @@ function ContactRecord({
     </div>
   );
 
-  return (
-    <div className="pb-10">
-      <PageHeader title={name} heading={heading} actions={quickActions} />
-      {dnc && (
-        <div
-          role="status"
-          className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-danger-soft-foreground sm:mx-6"
-        >
-          <div className="type-body">
-            <span className="font-semibold">Do Not Contact.</span>{" "}
-            {[contact.dncReason, contact.dncBy].filter(Boolean).join(" · ")}
-            {contact.dncAt && <> · {relDay(contact.dncAt)}</>}
-          </div>
-          <Button size="sm" variant="outline" onClick={() => setReactivateOpen(true)}>
-            Remove suppression
+  const callTaskId =
+    contact.nextAction && ["call", "follow_up"].includes(contact.nextAction.type)
+      ? contact.nextAction.taskId
+      : undefined;
+  // "Note" goes to the composer (no dialog); on phones with another tab open, the dialog.
+  const focusNote = () => {
+    const box = document.querySelector<HTMLTextAreaElement>('[aria-label="New note"]');
+    if (box) box.focus();
+    else setNoteOpen(true);
+  };
+  const contactability = extras.contactability;
+  const blockers = contactability.filter(
+    (c) => c.status === "opted_out" || (c.channel === "email" && c.status in EMAIL_BLOCKED),
+  );
+
+  const quickActions = (
+    <>
+      {quick(<Phone />, "Log call", () => openCall(callTaskId))}
+      {quick(<StickyNote />, "Note", focusNote, false)}
+      {quick(<ClipboardList />, "Task", () => createTask.open({ contact: { id, name } }))}
+      {quick(<CalendarPlus />, "Meeting", () => setMeetingOpen(true))}
+      {quick(<FileText />, "Proposal", () => setProposalOpen(true))}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline">
+            More <ChevronDown />
           </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={dnc} onSelect={() => setMessageOpen(true)}>
+            <MessageSquare /> Log email / WhatsApp
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={dnc} onSelect={() => openEnroll()}>
+            Enroll in workflow
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {active ? (
+            <>
+              <DropdownMenuItem
+                onSelect={() =>
+                  void mutate(() => actions.setLifecycle(id, "won"), "Contact marked Won")
+                }
+              >
+                Mark won
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setLostOpen(true)}>Mark lost…</DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() =>
+                  void mutate(() => actions.setLifecycle(id, "discard"), "Contact discarded")
+                }
+              >
+                Discard
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() =>
+                  void mutate(
+                    () => actions.setLifecycle(id, "long_term_nurture"),
+                    "Moved to Long-Term Nurture",
+                  )
+                }
+              >
+                Long-term nurture
+              </DropdownMenuItem>
+            </>
+          ) : (
+            !dnc &&
+            contact.lifecycleState !== "merged" && (
+              <DropdownMenuItem
+                onSelect={() =>
+                  void mutate(() => actions.setLifecycle(id, "reactivate"), "Contact reactivated")
+                }
+              >
+                Reactivate
+              </DropdownMenuItem>
+            )
+          )}
+          <DropdownMenuSeparator />
+          {dnc ? (
+            <DropdownMenuItem onSelect={() => setReactivateOpen(true)}>
+              Remove DNC…
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onSelect={() => setDncOpen(true)}>Mark DNC…</DropdownMenuItem>
+          )}
+          <DropdownMenuItem className="text-destructive" onSelect={() => setDeleteOpen(true)}>
+            Delete forever…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+
+  const header = (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div className="flex min-w-0 items-start gap-3">
+        <UserAvatar name={name} className="size-10 text-sm" />
+        <div className="min-w-0">
+          <h1 className="type-page-title truncate">{name}</h1>
+          <p className="truncate type-small text-muted-foreground">
+            {contact.jobTitle}
+            {contact.jobTitle && (contact.company || contact.companyText) && " · "}
+            {contact.company ? (
+              <RecordLink
+                type="company"
+                id={contact.company.id}
+                className="text-primary hover:underline"
+              >
+                {contact.company.name}
+              </RecordLink>
+            ) : (
+              contact.companyText
+            )}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <InlineOwner
+              label="Owner"
+              users={users}
+              value={
+                contact.ownerId ? { id: contact.ownerId, name: contact.ownerName ?? "" } : null
+              }
+              onChange={(ownerId) =>
+                void mutate(() => actions.updateLead(id, { ownerId }), "Owner updated")
+              }
+            />
+            <StatusBadge value={contact.pipelineStage} />
+            {!active && <StatusBadge value={contact.lifecycleState} />}
+            <HotScorePill
+              score={contact.hotScore}
+              band={contact.hotBand}
+              reasons={contact.hotReasons}
+            />
+            {contact.agentStatus !== "none" && (
+              <StatusBadge
+                value=""
+                display={`AI: ${AGENT_STATUS_LABEL[contact.agentStatus]}`}
+                tone={AGENT_STATUS_TONE[contact.agentStatus]}
+              />
+            )}
+            {contact.whatsappNumber && (
+              <StatusPill tone="neutral">WhatsApp · {contact.whatsappNumber.label}</StatusPill>
+            )}
+            {blockers.map((c) => (
+              <StatusPill key={c.channel} tone="danger">
+                {label(c.channel)}: {EMAIL_BLOCKED[c.status] ?? "Opted out"}
+              </StatusPill>
+            ))}
+            {dnc && contact.lifecycleState !== "do_not_contact" && (
+              <StatusPill tone="danger">Do Not Contact</StatusPill>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">{quickActions}</div>
+    </div>
+  );
+
+  // The one next step, above the composer: visible without scrolling on a laptop.
+  const nextStrip = (
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2",
+        !contact.nextAction && !nextAutomationStep && !dnc && "border-warning/50 bg-warning-soft",
+      )}
+    >
+      <div className="min-w-0 type-body">
+        <span className="mr-2 type-label">Next</span>
+        {contact.nextAction ? (
+          <>
+            <span className="font-medium">{contact.nextAction.title}</span>
+            <span className="type-small text-muted-foreground">
+              {" "}
+              · {label(contact.nextAction.type)} · due{" "}
+              <span className={isOverdue(contact.nextAction.dueAt) ? "text-destructive" : ""}>
+                {relDay(contact.nextAction.dueAt)}
+              </span>{" "}
+              · {contact.nextAction.ownerName ?? userName(contact.nextAction.ownerId)}
+            </span>
+          </>
+        ) : nextAutomationStep ? (
+          <span>
+            Automated: {label(nextAutomationStep.actionType)}{" "}
+            <span className="type-small text-muted-foreground">
+              · workflow step · due {relDay(nextAutomationStep.scheduledFor)}
+            </span>
+          </span>
+        ) : (
+          <span>
+            {dnc
+              ? "Contact is suppressed - no next action required."
+              : "No next action assigned. Every active contact needs one."}
+          </span>
+        )}
+      </div>
+      <div className="flex gap-1.5">
+        {contact.nextAction && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              completeTask({
+                id: contact.nextAction!.taskId,
+                type: contact.nextAction!.type,
+                title: contact.nextAction!.title,
+              })
+            }
+          >
+            <Check /> Complete
+          </Button>
+        )}
+        <Button size="sm" onClick={() => setNextActionOpen(true)} disabled={dnc}>
+          {contact.nextAction ? "Reschedule" : "Set next action"}
+        </Button>
+      </div>
+    </div>
+  );
+
+  const main = (
+    <>
+      {nextStrip}
+      <RecordComposer
+        contactId={id}
+        canCall={!dnc}
+        callTaskId={callTaskId}
+        onConnected={() => openCall(callTaskId)}
+      />
+      <ActivityFeed
+        key={linkKey}
+        contactId={id}
+        initialFilter={link.activity}
+        focusReply={link.reply === "latest"}
+      />
+    </>
+  );
+
+  const stageDetails = (
+    <>
+      {contact.pipelineStage === "interested_later" && (
+        <div className="space-y-1 rounded-md bg-muted/50 p-2.5 type-small text-muted-foreground">
+          <p className="font-medium text-foreground">Interested - Later</p>
+          {contact.interestedLaterReason && <p>Reason: {contact.interestedLaterReason}</p>}
+          {contact.interestedLaterRestartAt && (
+            <p>Expected restart: {contact.interestedLaterRestartAt}</p>
+          )}
+          {contact.interestedLaterNextAction && (
+            <p>Next action: {contact.interestedLaterNextAction}</p>
+          )}
+          {contact.interestedLaterDecisionOwner && (
+            <p>Decision owner: {contact.interestedLaterDecisionOwner}</p>
+          )}
+          {!contact.interestedLaterReason && !contact.interestedLaterRestartAt && (
+            <p>Captured from the call outcome. Log a call to update it.</p>
+          )}
         </div>
       )}
-      <RecordLayout
-        left={<ContactAbout contact={contact} contactability={extras.contactability} />}
-        tabs={[
-          { id: "overview", label: "Overview", content: overview },
-          {
-            id: "activity",
-            label: "Activity",
-            content: (
-              <ActivityFeed
-                key={linkKey}
-                contactId={id}
-                initialFilter={link.activity}
-                focusReply={link.reply === "latest"}
-              />
-            ),
-          },
-          { id: "notes", label: "Notes", content: notes },
-          { id: "meetings", label: "Meetings & proposals", content: meetingsAndProposals },
-          { id: "automation", label: "Automation", content: automation },
-        ]}
-        tab={tab}
-        onTabChange={(next) => {
-          setTab(next);
-          onTabChange?.();
-        }}
-        right={
-          <>
-            <ContactAssociations contact={contact} />
-            <LeadAiPanel leadId={id} />
-          </>
-        }
-        rightLabel="Associations"
-      />
+      {contact.pipelineStage === "objection_nurture" && contact.objectionType && (
+        <p className="type-body">
+          Objection: <StatusBadge value={contact.objectionType} />
+        </p>
+      )}
+      {contact.lifecycleState === "lost" && contact.lossReason && (
+        <div className="type-body">
+          Loss reason: <StatusBadge value={contact.lossReason} />
+          {contact.lossNotes && (
+            <p className="pt-1 type-small text-muted-foreground">{contact.lossNotes}</p>
+          )}
+        </div>
+      )}
+    </>
+  );
 
+  const tasksCard = (
+    <div className="space-y-2">
+      {openTasks.length === 0 && <p className="type-body text-muted-foreground">No open tasks.</p>}
+      {openTasks.map((task) => (
+        <div key={task.id} className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="type-body">{task.title}</div>
+            <div className="flex flex-wrap items-center gap-1.5 type-small text-muted-foreground">
+              {label(task.type)} ·{" "}
+              <span className={task.isOverdue ? "text-destructive" : ""}>{relDay(task.dueAt)}</span>
+              <TaskOriginBadge origin={task.origin} />
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-0.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Complete ${task.title}`}
+              onClick={() => completeTask(task)}
+            >
+              <Check />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                void mutate(() => cancelTask.mutateAsync({ id: task.id }), "Task cancelled")
+              }
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ))}
+      <Link
+        to="/tasks"
+        search={{ contactId: id, view: "everyone" }}
+        className="type-small text-primary hover:underline"
+      >
+        View all tasks
+      </Link>
+    </div>
+  );
+
+  const openDeals = contact.deals.filter((d) => !d.closedAt);
+  const rail: RailCard[] = [
+    {
+      id: "about",
+      title: "About",
+      content: (
+        <div className="space-y-3">
+          {stageDetails}
+          <ContactAbout
+            contact={contact}
+            contactability={contactability}
+            omit={["whatsappNumber", "hotScore", "contactability-whatsapp"]}
+          />
+        </div>
+      ),
+    },
+    {
+      id: "company",
+      title: "Company",
+      action: (
+        <Button size="sm" variant="ghost" onClick={() => setChangeCompanyOpen(true)}>
+          Change
+        </Button>
+      ),
+      content: (
+        <ContactAssociations
+          contact={contact}
+          show="company"
+          changeOpen={changeCompanyOpen}
+          onChangeOpen={setChangeCompanyOpen}
+        />
+      ),
+    },
+    {
+      id: "deals",
+      title: "Open deals",
+      badge: openDeals.length,
+      action: (
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="Create deal"
+          onClick={() => createDeal.open({ contact: { id, name }, stay: true })}
+        >
+          <Plus /> Deal
+        </Button>
+      ),
+      content: <ContactAssociations contact={contact} show="deals" />,
+    },
+    { id: "tasks", title: "Next tasks", badge: openTasks.length, content: tasksCard },
+    {
+      id: "ai",
+      title: "AI",
+      content: (
+        <div className="space-y-3">
+          <LatestSuggestedReply contactId={id} openOnly />
+          <LeadAiPanel leadId={id} />
+        </div>
+      ),
+    },
+    {
+      id: "hot",
+      title: "Hot-score reasons",
+      content: <ContactAbout contact={contact} contactability={[]} only={["hotScore"]} />,
+    },
+    {
+      id: "whatsapp",
+      title: "WhatsApp number",
+      content: (
+        <ContactAbout
+          contact={contact}
+          contactability={contactability.filter((c) => c.channel === "whatsapp")}
+          only={["whatsappNumber", "contactability-whatsapp"]}
+        />
+      ),
+    },
+    {
+      id: "meetings",
+      title: "Meetings & proposals",
+      badge: meetings.length + proposals.length,
+      defaultOpen: false,
+      content: meetingsAndProposals,
+    },
+    { id: "automation", title: "Automation", defaultOpen: false, content: automation },
+  ];
+
+  return (
+    <>
+      <RecordShell
+        railKey="contact"
+        breadcrumb={<RecordBreadcrumb list="/contacts" label="Contacts" name={name} />}
+        header={header}
+        banner={
+          dnc && (
+            <div
+              role="status"
+              className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/25 bg-danger-soft px-4 py-2.5 text-danger-soft-foreground sm:mx-6"
+            >
+              <div className="type-body">
+                <span className="font-semibold">Do Not Contact.</span>{" "}
+                {[contact.dncReason, contact.dncBy].filter(Boolean).join(" · ")}
+                {contact.dncAt && <> · {relDay(contact.dncAt)}</>}
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setReactivateOpen(true)}>
+                Remove suppression
+              </Button>
+            </div>
+          )
+        }
+        main={main}
+        rail={rail}
+      />
       <LogCallFlow
         leadId={id}
-        taskId={callTaskId}
+        taskId={dialogTaskId}
         open={callOpen}
         onOpenChange={(value) => {
           setCallOpen(value);
-          if (!value) setCallTaskId(undefined);
+          if (!value) setDialogTaskId(undefined);
         }}
       />
       <ScheduleMeetingFlow leadId={id} open={meetingOpen} onOpenChange={setMeetingOpen} />
@@ -1015,37 +1118,7 @@ function ContactRecord({
           })()
         }
       />
-    </div>
-  );
-}
-
-function NoteForm({ onSave }: { onSave: (body: string) => Promise<boolean> }) {
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  return (
-    <Card>
-      <CardContent className="space-y-2 py-4">
-        <Textarea
-          rows={3}
-          value={note}
-          aria-label="New note"
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Add a note…"
-        />
-        <Button
-          size="sm"
-          disabled={!note.trim() || saving}
-          onClick={() => {
-            setSaving(true);
-            void onSave(note.trim())
-              .then((ok) => ok && setNote(""))
-              .finally(() => setSaving(false));
-          }}
-        >
-          Add note
-        </Button>
-      </CardContent>
-    </Card>
+    </>
   );
 }
 

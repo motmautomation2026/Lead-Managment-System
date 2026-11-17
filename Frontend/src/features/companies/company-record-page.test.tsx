@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   openAdd: vi.fn(),
   openDeal: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  addNote: vi.fn(async () => undefined),
 }));
 
 const company = (id: string, name: string, extra: Partial<CompanyDetail> = {}): CompanyDetail => ({
@@ -166,6 +167,7 @@ vi.mock("@/store", () => ({
   useDealTimeline: () => page([]),
   useContactSearch: () => ({ data: undefined, isFetching: false, isError: false }),
   useContact: () => ({ data: undefined, isLoading: false, error: null }),
+  useLeadMutations: () => ({ addNote: mocks.addNote, logCall: vi.fn() }),
   useUpdateCompany: () => ({ mutateAsync: mocks.update, isPending: false }),
   useMergeCompanies: () => ({ mutateAsync: mocks.merge, isPending: false }),
   useCompanySearch: (input: string) => ({
@@ -216,6 +218,7 @@ const openTab = (name: string) => {
 };
 
 beforeEach(() => {
+  window.localStorage.clear();
   mocks.isAdmin = false;
   mocks.companies = {
     "co-1": company("co-1", "Tata Motors"),
@@ -228,45 +231,45 @@ afterEach(() => {
 });
 
 describe("CompanyRecordPage", () => {
-  it("renders the header and every tab (one column below lg)", async () => {
+  it("UX-3: sticky header, Activity first, the rail as tabs below lg", async () => {
     await renderPage();
     expect(await screen.findByRole("heading", { name: "Tata Motors" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /co-1\.example\.com/ })).toHaveAttribute(
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByRole("link", { name: "Companies" })).toHaveAttribute("href", "/companies");
+    expect(header.getByRole("link", { name: /co-1\.example\.com/ })).toHaveAttribute(
       "href",
       "https://co-1.example.com",
     );
-    expect(screen.getByText("Automotive · Pune")).toBeTruthy();
+    expect(header.getByText("Automotive · Pune")).toBeTruthy();
+    expect(header.getByText("3 contacts")).toBeTruthy();
+    for (const name of ["Add contact", "Note", "More"]) {
+      expect(header.getByRole("button", { name: new RegExp(`^${name}`) })).toBeTruthy();
+    }
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "About",
-      "Overview",
       "Activity",
+      "About",
       "Contacts",
-      "Deals",
-      "Related",
+      "Open deals",
+      "Tasks, meetings & proposals",
     ]);
-    // Overview (default): key facts, recent activity with the contact's name, open deals.
-    expect(screen.getByText("Last activity")).toBeTruthy();
+    // Activity (main): the company feed with whose event each row is.
+    expect(screen.getByRole("group", { name: "Activity type" })).toBeTruthy();
     expect(screen.getByText("Call logged")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Asha Rao" })).toHaveAttribute("href", "/contacts/c-1");
+    openTab("Contacts");
+    expect(screen.getByText(/asha@tata\.test/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View all 3 contacts" })).toHaveAttribute(
+      "href",
+      "/contacts?companyId=co-1",
+    );
+    openTab("Open deals");
     expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
       "href",
       "/deals/d-1",
     );
-
-    openTab("Activity");
-    expect(screen.getByRole("group", { name: "Activity type" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Asha Rao" })).toHaveAttribute("href", "/contacts/c-1");
-    openTab("Contacts");
-    expect(
-      within(screen.getByRole("table", { name: "Company contacts" })).getByText("asha@tata.test"),
-    ).toBeTruthy();
-    openTab("Deals");
-    expect(
-      within(screen.getByRole("table", { name: "Company deals" })).getByText("Tata – Fleet"),
-    ).toBeTruthy();
     openTab("About");
     expect(screen.getByText("India")).toBeTruthy();
-    openTab("Related");
-    expect(screen.getByRole("heading", { name: /Contacts/ })).toBeTruthy();
+    openTab("Tasks, meetings & proposals");
     // C6a work cards: the company's open tasks (count from /count) with a pre-filtered View all.
     expect(screen.getByRole("heading", { name: /Open tasks\s*\(7\)/ })).toBeTruthy();
     expect(screen.getByText("Chase the PO")).toBeTruthy();
@@ -274,9 +277,17 @@ describe("CompanyRecordPage", () => {
       "href",
       "/tasks?companyId=co-1&view=everyone",
     );
-    // Not an admin: no merge, no duplicate card.
-    expect(screen.queryByRole("button", { name: /More/ })).toBeNull();
+    // Not an admin: no duplicate card.
     expect(screen.queryByText("Possible duplicates")).toBeNull();
+  });
+
+  it("composer: a company note is saved on the picked contact", async () => {
+    await renderPage();
+    const box = await screen.findByRole("textbox", { name: "New note" });
+    fireEvent.change(box, { target: { value: "Board meets in May" } });
+    // No contact picked yet: nothing to save on.
+    expect(screen.getByRole("button", { name: "Add note" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Note about" })).toBeTruthy();
   });
 
   it("Add contact opens Create contact prefilled with the company name", async () => {
@@ -287,9 +298,10 @@ describe("CompanyRecordPage", () => {
 
   it("Create deal opens the app-wide dialog limited to this company; deals link to the deal", async () => {
     await renderPage();
-    fireEvent.click((await screen.findAllByRole("button", { name: /Create deal/ }))[0]!);
+    openTab("Open deals");
+    fireEvent.click(await screen.findByRole("button", { name: "Create deal" }));
     expect(mocks.openDeal).toHaveBeenCalledWith({ companyId: "co-1", stay: true });
-    expect(screen.getAllByRole("link", { name: "Tata – Fleet" })[0]).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Tata – Fleet" })).toHaveAttribute(
       "href",
       "/deals/d-1",
     );
@@ -349,14 +361,15 @@ describe("CompanyRecordPage", () => {
     mocks.isAdmin = true;
     mocks.merge.mockResolvedValue({ targetId: "co-2", sourceId: "co-1", movedContacts: 3 });
     const router = await renderPage();
-    openTab("Related");
-    expect(screen.getByText("Possible duplicates")).toBeTruthy();
+    openTab("Possible duplicates");
     expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute(
       "href",
       "/companies/duplicates",
     );
 
-    fireEvent.keyDown(screen.getByRole("button", { name: /More/ }), { key: "Enter" });
+    fireEvent.keyDown(within(screen.getByRole("banner")).getByRole("button", { name: /More/ }), {
+      key: "Enter",
+    });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Merge into another company…" }));
     const dialog = await screen.findByRole("dialog", { name: "Merge companies" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Other company" }));

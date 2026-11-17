@@ -377,6 +377,12 @@ export function CallQueuePage() {
           leadId={connected.task.contact.id}
           taskId={connected.task.id}
           open={connected.open}
+          // UX-3: a Connected call (full dialog) counts and leaves the queue like the quick outcomes.
+          onLogged={() => {
+            const id = connected.task.id;
+            setProgress((p) => ({ done: p.done + 1 }));
+            setSent((d) => ({ ...d, [id]: true }));
+          }}
           onOpenChange={(open) => {
             setConnected({ ...connected, open });
             if (!open) reset();

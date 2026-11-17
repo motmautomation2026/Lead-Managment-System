@@ -39,8 +39,23 @@ vi.mock("@/features/crm/activity-feed", () => ({
   ActivityFeed: ({ contactId }: { contactId: string }) => <p>activity of {contactId}</p>,
 }));
 vi.mock("@/features/work/log-call-flow", () => ({
-  LogCallFlow: ({ open, taskId }: { open: boolean; taskId: string }) =>
-    open ? <div role="dialog">full log call for {taskId}</div> : null,
+  LogCallFlow: ({
+    open,
+    taskId,
+    onLogged,
+  }: {
+    open: boolean;
+    taskId: string;
+    onLogged?: () => void;
+  }) =>
+    open ? (
+      <div role="dialog">
+        full log call for {taskId}
+        <button type="button" onClick={onLogged}>
+          save connected call
+        </button>
+      </div>
+    ) : null,
 }));
 vi.mock("@/features/leads/scheduled-followups", () => ({ EnrollWorkflowDialog: () => null }));
 vi.mock("@/store", () => ({
@@ -161,6 +176,15 @@ describe("CallQueuePage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Connected/ }));
     expect(await screen.findByRole("dialog")).toHaveTextContent("full log call for t2");
+  });
+
+  it("UX-3: a call saved in the full Connected dialog counts and moves the queue on", async () => {
+    await renderQueue();
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Connected/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "save connected call" }));
+    await waitFor(() => expect(current()).toBe("Mira Kumar"));
+    expect(screen.getByText(/^2 of/)).toBeInTheDocument();
   });
 
   it("keyboard outcomes work outside fields only; skip and pause resume after leaving", async () => {
