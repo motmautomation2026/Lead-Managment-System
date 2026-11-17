@@ -47,6 +47,8 @@ export type ObjectionType = (typeof OBJECTION_TYPES)[number];
 
 export const LEAD_LOSS_REASONS = [
   "price_budget",
+  "no_requirement",
+  "existing_supplier",
   "internal_hiring",
   "project_postponed",
   "competitor_selected",
