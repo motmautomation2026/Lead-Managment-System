@@ -106,6 +106,8 @@ const createSchema = z.object({
   emailTemplateId: z.string().uuid(),
   whatsappTemplateId: z.string().uuid(),
   dealId: z.string().uuid().optional(),
+  // LL-3 rule 9: default = the sent date + 30 days.
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 proposalsRouter.post(
@@ -129,6 +131,7 @@ const updateSchema = z.object({
   fileName: z.string().optional(),
   amount: z.number().nonnegative().optional(),
   notes: z.string().optional(),
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 proposalsRouter.patch(

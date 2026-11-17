@@ -990,6 +990,7 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
           createProposal.mutateAsync({
             leadId: id,
             title: value.title,
+            validUntil: value.validUntil || undefined,
             amount: value.amount ? Number(value.amount) : undefined,
             notes: value.notes || undefined,
             emailTemplateId: value.emailTemplateId,

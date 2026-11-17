@@ -17,6 +17,8 @@ import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.servi
 import { attributeOutcome } from "./messageFacts.service.js";
 import { getLeadRowOr404, markWon, type LeadRow } from "./leads.service.js";
 import { fairPickSql } from "./fairPick.js";
+import { onboardingDueAt, onboardingTitle } from "../domain/dealFollowUp.js";
+import { createResponsibleTask } from "./nextAction.service.js";
 
 export type DealSource = "meeting" | "proposal" | "manual" | "backfill";
 
@@ -139,7 +141,8 @@ export async function moveDealStage(
         set stage = $2,
             closed_at = case when $3 then now() else null end,
             loss_reason = $4, loss_notes = $5,
-            amount = coalesce($6, amount)
+            amount = coalesce($6, amount),
+            stage_changed_at = now()
       where id = $1 returning *`,
     [dealId, toStage, isClosedDealStage(toStage), lost ? options.lossReason : null, lost ? options.lossNotes?.trim() || null : null, options.amount ?? null],
   );
@@ -161,6 +164,17 @@ export async function moveDealStage(
     if (contact.lifecycle_state !== "do_not_contact" && contact.lifecycle_state !== "merged") {
       await markWon(db, actor, workspaceId, deal.lead_id, `Deal won: ${deal.name}`);
     }
+  }
+  // LL-3 rule 9: Won → "Onboarding: <deal>" for the deal's owner (rule 1), due the next working day. It survives the
+  // contact being marked Won (cancelOpenTasksForLead keepOnboarding).
+  if (toStage === "won") {
+    await createResponsibleTask(db, workspaceId, deal.lead_id, {
+      type: "general_task",
+      title: onboardingTitle(deal.name),
+      dueAt: onboardingDueAt(new Date()),
+      marker: "onboarding",
+      ownerHint: deal.owner_id,
+    });
   }
   return { deal, moved: true };
 }

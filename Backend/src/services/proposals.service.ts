@@ -12,6 +12,8 @@ import { autoEnroll } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
 import { dealStageForProposalStatus } from "../domain/dealRouting.js";
 import { attachDealSafely, moveLinkedDealSafely } from "./deals.service.js";
+import { defaultValidUntil } from "../domain/dealFollowUp.js";
+import { dateOnly } from "./leads.service.js";
 
 export interface ProposalRow {
   id: string;
@@ -44,6 +46,8 @@ export interface ProposalRow {
   whatsapp_attempt_count: number;
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
+  /** LL-3 rule 9: "YYYY-MM-DD" (pg date); default sent date + 30 days. */
+  valid_until: string | Date | null;
   deal_id: string | null;
   created_by: string | null;
   created_by_name: string | null;
@@ -79,6 +83,7 @@ export function proposalToDto(row: ProposalRow) {
     whatsappSendError: row.whatsapp_send_error ?? undefined,
     lossReason: row.loss_reason ?? undefined,
     lossNotes: row.loss_notes ?? undefined,
+    validUntil: dateOnly(row.valid_until),
     updatedAt: row.updated_at.toISOString(),
     createdAt: row.created_at.toISOString(),
   };
@@ -100,6 +105,8 @@ export interface CreateProposalInput {
   whatsappSendStatus?: WhatsappSendStatus;
   /** Attach to this open deal of the contact (else the newest open deal, else a new one). */
   dealId?: string;
+  /** LL-3 rule 9: "YYYY-MM-DD"; null / missing = the sent date + 30 days. */
+  validUntil?: string;
 }
 
 export async function createProposal(db: Queryable, actor: Actor, workspaceId: string, input: CreateProposalInput) {
@@ -112,8 +119,8 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
       (workspace_id, lead_id, owner_id, title, document_reference, document_storage_path, document_file_name,
        document_mime_type, document_size_bytes, amount, status, notes,
        email_template_id, whatsapp_template_id, email_send_status, whatsapp_send_status,
-       created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17) returning id`,
+       created_by, created_by_name, valid_until)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
     [
       workspaceId,
       input.leadId,
@@ -132,6 +139,7 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
       input.whatsappSendStatus ?? "not_applicable",
       actor.id,
       actor.fullName,
+      input.validUntil ?? null,
     ],
   );
   const id = result.rows[0]!.id;
@@ -186,6 +194,8 @@ export interface UpdateProposalInput {
   fileName?: string;
   amount?: number;
   notes?: string;
+  /** LL-3 rule 9: a new date re-arms the expiry tasks. */
+  validUntil?: string;
 }
 
 /** Plain field edits — use updateProposalStatus for status transitions (outcome routing). */
@@ -202,6 +212,10 @@ export async function updateProposal(db: Queryable, workspaceId: string, id: str
   if (patch.fileName !== undefined) push("document_reference", patch.fileName || null);
   if (patch.amount !== undefined) push("amount", patch.amount);
   if (patch.notes !== undefined) push("notes", patch.notes);
+  if (patch.validUntil !== undefined) {
+    push("valid_until", patch.validUntil);
+    sets.push("expiry_warned_at = null", "expired_task_at = null");
+  }
   if (sets.length === 0) return getProposalOr404(db, workspaceId, id);
   params.push(id);
   await db.query(`update public.proposals set ${sets.join(", ")} where id = $${i}`, params);
@@ -243,8 +257,9 @@ export async function updateProposalStatus(
   const params: unknown[] = [id, status];
   let i = 3;
   if (status === "sent") {
-    sets.push(`sent_at = now()`, `follow_up_at = $${i++}`);
-    params.push(addDaysIso(3));
+    // LL-3 rule 9: valid until the sent date + 30 days unless a date was set.
+    sets.push(`sent_at = now()`, `follow_up_at = $${i++}`, `valid_until = coalesce(valid_until, $${i++}::date)`);
+    params.push(addDaysIso(3), defaultValidUntil(new Date()));
   }
   if (LOSS_REASON_PROPOSAL_STATUSES.includes(status)) {
     sets.push(`loss_reason = $${i++}`, `loss_notes = $${i++}`);
@@ -275,7 +290,7 @@ export async function updateProposalStatus(
   }
 
   if (routing.cancelAllOpenTasks) {
-    await cancelOpenTasksForLead(db, actor, proposal.lead_id, "Lead Won");
+    await cancelOpenTasksForLead(db, actor, proposal.lead_id, "Lead Won", undefined, { keepOnboarding: true });
   } else if (routing.cancelOpenProposalFollowUps) {
     await cancelOpenTasksForLead(db, actor, proposal.lead_id, `Superseded - proposal ${status}`, ["proposal_follow_up"]);
   }

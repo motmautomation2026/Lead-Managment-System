@@ -30,3 +30,13 @@ describe("SendProposalDialog file row", () => {
     expect(screen.getByRole("dialog")).toHaveClass("grid-cols-1");
   });
 });
+
+describe("SendProposalDialog valid until (LL-3)", () => {
+  it("an optional date; empty means 30 days after sending", () => {
+    render(<SendProposalDialog leadId="lead-1" open onOpenChange={() => {}} onSend={vi.fn()} />);
+    const field = screen.getByLabelText("Valid until");
+    expect(field).toHaveAttribute("type", "date");
+    expect(field).toHaveValue("");
+    expect(screen.getByText("Empty = 30 days after sending.")).toBeTruthy();
+  });
+});

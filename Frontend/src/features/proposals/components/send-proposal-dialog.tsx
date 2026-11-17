@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ContactPicker } from "@/features/contacts/contact-picker";
+import { dateInputValue } from "@/lib/dates";
 import { messageFromError, useAutomations } from "@/store";
 import type { IdName, Proposal } from "@/types";
 
@@ -41,6 +42,8 @@ export interface SendProposalValue {
   document: File;
   /** Set when opened from a deal record: the proposal attaches to that deal. */
   dealId?: string | undefined;
+  /** LL-3: "YYYY-MM-DD"; empty = the sent date + 30 days. */
+  validUntil: string;
 }
 
 export function SendProposalDialog({
@@ -63,6 +66,7 @@ export function SendProposalDialog({
   const [title, setTitle] = useState("Sales Automation Proposal");
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
+  const [validUntil, setValidUntil] = useState("");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [whatsappTemplateId, setWhatsappTemplateId] = useState("");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
@@ -77,6 +81,7 @@ export function SendProposalDialog({
     setTitle("Sales Automation Proposal");
     setAmount("");
     setNotes("");
+    setValidUntil("");
     setEmailTemplateId("");
     setWhatsappTemplateId("");
     setDocumentFile(null);
@@ -120,6 +125,7 @@ export function SendProposalDialog({
         whatsappTemplateId,
         document: documentFile,
         dealId,
+        validUntil,
       });
       onOpenChange(false);
       // E1b: the request only queues the email; the worker sends it (the status pill follows it).
@@ -236,6 +242,19 @@ export function SendProposalDialog({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
               />
+            </div>
+            <div>
+              <Label htmlFor="proposal-valid-until" className="mb-1.5 block text-xs">
+                Valid until
+              </Label>
+              <Input
+                id="proposal-valid-until"
+                type="date"
+                min={dateInputValue(1)}
+                value={validUntil}
+                onChange={(event) => setValidUntil(event.target.value)}
+              />
+              <p className="pt-1 text-xs text-muted-foreground">Empty = 30 days after sending.</p>
             </div>
           </div>
           <div>

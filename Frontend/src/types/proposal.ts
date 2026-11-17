@@ -61,6 +61,8 @@ export interface Proposal {
   whatsappSendError?: string;
   lossReason?: LeadLossReason;
   lossNotes?: string;
+  /** LL-3: default the sent date + 30 days ("YYYY-MM-DD"). */
+  validUntil?: string;
   updatedAt: string;
   createdAt: string;
 }

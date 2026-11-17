@@ -98,13 +98,60 @@ describe("CloseDealDialog", () => {
     });
   });
 
-  it("reopen: picks an open stage", async () => {
+  it("reopen: picks an open stage; negotiation also needs the next decision date (LL-3)", async () => {
     mocks.move.mockResolvedValue({});
     const { onDone } = renderDialog("reopen", { ...deal, stage: "lost" });
     pick(screen.getByLabelText("Reopen at stage"), "Negotiation");
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    expect(await screen.findByText("Pick the next decision date.")).toBeTruthy();
+    expect(mocks.move).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Next decision date (required)"), {
+      target: { value: "2026-12-05" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
-    expect(mocks.move).toHaveBeenCalledWith({ id: "d-1", stage: "negotiation" });
+    expect(mocks.move).toHaveBeenCalledWith({
+      id: "d-1",
+      stage: "negotiation",
+      nextDecisionDate: "2026-12-05",
+    });
+  });
+
+  it("LL-3: moving into negotiation asks for the next decision date", async () => {
+    mocks.move.mockResolvedValue({});
+    const { onDone } = renderDialog("negotiation", { ...deal, stage: "proposal_sent" });
+    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(await screen.findByText("Pick the next decision date.")).toBeTruthy();
+    expect(mocks.move).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Next decision date (required)"), {
+      target: { value: "2026-12-05" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(mocks.move).toHaveBeenCalledWith({
+      id: "d-1",
+      stage: "negotiation",
+      nextDecisionDate: "2026-12-05",
+    });
+  });
+
+  it("LL-3: lost as Postponed with the contact lost needs the project date; Competitor sends the name", async () => {
+    mocks.move.mockResolvedValue({});
+    const { onDone } = renderDialog("lost");
+    pick(screen.getByLabelText("Loss reason"), "Project Postponed");
+    fireEvent.click(screen.getByRole("radio", { name: /Mark contact lost/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark lost" }));
+    expect(await screen.findByText("Pick the project date.")).toBeTruthy();
+    expect(mocks.move).not.toHaveBeenCalled();
+    pick(screen.getByLabelText("Loss reason"), "Competitor Selected");
+    fireEvent.change(screen.getByLabelText("Competitor name (optional)"), {
+      target: { value: "Acme Calls" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Mark lost" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(mocks.move).toHaveBeenCalledWith(
+      expect.objectContaining({ lossReason: "competitor_selected", competitorName: "Acme Calls" }),
+    );
   });
 
   it("shows backend errors inline and stays open", async () => {

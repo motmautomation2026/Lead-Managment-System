@@ -105,7 +105,10 @@ export function DealBoard({
   const desktop = useMediaQuery("(min-width: 768px)");
   const [extraState, setExtra] = useState<Extra>({ at: 0, byStage: {} });
   const [loadingMore, setLoadingMore] = useState<DealStage | null>(null);
-  const [closing, setClosing] = useState<{ deal: DealListItem; mode: "won" | "lost" } | null>(null);
+  const [closing, setClosing] = useState<{
+    deal: DealListItem;
+    mode: "won" | "lost" | "negotiation";
+  } | null>(null);
   const [mobileStage, setMobileStage] = useState<DealStage>("qualified");
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -155,8 +158,9 @@ export function DealBoard({
   /** Drop / "Move to…": won/lost open the Close dialog; open stages move optimistically. */
   const moveTo = async (deal: DealListItem, to: DealStage) => {
     if (deal.stage === to) return;
-    if (isClosedStage(to)) {
-      setClosing({ deal, mode: to as "won" | "lost" });
+    // LL-3: negotiation asks for the next decision date first.
+    if (isClosedStage(to) || to === "negotiation") {
+      setClosing({ deal, mode: to as "won" | "lost" | "negotiation" });
       return;
     }
     await client.cancelQueries({ queryKey: boardKey });

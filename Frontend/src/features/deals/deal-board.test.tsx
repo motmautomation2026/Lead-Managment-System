@@ -257,9 +257,9 @@ describe("DealBoard", () => {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Negotiation" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Proposal sent" }));
     await waitFor(() =>
-      expect(mocks.moveStage).toHaveBeenCalledWith("q1", { stage: "negotiation" }),
+      expect(mocks.moveStage).toHaveBeenCalledWith("q1", { stage: "proposal_sent" }),
     );
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Move Deal q1 to…" }), {

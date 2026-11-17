@@ -116,6 +116,8 @@ function DealRecord({ deal }: { deal: DealDetail }) {
   const goTo = (stage: DealStage) => {
     if (stage === deal.stage) return;
     if (isClosedStage(stage)) return setCloseMode(stage as CloseMode);
+    // LL-3: negotiation asks for the next decision date first.
+    if (stage === "negotiation") return setCloseMode("negotiation");
     void move
       .mutateAsync({ id: deal.id, stage })
       .then(() => toast.success(`Moved to ${DEAL_STAGE_LABELS[stage]}`))
@@ -203,6 +205,9 @@ function DealRecord({ deal }: { deal: DealDetail }) {
                 ? `Close ${closeDate(deal.expectedCloseDate)}`
                 : "No close date"}
             </span>
+            {deal.stage === "negotiation" && deal.nextDecisionDate && (
+              <span>Decision {closeDate(deal.nextDecisionDate)}</span>
+            )}
             <RecordLink
               type="contact"
               id={deal.contact.id}
@@ -491,6 +496,7 @@ function DealRecord({ deal }: { deal: DealDetail }) {
           createProposal.mutateAsync({
             leadId: deal.contact.id,
             title: value.title,
+            validUntil: value.validUntil || undefined,
             amount: value.amount ? Number(value.amount) : undefined,
             notes: value.notes || undefined,
             emailTemplateId: value.emailTemplateId,

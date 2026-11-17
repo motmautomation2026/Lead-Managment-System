@@ -26,6 +26,7 @@ import { runTaskReminders } from "./services/taskReminders.service.js";
 import { claimReminderWhatsappSends, processReminderWhatsappSend, runMeetingReminders } from "./services/meetingReminders.service.js";
 import { runTriedCallingSends } from "./services/triedCalling.service.js";
 import { runLostRecovery } from "./services/leadRecovery.service.js";
+import { runDealFollowUps } from "./services/dealFollowUps.service.js";
 import { runMorningDigest, runStaffAlertEmails } from "./services/staffAlerts.service.js";
 import { runCompanySweep } from "./services/companies.service.js";
 import { runOpenEvents } from "./services/emailOpens.service.js";
@@ -237,6 +238,8 @@ async function tick(): Promise<void> {
 
   // LL-3 rule 6: Lost leads whose recovery date came → long-term nurture + "Re-engage" task + bell.
   await step("lost_recovery", "Lost recovery", () => runLostRecovery(), (r) => r.length);
+  // LL-3 rule 9: proposal expiry, deal decision dates, the 10-day manager review.
+  await step("deal_follow_ups", "Proposal and deal follow-ups", () => runDealFollowUps(), (n) => n);
 
   // Knowledge-base ingestion: at most 2 documents per tick (extraction and
   // embedding are the slow part, done outside any transaction).

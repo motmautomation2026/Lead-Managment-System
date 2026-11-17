@@ -258,6 +258,8 @@ export interface DuplicateListParams {
 /** GET /deals/:id: all fields + contact, company, owner, and the meetings/proposals linked by deal_id. */
 export interface DealDetail extends Omit<DealListItem, "contact"> {
   serviceInterest: string | null;
+  /** LL-3: required in negotiation; a passed date gives the owner a task. */
+  nextDecisionDate: string | null;
   lossReason: LeadLossReason | null;
   lossNotes: string | null;
   createdBy: string | null;
@@ -309,6 +311,11 @@ export interface MoveDealStageInput {
   lossReason?: LeadLossReason | undefined;
   lossNotes?: string | undefined;
   contactAction?: ContactAction | undefined;
+  /** LL-3: required when moving into negotiation ("YYYY-MM-DD"). */
+  nextDecisionDate?: string | undefined;
+  /** LL-3: for the contact's Lost (contactAction lost). */
+  competitorName?: string | undefined;
+  projectDate?: string | undefined;
 }
 
 export type SavedViewObject =

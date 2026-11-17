@@ -287,6 +287,7 @@ export function ProposalsPage() {
           create.mutateAsync({
             leadId: value.leadId,
             title: value.title,
+            validUntil: value.validUntil || undefined,
             amount: value.amount ? Number(value.amount) : undefined,
             notes: value.notes || undefined,
             emailTemplateId: value.emailTemplateId,

@@ -6,7 +6,8 @@
 import { z } from "zod";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, NotFoundError } from "../errors.js";
+import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { DECISION_DATE_STAGES } from "../domain/dealFollowUp.js";
 import { DEAL_STAGES, LEAD_LOSS_REASONS, type DealStage } from "../domain/enums.js";
 import {
   addOwnerFilter,
@@ -173,6 +174,7 @@ export async function assertDealExists(db: Queryable, workspaceId: string, id: s
 export async function getDeal(db: Queryable, workspaceId: string, id: string) {
   const { rows } = await db.query(
     `select d.id, d.name, d.stage, d.amount::float8 as amount, d.currency, d.expected_close_date::text as "expectedCloseDate",
+            d.next_decision_date::text as "nextDecisionDate",
             d.service_interest as "serviceInterest", d.source, d.loss_reason as "lossReason", d.loss_notes as "lossNotes",
             d.closed_at as "closedAt", d.created_by_name as "createdBy", d.created_at as "createdAt", d.updated_at as "updatedAt",
             ${OWNER_JSON} as owner, ${COMPANY_JSON} as company,
@@ -220,6 +222,8 @@ export const updateDealSchema = z
     expectedCloseDate: closeDate,
     ownerId: z.string().uuid().nullable().optional(),
     companyId: z.string().uuid().nullable().optional(),
+    // LL-3 rule 9: a new date re-arms the "decision date passed" task.
+    nextDecisionDate: closeDate,
   })
   .strict();
 
@@ -232,6 +236,11 @@ export const moveStageSchema = z
     lossReason: z.enum(LEAD_LOSS_REASONS).optional(),
     lossNotes: z.string().trim().max(2000).optional(),
     contactAction: z.enum(CONTACT_ACTIONS).optional(),
+    // LL-3 rule 9: required when moving into negotiation (moveDeal).
+    nextDecisionDate: isoDate.optional(),
+    // LL-3: for the contact's Lost (contactAction lost): competitor name / project date (postponed, required).
+    competitorName: z.string().trim().max(200).optional(),
+    projectDate: isoDate.optional(),
   })
   .strict()
   .refine((v) => !v.contactAction || v.stage === "lost", { message: "contactAction is only allowed when the stage is lost.", path: ["contactAction"] });
@@ -258,6 +267,10 @@ export async function updateDeal(db: Queryable, workspaceId: string, id: string,
   if (patch.amount !== undefined) set("amount", patch.amount);
   if (patch.currency !== undefined) set("currency", patch.currency);
   if (patch.expectedCloseDate !== undefined) set("expected_close_date", patch.expectedCloseDate);
+  if (patch.nextDecisionDate !== undefined) {
+    set("next_decision_date", patch.nextDecisionDate);
+    sets.push("decision_task_for = null");
+  }
   if (patch.ownerId !== undefined) set("owner_id", patch.ownerId);
   if (patch.companyId !== undefined) set("company_id", patch.companyId);
   if (sets.length) await db.query(`update public.deals set ${sets.join(", ")} where id = ${b.p(id)}`, b.params);
@@ -271,9 +284,14 @@ export async function updateDeal(db: Queryable, workspaceId: string, id: string,
  * lost contact, that also closes its other open deals) or `long_term_nurture`; `keep` changes nothing.
  */
 export async function moveDeal(db: Queryable, actor: Actor, workspaceId: string, id: string, input: z.infer<typeof moveStageSchema>) {
+  const needsDate = (DECISION_DATE_STAGES as readonly string[]).includes(input.stage);
+  if (needsDate && !input.nextDecisionDate) throw new ValidationError("A next decision date is required to move a deal into negotiation.");
   const { deal, moved } = await moveDealStage(db, actor, workspaceId, id, input.stage, { manual: true, lossReason: input.lossReason, lossNotes: input.lossNotes });
   if (!moved) throw new ConflictError("The deal is already in this stage.");
-  if (input.contactAction === "lost") await markLost(db, actor, workspaceId, deal.lead_id, input.lossReason!, input.lossNotes);
+  if (needsDate) await db.query(`update public.deals set next_decision_date = $2, decision_task_for = null where id = $1`, [id, input.nextDecisionDate]);
+  if (input.contactAction === "lost") {
+    await markLost(db, actor, workspaceId, deal.lead_id, input.lossReason!, input.lossNotes, { competitorName: input.competitorName, projectDate: input.projectDate });
+  }
   else if (input.contactAction === "long_term_nurture") await moveToLongTermNurture(db, actor, workspaceId, deal.lead_id, `Deal lost: ${deal.name}`);
   return getDeal(db, workspaceId, id);
 }

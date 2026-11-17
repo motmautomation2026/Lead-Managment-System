@@ -341,6 +341,8 @@ export interface CreateProposalInput {
   document: File;
   /** Attach to this deal (else the contact's newest open deal, else a new one). */
   dealId?: string | undefined;
+  /** LL-3: "YYYY-MM-DD"; empty = the sent date + 30 days. */
+  validUntil?: string | undefined;
 }
 export interface UpdateProposalInput {
   title?: string | undefined;
@@ -1617,6 +1619,7 @@ export const backend = {
       formData.append("whatsappTemplateId", input.whatsappTemplateId);
       formData.append("document", input.document);
       if (input.dealId) formData.append("dealId", input.dealId);
+      if (input.validUntil) formData.append("validUntil", input.validUntil);
       return uploadFile<Proposal>("/proposals", formData);
     },
     update: (id: string, input: UpdateProposalInput) =>

@@ -67,6 +67,8 @@ export interface CreateAndSendProposalInput {
   emailTemplateId: string;
   whatsappTemplateId: string;
   dealId?: string;
+  /** LL-3 rule 9: "YYYY-MM-DD"; default the sent date + 30 days. */
+  validUntil?: string;
 }
 
 export interface ProposalDocumentFile {
@@ -119,6 +121,7 @@ export async function createAndSendProposal(actor: Actor, workspaceId: string, i
       emailSendStatus: emailEligible ? "pending" : "skipped",
       whatsappSendStatus: whatsappEligible ? "queued" : "skipped",
       dealId: input.dealId,
+      validUntil: input.validUntil,
     });
     if (emailEligible) {
       const rendered = renderTemplate(emailTemplate, toRenderLead(lead));

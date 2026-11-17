@@ -897,7 +897,7 @@ async function setTerminalLifecycle(
     `update public.leads set lifecycle_state = $${extraParams.length + 2}, last_activity_at = now()${extraSets.length ? ", " + extraSets.join(", ") : ""} where id = $1`,
     [leadId, ...extraParams, lifecycle],
   );
-  await cancelOpenTasksForLead(db, actor, leadId, `Lead ${timelineTitle}`);
+  await cancelOpenTasksForLead(db, actor, leadId, `Lead ${timelineTitle}`, undefined, { keepOnboarding: lifecycle === "won" });
   await addTimelineEvent(db, { leadId, kind: "system", title: timelineTitle, detail: reason, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR) });
   if (lifecycle !== "won") await closeOpenDealsSafely(db, actor, workspaceId, leadId, lifecycle);
   else if (winSingleOpenDeal) await winSingleOpenDealSafely(db, actor, workspaceId, leadId);

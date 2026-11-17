@@ -115,6 +115,7 @@ const baseDeal = (extra: Partial<DealDetail> = {}): DealDetail => ({
   id: "d-1",
   name: "Acme rollout",
   stage: "negotiation",
+  nextDecisionDate: "2026-12-01",
   amount: 500000,
   currency: "INR",
   expectedCloseDate: "2026-11-30",
