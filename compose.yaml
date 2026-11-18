@@ -29,6 +29,16 @@ services:
       # Knowledge-base embeddings. Optional; backend and worker only.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # REL-1: everything else the API reads (blank = the code's default; see docs/release/04-env-vars.md).
+      OPENAI_DECISION_MODEL: ${OPENAI_DECISION_MODEL:-}
+      OPENAI_GROUNDING_MODEL: ${OPENAI_GROUNDING_MODEL:-}
+      OPENAI_PRICES_JSON: ${OPENAI_PRICES_JSON:-}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_SESSION_POOL_MAX: ${DB_SESSION_POOL_MAX:-}
+      DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-}
+      SESSION_POOLER_MAX_CLIENTS: ${SESSION_POOLER_MAX_CLIENTS:-}
     restart: unless-stopped
 
   worker:
@@ -53,6 +63,21 @@ services:
       EMAIL_IMAP_POLL_SECONDS: ${EMAIL_IMAP_POLL_SECONDS:-120}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # REL-1: everything else the worker reads (blank = the code's default; see docs/release/04-env-vars.md).
+      AGENT_RUNNER_ENABLED: ${AGENT_RUNNER_ENABLED:-false}
+      OPENAI_DECISION_MODEL: ${OPENAI_DECISION_MODEL:-}
+      OPENAI_GROUNDING_MODEL: ${OPENAI_GROUNDING_MODEL:-}
+      OPENAI_PRICES_JSON: ${OPENAI_PRICES_JSON:-}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      CRM_COMPANY_SWEEP_ENABLED: ${CRM_COMPANY_SWEEP_ENABLED:-true}
+      CRM_DEAL_SWEEP_ENABLED: ${CRM_DEAL_SWEEP_ENABLED:-true}
+      WORKER_DB_POOL_MAX: ${WORKER_DB_POOL_MAX:-}
+      DB_SESSION_POOL_MAX: ${DB_SESSION_POOL_MAX:-}
+      DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-}
+      SESSION_POOLER_MAX_CLIENTS: ${SESSION_POOLER_MAX_CLIENTS:-}
     restart: unless-stopped
     depends_on:
       - backend

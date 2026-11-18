@@ -15,19 +15,20 @@
 -- Deploy order: apply this BEFORE the backend code that scopes the "clear
 -- the previous default" UPDATE by workspace. Old code stays correct on the
 -- relaxed indexes (it only ever clears more rows than needed).
+-- REL-1: made re-runnable (if not exists / if exists); same indexes.
 -- =============================================================================
 
 begin;
 
-create unique index message_templates_one_default_meeting_email_per_workspace
+create unique index if not exists message_templates_one_default_meeting_email_per_workspace
   on public.message_templates (workspace_id)
   where is_default_meeting_scheduled_email;
 
-create unique index message_templates_one_default_meeting_whatsapp_per_workspace
+create unique index if not exists message_templates_one_default_meeting_whatsapp_per_workspace
   on public.message_templates (workspace_id)
   where is_default_meeting_scheduled_whatsapp;
 
-drop index public.message_templates_one_default_meeting_email;
-drop index public.message_templates_one_default_meeting_whatsapp;
+drop index if exists public.message_templates_one_default_meeting_email;
+drop index if exists public.message_templates_one_default_meeting_whatsapp;
 
 commit;

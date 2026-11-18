@@ -1011,3 +1011,26 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   `taskReminders`, `deals`, `dealsC4Api`, `ll3Deals`). Staging integration: the LL-3b-touched files (`taskReminders`, `deals`,
   `dealsC4Api`, `ll3Deals`, `ll3Calls`, `ll3Recovery`) 48 / 48 green (302 s), no local API / worker; **the full suite was not run
   twice** (shortened on request: ~35 min per run) — still owed before production.
+- **REL-1 (production release prep, AI live: automatic for new leads, opt-in for old ones; migration 061; branch `dev`; staging
+  only, no OpenAI call, nothing sent to a lead):** Item 0: no automatic job knew a go-live cutoff (job → guard table in the REL-1
+  report). Item 1 (`8af28f0`): `agent_settings.automation_since` + `leads.automation_enabled / _set_at / _set_by` (061); pure
+  `domain/automation.ts` `isAutomated`, SQL `AUTOMATED_SQL`; guarded: AI wake-up claim, AI live scope (`effectiveMode`: not
+  automated → shadow; `new_leads` = "Automated leads", `live_since` no longer decides), workflow `autoEnroll` (not
+  `manual_enrollment`), LL-1 sweep (opt-in = activity), LL-2 due bells (automated + `origin = 'manual'` tasks) / escalations / reply
+  escalation / meeting-outcome task / meeting reminders / digest task counts, LL-3 ladder + "Fix the phone number" + "We tried
+  calling" (queue and send) / lost recovery / deal follow-ups; escalations never for anything before the opt-in. Contact page
+  Automation card, Contacts list bulk on/off (selection or filtered list with count confirm, ≤ 2000), manual AI / workflow enrolment
+  switches it on, off pauses workflow runs. Interpretations: a rep's manual tasks on old leads still ring and count in the digest;
+  meetings in the digest are not filtered; reply tasks + bells for inbound replies are unchanged for every lead; a CSV import after
+  go-live creates automated leads; tasks created by `createResponsibleTask` default to origin `manual`. Item 2: `dev` fast-forwarded
+  656cbad → 8af28f0, checks green, pushed. Item 3: 019 made re-runnable (`if not exists` / `if exists`); release parts 02a–02d + 020
+  applied on staging in order, no error, AI settings unchanged; 054's re-run copied numbers for 6 leftover `[test]` workspaces
+  (test numbers have other ids than their connection rows; production matches by id) → removed with
+  `staging:cleanup-test-workspaces`. Dry-run worker ticks on MOTM (cutoff = now): tick 1 old leads 0 tasks / bells / emails /
+  WhatsApp / tried-calling / reminders / runs / AI (a past meeting without outcome got no task); a new lead → First call + bells, no
+  run (MOTM has no `lead_created` workflow, AI off); opted-in old lead → one "Decide the next step" + one batched bell, no back-dated
+  outcome task; rehearsal leads deleted. Full staging suite **543 passed, 2 skipped** (2368 s) — also covers LL-3b's owed run.
+  Item 4: `docs/release/` (runbook, precheck, migrations, env vars, go-live switches, smoke tests, kill switch / rollback, first-day
+  watch); `compose.yaml` now passes every env var the API / worker read. Tests: backend unit 1442 → 1463, frontend 603 → 607.
+  **Production:** follow `docs/release/00-READ-ME-FIRST.md`; the cutoff + pause runs BEFORE the new worker starts; the "Automated
+  leads" scope needs the go-live gate (50 rated decisions) — management decision.
