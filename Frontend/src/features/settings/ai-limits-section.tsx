@@ -271,6 +271,7 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
               rows={2}
               value={form.emailOptOutText}
               onChange={(e) => set("emailOptOutText", e.target.value)}
+              aria-describedby="agent-opt-out-help"
             />
           </div>
           <div className="space-y-1">
@@ -280,8 +281,12 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
               rows={2}
               value={form.whatsappOptOutText}
               onChange={(e) => set("whatsappOptOutText", e.target.value)}
+              aria-describedby="agent-opt-out-help"
             />
           </div>
+          <p id="agent-opt-out-help" className="text-xs text-muted-foreground sm:col-span-2">
+            Leave empty to add no opt-out line.
+          </p>
         </div>
 
         <p className="border-t pt-4 text-xs text-muted-foreground">

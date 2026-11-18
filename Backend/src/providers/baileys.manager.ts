@@ -288,13 +288,15 @@ interface ConnectionControl {
   next_send_at: Date | null;
   paused_reason: string | null;
   resumed_at: Date | null;
+  no_opt_out_line: boolean;
 }
 
 const RESTRICTED_REASON = "WhatsApp applied a reach-out or new-chat restriction to this number.";
 const MASTER_OFF_REASON = "WhatsApp outbound is switched off for this workspace.";
 
 /** One number's control row with its workspace's send window and master switch. */
-const CONTROL_SQL = `select n.*, c.outbound_enabled, c.send_window_days, c.send_window_start, c.send_window_end
+const CONTROL_SQL = `select n.*, c.outbound_enabled, c.send_window_days, c.send_window_start, c.send_window_end,
+          coalesce((select trim(s.whatsapp_opt_out_text) = '' from public.agent_settings s where s.workspace_id = n.workspace_id), false) as no_opt_out_line
    from public.whatsapp_numbers n
    join public.whatsapp_connection c on c.workspace_id = n.workspace_id
   where n.id = $1`;
@@ -834,6 +836,7 @@ export class BaileysManager {
         paused,
         nextSendAt: control.next_send_at,
         firstInboundWindow,
+        noOptOutLine: control.no_opt_out_line,
       });
       if ("defer" in decision) {
         const pausedReason = signal ?? (masterOff ? MASTER_OFF_REASON : control.paused_reason);

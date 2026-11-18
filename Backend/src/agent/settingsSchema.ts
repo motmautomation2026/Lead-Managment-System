@@ -66,8 +66,9 @@ export const settingsUpdateSchema = z
     maxDecisionsPerDay: z.number().int().min(1).max(10_000),
     decisionModel: modelName,
     groundingModel: modelName,
-    emailOptOutText: nonBlank,
-    whatsappOptOutText: nonBlank,
+    // HOTFIX-1 (migration 062): empty = no opt-out line.
+    emailOptOutText: z.string().trim().max(1000),
+    whatsappOptOutText: z.string().trim().max(1000),
     repQuietHours: z.number().int().min(0).max(168),
     autoEnrollNewLeads: z.boolean(),
     // null = use the workspace name.

@@ -60,6 +60,16 @@ describeIfDb("AI agent foundation, migration 024 (requires TEST_DATABASE_URL)", 
     ).rejects.toMatchObject({ code: "23514" });
   });
 
+  it("HOTFIX-1 (062): the opt-out texts may be empty", async () => {
+    const before = await pool.query(`select email_opt_out_text, whatsapp_opt_out_text from public.agent_settings where workspace_id = $1`, [WORKSPACE_ID]);
+    try {
+      await pool.query(`update public.agent_settings set email_opt_out_text = '', whatsapp_opt_out_text = '' where workspace_id = $1`, [WORKSPACE_ID]);
+    } finally {
+      const { email_opt_out_text, whatsapp_opt_out_text } = before.rows[0];
+      await pool.query(`update public.agent_settings set email_opt_out_text = $2, whatsapp_opt_out_text = $3 where workspace_id = $1`, [WORKSPACE_ID, email_opt_out_text, whatsapp_opt_out_text]);
+    }
+  });
+
   it("new leads default to agent_status none with no touches, and task_origin accepts 'agent'", async () => {
     const lead = await pool.query(
       `insert into public.leads (workspace_id, first_name, company, source, email) values ($1, 'Agent', 'Agent Co', 'referral', $2)

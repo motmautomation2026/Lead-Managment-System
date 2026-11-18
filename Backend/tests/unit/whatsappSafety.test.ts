@@ -154,6 +154,11 @@ describe("first message (rule 6)", () => {
     expect(decideSend(base({ isFirstMessage: true, text: "Hi" }))).toMatchObject({ text: "Hi\n\nReply STOP to opt out." });
     expect(decideSend(base({ isFirstMessage: false, text: "Hi" }))).toMatchObject({ text: "Hi" });
   });
+
+  it("HOTFIX-1: no opt-out line when the workspace's WhatsApp opt-out text is empty (the link block stays)", () => {
+    expect(decideSend(base({ isFirstMessage: true, text: "Hi", noOptOutLine: true }))).toMatchObject({ send: true, text: "Hi" });
+    expect(decideSend(base({ isFirstMessage: true, text: "Hi https://acme.com", noOptOutLine: true }))).toEqual({ block: FIRST_MESSAGE_LINK_REASON });
+  });
 });
 
 describe("pause, spacing and typing", () => {

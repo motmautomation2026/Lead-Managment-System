@@ -48,6 +48,8 @@ export interface SafetyInput {
   nextSendAt: Date | null;
   /** E3b-1 rule 4: an AI first message to a fresh inbound lead may go out in the first-inbound window (08:00–21:00 IST, any day). */
   firstInboundWindow?: boolean;
+  /** HOTFIX-1: the workspace's WhatsApp opt-out text is empty, so no opt-out line is added. */
+  noOptOutLine?: boolean;
   random?: () => number;
 }
 
@@ -160,7 +162,7 @@ export function decideSend(input: SafetyInput): SafetyDecision {
   let text = input.text;
   if (automated && input.isFirstMessage) {
     if (hasLink(text)) return { block: FIRST_MESSAGE_LINK_REASON };
-    text = ensureOptOutLine(text);
+    if (!input.noOptOutLine) text = ensureOptOutLine(text);
   }
 
   const spacingMs = input.nextSendAt ? Math.max(0, input.nextSendAt.getTime() - now.getTime()) : 0;

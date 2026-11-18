@@ -81,9 +81,10 @@ describe("agent settings update schema", () => {
     expect(parse({ companyDisplayName: "x".repeat(121) }).success).toBe(false);
   });
 
-  it("opt-out texts can't be blank", () => {
-    expect(parse({ emailOptOutText: "   " }).success).toBe(false);
-    expect(parse({ whatsappOptOutText: "" }).success).toBe(false);
+  it("HOTFIX-1: opt-out texts are optional; blank is stored as empty", () => {
+    const blank = parse({ emailOptOutText: "   ", whatsappOptOutText: "" });
+    expect(blank.success && blank.data).toMatchObject({ emailOptOutText: "", whatsappOptOutText: "" });
     expect(parse({ whatsappOptOutText: " Reply STOP " }).success).toBe(true);
+    expect(parse({ emailOptOutText: "x".repeat(1001) }).success).toBe(false);
   });
 });

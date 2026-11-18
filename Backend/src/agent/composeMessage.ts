@@ -42,12 +42,13 @@ export function composeOutgoing(decision: SendDecision, options: ComposeOptions)
     // E3b-1 rule 8: "<first name>, <company>" on its own line, no leading dash.
     const firstName = ownerName.trim().split(/\s+/)[0] || ownerName;
     let text = [...paragraphs(decision.body), ...(booking ? [booking] : [])].join("\n\n") + `\n\n${firstName}, ${companyName}`;
-    if (options.isFirstWhatsApp) text += `\n\n${settings.whatsapp_opt_out_text}`;
+    const optOut = settings.whatsapp_opt_out_text.trim();
+    if (options.isFirstWhatsApp && optOut) text += `\n\n${optOut}`;
     return { channel: "whatsapp", text, bookingLinkAdded: Boolean(booking) };
   }
 
   const booking = bookingLine("email", options);
-  const parts = [...paragraphs(decision.body), ...(booking ? [booking] : []), `Best regards,\n${ownerName}\n${companyName}`, settings.email_opt_out_text.trim()];
+  const parts = [...paragraphs(decision.body), ...(booking ? [booking] : []), `Best regards,\n${ownerName}\n${companyName}`, settings.email_opt_out_text.trim()].filter(Boolean);
   return {
     channel: "email",
     subject: decision.subject,

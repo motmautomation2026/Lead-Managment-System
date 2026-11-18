@@ -58,6 +58,17 @@ describe("composeOutgoing", () => {
     expect(composeOutgoing(whatsapp("Hi Asha"), options)).toEqual({ channel: "whatsapp", text: "Hi Asha\n\nRavi, Northbeam", bookingLinkAdded: false });
   });
 
+  it("HOTFIX-1: an empty or blank opt-out text appends nothing (no stray characters or blank line)", () => {
+    for (const blank of ["", "  \n "]) {
+      const none = { ...options, settings: { email_opt_out_text: blank, whatsapp_opt_out_text: blank } };
+      expect(composeOutgoing(whatsapp("Hi Asha"), { ...none, isFirstWhatsApp: true }).text).toBe("Hi Asha\n\nRavi, Northbeam");
+      const mail = composeOutgoing(email("Hi Asha"), none);
+      if (mail.channel !== "email") throw new Error("expected email");
+      expect(mail.text).toBe("Hi Asha\n\nBest regards,\nRavi Kumar\nNorthbeam");
+      expect(mail.html).toBe("<p>Hi Asha</p>\n<p>Best regards,<br>Ravi Kumar<br>Northbeam</p>");
+    }
+  });
+
   it("E3b-1: the WhatsApp signature is the owner's first name and the company on its own line, no dash; email keeps the full name", () => {
     const wa = composeOutgoing(whatsapp("Hi Asha, would Thursday or Friday suit you?"), options);
     expect(wa.text).toBe("Hi Asha, would Thursday or Friday suit you?\n\nRavi, Northbeam");

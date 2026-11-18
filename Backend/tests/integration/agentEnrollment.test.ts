@@ -141,10 +141,14 @@ describeIfDb("agent settings and enrollment (requires TEST_DATABASE_URL)", () =>
     expect(live.body).toMatchObject({ mode: "live", liveScope: "test_contacts", liveContactCount: 0 });
     expect((await api(admin, ws, "PUT", "/agent/settings", { mode: "off" })).status).toBe(200);
 
-    for (const bad of [{ minGapHours: 0 }, { sendDays: [] }, { sendDays: [1, 1] }, { emailOptOutText: " " }, { repQuietHours: 169 }, { sendWindowStart: "20:00" }, { wakeMinDays: 40 }]) {
+    for (const bad of [{ minGapHours: 0 }, { sendDays: [] }, { sendDays: [1, 1] }, { repQuietHours: 169 }, { sendWindowStart: "20:00" }, { wakeMinDays: 40 }]) {
       expect((await api(admin, ws, "PUT", "/agent/settings", bad)).status, JSON.stringify(bad)).toBe(400);
     }
     expect((await api(admin, ws, "GET", "/agent/settings")).body).toMatchObject({ mode: "off", sendWindowStart: "10:00", minGapHours: 48 });
+    // HOTFIX-1: the opt-out texts are optional; blank is stored as ''.
+    const blank = await api(admin, ws, "PUT", "/agent/settings", { emailOptOutText: " ", whatsappOptOutText: "" });
+    expect(blank.status).toBe(200);
+    expect(blank.body).toMatchObject({ emailOptOutText: "", whatsappOptOutText: "" });
   });
 
   it("playbooks: parallel saves get distinct versions; restore creates a new version with the old body", async () => {

@@ -307,6 +307,24 @@ describe("Settings → AI sections (UX-1: one section per route)", () => {
     expect(screen.getByText(/Last updated by Ada Admin/)).toBeInTheDocument();
   });
 
+  it("HOTFIX-1: the opt-out texts are optional and save empty", async () => {
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });
+    await show(AgentLimitsSection);
+    const emailField = screen.getByLabelText("Email opt-out text");
+    const whatsappField = screen.getByLabelText("WhatsApp opt-out text");
+    for (const field of [emailField, whatsappField]) {
+      expect(field).not.toBeRequired();
+      expect(field).toHaveAccessibleDescription("Leave empty to add no opt-out line.");
+      fireEvent.change(field, { target: { value: "" } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    expect(mocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ emailOptOutText: "", whatsappOptOutText: "" }),
+      expect.any(Object),
+    );
+  });
+
   it("saves the company display name trimmed, and blank as null", async () => {
     mocks.isAdmin = true;
     mocks.settingsQuery.mockReturnValue({ data: settings, isError: false });

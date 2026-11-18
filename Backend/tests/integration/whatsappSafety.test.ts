@@ -273,6 +273,15 @@ describeIfDb("WhatsApp safety on the send path (requires TEST_DATABASE_URL)", ()
     expect(socket.sendPresenceUpdate.mock.calls.map(([type]) => type)).toEqual(["composing", "paused", "composing", "paused", "composing", "paused"]);
   });
 
+  it("HOTFIX-1: an empty workspace WhatsApp opt-out text adds no opt-out line to a first workflow message", async () => {
+    const ws = await workspace("no-opt-out");
+    await pool.query(`update public.agent_settings set whatsapp_opt_out_text = '' where workspace_id = $1`, [ws]);
+    const socket = fakeSocket();
+    const a = await lead(ws);
+    await send(manager(ws, socket), await workflowSource(ws, a.id), a.phone, "Hi Asha");
+    expect(socket.sendMessage.mock.calls.map(([, content]) => content.text)).toEqual(["Hi Asha"]);
+  });
+
   it("spacing: the next send right after one defers until next_send_at (45–120 s)", async () => {
     const ws = await workspace("spacing");
     const m = manager(ws, fakeSocket());
