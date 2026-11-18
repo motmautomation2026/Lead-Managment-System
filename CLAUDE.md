@@ -453,10 +453,11 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   Limits count both channels together. HOTFIX-2: `first_channel = both` → the first message is one WhatsApp + one email (two
   drafts, each fully checked; `agent_decisions.paired_decision_id` links the second): ONE touch (`TOUCH_GROUP_SQL`), ONE decision
   for the daily cap; one channel unusable or failing its checks → the other alone.
-- First message (HOTFIX-2, `welcome` angle): no call question or days; it ends with the code's closing sentence
-  (`domain/reminders.ts` `firstMessageClosing`: "<Rep> from our team will call you shortly / tomorrow morning / on Monday morning.",
-  from `firstCallDueAt`; polish appends it if missing). That closing is allowed only in the first message (`call_days`); follow-ups
-  keep the two suggested days. Reply drafts are never a first message.
+- First message (HOTFIX-2/3, `welcome` angle): no call question, days or any time/day phrase ("shortly", "tomorrow", "morning",
+  weekdays, "today", …); it ends with the code's closing sentence (`domain/reminders.ts` `firstMessageClosing`: owner → "I will give
+  you a call to understand your requirements.", none → "Our team will give you a call to understand your requirements."; polish
+  appends it if missing). That closing is allowed only in the first message (`call_days`); follow-ups keep the two suggested days.
+  Reply drafts are never a first message.
 - Speed to lead (E3b-1): a website/inbound-form contact < 2 h old with no touch may get its FIRST AI message 08:00–21:00 IST any day
   (rules, send re-check and both channel checks); every other safety rule unchanged; follow-ups keep the normal window.
 - Call days (E3b-2a-2, code check `call_days`, fixable, both channels, decisions and reply drafts): a question asking for a call offers

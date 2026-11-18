@@ -94,7 +94,7 @@ export async function draftDecision(
       ownerName: ctx.lead.ownerName,
       companyName: ctx.companyName,
       suggestedDays: suggestedDays(deps.now),
-      firstClosing: firstClosingOf(ctx, deps.now),
+      firstClosing: firstClosingOf(ctx),
     });
     // E3a rule 7: a follow-up email keeps its thread's subject; the model's is ignored.
     const thread = ctx.emailThread;

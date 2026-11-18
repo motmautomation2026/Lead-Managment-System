@@ -268,7 +268,7 @@ describe("E3b-1 rules 2 and 6: prompt lines", () => {
     expect(user).toContain("This message: welcome (first message)");
     expect(user).toContain("Channel for this message: WhatsApp");
     // HOTFIX-2: the first message gets the closing sentence instead of days; a follow-up call angle keeps the days.
-    expect(user).toContain("Closing sentence: Ravi from our team will call you shortly.");
+    expect(user).toContain("Closing sentence: I will give you a call to understand your requirements.");
     expect(user).not.toContain("Suggested days");
     const checkIn = stagePlan(planInput({ touches: [{ at: ist("2026-10-28T11:00"), channel: "email" }, { at: ist("2026-10-30T11:00"), channel: "whatsapp" }, { at: ist("2026-11-01T11:00"), channel: "email" }] }))!;
     expect(checkIn.angle).toBe("check_in");

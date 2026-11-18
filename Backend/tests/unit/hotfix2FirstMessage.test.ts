@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDecision } from "../../src/agent/decisionSchema.js";
 import { draftFirstMessages } from "../../src/agent/draftDecision.js";
-import { checkMessage, messageFactsOf } from "../../src/agent/messageChecks.js";
+import { checkMessage, firstClosingOf, messageFactsOf } from "../../src/agent/messageChecks.js";
 import { polishDecision } from "../../src/agent/polish.js";
 import { settingsUpdateSchema } from "../../src/agent/settingsSchema.js";
 import { stagePlan, type StagePlanInput } from "../../src/agent/stagePlan.js";
@@ -14,17 +14,18 @@ import { sampleContext, settings } from "../helpers/agentContextFixture.js";
 const ist = (local: string) => new Date(`${local}:00+05:30`);
 const WEDNESDAY = ist("2026-11-04T11:00");
 
-describe("HOTFIX-2: the first message's closing sentence (firstMessageClosing)", () => {
-  it.each([
-    ["weekday daytime", "2026-11-04T11:00", "Ravi", "Ravi from our team will call you shortly."],
-    ["weekday 18:45 (the call falls on the next working day)", "2026-11-04T18:45", "Ravi", "Ravi from our team will call you tomorrow morning."],
-    ["Saturday evening (never Sunday)", "2026-11-07T18:30", "Ravi", "Ravi from our team will call you on Monday morning."],
-    ["Saturday late night", "2026-11-07T22:00", "Ravi", "Ravi from our team will call you on Monday morning."],
-    ["Sunday", "2026-11-08T15:00", "Ravi", "Ravi from our team will call you tomorrow morning."],
-    ["no owner, daytime", "2026-11-04T11:00", null, "Our team will call you shortly."],
-    ["no owner, evening", "2026-11-04T20:00", null, "Our team will call you tomorrow morning."],
-  ])("%s", (_name, at, owner, expected) => {
-    expect(firstMessageClosing(ist(at), owner)).toBe(expected);
+describe("HOTFIX-3: the first message's closing sentence (firstMessageClosing)", () => {
+  it("owner → I; no owner → our team; never a time or day", () => {
+    expect(firstMessageClosing(true)).toBe("I will give you a call to understand your requirements.");
+    expect(firstMessageClosing(false)).toBe("Our team will give you a call to understand your requirements.");
+  });
+
+  it("firstClosingOf picks by the lead's owner, welcome angle only", () => {
+    const plan = stagePlan(planInput({ firstChannel: "whatsapp" }));
+    const lead = sampleContext().lead;
+    expect(firstClosingOf({ stagePlan: plan, lead: { ...lead, ownerName: "Ravi Kumar" } })).toBe(firstMessageClosing(true));
+    expect(firstClosingOf({ stagePlan: plan, lead: { ...lead, ownerName: null } })).toBe(firstMessageClosing(false));
+    expect(firstClosingOf({ stagePlan: stagePlan(planInput({ touches: [{ at: ist("2026-11-01T11:00"), channel: "email" }] })), lead })).toBeNull();
   });
 });
 
@@ -77,7 +78,7 @@ describe("HOTFIX-2: first_channel both in the stage plan", () => {
 
 const whatsapp = (body: string): AgentDecision => ({ action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "First message." });
 const email = (body: string): AgentDecision => ({ action: "send_email", subject: "Outbound for Acme Steel", body, assetIds: [], nextWakeInDays: 3, reasoning: "First message." });
-const CLOSING = "Ravi from our team will call you shortly.";
+const CLOSING = "I will give you a call to understand your requirements.";
 const GOOD = `Hi Asha, thanks for your enquiry about growing outbound sales for Acme Steel. We start with a short review of how your team finds buyers. ${CLOSING}`;
 const DAY_PAIR = "Hi Asha, thanks for your enquiry about growing outbound sales. Would Thursday or Friday suit you for a short call?";
 
@@ -95,13 +96,20 @@ describe("HOTFIX-2: message checks for the first message", () => {
     expect(rules(whatsapp(DAY_PAIR), firstCtx())).toContain("call_days");
   });
 
-  it("the closing phrases are allowed only in the first message", () => {
+  it("both closing sentences are allowed only in the first message", () => {
+    const noOwner = GOOD.replace(CLOSING, "Our team will give you a call to understand your requirements.");
+    expect(rules(whatsapp(noOwner), firstCtx())).not.toContain("call_days");
     expect(rules(whatsapp(GOOD), followUpCtx())).toContain("call_days");
-    for (const phrase of ["tomorrow morning", "on Monday morning"]) {
-      expect(rules(whatsapp(`Hi Asha, a quick note on lead lists. Ravi will call you ${phrase}.`), followUpCtx())).toContain("call_days");
-    }
+    expect(rules(whatsapp(noOwner), followUpCtx())).toContain("call_days");
     // A follow-up keeps the two-day call request.
     expect(rules(whatsapp(DAY_PAIR), followUpCtx())).not.toContain("call_days");
+  });
+
+  it("HOTFIX-3: a time or day phrase in the first message fails", () => {
+    for (const phrase of ["shortly", "tomorrow morning", "on Monday", "today", "this afternoon", "soon"]) {
+      const body = `Hi Asha, thanks for your enquiry about growing outbound sales. Ravi will reach out ${phrase}. ${CLOSING}`;
+      expect(rules(whatsapp(body), firstCtx())).toContain("call_days");
+    }
   });
 
   it("code appends the closing when the writer left it out (and drops its own call promise)", () => {

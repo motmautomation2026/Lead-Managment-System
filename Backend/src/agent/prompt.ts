@@ -210,8 +210,8 @@ function stageLines({ stagePlan: plan, latestMeeting, timeline, lead }: AgentCon
   }
   const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
   if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
-  // HOTFIX-2: the first message says when we will call instead of offering days.
-  const closing = now ? firstClosingOf({ stagePlan: plan, lead }, now) : null;
+  // HOTFIX-2/3: the first message ends with the code's closing instead of offering days.
+  const closing = firstClosingOf({ stagePlan: plan, lead });
   if (closing) lines.push(`Closing sentence: ${closing}`);
   else if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`, `Closing question: ${callQuestion(now)}`);
   if ((plan.angle === "meeting_recap" || plan.angle === "meeting_recap_deciding") && latestMeeting) {
@@ -366,8 +366,8 @@ export function applyGroundingAllowList(result: GroundingResult, ctx: AgentConte
   // AI-FIX-1 rule 1: a faithful paraphrase of ONE playbook client experience is neither a claim nor an introduction.
   const experiences = playbookClientExperiences(ctx.playbook?.body);
   const listed = (text: string) => isListedExperienceClaim(text, experiences);
-  // HOTFIX-2: the first message's code-written closing ("Ravi from our team will call you shortly.") is not a claim.
-  const closing = now ? firstClosingOf(ctx, now) : null;
+  // HOTFIX-2/3: the first message's code-written closing ("I will give you a call …") is not a claim.
+  const closing = firstClosingOf(ctx);
   const closingClaim = (text: string) => closing !== null && norm(text).length > 0 && norm(closing).includes(norm(text));
   const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim) || listed(claim) || closingClaim(claim));
   const ignoredStyle = (result.styleViolations ?? []).filter(

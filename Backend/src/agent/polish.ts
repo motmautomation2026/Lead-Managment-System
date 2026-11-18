@@ -180,8 +180,8 @@ function fixCallDays(body: string, days: string | null | undefined, fixes: AutoF
   return fixed;
 }
 
-// HOTFIX-2: the first message ends with the code's closing sentence: any other "… will call you …" sentence goes, then it is appended.
-const CALL_PROMISE = /[^.!?\n]*\bwill (?:call|ring|phone) you\b[^.!?\n]*[.!?]*/gi;
+// HOTFIX-2/3: the first message ends with the code's closing sentence: any other call promise goes, then it is appended.
+const CALL_PROMISE = /[^.!?\n]*\bwill (?:(?:call|ring|phone) you|give you a call)\b[^.!?\n]*[.!?]*/gi;
 
 function fixFirstClosing(body: string, closing: string | null | undefined, fixes: AutoFix[]): string {
   if (!closing || body.trim().endsWith(closing)) return body;

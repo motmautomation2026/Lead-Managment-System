@@ -268,7 +268,7 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     expect(paired).toMatchObject({ action: "send_email", outcome: "executed", send_status: "queued", paired_decision_id: main.id, angle: "welcome", next_wake_at: null });
     expect(Number(paired.cost_usd)).toBe(0);
     // Code appended the closing (the owner is Govinda Rep).
-    for (const row of [main, paired]) expect(row.message_body).toMatch(/\n\nGovinda from our team will call you (shortly|tomorrow morning|on \w+ morning)\.$/);
+    for (const row of [main, paired]) expect(row.message_body).toMatch(/\n\nI will give you a call to understand your requirements\.$/);
     const { DAY_DECISIONS_SQL } = await import("../../src/services/agentRunner.service.js");
     expect((await pool.query(`select ${DAY_DECISIONS_SQL} as n`, [ws])).rows[0].n).toBe(1);
     // One timer wake-up for the pair.

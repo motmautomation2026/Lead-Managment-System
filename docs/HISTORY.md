@@ -1046,3 +1046,8 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   message; reply drafts are never a first message. Integration fixtures whose FIRST AI message asked for a call on two days now ask a
   non-call question. Paused WhatsApp number: the WhatsApp of a pair defers (as every AI WhatsApp), the email goes. **Production:**
   apply 063 before deploying API, worker and frontend; Govinda updates the playbook / style examples (old first-message lines).
+- **HOTFIX-3 (generic first-message closing; no migration; branch `dev`):** `firstMessageClosing(hasOwner)` never names a time or day:
+  owner → "I will give you a call to understand your requirements.", no owner → "Our team will give you a call to understand your
+  requirements." (no working-time logic; `domain/workingTime.ts` unchanged). `call_days` now also fails a first message with any
+  time/day phrase (shortly, soon, today, tonight, tomorrow, morning/afternoon/evening, this/next week, weekend, weekdays); the two
+  closings fail in any other message; polish also drops a writer's "… will give you a call …" before appending the closing.

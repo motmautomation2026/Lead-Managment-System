@@ -122,9 +122,9 @@ export interface MessageFacts {
   firstMessage?: boolean;
 }
 
-/** HOTFIX-2: the first message's closing sentence (welcome angle only; null otherwise). */
-export function firstClosingOf(ctx: Pick<AgentContext, "stagePlan" | "lead">, now: Date): string | null {
-  return ctx.stagePlan?.angle === "welcome" ? firstMessageClosing(now, ctx.lead.ownerName?.trim().split(/\s+/)[0] || null) : null;
+/** HOTFIX-2/3: the first message's closing sentence (welcome angle only; null otherwise). */
+export function firstClosingOf(ctx: Pick<AgentContext, "stagePlan" | "lead">): string | null {
+  return ctx.stagePlan?.angle === "welcome" ? firstMessageClosing(Boolean(ctx.lead.ownerName?.trim())) : null;
 }
 
 const STALE_CALL_MS = 7 * 24 * 3_600_000;
@@ -181,20 +181,25 @@ export function callDaysProblem(body: string): string | null {
   return vague ? `The message offers days and also says "${vague}"; keep only the two days.` : null;
 }
 
-/** HOTFIX-2: the approved first-message closing ("… will call you shortly / tomorrow morning / on Monday morning"). */
-export const FIRST_CLOSING_RE = /\bwill call you (?:shortly|tomorrow morning|on (?:monday|tuesday|wednesday|thursday|friday|saturday) morning)\b/i;
+/** HOTFIX-3: the approved first-message closings ("I / Our team will give you a call to understand your requirements."). */
+export const FIRST_CLOSING_RE = /\b(?:I|our team) will give you a call to understand your requirements\b/i;
+/** HOTFIX-3: a time or day phrase; never in a first message (it never says when we will call). */
+const FIRST_TIME_PHRASE =
+  /\b(?:shortly|soon|today|tonight|tomorrow|morning|afternoon|evening|this week|next week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 
 /**
- * HOTFIX-2: the first message never asks for a call or offers days (it says when we will call); every
- * other message never uses that closing. The problem, or null.
+ * HOTFIX-2/3: the first message never asks for a call, offers days or names a time (it ends with the closing);
+ * every other message never uses that closing. The problem, or null.
  */
 export function firstMessageCallProblem(body: string, firstMessage: boolean): string | null {
   if (!firstMessage) {
-    return FIRST_CLOSING_RE.test(body) ? "Only the first message says when we will call. Don't say when someone will call; follow the message's purpose." : null;
+    return FIRST_CLOSING_RE.test(body) ? "Only the first message says \"… will give you a call to understand your requirements\"; follow the message's purpose." : null;
   }
   const questions = withoutUrls(body).match(/[^.!?？\n]*[?？]/g) ?? [];
   const ask = questions.find((q) => CALL_ASK.test(q) || new RegExp(WEEKDAYS.source, "i").test(q));
-  return ask ? `"${ask.trim()}": the first message doesn't ask for a call or offer days. No question; end with the closing sentence that says when we will call.` : null;
+  if (ask) return `"${ask.trim()}": the first message doesn't ask for a call or offer days. No question; end with the closing sentence.`;
+  const time = FIRST_TIME_PHRASE.exec(body)?.[0];
+  return time ? `"${time}": the first message never names a time or day. End with the closing sentence only.` : null;
 }
 
 /** AI-FIX-1 rule 3: thanks for a call ("Thank you for your time on the call", "Thanks for the call yesterday"), or null. */
