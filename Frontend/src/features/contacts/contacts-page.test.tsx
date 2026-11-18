@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   manyRows: false,
   fetchNextPage: vi.fn(),
   bulk: vi.fn(),
+  automation: vi.fn(),
   createView: vi.fn(),
   updateView: vi.fn(),
   deleteView: vi.fn(),
@@ -121,6 +122,7 @@ vi.mock("@/store", () => ({
   },
   useContactsCount: () => ({ data: { count: 2 } }),
   useBulkContacts: () => ({ mutateAsync: mocks.bulk, isPending: false }),
+  useContactAutomation: () => ({ mutateAsync: mocks.automation, isPending: false }),
   useCompany: (id?: string) => ({ data: id ? { id, name: "Acme" } : undefined }),
   useCompanySearch: () => ({ data: undefined, isFetching: false }),
   useCreateCompany: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -285,6 +287,35 @@ describe("ContactsPage", () => {
       expect(mocks.bulk).toHaveBeenCalledWith({ ids: ["c-1"], action: "enrollAi" }),
     );
     expect(mocks.toast.success).toHaveBeenCalledWith("1 contact enrolled in AI");
+  });
+
+  it("REL-1: turns automation on/off for the selection or the whole filtered list, always after a count confirm", async () => {
+    mocks.automation.mockResolvedValue({ changed: 1, unchanged: 0 });
+    await renderPage();
+    fireEvent.click(screen.getAllByRole("checkbox", { name: "Select row" })[0]!);
+    const bar = screen.getByRole("toolbar", { name: "Bulk actions" });
+    fireEvent.keyDown(within(bar).getByRole("button", { name: /Automation/ }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Turn off automation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn off for 1" }));
+    await waitFor(() =>
+      expect(mocks.automation).toHaveBeenCalledWith({ ids: ["c-1"], enabled: false }),
+    );
+
+    fireEvent.click(screen.getAllByRole("checkbox", { name: "Select row" })[0]!);
+    fireEvent.keyDown(
+      within(screen.getByRole("toolbar", { name: "Bulk actions" })).getByRole("button", {
+        name: /Automation/,
+      }),
+      { key: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Turn on for all 2" }));
+    expect(await screen.findByText(/Turn automation on for 2 contacts\?/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on for 2" }));
+    await waitFor(() =>
+      expect(mocks.automation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ expectedCount: 2, enabled: true, filtered: expect.any(Object) }),
+      ),
+    );
   });
 
   it("saves the current list as a view and opens it", async () => {

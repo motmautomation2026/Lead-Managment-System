@@ -32,6 +32,7 @@ import { getLeadNextAction } from "./tasks.service.js";
 import { assertAssignableUser } from "./profiles.service.js";
 import { leadNumber } from "./whatsappNumbers.service.js";
 import { enrollLeads } from "./agentStatus.service.js";
+import { getLeadAutomation } from "./leadAutomation.service.js";
 
 const AGENT_STATUSES = ["none", "active", "paused", "handed_off", "stopped"] as const satisfies readonly AgentStatus[];
 const OPEN_DEAL = `d.stage not in ('won', 'lost')`;
@@ -151,6 +152,12 @@ export async function listContacts(db: Queryable, actor: Actor, workspaceId: str
 export const countContacts = (db: Queryable, actor: Actor, workspaceId: string, filters: ContactFilters) =>
   runCount(db, contactWhere(workspaceId, actor, filters), "public.leads l");
 
+/** REL-1 bulk automation switch over a filtered list: the matching ids (same filters as /contacts/count), at most `limit`. */
+export async function contactIdsForFilter(db: Queryable, actor: Actor, workspaceId: string, filters: ContactFilters, limit: number): Promise<string[]> {
+  const b = contactWhere(workspaceId, actor, filters);
+  return (await db.query<{ id: string }>(`select l.id from public.leads l ${b.where()} limit ${b.p(limit)}`, b.params)).rows.map((r) => r.id);
+}
+
 /** The Lead DTO plus its company and deals (newest first). The DTO's company text moves to `companyText`. */
 export async function getContact(db: Queryable, workspaceId: string, id: string) {
   const row = await getLeadRowOr404(db, workspaceId, id);
@@ -167,8 +174,8 @@ export async function getContact(db: Queryable, workspaceId: string, id: string)
     leadNumber(db, id),
   ]);
   const dto = leadToDto(row, nextAction);
-  // E4a: the contact's sticky WhatsApp number (null until the first send / inbound).
-  return { ...dto, companyText: dto.company, company: company?.rows[0] ?? null, deals: deals.rows, whatsappNumber };
+  // E4a: the contact's sticky WhatsApp number (null until the first send / inbound). REL-1: the Automation switch.
+  return { ...dto, companyText: dto.company, company: company?.rows[0] ?? null, deals: deals.rows, whatsappNumber, automation: await getLeadAutomation(db, workspaceId, id) };
 }
 
 export const contactBulkSchema = z

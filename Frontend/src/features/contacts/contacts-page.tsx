@@ -11,6 +11,7 @@ import {
   Upload,
   UserPlus,
   Users,
+  Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,7 @@ import {
   messageFromError,
   useBulkContacts,
   useCompany,
+  useContactAutomation,
   useContacts,
   useContactsCount,
   useIsAdmin,
@@ -105,6 +107,12 @@ export function ContactsPage() {
   const count = useContactsCount(params);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.data) ?? [], [list.data]);
   const bulk = useBulkContacts();
+  const automation = useContactAutomation();
+  // REL-1: automation on/off for the selection or the whole filtered list (always confirmed with the count).
+  const [pendingAutomation, setPendingAutomation] = useState<{
+    enabled: boolean;
+    all: boolean;
+  } | null>(null);
   const filterCompany = useCompany(state.companyId);
 
   // Selection belongs to one list (filters + sort); it clears when they change.
@@ -230,6 +238,29 @@ export function ContactsPage() {
       toast.error(messageFromError(error));
     }
   };
+  const runAutomation = async ({ enabled, all }: { enabled: boolean; all: boolean }) => {
+    try {
+      const { sort: _sort, ...filters } = params;
+      const result = all
+        ? await automation.mutateAsync({
+            filtered: filters,
+            expectedCount: count.data?.count ?? 0,
+            enabled,
+          })
+        : await automation.mutateAsync({ ids: selected, enabled });
+      const verb = enabled ? "switched on" : "switched off";
+      toast.success(`Automation ${verb} for ${plural(result.changed)}`, {
+        description: result.unchanged
+          ? `${plural(result.unchanged)} unchanged (already ${enabled ? "on" : "off"}, or not yours to change).`
+          : undefined,
+      });
+      setSelected([]);
+    } catch (error) {
+      toast.error(messageFromError(error));
+    }
+  };
+  const automationCount = pendingAutomation?.all ? (count.data?.count ?? 0) : selected.length;
+
   /** Large batches ask first (count + what happens); small ones run at once with Undo. */
   const askBulk = (action: BulkAction) =>
     selected.length > BULK_CONFIRM_OVER
@@ -409,6 +440,52 @@ export function ContactsPage() {
                   <Sparkles /> Enroll in AI
                 </Button>
               )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline" disabled={automation.isPending}>
+                    <Workflow /> Automation
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>{plural(selected.length)} selected</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    onSelect={afterMenuClose(() =>
+                      setPendingAutomation({ enabled: true, all: false }),
+                    )}
+                  >
+                    Turn on automation
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={afterMenuClose(() =>
+                      setPendingAutomation({ enabled: false, all: false }),
+                    )}
+                  >
+                    Turn off automation
+                  </DropdownMenuItem>
+                  {count.data && count.data.count > selected.length && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>
+                        All {plural(count.data.count)} in this list
+                      </DropdownMenuLabel>
+                      <DropdownMenuItem
+                        onSelect={afterMenuClose(() =>
+                          setPendingAutomation({ enabled: true, all: true }),
+                        )}
+                      >
+                        Turn on for all {count.data.count}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={afterMenuClose(() =>
+                          setPendingAutomation({ enabled: false, all: true }),
+                        )}
+                      >
+                        Turn off for all {count.data.count}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           }
           hasNextPage={list.hasNextPage}
@@ -438,6 +515,28 @@ export function ContactsPage() {
           const action = pendingBulk;
           setPendingBulk(null);
           if (action) void runBulk(selected, action);
+        }}
+      />
+      <ConfirmDialog
+        open={pendingAutomation !== null}
+        onOpenChange={(open) => !open && setPendingAutomation(null)}
+        title={pendingAutomation?.enabled ? "Turn on automation" : "Turn off automation"}
+        description={
+          pendingAutomation?.enabled
+            ? `Turn automation on for ${plural(automationCount)}? Automatic tasks, reminders, workflows and AI messages start from the next worker run; nothing from the past is replayed.${isAdmin ? "" : " Only your own contacts change."}`
+            : `Turn automation off for ${plural(automationCount)}? No more automatic tasks, reminders or messages, and their workflow runs are paused. Sent messages stay sent.${isAdmin ? "" : " Only your own contacts change."}`
+        }
+        confirmLabel={
+          pendingAutomation?.enabled
+            ? `Turn on for ${automationCount}`
+            : `Turn off for ${automationCount}`
+        }
+        confirmVariant={pendingAutomation?.enabled ? "default" : "destructive"}
+        disabled={automation.isPending}
+        onConfirm={() => {
+          const next = pendingAutomation;
+          setPendingAutomation(null);
+          if (next) void runAutomation(next);
         }}
       />
       {rowDialog?.kind === "call" && (

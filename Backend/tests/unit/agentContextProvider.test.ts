@@ -17,7 +17,7 @@ const source: AgentContextSource = {
     id: "lead-1", first_name: "Reshma", last_name: "Tantry", company: "Altem Technologies", job_title: "Marketing Manager", industry: "industrial-automation",
     revenue_range: null, source: "website", email: "reshma@altem.example", phone_e164: "+919000000102", pipeline_stage: "connected_qualifying",
     lifecycle_state: "active", objection_type: null, loss_reason: null, agent_status: "active", agent_touch_count: 2,
-    agent_last_touch_at: new Date("2026-11-16T05:00:00Z"), agent_live_test: true, created_at: new Date("2026-11-16T04:35:00Z"), owner_id: "owner-1",
+    agent_last_touch_at: new Date("2026-11-16T05:00:00Z"), agent_live_test: true, automated: true, created_at: new Date("2026-11-16T04:35:00Z"), owner_id: "owner-1",
     owner_name: "Naitik", owner_email: "naitik@motm.example", owner_booking_url: "https://calendly.com/motm-demo/15min", company_name: "MOTM",
     linked_company: company, merge_target: null,
     deals: [{ id: "d1", name: "Altem SDR", stage: "qualified", updatedAt: "2026-11-17T05:00:00.000Z", stageSince: "2026-11-16T05:00:00.000Z", expectedCloseDate: null, latestMeeting: null, latestProposal: null }],

@@ -8,6 +8,7 @@ import { ATTACHMENT_MISSING, type AttachmentIssue } from "../agent/assetRules.js
 import { enqueueWakeup } from "./agentWakeups.service.js";
 import { addTimelineEvent } from "./timeline.service.js";
 import { cancelRunsForLead } from "./runs.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /**
  * E2: the AI send's re-check (rule 5) and writing a send's outcome back to its decision.
@@ -27,6 +28,7 @@ interface RecheckRow extends AgentRuleSettings {
   phone_e164: string | null;
   agent_live_test: boolean;
   lead_created_at: Date;
+  automated: boolean;
   lead_source: string;
   mode: "off" | "shadow" | "live";
   live_scope: LiveScope;
@@ -58,7 +60,7 @@ export async function agentSendRecheck(
     await db.query<RecheckRow>(
       // s.* first: its created_at must not shadow the decision's.
       `select s.*, d.created_at as decision_created_at, d.lead_id, l.agent_status, l.lifecycle_state, l.email, l.phone_e164, l.agent_live_test,
-              l.created_at as lead_created_at, l.source::text as lead_source,
+              l.created_at as lead_created_at, ${AUTOMATED_SQL("l")} as automated, l.source::text as lead_source,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'email') as email_status,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'whatsapp') as whatsapp_status,
               (select status from public.lead_contact_channels where lead_id = l.id and channel = 'phone') as phone_status,
@@ -96,7 +98,7 @@ export async function agentSendRecheck(
     now,
     channel,
     decisionCreatedAt: row.decision_created_at,
-    mode: effectiveMode(row, { agentLiveTest: row.agent_live_test, createdAt: row.lead_created_at }),
+    mode: effectiveMode(row, { agentLiveTest: row.agent_live_test, automated: row.automated }),
     lead: { agentStatus: row.agent_status, lifecycleState: row.lifecycle_state, email: row.email, phoneE164: row.phone_e164 },
     contactability: { email: row.email_status, whatsapp: row.whatsapp_status, phone: row.phone_status },
     nurtureLongTerm: row.nurture_long_term,
@@ -237,17 +239,17 @@ export const AI_MANAGED_STATUSES = ["active", "paused", "handed_off"] as const;
 
 /**
  * SQL mirror of effectiveMode() === 'live' for an AI-managed contact `l`, for bulk counts and
- * cancellations; scope and live_since are bind parameters. Keep in step with agent/liveMode.ts.
+ * cancellations; `scope` is a column or bind parameter. Keep in step with agent/liveMode.ts.
  */
-export const liveContactSql = (scope: string, since: string) =>
-  `(l.agent_status in ('active', 'paused', 'handed_off')
-    and (l.agent_live_test or ${scope} = 'all' or (${scope} = 'new_leads' and ${since}::timestamptz is not null and l.created_at >= ${since}::timestamptz)))`;
+export const liveContactSql = (scope: string) =>
+  `(l.agent_status in ('active', 'paused', 'handed_off') and ${AUTOMATED_SQL("l")}
+    and (l.agent_live_test or ${scope} in ('all', 'new_leads')))`;
 
 /** True when the contact is AI-managed and live (rule 9: never in a workflow at the same time). */
 export async function isAiLiveContact(db: Queryable, workspaceId: string, leadId: string): Promise<boolean> {
   const row = (
-    await db.query<{ agent_status: AgentStatus; agent_live_test: boolean; created_at: Date; mode: "off" | "shadow" | "live"; live_scope: LiveScope; live_since: Date | null }>(
-      `select l.agent_status, l.agent_live_test, l.created_at, s.mode, s.live_scope, s.live_since
+    await db.query<{ agent_status: AgentStatus; agent_live_test: boolean; automated: boolean; mode: "off" | "shadow" | "live"; live_scope: LiveScope; live_since: Date | null }>(
+      `select l.agent_status, l.agent_live_test, ${AUTOMATED_SQL("l")} as automated, s.mode, s.live_scope, s.live_since
          from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
         where l.id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId],
@@ -256,7 +258,7 @@ export async function isAiLiveContact(db: Queryable, workspaceId: string, leadId
   return (
     Boolean(row) &&
     (AI_MANAGED_STATUSES as readonly string[]).includes(row!.agent_status) &&
-    effectiveMode(row!, { agentLiveTest: row!.agent_live_test, createdAt: row!.created_at }) === "live"
+    effectiveMode(row!, { agentLiveTest: row!.agent_live_test, automated: row!.automated }) === "live"
   );
 }
 
@@ -269,7 +271,7 @@ export async function cancelWorkflowsIfLive(db: Queryable, workspaceId: string, 
 export async function cancelWorkflowsOfLiveContacts(db: Queryable, workspaceId: string): Promise<number> {
   const leads = await db.query<{ id: string }>(
     `select l.id from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
-      where l.workspace_id = $1 and s.mode = 'live' and ${liveContactSql("s.live_scope", "s.live_since")}
+      where l.workspace_id = $1 and s.mode = 'live' and ${liveContactSql("s.live_scope")}
         and exists (select 1 from public.workflow_runs r where r.lead_id = l.id and r.status not in ('completed', 'cancelled'))`,
     [workspaceId],
   );

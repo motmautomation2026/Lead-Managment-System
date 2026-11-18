@@ -70,7 +70,7 @@ export const OUTCOME_TONE: Record<
 /** E2: which AI contacts are live. */
 export const LIVE_SCOPE_LABEL: Record<AgentLiveScope, string> = {
   test_contacts: "Test contacts only",
-  new_leads: "New leads (pilot)",
+  new_leads: "Automated leads",
   all: "All AI contacts",
 };
 

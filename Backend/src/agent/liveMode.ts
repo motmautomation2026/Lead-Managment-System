@@ -24,18 +24,20 @@ export interface LiveSettings {
 
 export interface LiveLead {
   agentLiveTest: boolean;
-  createdAt: Date;
+  /** REL-1 domain/automation.ts isAutomated (SQL: AUTOMATED_SQL). */
+  automated: boolean;
 }
 
 /**
  * Rule 2: the mode one contact runs in. Off/shadow workspaces → their mode. In a live
- * workspace a marked test contact is always live; otherwise the scope decides, and a
- * contact outside it runs as shadow.
+ * workspace only automated contacts (REL-1: created since go-live or switched on) can be live:
+ * a marked test contact always, every automated contact with the `new_leads` ("automated leads")
+ * or `all` scope; any other contact runs as shadow.
  */
 export function effectiveMode(settings: LiveSettings, lead: LiveLead): AgentMode {
   if (settings.mode !== "live") return settings.mode;
-  if (lead.agentLiveTest || settings.live_scope === "all") return "live";
-  if (settings.live_scope === "new_leads" && settings.live_since && lead.createdAt.getTime() >= settings.live_since.getTime()) return "live";
+  if (!lead.automated) return "shadow";
+  if (lead.agentLiveTest || settings.live_scope === "all" || settings.live_scope === "new_leads") return "live";
   return "shadow";
 }
 

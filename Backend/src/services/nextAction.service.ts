@@ -22,6 +22,7 @@ import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
 import { createTask, type TaskMarker, type TaskRow } from "./tasks.service.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { liveContactSql } from "./agentSendState.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 import { REPLY_TASK_TITLES } from "../agent/replyClassification.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
 
@@ -201,7 +202,7 @@ const TICK_LIMIT = 1000;
 
 /** Columns of NextActionFacts for lead `l` ⋈ agent_settings `s`; `now` is a bind parameter. */
 const factsColumns = (now: string) => `l.id, l.workspace_id, l.lifecycle_state, l.automation_mode, l.agent_status, l.agent_touch_count, s.max_touches_total,
-       (s.mode = 'live' and ${liveContactSql("s.live_scope", "s.live_since")}) as ai_live,
+       (s.mode = 'live' and ${liveContactSql("s.live_scope")}) as ai_live,
        (select count(*)::int from public.tasks t where t.lead_id = l.id and t.status = 'open') as open_tasks,
        exists (select 1 from public.meetings m where m.lead_id = l.id and m.scheduled_at > ${now} and m.status::text in ${OPEN_MEETING_STATUSES}) as future_meeting,
        exists (select 1 from public.workflow_runs r join public.scheduled_actions a on a.workflow_run_id = r.id
@@ -209,7 +210,8 @@ const factsColumns = (now: string) => `l.id, l.workspace_id, l.lifecycle_state, 
 
 /**
  * SQL mirror of needsNextAction (rule 2) + the rollout guard (rule 4: activity — last_activity_at, an AI
- * status change or a task closed — at or after `since`, default the workspace's next_action_sweep_since).
+ * status change, automation switched on (REL-1) or a task closed — at or after `since`, default the workspace's
+ * next_action_sweep_since). REL-1: automated leads only.
  * $1 now, $2 workspace ids (null = all), $3 since override (null = the setting).
  */
 const CANDIDATE_WHERE = `l.lifecycle_state in ('active', 'long_term_nurture') and l.merged_into_lead_id is null
@@ -219,9 +221,11 @@ const CANDIDATE_WHERE = `l.lifecycle_state in ('active', 'long_term_nurture') an
    and not (l.lifecycle_state in ('active', 'long_term_nurture') and l.automation_mode = 'active'
             and exists (select 1 from public.workflow_runs r join public.scheduled_actions a on a.workflow_run_id = r.id
                          where r.lead_id = l.id and r.status in ('running', 'waiting') and a.status in ('pending', 'due', 'executing')))
-   and not (l.agent_status = 'active' and l.agent_touch_count < s.max_touches_total and s.mode = 'live' and ${liveContactSql("s.live_scope", "s.live_since")})
+   and not (l.agent_status = 'active' and l.agent_touch_count < s.max_touches_total and s.mode = 'live' and ${liveContactSql("s.live_scope")})
+   and ${AUTOMATED_SQL("l")}
    and (l.last_activity_at >= coalesce($3::timestamptz, s.next_action_sweep_since)
         or l.agent_status_changed_at >= coalesce($3::timestamptz, s.next_action_sweep_since)
+        or l.automation_set_at >= coalesce($3::timestamptz, s.next_action_sweep_since)
         or exists (select 1 from public.tasks t where t.lead_id = l.id and t.status <> 'open'
                     and t.updated_at >= coalesce($3::timestamptz, s.next_action_sweep_since)))`;
 

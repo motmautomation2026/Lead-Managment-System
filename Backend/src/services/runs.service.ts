@@ -6,6 +6,7 @@ import { isTerminalLifecycle } from "../domain/pipeline.js";
 import { isAiLiveContact } from "./agentSendState.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { findActiveWorkflowsForTrigger, getWorkflowRowOr404 } from "./workflows.service.js";
+import { isLeadAutomated } from "./leadAutomation.service.js";
 
 export interface RunRow {
   id: string;
@@ -265,6 +266,8 @@ export async function autoEnroll(
 ) {
   // E2 rule 9: a live AI contact is never in a workflow.
   if (await isAiLiveContact(db, workspaceId, leadId)) return [];
+  // REL-1: automatic triggers only for automated leads; a manual enrolment switches automation on (runs.routes.ts).
+  if (trigger !== "manual_enrollment" && !(await isLeadAutomated(db, leadId))) return [];
   const candidates = await findActiveWorkflowsForTrigger(db, workspaceId, trigger);
   const created: ReturnType<typeof runToDto>[] = [];
 

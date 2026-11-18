@@ -19,6 +19,7 @@ import { defaultTransportCache, type EmailTransport } from "../providers/email.p
 import { loadEmailConnection, mailboxOf, type Mailbox } from "./emailConnection.service.js";
 import { fairPickSql } from "./fairPick.js";
 import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /** P7: alerts claimed per tick (round-robin across workspaces); digests per tick. */
 const ALERT_TICK_LIMIT = 500;
@@ -55,7 +56,9 @@ const NO_MAILBOX_DETAIL =
 
 /** Lead filter for the digest counts: active / long-term-nurture, not merged. */
 const LIVE_LEAD = `join public.leads l on l.id = t.lead_id and l.workspace_id = t.workspace_id and l.lifecycle_state in ('active', 'long_term_nurture') and l.merged_into_lead_id is null`;
-const OPEN_TASKS = `public.tasks t ${LIVE_LEAD} where t.workspace_id = m.workspace_id and t.owner_id = m.user_id and t.status = 'open'`;
+// REL-1: tasks on automated leads, and tasks a person created on any lead.
+const OPEN_TASKS = `public.tasks t ${LIVE_LEAD} where t.workspace_id = m.workspace_id and t.owner_id = m.user_id and t.status = 'open'
+   and (t.origin = 'manual' or ${AUTOMATED_SQL("l")})`;
 
 /**
  * Members due a digest today: active, digest on, not sent today. $1 now, $2 end of the IST day, $3 start of the IST

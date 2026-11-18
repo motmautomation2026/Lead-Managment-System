@@ -142,18 +142,18 @@ async function loadSettingsRow(db: Queryable, workspaceId: string, forUpdate = f
   return row;
 }
 
-/** AI contacts that would be live with this scope (and live_since), and their unfinished workflow runs. */
-async function countLive(db: Queryable, workspaceId: string, scope: LiveScope, since: Date | null) {
+/** AI contacts that would be live with this scope (REL-1: automated contacts only), and their unfinished workflow runs. */
+async function countLive(db: Queryable, workspaceId: string, scope: LiveScope) {
   const result = await db.query<{ contacts: number; runs: number }>(
     `select count(*)::int as contacts,
             coalesce(sum((select count(*) from public.workflow_runs r where r.lead_id = l.id and r.status not in ('completed', 'cancelled'))), 0)::int as runs
-       from public.leads l where l.workspace_id = $1 and ${liveContactSql("$2::text", "$3")}`,
-    [workspaceId, scope, since],
+       from public.leads l where l.workspace_id = $1 and ${liveContactSql("$2::text")}`,
+    [workspaceId, scope],
   );
   return result.rows[0]!;
 }
 
-const liveCount = async (db: Queryable, row: SettingsRow) => (row.mode === "live" ? (await countLive(db, row.workspace_id, row.live_scope, row.live_since)).contacts : 0);
+const liveCount = async (db: Queryable, row: SettingsRow) => (row.mode === "live" ? (await countLive(db, row.workspace_id, row.live_scope)).contacts : 0);
 
 export async function getSettings(db: Queryable, workspaceId: string) {
   const row = await loadSettingsRow(db, workspaceId);
@@ -167,10 +167,8 @@ export async function getSettings(db: Queryable, workspaceId: string) {
  */
 export async function getLivePreview(db: Queryable, workspaceId: string, scope: LiveScope) {
   const [current, readiness] = await Promise.all([loadSettingsRow(db, workspaceId), loadReadiness(db, workspaceId)]);
-  // new_leads counts from the switch-on moment (now) unless it is already on.
-  const since = scope === "new_leads" ? (current.mode === "live" && current.live_scope === "new_leads" ? current.live_since : new Date()) : null;
   const allowed = canSetScope(scope, readiness);
-  const counts = await countLive(db, workspaceId, scope, since);
+  const counts = await countLive(db, workspaceId, scope);
   return { scope, readiness, allowed: allowed.ok, message: allowed.ok ? null : allowed.message, liveContacts: counts.contacts, workflowRunsToCancel: counts.runs };
 }
 

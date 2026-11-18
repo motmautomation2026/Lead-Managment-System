@@ -3,6 +3,8 @@
  * of website first calls. Every SQL query of the feature lives here (INT-1 verifies them); the rules are pure in
  * domain/reminders.ts. Once-only by markers: tasks.due_notified_at (due bell) and tasks.escalated_at (escalation;
  * reply tasks keep their own 2-working-hour escalation in workReminders.service.ts and never come here).
+ * REL-1: the due bell for automated leads and for tasks a person created on any lead (origin manual); escalations
+ * only for automated leads and never for a task due before the lead was switched on.
  * Only tasks due at or after agent_settings.task_reminders_since (migration 059: no flood on release); only for
  * active / long-term-nurture leads (never DNC / terminal / merged), except rule-9 deal tasks ("Onboarding: …") on a Won
  * lead (LL-3b); only open tasks.
@@ -15,6 +17,7 @@ import { DEAL_FOLLOW_UP_MARKERS } from "../domain/dealFollowUp.js";
 import { dueBellAt, dueBellTitle, escalationBellTitle, taskEscalation, type TaskEscalation } from "../domain/reminders.js";
 import { fairPickSql } from "./fairPick.js";
 import { notifyUsers } from "./nextAction.service.js";
+import { AUTOMATED_SQL, NOT_BEFORE_OPT_IN_SQL } from "./leadAutomation.service.js";
 
 /** P7: at most this many tasks per step per tick, round-robin across workspaces (fairPickSql). */
 const TICK_LIMIT = 200;
@@ -44,7 +47,8 @@ export const DUE_CANDIDATES_SQL = `select ${TASK_COLUMNS} ${TASK_JOINS}
  where t.id in (${fairPickSql({
    from: GUARDED_FROM,
    where: `x.status = 'open' and x.due_notified_at is null and x.due_at <= $1::timestamptz + interval '1 day'
-     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))`,
+     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))
+     and exists (select 1 from public.leads al where al.id = x.lead_id and (x.origin = 'manual' or ${AUTOMATED_SQL("al")}))`,
    order: "x.due_at",
    limit: "$3",
  })})
@@ -61,7 +65,8 @@ export const ESCALATION_CANDIDATES_SQL = `select ${TASK_COLUMNS} ${TASK_JOINS}
    from: GUARDED_FROM,
    where: `x.status = 'open' and x.escalated_at is null and x.due_at < $1::timestamptz
      and not (x.origin = 'agent' and x.title = any($3::text[]))
-     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))`,
+     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))
+     and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")} and ${NOT_BEFORE_OPT_IN_SQL("al", "x.due_at")})`,
    order: "x.due_at",
    limit: "$4",
  })})

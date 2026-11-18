@@ -6,7 +6,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../asyncHandler.js";
 import { pool, withTransaction } from "../db.js";
-import { ForbiddenError } from "../errors.js";
+import { ConflictError, ForbiddenError, ValidationError } from "../errors.js";
 import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as contacts from "../services/contacts.service.js";
 import { getLeadRowOr404 } from "../services/leads.service.js";
@@ -17,6 +17,8 @@ import { discardReplyDraft, draftsForReplies, getLatestReplyDraft, sendReplyDraf
 import { z } from "zod";
 import { requireAdmin } from "../authMiddleware.js";
 import { changeLeadNumber } from "../services/whatsappNumbers.service.js";
+import { assertCanSwitch, switchAutomation } from "../services/leadAutomation.service.js";
+import { MAX_AUTOMATION_BATCH } from "../domain/automation.js";
 
 /** E3b-2a: the rep's text (the word limit is checked by the service: 400 with the count). */
 const replyDraftSendSchema = z.object({ body: z.string().max(5000) }).strict();
@@ -46,6 +48,39 @@ contactsRouter.post(
     const input = parseBody(contacts.contactBulkSchema, req.body);
     if (input.action === "enrollAi" && req.actor!.role !== "admin") throw new ForbiddenError("Administrator access is required.");
     res.json({ data: await contacts.bulkContacts(pool, req.actor!, req.workspaceId!, input) });
+  }),
+);
+
+/**
+ * REL-1 rule 2: switch automation on / off for contacts (admins: any; salespeople: their own). `ids` = one contact (the
+ * contact page; 403 when not allowed) or a selection; /filtered = the whole filtered list (same query filters as
+ * /contacts/count) and `expectedCount` must still match what the user confirmed (409 otherwise).
+ */
+const automationIdsSchema = z.object({ enabled: z.boolean(), ids: z.array(z.string().uuid()).min(1).max(MAX_AUTOMATION_BATCH) }).strict();
+const automationFilteredSchema = z.object({ enabled: z.boolean(), expectedCount: z.number().int().min(1) }).strict();
+contactsRouter.post(
+  "/automation",
+  asyncHandler(async (req, res) => {
+    const { enabled, ids } = parseBody(automationIdsSchema, req.body);
+    const result = await withTransaction(async (client) => {
+      if (ids.length === 1) await assertCanSwitch(client, req.actor!, req.workspaceId!, ids[0]!);
+      return switchAutomation(client, req.actor!, req.workspaceId!, ids, enabled);
+    });
+    res.json({ changed: result.changed.length, unchanged: result.unchanged });
+  }),
+);
+contactsRouter.post(
+  "/automation/filtered",
+  asyncHandler(async (req, res) => {
+    const filters = parseQuery(contacts.contactFilterSchema, req.query);
+    const { enabled, expectedCount } = parseBody(automationFilteredSchema, req.body);
+    const result = await withTransaction(async (client) => {
+      const ids = await contacts.contactIdsForFilter(client, req.actor!, req.workspaceId!, filters, MAX_AUTOMATION_BATCH + 1);
+      if (ids.length > MAX_AUTOMATION_BATCH) throw new ValidationError(`This list has more than ${MAX_AUTOMATION_BATCH} contacts. Narrow the filters first.`);
+      if (ids.length !== expectedCount) throw new ConflictError(`${ids.length} contacts match these filters now (you confirmed ${expectedCount}). Check the list and try again.`);
+      return switchAutomation(client, req.actor!, req.workspaceId!, ids, enabled, { audit: { filters } });
+    });
+    res.json({ changed: result.changed.length, unchanged: result.unchanged });
   }),
 );
 

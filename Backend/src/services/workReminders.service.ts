@@ -15,6 +15,7 @@ import { DEFAULT_SEND_WINDOW, type SendWindow } from "../domain/whatsappSafety.j
 import { createResponsibleTask } from "./nextAction.service.js";
 import { endOfIstDay } from "./whatsapp-inbound.service.js";
 import { fairPickSql } from "./fairPick.js";
+import { AUTOMATED_SQL, NOT_BEFORE_OPT_IN_SQL } from "./leadAutomation.service.js";
 
 const PER_WORKSPACE = 20;
 const MEETING_BATCH = 50;
@@ -50,6 +51,8 @@ export async function runReplyEscalation(opts: { now?: Date; workspaceIds?: stri
                  from public.tasks t
                  join public.agent_settings rs on rs.workspace_id = t.workspace_id and t.created_at >= rs.reminders_since
                 where t.status = 'open' and t.origin = 'agent' and t.escalated_at is null and t.title = any($1::text[])
+                  -- REL-1: automated leads only; never a reply task from before the lead was switched on.
+                  and exists (select 1 from public.leads al where al.id = t.lead_id and ${AUTOMATED_SQL("al")} and ${NOT_BEFORE_OPT_IN_SQL("al", "t.created_at")})
                   and t.created_at < $2::timestamptz - interval '2 hours'
                   and ($3::uuid[] is null or t.workspace_id = any($3::uuid[]))) t
          join public.leads l on l.id = t.lead_id
@@ -100,6 +103,8 @@ export async function runMeetingOutcomeTasks(opts: { workspaceIds?: string[] } =
           where m.id in (${fairPickSql({
             from: "public.meetings x join public.agent_settings rs on rs.workspace_id = x.workspace_id and x.created_at >= rs.reminders_since",
             where: `x.outcome is null and x.outcome_task_created_at is null
+            and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")}
+                        and ${NOT_BEFORE_OPT_IN_SQL("al", "x.scheduled_at + make_interval(mins => x.duration_minutes)")})
             and x.status::text not in ('cancelled', 'no_show', 'failed')
             and x.scheduled_at + make_interval(mins => x.duration_minutes) < now() - interval '2 hours' and x.scheduled_at > now() - interval '30 days'
             and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,

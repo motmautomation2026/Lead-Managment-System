@@ -831,6 +831,36 @@ export function useBulkContacts() {
   });
 }
 
+/** REL-1: switch automation for contacts — `ids` (one or a selection) or the whole filtered list (`filtered`). */
+export function useContactAutomation() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (
+      input:
+        | { ids: string[]; enabled: boolean }
+        | {
+            filtered: Omit<ContactListParams, "sort" | "limit">;
+            expectedCount: number;
+            enabled: boolean;
+          },
+    ) =>
+      "ids" in input
+        ? backend.contacts.setAutomation(input.ids, input.enabled)
+        : backend.contacts.setAutomationFiltered(
+            input.filtered,
+            input.enabled,
+            input.expectedCount,
+          ),
+    onSuccess: (_r, input) =>
+      refreshContact(
+        client,
+        ws,
+        "ids" in input && input.ids.length === 1 ? input.ids[0] : undefined,
+      ),
+  });
+}
+
 export function useSavedViews(object: SavedViewObject) {
   const { currentWorkspaceId } = useWorkspace();
   return useQuery({

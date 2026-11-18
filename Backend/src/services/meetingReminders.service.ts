@@ -21,6 +21,7 @@ import { loadResponsible, notifyUsers } from "./nextAction.service.js";
 import { sendWhatsApp } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /** P7: meetings looked at per tick (soonest first, round-robin across workspaces). */
 const TICK_LIMIT = 200;
@@ -30,7 +31,7 @@ const LOOK_AHEAD = "3 days";
 export const EMAIL_UNUSABLE = ["invalid", "permanent_bounce", "unsubscribed"];
 export const WHATSAPP_UNUSABLE = ["opted_out", "invalid"];
 
-/** $1 now, $2 workspace ids (null = all), $3 tick limit. Scheduled meetings starting within LOOK_AHEAD, live leads. */
+/** $1 now, $2 workspace ids (null = all), $3 tick limit. Scheduled meetings starting within LOOK_AHEAD, live automated (REL-1) leads. */
 export const PLAN_CANDIDATES_SQL = `select m.id, m.workspace_id, m.lead_id, m.owner_id, m.title, m.scheduled_at, m.reminders_from,
        coalesce(m.meet_link, m.meeting_url) as link, coalesce(op.full_name, m.owner_name) as rep_name,
        l.first_name, nullif(trim(concat_ws(' ', l.first_name, l.last_name)), '') as lead_name,
@@ -47,7 +48,8 @@ export const PLAN_CANDIDATES_SQL = `select m.id, m.workspace_id, m.lead_id, m.ow
  where m.id in (${fairPickSql({
    from: "public.meetings x",
    where: `x.status = 'scheduled' and x.scheduled_at > $1::timestamptz and x.scheduled_at <= $1::timestamptz + interval '${LOOK_AHEAD}'
-     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))`,
+     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))
+     and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})`,
    order: "x.scheduled_at",
    limit: "$3",
  })})

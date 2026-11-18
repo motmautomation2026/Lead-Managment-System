@@ -137,7 +137,7 @@ describe("E2 live UI pieces", () => {
       />,
     );
     expect(screen.getByRole("status").textContent).toBe(
-      "Live: the AI sends real messages to 4 contacts (New leads (pilot)). 2 sent today, 11 this month. Other AI contacts get drafts only.",
+      "Live: the AI sends real messages to 4 contacts (Automated leads). 2 sent today, 11 this month. Other AI contacts get drafts only.",
     );
   });
 

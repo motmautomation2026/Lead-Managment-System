@@ -15,6 +15,7 @@ import type {
   DealListParams,
   DuplicateListParams,
   ContactDetail,
+  AutomationSwitchResult,
   ContactListItem,
   ContactListParams,
   CreateDealInput,
@@ -1181,6 +1182,19 @@ export const backend = {
     /** At most 100 ids; `enrollAi` is admin only. */
     bulk: (input: { ids: string[]; action: "assignOwner" | "enrollAi"; ownerId?: string }) =>
       send<{ data: BulkResult[] }>("POST", "/contacts/bulk", input),
+    /** REL-1: switch automation on/off (admins: any contact; salespeople: their own). At most 2000 ids. */
+    setAutomation: (ids: string[], enabled: boolean) =>
+      send<AutomationSwitchResult>("POST", "/contacts/automation", { ids, enabled }),
+    /** REL-1: the whole filtered list; 409 when the count no longer matches `expectedCount`. */
+    setAutomationFiltered: (
+      filters: Omit<ContactListParams, "sort" | "limit">,
+      enabled: boolean,
+      expectedCount: number,
+    ) =>
+      send<AutomationSwitchResult>("POST", listQuery("/contacts/automation/filtered", filters), {
+        enabled,
+        expectedCount,
+      }),
     /** Paginated, newest first (C3). The old `leads.timeline` returns everything. */
     timeline: (id: string, kind: ActivityType[], cursor?: string, signal?: AbortSignal) =>
       get<Page<TimelineEvent>>(listQuery(`/contacts/${id}/timeline`, { kind, cursor }), signal),

@@ -34,35 +34,27 @@ const settings: AgentRuleSettings = {
   rep_quiet_hours: 24,
 };
 
-describe("effectiveMode (rule 2)", () => {
-  const liveSince = ist("2026-10-20T10:00");
-  const before = new Date(liveSince.getTime() - MIN);
-  const after = new Date(liveSince.getTime() + MIN);
-  const live = (scope: LiveScope) => ({ mode: "live" as const, live_scope: scope, live_since: scope === "new_leads" ? liveSince : null });
+describe("effectiveMode (rule 2; REL-1: only automated contacts can be live)", () => {
+  const live = (scope: LiveScope) => ({ mode: "live" as const, live_scope: scope, live_since: null });
 
   it("off and shadow workspaces keep their mode, marked or not", () => {
     for (const mode of ["off", "shadow"] as const) {
-      expect(effectiveMode({ mode, live_scope: "all", live_since: null }, { agentLiveTest: true, createdAt: after })).toBe(mode);
+      expect(effectiveMode({ mode, live_scope: "all", live_since: null }, { agentLiveTest: true, automated: true })).toBe(mode);
     }
   });
 
   it.each([
-    // scope, marked, created after live_since, expected
-    ["test_contacts", true, false, "live"],
+    // scope, marked, automated, expected
+    ["test_contacts", true, true, "live"],
+    ["test_contacts", true, false, "shadow"],
     ["test_contacts", false, true, "shadow"],
-    ["test_contacts", false, false, "shadow"],
     ["new_leads", false, true, "live"],
     ["new_leads", false, false, "shadow"],
-    ["new_leads", true, false, "live"],
-    ["all", false, false, "live"],
-    ["all", true, true, "live"],
-  ] as const)("%s, marked %s, created after %s → %s", (scope, marked, createdAfter, expected) => {
-    expect(effectiveMode(live(scope), { agentLiveTest: marked, createdAt: createdAfter ? after : before })).toBe(expected);
-  });
-
-  it("a contact created exactly at live_since is live; new_leads without live_since is nobody", () => {
-    expect(effectiveMode(live("new_leads"), { agentLiveTest: false, createdAt: liveSince })).toBe("live");
-    expect(effectiveMode({ mode: "live", live_scope: "new_leads", live_since: null }, { agentLiveTest: false, createdAt: after })).toBe("shadow");
+    ["new_leads", true, false, "shadow"],
+    ["all", false, true, "live"],
+    ["all", true, false, "shadow"],
+  ] as const)("%s, marked %s, automated %s → %s", (scope, marked, automated, expected) => {
+    expect(effectiveMode(live(scope), { agentLiveTest: marked, automated })).toBe(expected);
   });
 });
 

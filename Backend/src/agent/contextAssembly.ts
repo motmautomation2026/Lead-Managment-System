@@ -47,6 +47,8 @@ export interface AgentContextLeadRow {
   agent_touch_count: number;
   agent_last_touch_at: Date | null;
   agent_live_test: boolean;
+  /** REL-1 isAutomated (AUTOMATED_SQL). */
+  automated: boolean;
   created_at: Date;
   owner_id: string | null;
   owner_name: string | null;
@@ -107,8 +109,8 @@ const latest = (dates: Date[]) => (dates.length ? new Date(Math.max(...dates.map
 export const truncate = (text: string | null, max: number) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** The contact's effective mode (E2 rule 2), which also decides which touches and past messages the source holds. */
-export const sourceMode = (settings: AgentSettingsRow, lead: Pick<AgentContextLeadRow, "agent_live_test" | "created_at">) =>
-  effectiveMode(settings, { agentLiveTest: lead.agent_live_test, createdAt: lead.created_at });
+export const sourceMode = (settings: AgentSettingsRow, lead: Pick<AgentContextLeadRow, "agent_live_test" | "automated">) =>
+  effectiveMode(settings, { agentLiveTest: lead.agent_live_test, automated: lead.automated });
 
 export async function assembleAgentContext(source: AgentContextSource, now: Date, search: KnowledgeSearch): Promise<AgentContext> {
   const { lead: leadRow, settings, workspaceId } = source;

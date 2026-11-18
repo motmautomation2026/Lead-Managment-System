@@ -35,6 +35,7 @@ export {
   useContactsCount,
   useContact,
   useBulkContacts,
+  useContactAutomation,
   useSavedViews,
   useCreateSavedView,
   useUpdateSavedView,

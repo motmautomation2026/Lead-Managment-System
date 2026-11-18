@@ -13,6 +13,7 @@ import { fairPickSql } from "./fairPick.js";
 import { createResponsibleTask, LOST_AT_SQL } from "./nextAction.service.js";
 import { moveToLongTermNurture } from "./leads.service.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /** P7: per tick, round-robin across workspaces. */
 const TICK_LIMIT = 100;
@@ -21,6 +22,7 @@ const TICK_LIMIT = 100;
 export const RECOVERY_DUE_SQL = `select l.id, l.workspace_id from public.leads l where l.id in (${fairPickSql({
   from: "public.leads x",
   where: `x.lifecycle_state = 'lost' and x.recovered_at is null and x.recover_at is not null and x.recover_at <= $1::timestamptz
+    and ${AUTOMATED_SQL("x")}
     and ($2::uuid[] is null or x.workspace_id = any($2::uuid[]))`,
   order: "x.recover_at",
   limit: "$3",

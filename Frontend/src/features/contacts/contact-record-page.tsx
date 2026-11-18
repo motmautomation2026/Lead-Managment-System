@@ -101,6 +101,7 @@ import {
   type WorkflowTrigger,
 } from "@/types";
 import { ContactAbout } from "./contact-about";
+import { ContactAutomationCard } from "./contact-automation-card";
 import { ContactAssociations } from "./contact-associations";
 import { RecordLink } from "@/features/crm/record-link";
 import { useRememberRecent } from "@/features/crm/recent";
@@ -427,9 +428,16 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
           openEnroll(nurtureTriggerForStage(contact.pipelineStage, contact.objectionType))
         }
       />
+      {contact.automation && (
+        <ContactAutomationCard
+          contactId={id}
+          ownerId={contact.ownerId ?? null}
+          automation={contact.automation}
+        />
+      )}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="type-section-title">Automation control</CardTitle>
+          <CardTitle className="type-section-title">Workflow mode</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <StatusBadge value={contact.automationMode} dot />

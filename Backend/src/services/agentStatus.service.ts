@@ -9,6 +9,7 @@ import { cancelPendingWakeups, enqueueWakeup, type EnqueueOutcome, type WakeupRe
 import { actorEvent, addTimelineEvent } from "./timeline.service.js";
 import { getLeadRowOr404 } from "./leads.service.js";
 import { cancelWorkflowsIfLive } from "./agentSendState.service.js";
+import { switchOnForEnrolment } from "./leadAutomation.service.js";
 
 /**
  * Admin changes to leads.agent_status. Touches only agent_* columns,
@@ -84,6 +85,8 @@ async function applyAction(
     metadata: { agentStatusFrom: lead.agent_status, agentStatusTo: check.to, reason },
   });
 
+  // REL-1 rule 2: a manual AI enrolment switches the lead's automation on (before the live check below).
+  if (action === "enroll") await switchOnForEnrolment(client, actor, workspaceId, leadId, "a manual AI enrolment");
   // E2 rule 9: enrolled while live → out of its workflows.
   if (action === "enroll") await cancelWorkflowsIfLive(client, workspaceId, leadId);
   const wakeReason = WAKE_REASONS[action];

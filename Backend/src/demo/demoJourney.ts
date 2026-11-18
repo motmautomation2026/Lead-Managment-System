@@ -248,6 +248,7 @@ function initialState(lead: DemoLead, input: DemoInput, startAt: Date): SimState
       agent_touch_count: 0,
       agent_last_touch_at: null,
       agent_live_test: true,
+      automated: true,
       created_at: startAt,
       owner_id: "demo-owner",
       owner_name: input.workspace.ownerName,

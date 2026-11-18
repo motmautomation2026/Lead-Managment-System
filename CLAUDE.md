@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `060`).
+  (currently `061`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `060`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `061`).
 
 ## Way of working
 
@@ -137,7 +137,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Completed so far
 
 Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1, UX-3, LL-3 and LL-3b) is in `docs/HISTORY.md`; read it for details of a past phase.
-Staging (`arejsxqjhzotmngrobhm`) is at migration `060` (LL-3, 2026-11-17); production is not.
+Staging (`arejsxqjhzotmngrobhm`) is at migration `061` (REL-1, 2026-11-18); production is not (release kit: `docs/release/`).
 Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
 ## Safety net (LL-1)
@@ -151,6 +151,20 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   owner-only bell (`if (lead.owner_id) insert into notifications …`).
 - Paths that end automation leave a task at once (not only through the sweep): AI stop (every reason), any matched reply, an
   unassigned handoff, a cancelled / no-show / failed meeting; website leads are enrolled in the `lead_created` workflow.
+
+## Automated leads (REL-1)
+
+- A lead is **automated** when `leads.automation_enabled` is true, or it is null and the lead was created at/after its workspace's
+  `agent_settings.automation_since` (the go-live cutoff, migration 061): pure `domain/automation.ts` `isAutomated`, SQL mirror
+  `AUTOMATED_SQL` in `services/leadAutomation.service.ts` (the only places). Every automatic job filters with it: AI wake-ups (claim),
+  AI live scope (`effectiveMode`: not automated → shadow; `new_leads` = "Automated leads"), workflow `autoEnroll` (not
+  `manual_enrollment`), LL-1 sweep, LL-2 due bells (automated leads + tasks with origin `manual`) / escalations / reply escalation /
+  meeting-outcome task / meeting reminders / digest items, LL-3 ladder + "Fix the phone number" + "We tried calling" (queue and send) /
+  lost recovery / deal follow-ups. A new automatic job must use it too.
+- Switch (admins, or the owner for own contacts): `POST /contacts/automation` (`ids`, ≤ 2000) and `/contacts/automation/filtered`
+  (list filters as query + `expectedCount`, 409 when stale); timeline row + admin audit; off pauses the lead's workflow runs (on again
+  leaves them paused). A manual AI / workflow enrolment switches it on. Opting in never replays the past: the sweep treats
+  `automation_set_at` as activity; escalations skip anything due / created before it (`NOT_BEFORE_OPT_IN_SQL`).
 
 ## Reminders, escalation and staff email (LL-2)
 

@@ -60,6 +60,8 @@ export const INTERESTED_LATER_CALLBACK_TITLE = "Call back — interested later";
 
 export interface TriedCallingInput {
   enabled: boolean;
+  /** REL-1 isAutomated: the lead is worked automatically (switching it off drops a queued message). */
+  automated: boolean;
   hasPhone: boolean;
   lifecycle: string;
   /** A connected call, a matched reply or a booked meeting since the message was queued. */
@@ -77,6 +79,7 @@ export const MAX_TRIED_CALLING_MESSAGES = 3;
 /** Rule 3 at send time: why the queued "We tried calling" message is dropped, or null to send it. */
 export function triedCallingCheck(f: TriedCallingInput): string | null {
   if (!f.enabled) return "The \"We tried calling\" WhatsApp is turned off.";
+  if (!f.automated) return "Automation is off for this contact.";
   if (!f.hasPhone) return "The contact no longer has a WhatsApp-capable phone number.";
   if (f.lifecycle !== "active" && f.lifecycle !== "long_term_nurture") return `The contact is ${f.lifecycle.replace(/_/g, " ")}.`;
   if (f.reached) return "The contact was reached meanwhile.";

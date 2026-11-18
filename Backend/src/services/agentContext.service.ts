@@ -12,6 +12,7 @@ import type { Embedder } from "../providers/openai.provider.js";
 import { latestAiEmail, type AiEmailThread } from "./agentSendState.service.js";
 import { searchKnowledge } from "./knowledge.service.js";
 import { assetFileSize } from "./knowledgeLibrary.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 export { CONTEXT_TOKEN_CAP, trimToCap } from "../agent/contextAssembly.js";
 
@@ -175,7 +176,7 @@ export async function loadAgentContextSource(db: Queryable, workspaceId: string,
     await db.query<AgentContextLeadRow>(
       `select l.id, l.first_name, l.last_name, l.company, l.job_title, l.industry, l.revenue_range, l.source,
               l.email, l.phone_e164, l.pipeline_stage, l.lifecycle_state, l.objection_type, l.loss_reason,
-              l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.agent_live_test, l.created_at, l.owner_id,
+              l.agent_status, l.agent_touch_count, l.agent_last_touch_at, l.agent_live_test, ${AUTOMATED_SQL("l")} as automated, l.created_at, l.owner_id,
               o.full_name as owner_name, o.email as owner_email, o.booking_url as owner_booking_url, w.name as company_name,
               ${companyJson("c")} as linked_company, ${companyJson("cm")} as merge_target,
               coalesce(dl.deals, '[]'::json) as deals

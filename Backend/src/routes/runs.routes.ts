@@ -8,6 +8,7 @@ import { SCHEDULED_ACTION_STATUSES, WORKFLOW_RUN_STATUSES } from "../domain/enum
 import { ConflictError, ValidationError } from "../errors.js";
 import * as runsService from "../services/runs.service.js";
 import { autoEnroll, enrollLeadInWorkflow } from "../services/runs.service.js";
+import { switchOnForEnrolment } from "../services/leadAutomation.service.js";
 import { AI_MANAGED_CONFLICT, isAiLiveContact } from "../services/agentSendState.service.js";
 import * as lists from "../services/automationLists.service.js";
 
@@ -61,7 +62,12 @@ runsRouter.post(
     if (await isAiLiveContact(pool, req.workspaceId!, leadId)) throw new ConflictError(AI_MANAGED_CONFLICT);
 
     if (workflowId) {
-      const run = await withTransaction((client) => enrollLeadInWorkflow(client, req.workspaceId!, leadId, workflowId, enrolledReason));
+      const run = await withTransaction(async (client) => {
+        const created = await enrollLeadInWorkflow(client, req.workspaceId!, leadId, workflowId, enrolledReason);
+        // REL-1 rule 2: a manual enrolment switches the lead's automation on.
+        if (created) await switchOnForEnrolment(client, req.actor!, req.workspaceId!, leadId, "a manual workflow enrolment");
+        return created;
+      });
       if (!run) {
         throw new ValidationError("This lead already has an active run for that workflow.");
       }
@@ -69,7 +75,11 @@ runsRouter.post(
       return;
     }
 
-    const created = await withTransaction((client) => autoEnroll(client, req.workspaceId!, leadId, "manual_enrollment", enrolledReason));
+    const created = await withTransaction(async (client) => {
+      const runs = await autoEnroll(client, req.workspaceId!, leadId, "manual_enrollment", enrolledReason);
+      if (runs.length) await switchOnForEnrolment(client, req.actor!, req.workspaceId!, leadId, "a manual workflow enrolment");
+      return runs;
+    });
     if (created.length === 0) {
       throw new ValidationError("No active published workflow with trigger 'manual_enrollment' is available to enroll this lead in.");
     }

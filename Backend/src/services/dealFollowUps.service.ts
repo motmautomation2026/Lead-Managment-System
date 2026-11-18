@@ -24,6 +24,7 @@ import { fairPickSql } from "./fairPick.js";
 import { createResponsibleTask, notifyUsers } from "./nextAction.service.js";
 import { createTask } from "./tasks.service.js";
 import { WORKSPACE_ADMIN_IDS_SQL } from "./profiles.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /** P7: per kind and tick, round-robin across workspaces. */
 const TICK_LIMIT = 100;
@@ -34,7 +35,8 @@ const IST_TODAY = `(now() at time zone 'Asia/Kolkata')::date`;
 export const EXPIRING_CANDIDATES_SQL = `select p.id, p.valid_until::text as valid_until from public.proposals p where p.id in (${fairPickSql({
   from: "public.proposals x",
   where: `x.status = 'sent' and x.valid_until is not null and x.expiry_warned_at is null and x.valid_until <= ${IST_TODAY} + 4
-    and x.valid_until >= ${IST_TODAY} and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
+    and x.valid_until >= ${IST_TODAY} and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+    and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})`,
   order: "x.valid_until",
   limit: "$2",
 })})`;
@@ -43,7 +45,8 @@ export const EXPIRING_CANDIDATES_SQL = `select p.id, p.valid_until::text as vali
 export const EXPIRED_CANDIDATES_SQL = `select p.id from public.proposals p where p.id in (${fairPickSql({
   from: "public.proposals x",
   where: `x.status = 'sent' and x.valid_until is not null and x.expired_task_at is null and x.valid_until < ${IST_TODAY}
-    and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
+    and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+    and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})`,
   order: "x.valid_until",
   limit: "$2",
 })})`;
@@ -58,7 +61,8 @@ export const PROPOSAL_ROW_SQL = `select p.id, p.workspace_id, p.lead_id, p.owner
 export const DECISION_CANDIDATES_SQL = `select d.id from public.deals d where d.id in (${fairPickSql({
   from: "public.deals x",
   where: `x.stage = 'negotiation' and x.next_decision_date is not null and x.next_decision_date < ${IST_TODAY}
-    and x.decision_task_for is distinct from x.next_decision_date and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
+    and x.decision_task_for is distinct from x.next_decision_date and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+    and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})`,
   order: "x.next_decision_date",
   limit: "$2",
 })})`;
@@ -77,7 +81,8 @@ export const REVIEW_CANDIDATES_SQL = `select d.id from public.deals d where d.id
   from: "public.deals x",
   where: `x.stage in ('proposal_sent', 'negotiation') and x.stage_changed_at < $3::timestamptz - interval '10 days'
     and (x.review_task_at is null or x.review_task_at <= $3::timestamptz - interval '10 days')
-    and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))`,
+    and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+    and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})`,
   order: "x.stage_changed_at",
   limit: "$2",
 })})`;

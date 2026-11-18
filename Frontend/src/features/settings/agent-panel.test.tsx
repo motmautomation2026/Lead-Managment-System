@@ -251,7 +251,7 @@ describe("Settings → AI sections (UX-1: one section per route)", () => {
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("button", { name: "New leads (pilot)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Automated leads" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "All AI contacts" })).toBeDisabled();
     expect(screen.getByText(/unlock when the go-live gate passes/)).toBeInTheDocument();
     expect(screen.getAllByText("Not passed").length).toBeGreaterThan(0);

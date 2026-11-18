@@ -67,6 +67,7 @@ export interface AgentRunnerDeps {
 // --- The decision pipeline: agent/draftDecision.ts (DB-free, DEMO-1); re-exported for existing callers.
 export { draftDecision, type DraftAttempt, type DraftResult, type Usage } from "../agent/draftDecision.js";
 import { draftDecision, type DraftAttempt, type DraftResult, type Usage } from "../agent/draftDecision.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 const isSend = (d: AgentDecision): d is Extract<AgentDecision, { action: "send_email" | "send_whatsapp" }> =>
   d.action === "send_email" || d.action === "send_whatsapp";
@@ -111,6 +112,8 @@ const WAKEUP_FAIR = fairPickSql({
   where: `((x.status = 'pending' and x.due_at <= now())
                or (x.status = 'executing' and x.claimed_at < now() - interval '15 minutes'))
              and ($1::uuid[] is null or x.workspace_id = any($1::uuid[]))
+             -- REL-1: only automated leads (a non-automated lead's wake-up waits until it is switched on).
+             and exists (select 1 from public.leads al where al.id = x.lead_id and ${AUTOMATED_SQL("al")})
              -- At most one per lead: only the earliest claimable one, and none while another
              -- wakeup for the lead is being processed (a fresh executing row).
              and not exists (

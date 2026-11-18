@@ -9,6 +9,7 @@ import { effectiveMode, type LiveScope } from "../agent/liveMode.js";
 import { isUuid } from "../validation/parse.js";
 import { IST_MONTH, MONTH_SPEND_SQL } from "./agentRunner.service.js";
 import { liveContactSql } from "./agentSendState.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 /**
  * Reviewing the agent's decisions (3D-1): the decision log, ratings, problem
@@ -408,7 +409,7 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
       whatsapp_max_words: number;
     }>(
       `select s.live_scope as scope, s.live_since, s.readiness_since, s.banned_phrases, s.style_examples, s.email_max_words, s.whatsapp_max_words,
-              case when s.mode = 'live' then (select count(*)::int from public.leads l where l.workspace_id = s.workspace_id and ${liveContactSql("s.live_scope", "s.live_since")}) else 0 end as live_contacts,
+              case when s.mode = 'live' then (select count(*)::int from public.leads l where l.workspace_id = s.workspace_id and ${liveContactSql("s.live_scope")}) else 0 end as live_contacts,
               (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
                 and sent_at >= (${IST_DAY} at time zone 'Asia/Kolkata')) as sent_today,
               (select count(*)::int from public.agent_decisions where workspace_id = s.workspace_id and send_status = 'sent'
@@ -470,19 +471,19 @@ export async function getAgentStats(db: Queryable, workspaceId: string) {
 
 export async function getLeadAgentPanel(db: Queryable, workspaceId: string, leadId: string) {
   const row = (
-    await db.query<{ _createdAt: Date; _mode: "off" | "shadow" | "live"; _scope: LiveScope; _since: Date | null; liveTest: boolean; [key: string]: unknown }>(
+    await db.query<{ _automated: boolean; _mode: "off" | "shadow" | "live"; _scope: LiveScope; _since: Date | null; liveTest: boolean; [key: string]: unknown }>(
       `select l.id as "leadId", l.agent_status as status, l.agent_status_reason as "statusReason", l.agent_status_changed_at as "statusChangedAt",
               l.agent_touch_count as "touchCount", l.agent_last_touch_at as "lastTouchAt", l.agent_live_test as "liveTest",
-              l.created_at as "_createdAt", s.mode as "_mode", s.live_scope as "_scope", s.live_since as "_since"
+              ${AUTOMATED_SQL("l")} as "_automated", s.mode as "_mode", s.live_scope as "_scope", s.live_since as "_since"
          from public.leads l join public.agent_settings s on s.workspace_id = l.workspace_id
         where l.id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId],
     )
   ).rows[0];
   if (!row) throw new NotFoundError("Lead");
-  const { _createdAt, _mode, _scope, _since, ...lead } = row;
+  const { _automated, _mode, _scope, _since, ...lead } = row;
   // E2 rule 2: whether this contact runs live or as shadow (off when the agent is off).
-  const mode = effectiveMode({ mode: _mode, live_scope: _scope, live_since: _since }, { agentLiveTest: row.liveTest, createdAt: _createdAt });
+  const mode = effectiveMode({ mode: _mode, live_scope: _scope, live_since: _since }, { agentLiveTest: row.liveTest, automated: _automated });
   const [wakeup, decisions] = await Promise.all([
     db.query(
       `select id, due_at as "dueAt", reason from public.agent_wakeups

@@ -64,7 +64,23 @@ export type ContactDetail = Omit<Lead, "company"> & {
   deals: ContactDeal[];
   /** E4a: the sticky WhatsApp number (null until the first message either way). */
   whatsappNumber?: { id: string; label: string } | null;
+  /** REL-1: whether automatic tasks, reminders and messages run for this contact. */
+  automation?: ContactAutomation | null;
 };
+
+/** REL-1: `enabled` null = decided by the go-live cutoff `since` (created at/after it = on). */
+export interface ContactAutomation {
+  automated: boolean;
+  enabled: boolean | null;
+  setAt: string | null;
+  setByName: string | null;
+  since: string;
+}
+
+export interface AutomationSwitchResult {
+  changed: number;
+  unchanged: number;
+}
 
 /** List params exactly as the API takes them (saved views store this shape). */
 export interface ContactListParams {

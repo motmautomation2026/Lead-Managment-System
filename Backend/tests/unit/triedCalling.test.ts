@@ -9,13 +9,14 @@ import { WORKER_LOOPS } from "../../src/services/systemHealth.service.js";
 const ist = (local: string) => new Date(`${local}:00+05:30`);
 
 describe("LL-3 'We tried calling' WhatsApp — send-time check", () => {
-  const ok: TriedCallingInput = { enabled: true, hasPhone: true, lifecycle: "active", reached: false, touches7d: 0, max7d: 2, triedCallingSent: 0 };
+  const ok: TriedCallingInput = { enabled: true, automated: true, hasPhone: true, lifecycle: "active", reached: false, touches7d: 0, max7d: 2, triedCallingSent: 0 };
   it("sends for a live lead with room in the limits", () => {
     expect(triedCallingCheck(ok)).toBeNull();
     expect(triedCallingCheck({ ...ok, lifecycle: "long_term_nurture", touches7d: 1, triedCallingSent: 2 })).toBeNull();
   });
   it("dropped: setting off, reached meanwhile, closed lead, no phone", () => {
     expect(triedCallingCheck({ ...ok, enabled: false })).toMatch(/turned off/);
+    expect(triedCallingCheck({ ...ok, automated: false })).toBe("Automation is off for this contact.");
     expect(triedCallingCheck({ ...ok, reached: true })).toMatch(/reached meanwhile/);
     expect(triedCallingCheck({ ...ok, lifecycle: "do_not_contact" })).toMatch(/do not contact/);
     expect(triedCallingCheck({ ...ok, lifecycle: "lost" })).toMatch(/lost/);

@@ -16,14 +16,16 @@ import { fairPickSql } from "./fairPick.js";
 import { sendWhatsApp } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
-/** $1 workspace, $2 lead, $3 call, $4 IST day, $5 rep name. Only for a live lead with a usable WhatsApp and the setting on. */
+/** $1 workspace, $2 lead, $3 call, $4 IST day, $5 rep name. Only for a live, automated (REL-1) lead with a usable WhatsApp and the setting on. */
 export const ENQUEUE_SQL = `insert into public.tried_calling_messages (workspace_id, lead_id, call_id, ist_day, rep_name)
   select l.workspace_id, l.id, $3, $4, $5
     from public.leads l
     left join public.agent_settings s on s.workspace_id = l.workspace_id
    where l.id = $2 and l.workspace_id = $1 and l.phone_e164 is not null and l.merged_into_lead_id is null
      and l.lifecycle_state in ('active', 'long_term_nurture') and coalesce(s.tried_calling_whatsapp_enabled, true)
+     and ${AUTOMATED_SQL("l")}
      and not exists (select 1 from public.lead_contact_channels c
                       where c.lead_id = l.id and ((c.channel = 'whatsapp' and c.status in ('opted_out', 'invalid', 'do_not_contact'))
                                                   or (c.channel = 'phone' and c.status = 'do_not_contact')))
@@ -55,6 +57,7 @@ export const FACTS_SQL = `select t.id, t.workspace_id, t.lead_id, t.rep_name, t.
        l.first_name, l.phone_e164, l.lifecycle_state::text as lifecycle_state,
        coalesce(nullif(trim(s.company_display_name), ''), w.name) as workspace_name,
        coalesce(s.tried_calling_whatsapp_enabled, true) as enabled,
+       ${AUTOMATED_SQL("l")} as automated,
        coalesce(s.max_touches_7d, 2) as max_touches_7d,
        (exists (select 1 from public.calls k where k.lead_id = l.id and k.connected and k.created_at > t.created_at)
         or exists (select 1 from public.whatsapp_inbound_events i where i.lead_id = l.id and i.received_at > t.created_at)
@@ -85,6 +88,7 @@ export interface TriedCallingFacts {
   lifecycle_state: string;
   workspace_name: string;
   enabled: boolean;
+  automated: boolean;
   max_touches_7d: number;
   reached: boolean;
   touches_7d: number;
@@ -104,6 +108,7 @@ export async function processTriedCallingSend(id: string, deps: { send?: typeof 
     if (!f) return "missing";
     const problem = triedCallingCheck({
       enabled: f.enabled,
+      automated: f.automated,
       hasPhone: Boolean(f.phone_e164),
       lifecycle: f.lifecycle_state,
       reached: f.reached,

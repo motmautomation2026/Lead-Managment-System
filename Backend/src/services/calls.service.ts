@@ -15,6 +15,7 @@ import type { LossDetails } from "../domain/recovery.js";
 import { createResponsibleTask, factsOf, LEAD_FACTS_SQL, type FactsRow } from "./nextAction.service.js";
 import { autoEnroll } from "./runs.service.js";
 import { enqueueTriedCalling } from "./triedCalling.service.js";
+import { isLeadAutomated } from "./leadAutomation.service.js";
 
 export interface LogCallInput {
   connected: boolean;
@@ -231,7 +232,8 @@ export async function logCall(db: Queryable, actor: Actor, workspaceId: string, 
     await autoEnroll(db, workspaceId, leadId, routing.workflowTrigger, `Call outcome: ${input.connected ? input.connectedOutcome : input.notConnectedReason}`);
   }
 
-  if (!input.connected) {
+  // REL-1: the retry ladder, "Fix the phone number" and "We tried calling" only for automated leads.
+  if (!input.connected && (await isLeadAutomated(db, leadId))) {
     if (attemptNumber) await afterUnansweredCall(db, actor, workspaceId, leadId, call, attemptNumber);
     else await afterBadNumber(db, actor, workspaceId, leadId);
   }

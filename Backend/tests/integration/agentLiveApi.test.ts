@@ -129,9 +129,11 @@ describeIfDb("E2 live mode API (requires TEST_DATABASE_URL)", () => {
     // Already on: changing something else keeps live_since.
     const again = await api.call(admin, ws, "PUT", "/agent/settings", { repQuietHours: 2 });
     expect(again.body.liveSince).toBe(pilot.body.liveSince);
-    // A contact created now is in the pilot; the older one isn't.
+    // REL-1: "new leads" = automated contacts (created since the workspace's go-live cutoff, or switched on); a contact
+    // whose automation is switched off runs as shadow.
     const fresh = await lead(ws);
     expect((await api.call(admin, ws, "GET", `/agent/leads/${fresh}`)).body.effectiveMode).toBe("live");
+    expect((await api.call(admin, ws, "POST", "/contacts/automation", { enabled: false, ids: [l] })).status).toBe(200);
     expect((await api.call(admin, ws, "GET", `/agent/leads/${l}`)).body.effectiveMode).toBe("shadow");
   });
 

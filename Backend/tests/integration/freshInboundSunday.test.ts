@@ -37,7 +37,8 @@ describeIfDb("fresh inbound lead on a Sunday evening (requires TEST_DATABASE_URL
   it("passes the re-check and both window checks at 20:00 IST on Sunday; a non-fresh lead defers to Monday 09:30", async () => {
     const ws = await createTestWorkspace(pool, "sunday-inbound");
     // The default window (Mon–Sat 09:30–19:00): Sunday 20:00 is outside it.
-    await pool.query(`update public.agent_settings set mode = 'live', live_scope = 'test_contacts' where workspace_id = $1`, [ws]);
+    // REL-1: the lead is back-dated to that Sunday, so the go-live cutoff goes before it (else it isn't automated).
+    await pool.query(`update public.agent_settings set mode = 'live', live_scope = 'test_contacts', automation_since = '2026-01-01' where workspace_id = $1`, [ws]);
     await pool.query(`insert into public.email_imap_state (workspace_id, last_success_at) values ($1, $2)`, [ws, new Date(SUNDAY_8PM.getTime() - 5 * MINUTE)]);
     const lead = (
       await pool.query(
