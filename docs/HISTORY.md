@@ -1034,3 +1034,15 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   watch); `compose.yaml` now passes every env var the API / worker read. Tests: backend unit 1442 → 1463, frontend 603 → 607.
   **Production:** follow `docs/release/00-READ-ME-FIRST.md`; the cutoff + pause runs BEFORE the new worker starts; the "Automated
   leads" scope needs the go-live gate (50 rated decisions) — management decision.
+- **HOTFIX-2 (first AI message: both channels + "we will call you" closing; migration 063; branch `dev`; staging only, no OpenAI
+  call):** `agent_settings.first_channel` accepts `both` (Settings → AI limits: WhatsApp / Email / Both): with both channels usable
+  the first decision writes one WhatsApp and one email (`draftFirstMessages`: a draft per channel, each through every check; the
+  second row has `agent_decisions.paired_decision_id`, cost 0, no wake-up of its own). The pair is one touch (`TOUCH_GROUP_SQL` in the
+  context, the send re-check, `leads.agent_touch_count`, the "We tried calling" weekly count) and one decision (`DAY_DECISIONS_SQL`).
+  One channel unusable → the other only (no pair); one failing its checks → the other goes, the failed one is kept `blocked` for
+  review. First message (`welcome`): no call question / days; ends with `firstMessageClosing` (`domain/reminders.ts`, from
+  `firstCallDueAt`: "<Rep> from our team will call you shortly." / "… tomorrow morning." / "… on Monday morning."; no owner → "Our
+  team will call you …"); polish appends it if missing; grounding ignores it; the closing phrases fail `call_days` in any other
+  message; reply drafts are never a first message. Integration fixtures whose FIRST AI message asked for a call on two days now ask a
+  non-call question. Paused WhatsApp number: the WhatsApp of a pair defers (as every AI WhatsApp), the email goes. **Production:**
+  apply 063 before deploying API, worker and frontend; Govinda updates the playbook / style examples (old first-message lines).

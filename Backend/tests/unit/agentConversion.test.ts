@@ -267,7 +267,12 @@ describe("E3b-1 rules 2 and 6: prompt lines", () => {
     const user = messages[1]!.content;
     expect(user).toContain("This message: welcome (first message)");
     expect(user).toContain("Channel for this message: WhatsApp");
-    expect(user).toContain("Suggested days: Thursday or Friday");
+    // HOTFIX-2: the first message gets the closing sentence instead of days; a follow-up call angle keeps the days.
+    expect(user).toContain("Closing sentence: Ravi from our team will call you shortly.");
+    expect(user).not.toContain("Suggested days");
+    const checkIn = stagePlan(planInput({ touches: [{ at: ist("2026-10-28T11:00"), channel: "email" }, { at: ist("2026-10-30T11:00"), channel: "whatsapp" }, { at: ist("2026-11-01T11:00"), channel: "email" }] }))!;
+    expect(checkIn.angle).toBe("check_in");
+    expect(buildDecisionMessages(sampleContext({ stagePlan: checkIn }), ctxSettings, WEDNESDAY)[1]!.content).toContain("Suggested days: Thursday or Friday");
     expect(messages[0]!.content).toContain("- proposal_timing: ask, simply, when they expect to decide on the proposal.");
     // The system message is the same with or without a plan (cached prefix).
     expect(messages[0]!.content).toBe(buildDecisionMessages(sampleContext(), ctxSettings, WEDNESDAY)[0]!.content);

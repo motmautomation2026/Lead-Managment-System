@@ -210,11 +210,11 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">First message channel</legend>
           <p className="text-xs text-muted-foreground">
-            When a contact has both email and WhatsApp, the first AI message uses this channel;
-            later messages alternate.
+            When a contact has both email and WhatsApp, the first AI message uses this channel
+            (Both: one WhatsApp and one email, counted as one message); later messages alternate.
           </p>
           <div className="flex flex-wrap gap-2" role="group" aria-label="First message channel">
-            {(["whatsapp", "email"] as const).map((channel) => (
+            {(["whatsapp", "email", "both"] as const).map((channel) => (
               <Button
                 key={channel}
                 type="button"
@@ -223,7 +223,7 @@ function LimitsCard({ settings }: { settings: AgentSettings }) {
                 aria-pressed={form.firstChannel === channel}
                 onClick={() => set("firstChannel", channel)}
               >
-                {channel === "whatsapp" ? "WhatsApp" : "Email"}
+                {channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "Both"}
               </Button>
             ))}
           </div>

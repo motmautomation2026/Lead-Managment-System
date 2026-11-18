@@ -25,8 +25,8 @@ const numbers = new Map<string, string>();
 const PRICES = { "m-decide": { inputPer1M: 1, outputPer1M: 1 }, "m-ground": { inputPer1M: 1, outputPer1M: 1 } };
 const MODELS = { decision: "m-decide", grounding: "m-ground" };
 
-const WHATSAPP: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, following up on our call about outbound for Acme Steel. Would a short call on Tuesday or Wednesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
-const EMAIL: AgentDecision = { action: "send_email", subject: "Outbound for Acme Steel", body: "Hi Asha,\n\nFollowing up on our call. Would a short call on Tuesday or Wednesday work?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
+const WHATSAPP: AgentDecision = { action: "send_whatsapp", body: "Hi Asha, following up on our call about outbound for Acme Steel. Would it help to compare notes on your lead sources?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
+const EMAIL: AgentDecision = { action: "send_email", subject: "Outbound for Acme Steel", body: "Hi Asha,\n\nFollowing up on our call. Would it help to compare notes on your lead sources?", assetIds: [], nextWakeInDays: 3, reasoning: "Follow up." };
 
 describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
   let pool: Pool;
@@ -246,6 +246,50 @@ describeIfDb("E2 AI live mode (requires TEST_DATABASE_URL)", () => {
     expect(outbound.message_id).toBe(sent.provider_message_id);
     expect(await aiTimeline(l.id)).toEqual(["AI sent email: Outbound for Acme Steel"]);
     expect((await leadRow(l.id)).agent_touch_count).toBe(1);
+  });
+
+  it("HOTFIX-2: first_channel both → one WhatsApp and one email, both sent, one touch, one decision; each ends with the closing", async () => {
+    const ws = await workspace("both");
+    await pool.query(`update public.agent_settings set first_channel = 'both' where workspace_id = $1`, [ws]);
+    const l = await lead(ws);
+    await wakeup(ws, l.id);
+    const body = "Hi Asha, thanks for your interest in outbound for Acme Steel. We start with a short review of how your team finds buyers.";
+    const first: AgentDecision[] = [
+      { action: "send_whatsapp", body, assetIds: [], nextWakeInDays: 3, reasoning: "First message." },
+      { action: "send_email", subject: "Outbound for Acme Steel", body, assetIds: [], nextWakeInDays: 3, reasoning: "First message." },
+    ];
+    expect((await tick(ws, first))[0]).toMatchObject({ result: "executed", action: "send_whatsapp" });
+    // Same transaction, same created_at: the pair's first row has no paired_decision_id.
+    const rows = await decisionsOf(l.id);
+    expect(rows).toHaveLength(2);
+    const main = rows.find((r) => r.paired_decision_id === null)!;
+    const paired = rows.find((r) => r.paired_decision_id !== null)!;
+    expect(main).toMatchObject({ action: "send_whatsapp", outcome: "executed", send_status: "queued", paired_decision_id: null, angle: "welcome" });
+    expect(paired).toMatchObject({ action: "send_email", outcome: "executed", send_status: "queued", paired_decision_id: main.id, angle: "welcome", next_wake_at: null });
+    expect(Number(paired.cost_usd)).toBe(0);
+    // Code appended the closing (the owner is Govinda Rep).
+    for (const row of [main, paired]) expect(row.message_body).toMatch(/\n\nGovinda from our team will call you (shortly|tomorrow morning|on \w+ morning)\.$/);
+    const { DAY_DECISIONS_SQL } = await import("../../src/services/agentRunner.service.js");
+    expect((await pool.query(`select ${DAY_DECISIONS_SQL} as n`, [ws])).rows[0].n).toBe(1);
+    // One timer wake-up for the pair.
+    expect((await pool.query(`select count(*)::int as n from public.agent_wakeups where lead_id = $1 and status = 'pending'`, [l.id])).rows[0].n).toBe(1);
+
+    const { send } = whatsapp(ws);
+    expect(await sendTick(ws, send)).toEqual([{ id: main.id, result: "sent" }]);
+    // The email's re-check doesn't count the WhatsApp of its own pair (no 48 h gap, no weekly limit).
+    const smtp = fakeSmtp();
+    expect(await emailTick(ws, smtp)).toEqual(["sent"]);
+    expect(await decision(paired.id)).toMatchObject({ send_status: "sent", outcome: "sent" });
+    expect((await leadRow(l.id)).agent_touch_count).toBe(1);
+    expect((await aiTimeline(l.id)).sort()).toEqual(["AI sent WhatsApp", "AI sent email: Outbound for Acme Steel"].sort());
+
+    // The next decision sees one touch (total and last 7 days) and no first message.
+    const { buildAgentContext } = await import("../../src/services/agentContext.service.js");
+    const ctx = await buildAgentContext(pool, ws, l.id, new Date(), { embedder: fakeEmbedder });
+    expect(ctx.rules.lead.agentTouchCount).toBe(1);
+    expect(ctx.rules.recentTouchTimes).toHaveLength(1);
+    expect(ctx.stagePlanInput!.touches).toHaveLength(1);
+    expect(ctx.stagePlan?.alsoChannel).toBeUndefined();
   });
 
   describe("E3a: email threading", () => {

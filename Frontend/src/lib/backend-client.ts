@@ -592,8 +592,8 @@ export interface AgentSettings {
   styleExamples: string;
   /** E3b-2b: the workspace's buyer industries for the hot-lead score (lower case). */
   targetIndustryKeywords: string[];
-  /** E3b-1: the channel of a contact's first AI message when both work; then channels alternate. */
-  firstChannel: "whatsapp" | "email";
+  /** E3b-1: the channel of a contact's first AI message when both work; then channels alternate. HOTFIX-2: "both" = one of each. */
+  firstChannel: "whatsapp" | "email" | "both";
   wakeMinDays: number;
   wakeMaxDays: number;
   nurtureLongTerm: boolean;

@@ -23,7 +23,7 @@ interface SettingsRow {
   banned_phrases: string[];
   target_industry_keywords: string[];
   style_examples: string;
-  first_channel: "whatsapp" | "email";
+  first_channel: "whatsapp" | "email" | "both";
   wake_min_days: number;
   wake_max_days: number;
   nurture_long_term: boolean;

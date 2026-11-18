@@ -17,6 +17,9 @@ import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
 const AGENT_ACTOR = { actorId: null, actorName: AGENT_ACTOR_NAME, actorSource: "automation" as const };
 
+/** HOTFIX-2: the touch an agent_decisions row belongs to; a "both" first message's two rows share it (one touch). */
+export const TOUCH_GROUP_SQL = "coalesce(paired_decision_id, id)";
+
 // --- The send-time re-check ---------------------------------------------------------
 
 interface RecheckRow extends AgentRuleSettings {
@@ -73,11 +76,16 @@ export async function agentSendRecheck(
               exists (select 1 from public.workflow_runs where lead_id = l.id and status in ('running', 'waiting', 'paused')) as has_run,
               -- Real sends only (rule 6), not this decision. LL-3b: "We tried calling" sends count toward the 7-day limit only
               -- (recent_touches), never the total or the 48 h gap (last_touch_at).
-              (select count(*)::int from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as touch_count,
-              (select max(sent_at) from public.agent_decisions where lead_id = l.id and outcome = 'sent' and id <> d.id) as last_touch_at,
+              -- HOTFIX-2: touches, not rows (a "both" pair is one), never this decision's own touch.
+              (select count(distinct ${TOUCH_GROUP_SQL})::int from public.agent_decisions
+                where lead_id = l.id and outcome = 'sent' and ${TOUCH_GROUP_SQL} <> coalesce(d.paired_decision_id, d.id)) as touch_count,
+              (select max(sent_at) from public.agent_decisions
+                where lead_id = l.id and outcome = 'sent' and ${TOUCH_GROUP_SQL} <> coalesce(d.paired_decision_id, d.id)) as last_touch_at,
               coalesce((select array_agg(x.at) from (
-                          select sent_at as at from public.agent_decisions
-                           where lead_id = l.id and outcome = 'sent' and id <> d.id and sent_at > now() - interval '7 days'
+                          select min(sent_at) as at from public.agent_decisions
+                           where lead_id = l.id and outcome = 'sent' and ${TOUCH_GROUP_SQL} <> coalesce(d.paired_decision_id, d.id)
+                             and sent_at > now() - interval '7 days'
+                           group by ${TOUCH_GROUP_SQL}
                           union all
                           select t.sent_at from public.tried_calling_messages t
                            where t.lead_id = l.id and t.status = 'sent' and not t.dry_run and t.sent_at > now() - interval '7 days') x), '{}') as recent_touches,
@@ -178,7 +186,17 @@ export async function recordAgentSendOutcome(db: Queryable, decisionId: string, 
         where id = $1`,
       [decisionId, outcome.providerMessageId, sentAssets.length ? sentAssets.map((a) => a.id) : null, issues.length ? JSON.stringify(issues) : null],
     );
-    await db.query(`update public.leads set agent_touch_count = agent_touch_count + 1, agent_last_touch_at = now(), last_activity_at = now() where id = $1`, [d.lead_id]);
+    // HOTFIX-2: the second message of a "both" pair is the same touch: no second count.
+    await db.query(
+      `update public.leads
+          set agent_touch_count = agent_touch_count + case when exists (
+                select 1 from public.agent_decisions o, public.agent_decisions me
+                 where me.id = $2 and o.id <> me.id and o.outcome = 'sent'
+                   and coalesce(o.paired_decision_id, o.id) = coalesce(me.paired_decision_id, me.id)) then 0 else 1 end,
+              agent_last_touch_at = now(), last_activity_at = now()
+        where id = $1`,
+      [d.lead_id, decisionId],
+    );
     await addTimelineEvent(db, {
       leadId: d.lead_id,
       kind: "automation",

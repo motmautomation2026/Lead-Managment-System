@@ -2,6 +2,7 @@ import type { AgentContext } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { situationInboundFirst, situationOf } from "./situation.js";
 import { EMAIL_RE, PHONE_RE } from "./rules.js";
+import { firstMessageClosing } from "../domain/reminders.js";
 
 // URLs can carry "?" (query strings); they are not questions.
 export const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/gi;
@@ -117,6 +118,13 @@ export interface MessageFacts {
   staleCall?: boolean;
   /** AI-FIX-1 rule 3: this message is the final polite check (no call ask). */
   finalCheck?: boolean;
+  /** HOTFIX-2: the first message (welcome angle): no call ask or days; ends with the code's closing sentence. */
+  firstMessage?: boolean;
+}
+
+/** HOTFIX-2: the first message's closing sentence (welcome angle only; null otherwise). */
+export function firstClosingOf(ctx: Pick<AgentContext, "stagePlan" | "lead">, now: Date): string | null {
+  return ctx.stagePlan?.angle === "welcome" ? firstMessageClosing(now, ctx.lead.ownerName?.trim().split(/\s+/)[0] || null) : null;
 }
 
 const STALE_CALL_MS = 7 * 24 * 3_600_000;
@@ -128,6 +136,7 @@ export function messageFactsOf(ctx: AgentContext, now?: Date): MessageFacts {
     usedExperiences: usedClientExperiences(ctx),
     staleCall: Boolean(now && lastCall && now.getTime() - new Date(lastCall.at).getTime() > STALE_CALL_MS),
     finalCheck: ctx.stagePlan?.angle === "final_check",
+    firstMessage: ctx.stagePlan?.angle === "welcome",
     inboundFirst: situationInboundFirst(situation),
     conversationExists: situation.conversationExists,
     ownerFirstName: ctx.lead.ownerName?.trim().split(/\s+/)[0] ?? null,
@@ -170,6 +179,22 @@ export function callDaysProblem(body: string): string | null {
     return `The message asks for a call without offering the two suggested days${vague ? ` ("${vague}")` : ""}. Ask which of the two suggested days suits them, e.g. "Would Thursday or Friday suit you for a short call?"`;
   }
   return vague ? `The message offers days and also says "${vague}"; keep only the two days.` : null;
+}
+
+/** HOTFIX-2: the approved first-message closing ("… will call you shortly / tomorrow morning / on Monday morning"). */
+export const FIRST_CLOSING_RE = /\bwill call you (?:shortly|tomorrow morning|on (?:monday|tuesday|wednesday|thursday|friday|saturday) morning)\b/i;
+
+/**
+ * HOTFIX-2: the first message never asks for a call or offers days (it says when we will call); every
+ * other message never uses that closing. The problem, or null.
+ */
+export function firstMessageCallProblem(body: string, firstMessage: boolean): string | null {
+  if (!firstMessage) {
+    return FIRST_CLOSING_RE.test(body) ? "Only the first message says when we will call. Don't say when someone will call; follow the message's purpose." : null;
+  }
+  const questions = withoutUrls(body).match(/[^.!?？\n]*[?？]/g) ?? [];
+  const ask = questions.find((q) => CALL_ASK.test(q) || new RegExp(WEEKDAYS.source, "i").test(q));
+  return ask ? `"${ask.trim()}": the first message doesn't ask for a call or offer days. No question; end with the closing sentence that says when we will call.` : null;
 }
 
 /** AI-FIX-1 rule 3: thanks for a call ("Thank you for your time on the call", "Thanks for the call yesterday"), or null. */
@@ -355,7 +380,9 @@ export function checkMessage(decision: AgentDecision, settings: MessageCheckSett
     if (subject) violations.push({ rule: "subject_style", message: subject });
   }
 
-  const days = callDaysProblem(decision.body);
+  const firstCall = firstMessageCallProblem(decision.body, Boolean(facts?.firstMessage));
+  const days = facts?.firstMessage ? null : callDaysProblem(decision.body);
+  if (firstCall) violations.push({ rule: "call_days", message: firstCall });
   // AI-FIX-1 rule 3: the final check asks for no call at all, so offering days is not the fix.
   if (days && facts?.finalCheck) {
     violations.push({ rule: "call_days", message: "The final check doesn't ask for a call. Ask one simple question whether their goal is still a priority, and offer to reconnect later." });

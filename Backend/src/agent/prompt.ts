@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentContext, AgentKnowledgeChunk, AgentSettingsRow } from "../services/agentContext.service.js";
 import type { AgentDecision } from "./decisionSchema.js";
 import { hasDealContext } from "./dealContext.js";
-import { isListedExperienceClaim, playbookClientExperiences, usedClientExperiences, whatsappTargetWords } from "./messageChecks.js";
+import { firstClosingOf, isListedExperienceClaim, playbookClientExperiences, usedClientExperiences, whatsappTargetWords } from "./messageChecks.js";
 import { situationInboundFirst, situationOf, type Situation } from "./situation.js";
 import { signalsOf, type AgentSignal } from "./signals.js";
 import { ANGLE_LABELS, ANGLE_RULES, ANGLES, CALL_ANGLES, callQuestion, suggestedDays } from "./stagePlan.js";
@@ -88,9 +88,9 @@ export function buildDecisionMessages(ctx: AgentContext, settings: AgentSettings
     "- No long dashes, no exclamation marks, no emojis.",
     "- The first line is about the lead, not about us: use their latest call, note or enquiry. Never send a generic message.",
     "- Never start two messages to the same contact the same way.",
-    "- End with one easy question. When you propose a call, end with the exact \"Closing question\" from lead_data, word for word, or ask a simple yes/no; never an exact clock time (the rep confirms the time). Never add \"in the coming days\", \"in the next few days\", \"this week\" or any other time phrase to it.",
+    "- End with one easy question (except the welcome message, which ends with its \"Closing sentence\"). When you propose a call, end with the exact \"Closing question\" from lead_data, word for word, or ask a simple yes/no; never an exact clock time (the rep confirms the time). Never add \"in the coming days\", \"in the next few days\", \"this week\" or any other time phrase to it.",
     "- Name ONE listed client experience specifically, as the knowledge gives it, or none. Never a general sentence about \"our client experiences\", \"published client experiences\", \"case studies describe\" or \"helped similar B2B firms/businesses\".",
-    "- Never promise when you will follow up (\"I will check back next week\"): the system schedules follow-ups.",
+    "- Never promise when you will follow up (\"I will check back next week\"): the system schedules follow-ups. The welcome message's \"Closing sentence\" is the only exception.",
     "",
     "Each message has a purpose, given in lead_data as \"This message\" (from the CRM, reliable). Write for that purpose:",
     ...ANGLES.map((angle) => `- ${ANGLE_RULES[angle]}`),
@@ -198,7 +198,7 @@ function leadDataText(ctx: AgentContext, now: Date | null = null): string {
 }
 
 /** E3b-1 rules 1–3, 6: what this message is for, its channel and the days to offer (only with a stage plan). */
-function stageLines({ stagePlan: plan, latestMeeting, timeline }: AgentContext, now: Date | null): string[] {
+function stageLines({ stagePlan: plan, latestMeeting, timeline, lead }: AgentContext, now: Date | null): string[] {
   if (!plan) return [];
   const lines = [plan.angle ? `This message: ${ANGLE_LABELS[plan.angle]} (${plan.reason})` : `This message: none now (${plan.reason})`];
   // AI-FIX-1 rule 5: a question the lead asked on the call is answered, not just acknowledged.
@@ -210,7 +210,10 @@ function stageLines({ stagePlan: plan, latestMeeting, timeline }: AgentContext, 
   }
   const sends = plan.allowedActions.filter((a) => a === "send_email" || a === "send_whatsapp");
   if (plan.angle && sends.length === 1) lines.push(`Channel for this message: ${sends[0] === "send_email" ? "email" : "WhatsApp"}`);
-  if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`, `Closing question: ${callQuestion(now)}`);
+  // HOTFIX-2: the first message says when we will call instead of offering days.
+  const closing = now ? firstClosingOf({ stagePlan: plan, lead }, now) : null;
+  if (closing) lines.push(`Closing sentence: ${closing}`);
+  else if (plan.angle && now && CALL_ANGLES.includes(plan.angle)) lines.push(`Suggested days: ${suggestedDays(now)}`, `Closing question: ${callQuestion(now)}`);
   if ((plan.angle === "meeting_recap" || plan.angle === "meeting_recap_deciding") && latestMeeting) {
     lines.push(`Meeting outcome: ${words(latestMeeting.outcome)}`, `Meeting notes: ${latestMeeting.notes ?? "none"}`);
   }
@@ -363,7 +366,10 @@ export function applyGroundingAllowList(result: GroundingResult, ctx: AgentConte
   // AI-FIX-1 rule 1: a faithful paraphrase of ONE playbook client experience is neither a claim nor an introduction.
   const experiences = playbookClientExperiences(ctx.playbook?.body);
   const listed = (text: string) => isListedExperienceClaim(text, experiences);
-  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim) || listed(claim));
+  // HOTFIX-2: the first message's code-written closing ("Ravi from our team will call you shortly.") is not a claim.
+  const closing = now ? firstClosingOf(ctx, now) : null;
+  const closingClaim = (text: string) => closing !== null && norm(text).length > 0 && norm(closing).includes(norm(text));
+  const ignored = result.unsupportedClaims.filter((claim) => allowed.has(norm(claim)) || dayQuestion(claim) || listed(claim) || closingClaim(claim));
   const ignoredStyle = (result.styleViolations ?? []).filter(
     (v) => (v.rule === "asks_lead_to_describe_business" && dayQuestion(v.quote)) || (v.rule !== "asks_lead_to_describe_business" && listed(v.quote)),
   );

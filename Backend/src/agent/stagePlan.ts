@@ -34,10 +34,13 @@ export const ANGLES = [
 ] as const;
 export type Angle = (typeof ANGLES)[number];
 export type Channel = "email" | "whatsapp";
+/** agent_settings.first_channel: HOTFIX-2 "both" = the first message goes on WhatsApp AND email. */
+export type FirstChannel = Channel | "both";
 
 /** One line per angle for the system rules (the same for every contact, so it stays in the cached prefix). */
 export const ANGLE_RULES: Record<Angle, string> = {
-  welcome: "welcome: a short first message about what they told us, and one easy question about a short call.",
+  welcome:
+    "welcome: the first message: thank them for reaching out, name the goal they told us, and one line on our approach. No question and no days: end with the exact \"Closing sentence\" from lead_data, word for word.",
   insight: "insight: one useful, specific point for their kind of business, from the knowledge or playbook.",
   client_experience: "client_experience: one relevant client experience from the knowledge, in a sentence or two.",
   check_in: "check_in: a short, friendly check-in asking whether a short call would help.",
@@ -112,7 +115,7 @@ export interface StagePlanInput {
   conversationExists: boolean;
   emailUsable: boolean;
   whatsappUsable: boolean;
-  firstChannel: Channel;
+  firstChannel: FirstChannel;
   maxTouchesTotal: number;
   /** An earlier decision for this contact was made under rep_owned (its one handoff is used). */
   repOwnedBefore: boolean;
@@ -125,6 +128,8 @@ export interface StagePlan {
   allowedActions: AgentAction[];
   /** null = no channel usable (rules.ts rule 5 decides). */
   preferredChannel: Channel | null;
+  /** HOTFIX-2: first_channel "both" on a first message with both channels usable: the second channel (email). */
+  alsoChannel?: Channel;
   reason: string;
   /** What a disallowed action becomes. */
   fallback: { action: "wait"; days: number } | { action: "handoff"; title: string };
@@ -144,7 +149,7 @@ export function journeyAngle(index: number, maxTotal: number, skipWelcome: boole
 export function preferredChannel(input: Pick<StagePlanInput, "touches" | "emailUsable" | "whatsappUsable" | "firstChannel">): Channel | null {
   if (input.emailUsable && input.whatsappUsable) {
     const last = input.touches[input.touches.length - 1];
-    return last ? (last.channel === "email" ? "whatsapp" : "email") : input.firstChannel;
+    return last ? (last.channel === "email" ? "whatsapp" : "email") : input.firstChannel === "both" ? "whatsapp" : input.firstChannel;
   }
   if (input.emailUsable) return "email";
   if (input.whatsappUsable) return "whatsapp";
@@ -160,12 +165,14 @@ export function stagePlan(input: StagePlanInput): StagePlan | null {
   const channel = preferredChannel(input);
   const sendActions: AgentAction[] = channel ? [`send_${channel}`] : ["send_email", "send_whatsapp"];
   const lastTouch = input.touches[input.touches.length - 1]?.at ?? null;
+  const both = input.firstChannel === "both" && !input.touches.length && input.emailUsable && input.whatsappUsable;
   const touchesSince = (start: Date) => input.touches.filter((t) => t.at.getTime() >= start.getTime()).length;
   const send = (stageKey: StageKey, angle: Angle, reason: string, waitDays = 7): StagePlan => ({
     stageKey,
     angle,
     allowedActions: [...sendActions, ...NON_SEND],
     preferredChannel: channel,
+    ...(both ? { alsoChannel: "email" as const } : {}),
     reason,
     fallback: { action: "wait", days: waitDays },
   });

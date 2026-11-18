@@ -64,7 +64,8 @@ export const FACTS_SQL = `select t.id, t.workspace_id, t.lead_id, t.rep_name, t.
         or exists (select 1 from public.email_inbound_events e where e.lead_id = l.id and e.match_status = 'matched'
                     and e.kind in ('reply', 'unsubscribe') and e.received_at > t.created_at)
         or exists (select 1 from public.meetings m where m.lead_id = l.id and m.created_at > t.created_at)) as reached,
-       ((select count(*) from public.agent_decisions d where d.lead_id = l.id and d.outcome = 'sent'
+       -- HOTFIX-2: AI touches (a "both" first message is one).
+       ((select count(distinct coalesce(d.paired_decision_id, d.id)) from public.agent_decisions d where d.lead_id = l.id and d.outcome = 'sent'
            and d.sent_at > now() - interval '7 days')
         + (select count(*) from public.tried_calling_messages x where x.lead_id = l.id and x.status = 'sent' and not x.dry_run
            and x.sent_at > now() - interval '7 days'))::int as touches_7d,

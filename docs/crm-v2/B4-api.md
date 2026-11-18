@@ -433,8 +433,8 @@ Migration 047.
 
 ## 7p. AI conversion core — E3b-1
 
-- `GET|PUT /agent/settings` (PUT admin-only): `firstChannel: "whatsapp" | "email"` (default `whatsapp`, else **400**): the channel of a
-  contact's first AI message when both channels are usable; later messages alternate.
+- `GET|PUT /agent/settings` (PUT admin-only): `firstChannel: "whatsapp" | "email" | "both"` (default `whatsapp`, else **400**): the channel of a
+  contact's first AI message when both channels are usable (HOTFIX-2 `both`: one WhatsApp + one email, one touch); later messages alternate.
 - Decision list, decision detail and the contact's AI panel rows: `stageKey` (`new_no_contact | after_call | meeting_scheduled |
   meeting_held_no_proposal | meeting_no_show | proposal_sent | rep_owned | long_term`, null before E3b-1) and `angle` (`welcome |
   insight | client_experience | check_in | final_check | call_followup | meeting_recap | reschedule | proposal_questions |

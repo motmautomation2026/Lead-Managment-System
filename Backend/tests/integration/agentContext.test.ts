@@ -192,7 +192,7 @@ describeIfDb("agent context builder (requires TEST_DATABASE_URL)", () => {
     const decision = {
       action: "send_email" as const,
       subject: "Your enquiry",
-      body: "Hi Suresh,\n\nThank you for your enquiry. You mentioned that buyers come once for a project and do not come back.\n\nWould Thursday or Friday suit you for a short call?",
+      body: "Hi Suresh,\n\nThank you for your enquiry. You mentioned that buyers come once for a project and do not come back.\n\nWe start with a short review of how buyers find you.",
       assetIds: [],
       nextWakeInDays: 3,
       reasoning: "Reply to the enquiry.",

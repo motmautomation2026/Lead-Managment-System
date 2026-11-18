@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const settings = {
@@ -321,6 +321,33 @@ describe("Settings → AI sections (UX-1: one section per route)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
     expect(mocks.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ emailOptOutText: "", whatsappOptOutText: "" }),
+      expect.any(Object),
+    );
+  });
+
+  it("HOTFIX-2: the first message channel offers WhatsApp, Email and Both, and saves Both", async () => {
+    mocks.isAdmin = true;
+    mocks.settingsQuery.mockReturnValue({
+      data: { ...settings, firstChannel: "whatsapp" },
+      isError: false,
+    });
+    await show(AgentLimitsSection);
+    // The fieldset (legend) and the button row share the name; the row is the inner one.
+    const group = screen.getAllByRole("group", { name: "First message channel" }).at(-1)!;
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["WhatsApp", "Email", "Both"]);
+    expect(within(group).getByRole("button", { name: "WhatsApp" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(within(group).getByRole("button", { name: "Both" }));
+    expect(within(group).getByRole("button", { name: "Both" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save limits" }));
+    expect(mocks.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ firstChannel: "both" }),
       expect.any(Object),
     );
   });

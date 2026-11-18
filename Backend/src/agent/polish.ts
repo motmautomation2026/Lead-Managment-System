@@ -22,6 +22,8 @@ export interface PolishNames {
   companyName: string;
   /** E3b-2b rule 4: the two suggested days ("Thursday or Friday"); null = no call-days fix. */
   suggestedDays?: string | null;
+  /** HOTFIX-2: the first message's closing sentence (firstClosingOf); null = not a first message. */
+  firstClosing?: string | null;
 }
 
 const CONTEXT = 20;
@@ -178,6 +180,16 @@ function fixCallDays(body: string, days: string | null | undefined, fixes: AutoF
   return fixed;
 }
 
+// HOTFIX-2: the first message ends with the code's closing sentence: any other "… will call you …" sentence goes, then it is appended.
+const CALL_PROMISE = /[^.!?\n]*\bwill (?:call|ring|phone) you\b[^.!?\n]*[.!?]*/gi;
+
+function fixFirstClosing(body: string, closing: string | null | undefined, fixes: AutoFix[]): string {
+  if (!closing || body.trim().endsWith(closing)) return body;
+  const before = (body.match(CALL_PROMISE) ?? []).map((s) => s.trim()).join(" ");
+  fixes.push({ rule: "call_days", before, after: closing });
+  return `${body.replace(CALL_PROMISE, "").trim()}\n\n${closing}`;
+}
+
 // E3b-2b rule 5: a general client-experience sentence goes when at least 2 other sentences stay; else the check fails.
 function fixGenericClaims(body: string, fixes: AutoFix[]): string {
   const sentences = body.match(SENTENCE) ?? [];
@@ -208,7 +220,9 @@ export function polishDecision(decision: AgentDecision, names: PolishNames): { d
   if (decision.action !== "send_email" && decision.action !== "send_whatsapp") return { decision, autoFixes: [] };
   const autoFixes: AutoFix[] = [];
   // Before the ellipsis fix, which would split a "…" inside a generic sentence.
-  const body = polishText(fixCallDays(fixGenericClaims(decision.body, autoFixes), names.suggestedDays, autoFixes), autoFixes, (text, fixes) => fixSignOff(text, names, fixes));
+  const polishedBody = polishText(fixCallDays(fixGenericClaims(decision.body, autoFixes), names.suggestedDays, autoFixes), autoFixes, (text, fixes) => fixSignOff(text, names, fixes));
+  // After the sign-off fix, so the closing is the last line before the code's signature.
+  const body = fixFirstClosing(polishedBody, names.firstClosing, autoFixes);
   const polished: SendDecision =
     decision.action === "send_email" ? { ...decision, body, subject: polishText(decision.subject, autoFixes, (text) => text) } : { ...decision, body };
   return { decision: polished, autoFixes };

@@ -2,9 +2,9 @@ import type { AgentContext } from "../services/agentContext.service.js";
 import { DECISION_JSON_SCHEMA, type AgentDecision } from "./decisionSchema.js";
 import { costUsd, type ModelPrices } from "./pricing.js";
 import { applyGroundingAllowList, buildDecisionMessages, buildGroundingMessages, GROUNDING_JSON_SCHEMA, STYLE_RULES, type GroundingResult } from "./prompt.js";
-import { checkMessage, messageFactsOf } from "./messageChecks.js";
+import { checkMessage, firstClosingOf, messageFactsOf } from "./messageChecks.js";
 import { polishDecision, type AutoFix } from "./polish.js";
-import { suggestedDays } from "./stagePlan.js";
+import { suggestedDays, type Channel } from "./stagePlan.js";
 import { threadSubject } from "../domain/emailSafety.js";
 import { validateDecision, type RulesResult } from "./rules.js";
 import type { DecisionModel, ModelCallResult } from "../providers/openai.provider.js";
@@ -90,7 +90,12 @@ export async function draftDecision(
     const decided = await deps.model.decide({ model: deps.decisionModel, messages, jsonSchema: { name: "agent_decision", schema: DECISION_JSON_SCHEMA as unknown as Record<string, unknown> } });
     add(deps.decisionModel, decided, tokens);
     // E3a rule 3: auto-fixes first, so a fixed problem never costs a regeneration.
-    const { decision: polished, autoFixes } = polishDecision(decided.json, { ownerName: ctx.lead.ownerName, companyName: ctx.companyName, suggestedDays: suggestedDays(deps.now) });
+    const { decision: polished, autoFixes } = polishDecision(decided.json, {
+      ownerName: ctx.lead.ownerName,
+      companyName: ctx.companyName,
+      suggestedDays: suggestedDays(deps.now),
+      firstClosing: firstClosingOf(ctx, deps.now),
+    });
     // E3a rule 7: a follow-up email keeps its thread's subject; the model's is ignored.
     const thread = ctx.emailThread;
     const final = thread && polished.action === "send_email" ? { ...polished, subject: threadSubject(thread.subject) } : polished;
@@ -158,6 +163,48 @@ export async function draftDecision(
     failedAttempt: last,
     attempts,
   };
+}
+
+/** HOTFIX-2: the second message of a "both" first message: `ok` = it passed every check, else its failed send is kept for review. */
+export interface CompanionDraft {
+  draft: DraftResult;
+  ok: boolean;
+}
+
+const passedSend = (d: DraftResult) => d.outcome === "draft" && !d.failedAttempt && isSend(d.decision);
+
+/** The context with the stage plan narrowed to one channel (no second channel). */
+export function forChannel(ctx: AgentContext, channel: Channel): AgentContext {
+  const plan = ctx.stagePlan!;
+  const narrowed = {
+    ...plan,
+    preferredChannel: channel,
+    alsoChannel: undefined,
+    allowedActions: [`send_${channel}` as const, ...plan.allowedActions.filter((a) => a !== "send_email" && a !== "send_whatsapp")],
+  };
+  return { ...ctx, stagePlan: narrowed, rules: { ...ctx.rules, stagePlan: narrowed } };
+}
+
+/**
+ * HOTFIX-2: a "both" first message (stagePlan.alsoChannel): when the first draft is a message (passed or failed
+ * its checks), a second one is written for the other channel, each through every check. `main` is a passing
+ * message when there is one; `companion` is the other channel's message (passed, or failed for review), else null.
+ * One channel never gets two messages. Without alsoChannel this is draftDecision.
+ */
+export async function draftFirstMessages(
+  ctx: AgentContext,
+  deps: Parameters<typeof draftDecision>[1],
+  usage: Usage,
+): Promise<{ main: DraftResult; companion: CompanionDraft | null }> {
+  const also = ctx.stagePlan?.alsoChannel;
+  const first = await draftDecision(also ? forChannel(ctx, ctx.stagePlan!.preferredChannel!) : ctx, deps, usage);
+  const wroteMessage = first.outcome !== "blocked" && first.attempts.some((a) => isSend(a.rules.finalDecision));
+  if (!also || !wroteMessage) return { main: first, companion: null };
+  const second = await draftDecision(forChannel(ctx, also), deps, usage);
+  const failedSend = (d: DraftResult) => Boolean(d.failedAttempt && isSend(d.failedAttempt.rules.finalDecision));
+  if (passedSend(first)) return { main: first, companion: passedSend(second) || failedSend(second) ? { draft: second, ok: passedSend(second) } : null };
+  if (passedSend(second)) return { main: second, companion: failedSend(first) ? { draft: first, ok: false } : null };
+  return { main: first, companion: null };
 }
 
 function handoffTitle(problems: string[]): string {

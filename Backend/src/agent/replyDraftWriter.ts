@@ -35,7 +35,7 @@ export async function writeReplyDraft(
     usage.costUsd += costUsd(deps.prices, modelName, r.inputTokens, r.outputTokens, r.cachedInputTokens ?? 0) ?? 0;
   };
   const action = channel === "email" ? "send_email" : "send_whatsapp";
-  const facts = { ...messageFactsOf(ctx, deps.now), inboundFirst: false, conversationExists: true, threaded: true, finalCheck: false };
+  const facts = { ...messageFactsOf(ctx, deps.now), inboundFirst: false, conversationExists: true, threaded: true, finalCheck: false, firstMessage: false };
   let problems: string[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {
     const decided = await deps.model.decide({

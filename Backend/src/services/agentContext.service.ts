@@ -9,7 +9,7 @@ import type { AgentDealContext } from "../agent/dealContext.js";
 import type { LiveScope } from "../agent/liveMode.js";
 import { assembleAgentContext, sourceMode, type AgentContextLeadRow, type AgentContextSource, type AgentContextStageRow } from "../agent/contextAssembly.js";
 import type { Embedder } from "../providers/openai.provider.js";
-import { latestAiEmail, type AiEmailThread } from "./agentSendState.service.js";
+import { latestAiEmail, TOUCH_GROUP_SQL, type AiEmailThread } from "./agentSendState.service.js";
 import { searchKnowledge } from "./knowledge.service.js";
 import { assetFileSize } from "./knowledgeLibrary.service.js";
 import { AUTOMATED_SQL } from "./leadAutomation.service.js";
@@ -42,7 +42,7 @@ export interface AgentSettingsRow extends AgentRuleSettings {
   live_since: Date | null;
   banned_phrases: string[];
   style_examples: string;
-  first_channel: "whatsapp" | "email";
+  first_channel: "whatsapp" | "email" | "both";
 }
 
 export interface AgentContextLead {
@@ -229,9 +229,12 @@ export async function loadAgentContextSource(db: Queryable, workspaceId: string,
     // respect the same gaps and limits a live agent would (leads.agent_touch_* stay real-only).
     // A live contact counts real sends only (E2 rule 6).
     db.query<{ action: string; at: Date }>(
-      `select action, coalesce(sent_at, send_at, created_at) as at from public.agent_decisions
-        where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp')
-          and (outcome = 'sent' or ($3::boolean and outcome = 'draft' and coalesce((rules_result ->> 'allowed')::boolean, false)))
+      // HOTFIX-2: a "both" first message (two rows, one pair) is one touch.
+      `select action, at from (
+         select distinct on (${TOUCH_GROUP_SQL}) action, coalesce(sent_at, send_at, created_at) as at from public.agent_decisions
+          where lead_id = $1 and workspace_id = $2 and action in ('send_email', 'send_whatsapp')
+            and (outcome = 'sent' or ($3::boolean and outcome = 'draft' and coalesce((rules_result ->> 'allowed')::boolean, false)))
+          order by ${TOUCH_GROUP_SQL}, (action = 'send_whatsapp') desc) touches
        union all
        -- LL-3: the fixed "We tried calling" WhatsApp counts toward the 7-day limit only (contextAssembly).
        select '${TRIED_CALLING_ACTION}', t.sent_at from public.tried_calling_messages t

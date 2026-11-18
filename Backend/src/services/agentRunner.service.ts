@@ -49,7 +49,8 @@ export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agen
      where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
 /** Today's (IST) count toward max_decisions_per_day of workspace $1: AI decisions plus reply drafts (E3b-2a rule 3). AI reply labels count only toward the monthly budget (E3b-2b rule 1). */
 export const DAY_DECISIONS_SQL = `((select count(*) from public.agent_decisions
-     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata'))
+     -- HOTFIX-2: a "both" first message's second row is part of the same decision.
+     where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata') and paired_decision_id is null)
    + (select count(*) from public.reply_drafts
      where workspace_id = $1 and created_at >= (${IST_DAY} at time zone 'Asia/Kolkata')))::int`;
 
@@ -66,11 +67,11 @@ export interface AgentRunnerDeps {
 
 // --- The decision pipeline: agent/draftDecision.ts (DB-free, DEMO-1); re-exported for existing callers.
 export { draftDecision, type DraftAttempt, type DraftResult, type Usage } from "../agent/draftDecision.js";
-import { draftDecision, type DraftAttempt, type DraftResult, type Usage } from "../agent/draftDecision.js";
+import { draftFirstMessages, type CompanionDraft, type DraftAttempt, type DraftResult, type Usage } from "../agent/draftDecision.js";
 import { AUTOMATED_SQL } from "./leadAutomation.service.js";
 
-const isSend = (d: AgentDecision): d is Extract<AgentDecision, { action: "send_email" | "send_whatsapp" }> =>
-  d.action === "send_email" || d.action === "send_whatsapp";
+const isSendAction = (action: string) => action === "send_email" || action === "send_whatsapp";
+const isSend = (d: AgentDecision): d is Extract<AgentDecision, { action: "send_email" | "send_whatsapp" }> => isSendAction(d.action);
 
 // --- The worker loop -------------------------------------------------------------
 
@@ -265,8 +266,8 @@ async function processWakeup(wakeup: ClaimedWakeup, deps: AgentRunnerDeps, confi
   let ctx: AgentContext | null = null;
   try {
     ctx = await buildAgentContext(pool, wakeup.workspace_id, wakeup.lead_id, now, { embedder: deps.embedder });
-    const draft = await draftDecision(ctx, { model: deps.model, ...models, prices, now }, usage);
-    return await recordDraft(wakeup, ctx, draft, models, usage);
+    const { main, companion } = await draftFirstMessages(ctx, { model: deps.model, ...models, prices, now }, usage);
+    return await recordDraft(wakeup, ctx, main, models, usage, companion);
   } catch (error) {
     if (error instanceof ProviderDeferredError) {
       console.warn(`[agent] wakeup ${wakeup.id}: deferred (${error.message}).`);
@@ -303,9 +304,9 @@ const INSERT_DECISION = `
      send_at, next_wake_at, handoff_title, handoff_urgency, new_stage, stop_reason, rules_result, grounding_result,
      regenerated, chunk_ids, playbook_version, decision_model, grounding_model, input_tokens, output_tokens, cost_usd,
      outcome, error, context_company_id, context_deal_id, context_deal_stage, mode, send_status, send_next_at, quality_checks,
-     stage_key, angle)
+     stage_key, angle, paired_decision_id)
   values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33,
-          $34, $35)
+          $34, $35, $36)
   returning id`;
 
 /** One quality_checks entry; `attachmentsRemoved` only when the rules dropped an attachment (E2g). */
@@ -330,9 +331,57 @@ async function recordDraft(
   draft: DraftResult,
   models: { decisionModel: string; groundingModel: string },
   usage: Usage,
+  companion: CompanionDraft | null = null,
 ): Promise<WakeupOutcome> {
   const base = { wakeupId: wakeup.id, leadId: wakeup.lead_id };
   return withTransaction(async (client) => {
+    const live = ctx.rules.mode === "live";
+    const insert = async (
+      d: DraftResult,
+      columns: ReturnType<typeof decisionColumns>,
+      row: { rules: DraftResult["rules"]; grounding: DraftResult["grounding"]; outcome: string; error: string | null; sendAt: Date | null; nextWakeAt: Date | null; usage: Usage; pairedId: string | null },
+    ) => {
+      const queued = row.outcome === "executed" && isSendAction(columns.action);
+      const inserted = await client.query<{ id: string }>(INSERT_DECISION, [
+        wakeup.workspace_id,
+        wakeup.lead_id,
+        wakeup.id,
+        columns.action,
+        columns.reasoning,
+        columns.message_subject,
+        columns.message_body,
+        columns.asset_ids,
+        row.sendAt,
+        row.nextWakeAt,
+        columns.handoff_title,
+        columns.handoff_urgency,
+        columns.new_stage,
+        columns.stop_reason,
+        JSON.stringify(row.rules),
+        row.grounding ? JSON.stringify(row.grounding) : null,
+        d.regenerated,
+        ctx.knowledge.chunks.map((c) => c.id),
+        ctx.playbook?.version ?? null,
+        models.decisionModel,
+        models.groundingModel,
+        row.usage.inputTokens,
+        row.usage.outputTokens,
+        row.usage.costUsd,
+        row.outcome,
+        row.error,
+        ...contextColumns(ctx),
+        live ? "live" : "shadow",
+        queued ? "queued" : null,
+        queued ? row.sendAt : null,
+        // E2b rule 3: what each attempt failed (empty = passed), for AI Activity; E2g: attachments it dropped.
+        JSON.stringify(d.attempts.map((a) => qualityCheck(a, ctx))),
+        // E3b-1 rule 2: the stage plan the decision was made under (the angle only for a message).
+        ctx.stagePlan?.stageKey ?? null,
+        isSendAction(columns.action) ? (ctx.stagePlan?.angle ?? null) : null,
+        row.pairedId,
+      ]);
+      return inserted.rows[0]!.id;
+    };
     const ours = await client.query(`select 1 from public.agent_wakeups where id = $1 and status = 'executing' and claimed_at = $2 for update`, [wakeup.id, wakeup.claimed_at]);
     if (!ours.rowCount) {
       console.warn(`[agent] wakeup ${wakeup.id}: claim lost while deciding; result discarded.`);
@@ -345,63 +394,54 @@ async function recordDraft(
     // A handoff fallback keeps the failed attempt's message for review.
     const failed = draft.failedAttempt ? decisionColumns(draft.failedAttempt.rules.finalDecision) : null;
     // E2: a live contact's decision is acted on (executed), a shadow contact's stays a draft.
-    const live = ctx.rules.mode === "live";
     const outcome = !stillActive ? "skipped" : live && draft.outcome === "draft" ? "executed" : draft.outcome;
-    const queuedSend = outcome === "executed" && isSend(draft.decision);
     const recorded = draft.decision.action === "handoff" && failed ? { ...columns, message_subject: failed.message_subject, message_body: failed.message_body } : columns;
     const sendAt = draft.failedAttempt ? null : draft.rules.sendAt;
     const nextWakeAt = draft.failedAttempt ? null : draft.rules.nextWakeAt;
-    const inserted = await client.query<{ id: string }>(INSERT_DECISION, [
-      wakeup.workspace_id,
-      wakeup.lead_id,
-      wakeup.id,
-      recorded.action,
-      recorded.reasoning,
-      recorded.message_subject,
-      recorded.message_body,
-      recorded.asset_ids,
+    const decisionId = await insert(draft, recorded, {
+      rules: draft.rules,
+      grounding: draft.grounding,
+      outcome,
+      error: stillActive ? null : "The lead is no longer managed by the agent.",
       sendAt,
       nextWakeAt,
-      recorded.handoff_title,
-      recorded.handoff_urgency,
-      recorded.new_stage,
-      recorded.stop_reason,
-      JSON.stringify(draft.rules),
-      draft.grounding ? JSON.stringify(draft.grounding) : null,
-      draft.regenerated,
-      ctx.knowledge.chunks.map((c) => c.id),
-      ctx.playbook?.version ?? null,
-      models.decisionModel,
-      models.groundingModel,
-      usage.inputTokens,
-      usage.outputTokens,
-      usage.costUsd,
-      outcome,
-      stillActive ? null : "The lead is no longer managed by the agent.",
-      ...contextColumns(ctx),
-      live ? "live" : "shadow",
-      queuedSend ? "queued" : null,
-      queuedSend ? sendAt : null,
-      // E2b rule 3: what each attempt failed (empty = passed), for AI Activity; E2g: attachments it dropped.
-      JSON.stringify(draft.attempts.map((a) => qualityCheck(a, ctx))),
-      // E3b-1 rule 2: the stage plan the decision was made under (the angle only for a message).
-      ctx.stagePlan?.stageKey ?? null,
-      isSend(draft.decision) ? (ctx.stagePlan?.angle ?? null) : null,
-    ]);
-    const decisionId = inserted.rows[0]!.id;
+      usage,
+      pairedId: null,
+    });
 
+    // The draft (shadow) / queued send (live) of one message, with its timeline row.
+    const act = async (d: AgentDecision, id: string, at: Date | null) => {
+      if (outcome === "draft") {
+        const title = timelineTitle(d);
+        if (title) await addTimelineEvent(client, { leadId: wakeup.lead_id, kind: "automation", title, detail: SHADOW_NOTE, ...AGENT_ACTOR, metadata: { decisionId: id } });
+      } else {
+        await executeLive(client, wakeup, ctx, d, id, at);
+      }
+    };
     if (outcome === "draft" || outcome === "executed") {
       const d = draft.decision;
       if ((isSend(d) || d.action === "wait") && nextWakeAt) {
         await enqueueWakeup(client, { workspaceId: wakeup.workspace_id, leadId: wakeup.lead_id, reason: "timer", dueAt: nextWakeAt, payload: { decisionId } });
       }
-      if (outcome === "draft") {
-        const title = timelineTitle(d);
-        if (title) {
-          await addTimelineEvent(client, { leadId: wakeup.lead_id, kind: "automation", title, detail: SHADOW_NOTE, ...AGENT_ACTOR, metadata: { decisionId } });
-        }
-      } else {
-        await executeLive(client, wakeup, ctx, d, decisionId, sendAt);
+      await act(d, decisionId, sendAt);
+      // HOTFIX-2: the "both" first message's other channel: the same touch and decision (no cost, no wake-up of its own).
+      // A message that failed its checks is kept for review (blocked); the passing one still goes.
+      if (companion) {
+        const c = companion.draft;
+        const message = companion.ok ? c.decision : c.failedAttempt!.rules.finalDecision;
+        const pairedOutcome = companion.ok ? outcome : "blocked";
+        const pairedSendAt = companion.ok ? c.rules.sendAt : null;
+        const pairedId = await insert(c, decisionColumns(message), {
+          rules: companion.ok ? c.rules : c.failedAttempt!.rules,
+          grounding: companion.ok ? c.grounding : c.failedAttempt!.grounding,
+          outcome: pairedOutcome,
+          error: companion.ok ? null : "Failed the message checks; only the other channel's message went.",
+          sendAt: pairedSendAt,
+          nextWakeAt: null,
+          usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+          pairedId: decisionId,
+        });
+        if (companion.ok) await act(message, pairedId, pairedSendAt);
       }
     }
     await client.query(`update public.agent_wakeups set status = 'done', processed_at = now() where id = $1`, [wakeup.id]);

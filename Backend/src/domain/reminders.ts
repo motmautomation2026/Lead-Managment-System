@@ -3,7 +3,7 @@
  * due time, when a meeting reminder goes, and the fixed reminder texts (no AI). SQL: services/taskReminders.service.ts,
  * services/meetingReminders.service.ts.
  */
-import { addWorkingTime, HOUR_MS, isDateOnly, lastWorkingSlotAtOrBefore, MINUTE_MS, nextWorkingSlot, workingDayOpening } from "./workingTime.js";
+import { addWorkingTime, HOUR_MS, isDateOnly, istDate, lastWorkingSlotAtOrBefore, MINUTE_MS, nextWorkingSlot, workingDayOpening } from "./workingTime.js";
 
 // --- Rule 2: tasks -------------------------------------------------------------------------------
 
@@ -18,6 +18,21 @@ export const FIRST_CALL_WORKING_MS = HOUR_MS;
 /** Rule 2: website / inbound "First call" due time (a lead at 22:00 Saturday → Monday 10:30). */
 export function firstCallDueAt(createdAt: Date): Date {
   return addWorkingTime(createdAt, FIRST_CALL_WORKING_MS);
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * HOTFIX-2: the first AI message's closing sentence, from when the rep's first call is due (firstCallDueAt):
+ * due today → "shortly"; else the next working day's morning ("tomorrow morning" / "on Monday morning").
+ */
+export function firstMessageClosing(now: Date, ownerFirstName: string | null): string {
+  const due = firstCallDueAt(now);
+  const who = ownerFirstName ? `${ownerFirstName} from our team` : "Our team";
+  if (istDate(due) === istDate(now)) return `${who} will call you shortly.`;
+  const tomorrow = istDate(due) === istDate(new Date(now.getTime() + 24 * HOUR_MS));
+  const weekday = WEEKDAY_NAMES[new Date(due.getTime() + 330 * MINUTE_MS).getUTCDay()]!;
+  return `${who} will call you ${tomorrow ? "tomorrow morning" : `on ${weekday} morning`}.`;
 }
 
 /**

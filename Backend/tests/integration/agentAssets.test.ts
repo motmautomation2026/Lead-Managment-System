@@ -35,14 +35,14 @@ const OVER_LIMIT = 10 * 1024 * 1024 + 1024;
 const emailWith = (assetIds: string[], line = ATTACH_LINE): AgentDecision => ({
   action: "send_email",
   subject: "Outbound for Acme Steel",
-  body: `Hi Asha,\n\nFollowing up on my last message. ${line} Would a short call on Tuesday or Wednesday work?`,
+  body: `Hi Asha,\n\nFollowing up on my last message. ${line} Would it help to compare notes on your lead sources?`,
   assetIds,
   nextWakeInDays: 3,
   reasoning: "Share proof.",
 });
 const whatsappWith = (assetIds: string[], line = ATTACH_LINE): AgentDecision => ({
   action: "send_whatsapp",
-  body: `Hi Asha, thanks for your reply. ${line} Would a short call on Tuesday or Wednesday work?`,
+  body: `Hi Asha, thanks for your reply. ${line} Would it help to compare notes on your lead sources?`,
   assetIds,
   nextWakeInDays: 3,
   reasoning: "Share proof.",

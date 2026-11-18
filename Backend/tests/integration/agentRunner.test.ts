@@ -22,7 +22,7 @@ const DAY = 24 * HOUR;
 const EMAIL: AgentDecision = {
   action: "send_email",
   subject: "Outbound for Acme Steel",
-  body: "Hi Asha,\n\nFollowing up on our call about outbound for Acme Steel. Would a short call on Tuesday or Wednesday work for you?",
+  body: "Hi Asha,\n\nFollowing up on our call about outbound for Acme Steel. Would it help to compare notes on your lead sources?",
   assetIds: [],
   nextWakeInDays: 3,
   reasoning: "Follow up after the call.",
@@ -470,13 +470,13 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     });
 
     it("\"we cannot guarantee\" passes the banned-phrase check; \"guaranteed results\" is regenerated", async () => {
-      const honest = whatsapp("Hi Asha, we cannot guarantee orders, but we can show you how we find buyers. Would Tuesday or Wednesday suit you for a call?");
+      const honest = whatsapp("Hi Asha, we cannot guarantee orders, but we can show you how we find buyers. Would it help to compare notes on your lead sources?");
       const { ws, leadId } = await scenario();
       await tick(ws, createFakeDecisionModel({ decisions: [honest] }));
       expect((await decisions(leadId))[0]).toMatchObject({ action: "send_whatsapp", regenerated: false });
 
       const other = await scenario();
-      await tick(other.ws, createFakeDecisionModel({ decisions: [whatsapp("Hi Asha, we offer guaranteed results. Would Tuesday suit you?"), honest] }));
+      await tick(other.ws, createFakeDecisionModel({ decisions: [whatsapp("Hi Asha, we offer guaranteed results. Would that help?"), honest] }));
       const [row] = await decisions(other.leadId);
       expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true });
       expect(row.quality_checks[0].problems).toEqual(['banned_phrase: Uses banned phrase(s): "guaranteed".']);
@@ -484,8 +484,8 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
 
     it("two questions twice, then one → accepted on the third attempt, all three recorded", async () => {
       const { ws, leadId } = await scenario();
-      const two = whatsapp("Hi Asha, is Tuesday good? Or Wednesday?");
-      const model = createFakeDecisionModel({ decisions: [two, two, whatsapp("Hi Asha, would Tuesday or Wednesday suit you for a short call?")] });
+      const two = whatsapp("Hi Asha, is lead quality the issue? Or lead volume?");
+      const model = createFakeDecisionModel({ decisions: [two, two, whatsapp("Hi Asha, is lead volume the main issue for your team?")] });
       await tick(ws, model);
       const [row] = await decisions(leadId);
       expect(row).toMatchObject({ action: "send_whatsapp", regenerated: true });
@@ -499,7 +499,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
 
     it("an inbound first message that thanks the lead is accepted (Suyash); one without thanks is regenerated", async () => {
       const { ws, leadId } = await scenario({ source: "website" });
-      const thanks = whatsapp("Hello Asha, thank you for contacting Northbeam. We focus on relevant business opportunities. Would a short introductory call on Thursday or Friday suit you?");
+      const thanks = whatsapp("Hello Asha, thank you for contacting Northbeam. We focus on relevant business opportunities.");
       const model = createFakeDecisionModel({ decisions: [thanks] });
       expect((await tick(ws, model))[0]).toMatchObject({ result: "draft", action: "send_whatsapp" });
       const [row] = await decisions(leadId);
@@ -511,7 +511,7 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
       expect(model.calls.find((c) => c.kind === "grounding")!.input.messages[0]!.content).not.toContain("not_thanking_inbound");
 
       const other = await scenario({ source: "website" });
-      const noThanks = createFakeDecisionModel({ decisions: [whatsapp("Hello Asha, hope you are well. Would a short call on Thursday or Friday suit you?"), thanks] });
+      const noThanks = createFakeDecisionModel({ decisions: [whatsapp("Hello Asha, hope you are well. We focus on relevant business opportunities."), thanks] });
       await tick(other.ws, noThanks);
       const [retried] = await decisions(other.leadId);
       expect(retried).toMatchObject({ action: "send_whatsapp", regenerated: true });
@@ -539,8 +539,8 @@ describeIfDb("agent runner, shadow mode (requires TEST_DATABASE_URL)", () => {
     });
 
     it("repeating 4+ words of the internal company description → internal_info_leak → regenerated; still leaking → handoff", async () => {
-      const leak = whatsapp("Hi Asha, we support firms in specialty chemicals for textile plants. Would Tuesday or Wednesday suit you for a call?");
-      const clean = whatsapp("Hi Asha, would Tuesday or Wednesday suit you for a short call about outbound for Acme Steel?");
+      const leak = whatsapp("Hi Asha, we support firms in specialty chemicals for textile plants. Would it help to compare notes?");
+      const clean = whatsapp("Hi Asha, would it help to compare notes on outbound for Acme Steel?");
       const withCompany = async () => {
         const s = await scenario();
         const company = (

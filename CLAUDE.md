@@ -97,7 +97,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `062`).
+  (currently `063`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +126,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `062`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `063`).
 
 ## Way of working
 
@@ -137,7 +137,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Completed so far
 
 Every completed phase (0A … E3b-1b and later, incl. UX-1, LL-1, LL-2, INT-1, UX-3, LL-3 and LL-3b) is in `docs/HISTORY.md`; read it for details of a past phase.
-Staging (`arejsxqjhzotmngrobhm`) is at migration `061` (REL-1, 2026-11-18); production is not (release kit: `docs/release/`).
+Staging (`arejsxqjhzotmngrobhm`) is at migration `063` (HOTFIX-2, 2026-11-18); production is not (release kit: `docs/release/`).
 Integration checks owed by phases run without staging, and what INT-1 left open: `docs/crm-v2/INT-1-owed.md`.
 
 ## Safety net (LL-1)
@@ -450,7 +450,13 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
   model may still pick wait/handoff/stop.
 - Channels (E3b-1): both usable → the first touch on `agent_settings.first_channel`, then the other channel than the last touch
   (real sends; shadow: allowed drafts); the wrong one is switched + regenerated (`channel_switch`, fixable). One usable → that one.
-  Limits count both channels together.
+  Limits count both channels together. HOTFIX-2: `first_channel = both` → the first message is one WhatsApp + one email (two
+  drafts, each fully checked; `agent_decisions.paired_decision_id` links the second): ONE touch (`TOUCH_GROUP_SQL`), ONE decision
+  for the daily cap; one channel unusable or failing its checks → the other alone.
+- First message (HOTFIX-2, `welcome` angle): no call question or days; it ends with the code's closing sentence
+  (`domain/reminders.ts` `firstMessageClosing`: "<Rep> from our team will call you shortly / tomorrow morning / on Monday morning.",
+  from `firstCallDueAt`; polish appends it if missing). That closing is allowed only in the first message (`call_days`); follow-ups
+  keep the two suggested days. Reply drafts are never a first message.
 - Speed to lead (E3b-1): a website/inbound-form contact < 2 h old with no touch may get its FIRST AI message 08:00–21:00 IST any day
   (rules, send re-check and both channel checks); every other safety rule unchanged; follow-ups keep the normal window.
 - Call days (E3b-2a-2, code check `call_days`, fixable, both channels, decisions and reply drafts): a question asking for a call offers
