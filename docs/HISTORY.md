@@ -1005,5 +1005,9 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   option `none` labelled "Admins (no owner)". Item 2 (`agentAssets` run B): not the clock — every window in that file is 24 h × 7
   days and its lead is not fresh-inbound; likeliest cause a transient Storage download in the WhatsApp attachment send (any
   non-provider error → "Temporary error, will retry" → `deferred`); no other integration test asserts a send without a 24 h window,
-  a fixed `now` or a mocked sender; the file was left unchanged (reported, not a test bug). Tests: backend unit 1438 → 1442, frontend
-  600 → 603 (+ integration cases in `taskReminders`, `deals`, `dealsC4Api`, `ll3Deals`).
+  a fixed `now` or a mocked sender. Follow-up (approved): the three WhatsApp attachment sends in `agentAssets` go through
+  `sendRetryingOnce` (a deferral must be "Temporary error, will retry: …", then one bounded retry; "sent" still required) — the
+  file passed 3× alone (12 / 12 each, ~80 s). Tests: backend unit 1438 → 1442, frontend 600 → 603 (+ integration cases in
+  `taskReminders`, `deals`, `dealsC4Api`, `ll3Deals`). Staging integration: the LL-3b-touched files (`taskReminders`, `deals`,
+  `dealsC4Api`, `ll3Deals`, `ll3Calls`, `ll3Recovery`) 48 / 48 green (302 s), no local API / worker; **the full suite was not run
+  twice** (shortened on request: ~35 min per run) — still owed before production.
