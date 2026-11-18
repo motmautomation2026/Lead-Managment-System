@@ -51,6 +51,8 @@ export function EnrollWorkflowDialog({
   const automationStore = useAutomations();
   const [workflowId, setWorkflowId] = useState("");
   const [reason, setReason] = useState("");
+  // Shown in the dialog too: e.g. the 409 for a contact the AI agent manages live (E2).
+  const [error, setError] = useState<string | null>(null);
 
   const active = automationStore.workflows.filter(
     (workflow) =>
@@ -68,6 +70,7 @@ export function EnrollWorkflowDialog({
     setLastLoadedFor(loadedFor);
     setWorkflowId(matchingTrigger.length === 1 ? matchingTrigger[0]!.id : "");
     setReason("");
+    setError(null);
   }
   if (!open && lastLoadedFor !== "") setLastLoadedFor("");
 
@@ -79,8 +82,9 @@ export function EnrollWorkflowDialog({
       setWorkflowId("");
       setReason("");
       onOpenChange(false);
-    } catch (error) {
-      toast.error(messageFromError(error));
+    } catch (err) {
+      setError(messageFromError(err));
+      toast.error(messageFromError(err));
     }
   };
 
@@ -131,6 +135,14 @@ export function EnrollWorkflowDialog({
               placeholder="Why this lead is going into this workflow"
             />
           </div>
+          {error && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-danger-soft p-2 text-sm text-danger-soft-foreground"
+            >
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -225,25 +237,27 @@ function StepRow({
 
 /**
  * "At a glance" view of a lead's nurture sequence: which messages already
- * went out, and exactly when the next one is due — assembled entirely from
- * data useAutomations() already loads (workflows+steps, runs, scheduled
- * actions), no extra requests.
+ * went out, and exactly when the next one is due — from the contact's runs and
+ * scheduled steps (the record page loads them from the lists, filtered by contact)
+ * plus the workflows + templates useAutomations() loads.
  */
 /** How many upcoming steps the card shows inline before collapsing the rest behind "View all". */
 const VISIBLE_STEP_COUNT = 2;
 
 export function ScheduledFollowupTimeline({
-  leadId,
+  runs: leadRuns,
+  scheduledActions,
   doNotContact,
   onEnrollClick,
 }: {
-  leadId: string;
+  /** This contact's runs and scheduled steps. */
+  runs: Run[];
+  scheduledActions: ScheduledAction[];
   doNotContact: boolean;
   onEnrollClick: () => void;
 }) {
   const [viewAllOpen, setViewAllOpen] = useState(false);
   const automationStore = useAutomations();
-  const leadRuns = automationStore.runs.filter((run: Run) => run.leadId === leadId);
   const nonTerminalRun = leadRuns.find((run) =>
     ["running", "waiting", "paused"].includes(run.status),
   );
@@ -279,9 +293,7 @@ export function ScheduledFollowupTimeline({
   const workflow = automationStore.workflows.find((item) => item.id === displayRun.workflowId);
   const version = workflow?.versions.find((item) => item.version === displayRun.version);
   const rows = stepsWithCumulativeDay(version?.steps ?? []);
-  const actionsForRun = automationStore.scheduledActions.filter(
-    (action) => action.workflowRunId === displayRun.id,
-  );
+  const actionsForRun = scheduledActions.filter((action) => action.workflowRunId === displayRun.id);
   const currentOrder = findCurrentStep(workflow, displayRun)?.order;
   const actionFor = (stepId: string) =>
     actionsForRun.find((action) => action.workflowStepId === stepId);

@@ -1,6 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   backend,
+  type AgentDecisionFilters,
+  type AgentEnrollResult,
+  type AgentRatingInput,
+  type AgentSettingsUpdate,
+  type AgentLiveScope,
   type CreateLeadInput,
   type CreateMeetingInput,
   type CreateProposalInput,
@@ -17,33 +23,68 @@ import {
   type UpdateWorkflowInput,
 } from "@/lib/backend-client";
 import { initials } from "@/lib/format";
+import type { DiscardReason } from "@/types";
+
+/** LL-3: what Lost (reason + competitor / project date) and Discard (reason) carry besides the text. */
+export interface LifecycleExtra {
+  lossReason?: LeadLossReason | undefined;
+  competitorName?: string | undefined;
+  projectDate?: string | undefined;
+  discardReason?: DiscardReason | undefined;
+}
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type {
   AutomationMode,
+  ActivityType,
+  BulkResult,
+  CompanyInput,
+  CompanyListParams,
+  ContactListParams,
+  DealListParams,
+  DuplicateListParams,
+  CreateDealInput,
+  MoveDealStageInput,
+  UpdateDealInput,
+  SavedViewInput,
+  SavedViewObject,
   LeadLossReason,
   MeetingOutcome,
   ProposalStatus,
+  ReplyLabel,
+  ReplyChannel,
+  ReplyDraft,
   TemplateType,
   User,
   WorkflowStep,
 } from "@/types";
-import { keys, refreshLead } from "./query";
+import { keys, refreshCompany, refreshContact, refreshDeal } from "./query";
 import { useWorkspace } from "./workspace-context";
 
+/** E4b rule 5: a non-member who still owns records here is labelled, never offered in pickers. */
+export const NOT_IN_WORKSPACE = "(not in this workspace)";
+
 export function useSession() {
+  const { currentWorkspace, currentWorkspaceId } = useWorkspace();
   const me = useQuery({
     queryKey: keys.session,
     queryFn: ({ signal }) => backend.me(signal),
     staleTime: 60_000,
   });
   const profiles = useQuery({
-    queryKey: keys.profiles,
+    queryKey: keys.profiles(currentWorkspaceId),
     queryFn: ({ signal }) => backend.profiles(signal),
     staleTime: 60_000,
+    enabled: currentWorkspaceId !== null,
   });
-  const users: User[] = (profiles.data?.data ?? []).map((user) => ({
+  // Pickers already offer only `active` users (plus a record's current owner): a non-member is
+  // `active: false` and named "(not in this workspace)".
+  const users: User[] = (profiles.data?.data ?? []).map(({ member, ...user }) => ({
     ...user,
-    role: "Salesperson",
+    name: member ? user.name : `${user.name} ${NOT_IN_WORKSPACE}`,
+    active: member,
+    role: user.role === "admin" ? "Admin" : "Salesperson",
   }));
+  // E4b: the role in the CURRENT workspace (a super-admin is admin everywhere).
   const currentUser: User | null = me.data
     ? {
         id: me.data.id,
@@ -51,12 +92,15 @@ export function useSession() {
         email: me.data.email,
         initials: initials(me.data.name),
         active: true,
-        role: me.data.role === "admin" ? "Admin" : "Salesperson",
+        role: currentWorkspace?.role === "admin" || me.data.isSuperAdmin ? "Admin" : "Salesperson",
       }
     : null;
   return {
     users,
     currentUser,
+    isSuperAdmin: me.data?.isSuperAdmin === true,
+    /** /admin user management (global admin or super-admin), not a workspace role. */
+    canManageUsers: me.data?.role === "admin" || me.data?.isSuperAdmin === true,
     userName: (id?: string) => users.find((user) => user.id === id)?.name ?? "Unassigned",
     isLoading: me.isLoading || profiles.isLoading,
     error: me.error ?? profiles.error,
@@ -64,27 +108,24 @@ export function useSession() {
 }
 export type SessionSlice = ReturnType<typeof useSession>;
 
-export function useLeads() {
+/** The one check for admin-only UI (role from GET /me); the backend enforces it with requireAdmin. */
+export function useIsAdmin() {
+  return useSession().currentUser?.role === "Admin";
+}
+
+/** Every lead/contact write (PATCH /leads/:id, notes, calls, lifecycle…) without loading a list. */
+export function useLeadMutations() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.leads(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.leads.list({ limit: 500 }, signal),
-    enabled: Boolean(currentWorkspaceId),
-  });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
+  const refresh = (leadId: string) => refreshContact(client, currentWorkspaceId, leadId);
   const create = useMutation({
     mutationFn: (input: CreateLeadInput) => backend.leads.create(input),
     onSuccess: (lead) => refresh(lead.id),
   });
   const importCsv = useMutation({
     mutationFn: (rows: ImportLeadRow[]) => backend.leads.importCsv(rows),
-    onSuccess: () =>
-      Promise.all([
-        client.invalidateQueries({ queryKey: keys.leads(currentWorkspaceId) }),
-        client.invalidateQueries({ queryKey: keys.dashboard(currentWorkspaceId) }),
-        client.invalidateQueries({ queryKey: keys.notifications(currentWorkspaceId) }),
-      ]),
+    // New contacts can land anywhere (lists, companies, Home): refresh every contact view.
+    onSuccess: () => refreshContact(client, currentWorkspaceId),
   });
   const update = useMutation({
     mutationFn: ({ id, input }: { id: string; input: UpdateLeadInput }) =>
@@ -92,8 +133,11 @@ export function useLeads() {
     onSuccess: (lead) => refresh(lead.id),
   });
   const note = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: string }) => backend.leads.addNote(id, body),
-    onSuccess: (_, vars) => refresh(vars.id),
+    mutationFn: ({ id, body, dealId }: { id: string; body: string; dealId?: string | undefined }) =>
+      backend.leads.addNote(id, body, dealId),
+    // A deal note also shows in the deal's (and its company's) feed.
+    onSuccess: (_, vars) =>
+      vars.dealId ? refreshDeal(client, currentWorkspaceId) : refresh(vars.id),
   });
   const remove = useMutation({
     mutationFn: (id: string) => backend.leads.delete(id),
@@ -143,26 +187,40 @@ export function useLeads() {
       id,
       action,
       reason,
-      lossReason,
+      extra,
     }: {
       id: string;
       action: "won" | "lost" | "discard" | "reactivate" | "long_term_nurture";
       reason?: string | undefined;
-      /** Required by the backend when action === 'lost'. */
-      lossReason?: LeadLossReason | undefined;
+      extra?: LifecycleExtra | undefined;
     }) =>
       action === "won"
         ? backend.leads.markWon(id, reason)
         : action === "lost"
-          ? backend.leads.markLost(id, lossReason!, reason)
+          ? backend.leads.markLost(id, extra!.lossReason!, reason, {
+              competitorName: extra?.competitorName,
+              projectDate: extra?.projectDate,
+            })
           : action === "discard"
-            ? backend.leads.discard(id, reason)
+            ? backend.leads.discard(id, extra!.discardReason!, reason)
             : action === "long_term_nurture"
               ? backend.leads.longTermNurture(id, reason)
               : backend.leads.reactivate(id, reason),
     onSuccess: (lead) => refresh(lead.id),
   });
-  const leads = query.data?.data ?? [];
+  // E1 / D3: clearing a WhatsApp opt-out or an email bounce / unsubscribe is admin-only and needs a reason (backend enforces it).
+  const contactability = useMutation({
+    mutationFn: ({
+      id,
+      reason,
+      channel,
+    }: {
+      id: string;
+      reason: string;
+      channel: "whatsapp" | "email";
+    }) => backend.leads.setContactability(id, { channel, status: "valid", reason }),
+    onSuccess: (_data, variables) => refresh(variables.id),
+  });
   const isPending = [
     create,
     importCsv,
@@ -175,18 +233,15 @@ export function useLeads() {
     call,
     communication,
     lifecycle,
+    contactability,
   ].some((mutation) => mutation.isPending);
   return {
-    leads,
-    getLead: (id: string) => leads.find((lead) => lead.id === id),
-    isLoading: query.isLoading,
-    error: query.error,
     isPending,
     addLead: (input: CreateLeadInput) => create.mutateAsync(input),
     importLeadsCsv: (rows: ImportLeadRow[]) => importCsv.mutateAsync(rows),
     updateLead: (id: string, input: UpdateLeadInput) => update.mutateAsync({ id, input }),
     deleteLead: (id: string) => remove.mutateAsync(id),
-    addNote: (id: string, body: string) => note.mutateAsync({ id, body }),
+    addNote: (id: string, body: string, dealId?: string) => note.mutateAsync({ id, body, dealId }),
     setAutomation: (id: string, mode: AutomationMode, reason?: string) =>
       automation.mutateAsync({ id, mode, reason }),
     markDnc: (id: string, reason: string) => dnc.mutateAsync({ id, reason }),
@@ -198,11 +253,14 @@ export function useLeads() {
       id: string,
       action: "won" | "lost" | "discard" | "reactivate" | "long_term_nurture",
       reason?: string,
-      lossReason?: LeadLossReason,
-    ) => lifecycle.mutateAsync({ id, action, reason, lossReason }),
+      extra?: LifecycleExtra,
+    ) => lifecycle.mutateAsync({ id, action, reason, extra }),
+    clearWhatsAppOptOut: (id: string, reason: string) =>
+      contactability.mutateAsync({ id, reason, channel: "whatsapp" }),
+    clearEmailStatus: (id: string, reason: string) =>
+      contactability.mutateAsync({ id, reason, channel: "email" }),
   };
 }
-export type LeadsSlice = ReturnType<typeof useLeads>;
 
 export function useLead(leadId: string) {
   const { currentWorkspaceId } = useWorkspace();
@@ -231,160 +289,10 @@ export function useLead(leadId: string) {
   };
 }
 
-export function useTasks() {
-  const client = useQueryClient();
-  const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.tasks(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.tasks.list(undefined, signal),
-    enabled: Boolean(currentWorkspaceId),
-  });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
-  const create = useMutation({
-    mutationFn: (input: CreateTaskInput) => backend.tasks.create(input),
-    onSuccess: (task) => refresh(task.leadId),
-  });
-  const update = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateTaskInput }) =>
-      backend.tasks.update(id, input),
-    onSuccess: (task) => refresh(task.leadId),
-  });
-  const complete = useMutation({
-    mutationFn: (id: string) => backend.tasks.complete(id),
-    onSuccess: (task) => refresh(task.leadId),
-  });
-  const cancel = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason?: string | undefined }) =>
-      backend.tasks.cancel(id, reason),
-    onSuccess: (task) => refresh(task.leadId),
-  });
-  return {
-    tasks: query.data?.data ?? [],
-    isLoading: query.isLoading,
-    error: query.error,
-    isPending: create.isPending || update.isPending || complete.isPending || cancel.isPending,
-    addTask: (input: CreateTaskInput) => create.mutateAsync(input),
-    updateTask: (id: string, input: UpdateTaskInput) => update.mutateAsync({ id, input }),
-    completeTask: (id: string) => complete.mutateAsync(id),
-    cancelTask: (id: string, reason?: string) => cancel.mutateAsync({ id, reason }),
-  };
-}
-export type TasksSlice = ReturnType<typeof useTasks>;
-
-export function useMeetings() {
-  const client = useQueryClient();
-  const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.meetings(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.meetings.list(undefined, signal),
-    enabled: Boolean(currentWorkspaceId),
-  });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
-  const create = useMutation({
-    mutationFn: (input: CreateMeetingInput) => backend.meetings.create(input),
-    onSuccess: (meeting) => refresh(meeting.leadId),
-  });
-  const update = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateMeetingInput }) =>
-      backend.meetings.update(id, input),
-    onSuccess: (meeting) => refresh(meeting.leadId),
-  });
-  const outcome = useMutation({
-    mutationFn: ({
-      id,
-      outcome,
-      notes,
-    }: {
-      id: string;
-      outcome: MeetingOutcome;
-      notes?: string | undefined;
-    }) => backend.meetings.recordOutcome(id, outcome, notes),
-    onSuccess: (meeting) => refresh(meeting.leadId),
-  });
-  return {
-    meetings: query.data?.data ?? [],
-    isLoading: query.isLoading,
-    error: query.error,
-    isPending: create.isPending || update.isPending || outcome.isPending,
-    addMeeting: (input: CreateMeetingInput) => create.mutateAsync(input),
-    updateMeeting: (id: string, input: UpdateMeetingInput) => update.mutateAsync({ id, input }),
-    recordOutcome: (id: string, value: MeetingOutcome, notes?: string) =>
-      outcome.mutateAsync({ id, outcome: value, notes }),
-  };
-}
-export type MeetingsSlice = ReturnType<typeof useMeetings>;
-
-export function useProposals() {
-  const client = useQueryClient();
-  const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.proposals(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.proposals.list(undefined, signal),
-    enabled: Boolean(currentWorkspaceId),
-    // Keeps polling while any proposal's WhatsApp send is still in flight on
-    // the worker (email resolves synchronously, but WhatsApp can only be
-    // sent from the automation worker process — see Backend/src/worker.ts —
-    // so its status flips a few seconds after this list first loads).
-    refetchInterval: (q) =>
-      q.state.data?.data.some((p) => ["queued", "sending"].includes(p.whatsappSendStatus))
-        ? 8000
-        : false,
-  });
-  const refresh = (leadId: string) => refreshLead(client, currentWorkspaceId, leadId);
-  const create = useMutation({
-    mutationFn: (input: CreateProposalInput) => backend.proposals.create(input),
-    onSuccess: (proposal) => refresh(proposal.leadId),
-  });
-  const update = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateProposalInput }) =>
-      backend.proposals.update(id, input),
-    onSuccess: (proposal) => refresh(proposal.leadId),
-  });
-  const status = useMutation({
-    mutationFn: ({
-      id,
-      status,
-      lossReason,
-      lossNotes,
-    }: {
-      id: string;
-      status: ProposalStatus;
-      lossReason?: LeadLossReason | undefined;
-      lossNotes?: string | undefined;
-    }) => backend.proposals.setStatus(id, status, lossReason, lossNotes),
-    onSuccess: (proposal) => refresh(proposal.leadId),
-  });
-  return {
-    proposals: query.data?.data ?? [],
-    isLoading: query.isLoading,
-    error: query.error,
-    isPending: create.isPending || update.isPending || status.isPending,
-    addProposal: (input: CreateProposalInput) => create.mutateAsync(input),
-    updateProposal: (id: string, input: UpdateProposalInput) => update.mutateAsync({ id, input }),
-    // lossReason/lossNotes are required by the backend when value is
-    // 'rejected'/'expired' — the UI prompts for it first (see
-    // proposals-page.tsx) rather than this hook silently omitting it.
-    setProposalStatus: (
-      id: string,
-      value: ProposalStatus,
-      lossReason?: LeadLossReason,
-      lossNotes?: string,
-    ) => status.mutateAsync({ id, status: value, lossReason, lossNotes }),
-  };
-}
-export type ProposalsSlice = ReturnType<typeof useProposals>;
-
-export function useTimeline(leadId: string) {
-  const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.timeline(currentWorkspaceId, leadId),
-    queryFn: ({ signal }) => backend.leads.timeline(leadId, signal),
-    enabled: Boolean(leadId) && Boolean(currentWorkspaceId),
-  });
-  return { timeline: query.data?.data ?? [], isLoading: query.isLoading, error: query.error };
-}
-export type TimelineSlice = ReturnType<typeof useTimeline>;
-
+/**
+ * Workflows + templates (small reference lists) and their writes. Runs and scheduled steps
+ * are paginated lists since C6b (`useRunList`, `useScheduledActionList`, `useRunAction`).
+ */
 export function useAutomations() {
   const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
@@ -399,16 +307,6 @@ export function useAutomations() {
     queryFn: ({ signal }) => backend.templates.list(signal),
     enabled,
   });
-  const runs = useQuery({
-    queryKey: keys.runs(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.runs.list(undefined, signal),
-    enabled,
-  });
-  const scheduled = useQuery({
-    queryKey: keys.scheduledActions(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.scheduledActions.list(undefined, signal),
-    enabled,
-  });
   const invalidate = () =>
     Promise.all(
       [
@@ -416,7 +314,7 @@ export function useAutomations() {
         keys.templates(currentWorkspaceId),
         keys.runs(currentWorkspaceId),
         keys.scheduledActions(currentWorkspaceId),
-        keys.dashboard(currentWorkspaceId),
+        keys.home(currentWorkspaceId),
       ].map((queryKey) => client.invalidateQueries({ queryKey })),
     );
   const workflowCreate = useMutation({
@@ -456,27 +354,13 @@ export function useAutomations() {
       backend.workflows.deleteVersion(id, version),
     onSuccess: invalidate,
   });
-  const runAction = useMutation({
-    mutationFn: ({
-      id,
-      action,
-    }: {
-      id: string;
-      action: "pause" | "resume" | "cancel" | "retry";
-    }) =>
-      action === "pause"
-        ? backend.runs.pause(id)
-        : action === "resume"
-          ? backend.runs.resume(id)
-          : action === "cancel"
-            ? backend.runs.cancel(id)
-            : backend.runs.retry(id),
-    onSuccess: invalidate,
-  });
+  // Runs change the contact's next action, timeline and tasks too (audit B31).
+  const invalidateFor = (leadId: string) =>
+    Promise.all([invalidate(), refreshContact(client, currentWorkspaceId, leadId)]);
   const enroll = useMutation({
     mutationFn: (input: { leadId: string; workflowId: string; reason?: string | undefined }) =>
       backend.runs.create(input),
-    onSuccess: invalidate,
+    onSuccess: (_, input) => invalidateFor(input.leadId),
   });
   const templateCreate = useMutation({
     mutationFn: (input: CreateTemplateInput) => backend.templates.create(input),
@@ -505,10 +389,8 @@ export function useAutomations() {
   return {
     workflows: workflowList,
     templates: templates.data?.data ?? [],
-    runs: runs.data?.data ?? [],
-    scheduledActions: scheduled.data?.data ?? [],
-    isLoading: workflows.isLoading || templates.isLoading || runs.isLoading || scheduled.isLoading,
-    error: workflows.error ?? templates.error ?? runs.error ?? scheduled.error,
+    isLoading: workflows.isLoading || templates.isLoading,
+    error: workflows.error ?? templates.error,
     isPending: [
       workflowCreate,
       workflowUpdate,
@@ -518,7 +400,6 @@ export function useAutomations() {
       duplicate,
       workflowDelete,
       workflowVersionDelete,
-      runAction,
       enroll,
       templateCreate,
       templateUpdate,
@@ -546,10 +427,6 @@ export function useAutomations() {
       workflowDelete.mutateAsync(force !== undefined ? { id, force } : { id }),
     deleteWorkflowVersion: (id: string, version: number) =>
       workflowVersionDelete.mutateAsync({ id, version }),
-    pauseRun: (id: string) => runAction.mutateAsync({ id, action: "pause" }),
-    resumeRun: (id: string) => runAction.mutateAsync({ id, action: "resume" }),
-    cancelRun: (id: string) => runAction.mutateAsync({ id, action: "cancel" }),
-    retryRun: (id: string) => runAction.mutateAsync({ id, action: "retry" }),
     enrollLead: (leadId: string, workflowId: string, reason?: string) =>
       enroll.mutateAsync({ leadId, workflowId, reason }),
     addTemplate: (input: { name: string; type: TemplateType; subject: string; body: string }) =>
@@ -591,12 +468,756 @@ export function useNotifications() {
 }
 export type NotificationsSlice = ReturnType<typeof useNotifications>;
 
-export function useDashboard() {
+const KNOWLEDGE_POLL_MS = 5_000;
+
+/** Poll while anything is still being ingested by the worker; stop once all are ready or failed. */
+export function knowledgePollInterval(
+  items: { status: string | null }[] | undefined,
+): number | false {
+  return items?.some((item) => item.status === "pending" || item.status === "processing")
+    ? KNOWLEDGE_POLL_MS
+    : false;
+}
+
+export function useKnowledge() {
+  const client = useQueryClient();
   const { currentWorkspaceId } = useWorkspace();
-  const query = useQuery({
-    queryKey: keys.dashboard(currentWorkspaceId),
-    queryFn: ({ signal }) => backend.dashboard.summary(signal),
+  const enabled = Boolean(currentWorkspaceId);
+  const documents = useQuery({
+    queryKey: keys.knowledgeDocuments(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.knowledge.documents.list(signal),
+    enabled,
+    refetchInterval: (query) => knowledgePollInterval(query.state.data?.data),
+  });
+  const assets = useQuery({
+    queryKey: keys.knowledgeAssets(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.knowledge.assets.list(signal),
+    enabled,
+    refetchInterval: (query) => knowledgePollInterval(query.state.data?.data),
+  });
+  const invalidate = () =>
+    Promise.all(
+      [keys.knowledgeDocuments(currentWorkspaceId), keys.knowledgeAssets(currentWorkspaceId)].map(
+        (queryKey) => client.invalidateQueries({ queryKey }),
+      ),
+    );
+  const write =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A) => {
+      const result = await fn(...args);
+      await invalidate();
+      return result;
+    };
+  return {
+    documents: documents.data?.data ?? [],
+    assets: assets.data?.data ?? [],
+    isLoading: documents.isLoading || assets.isLoading,
+    error: documents.error ?? assets.error,
+    createText: write(backend.knowledge.documents.createText),
+    upload: write(backend.knowledge.documents.upload),
+    updateDocument: write(backend.knowledge.documents.update),
+    reprocess: write(backend.knowledge.documents.reprocess),
+    removeDocument: write(backend.knowledge.documents.remove),
+    createAsset: write(backend.knowledge.assets.create),
+    updateAsset: write(backend.knowledge.assets.update),
+    removeAsset: write(backend.knowledge.assets.remove),
+  };
+}
+
+export function useKnowledgeDocument(id: string | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.knowledgeDocument(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.knowledge.documents.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+export function useKnowledgeSearch() {
+  return useMutation({ mutationFn: backend.knowledge.search });
+}
+
+// --- AI agent (Settings → AI agent, admin only) ---------------------------------
+
+export function useAgentSettings() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentSettings(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.settings.get(signal),
     enabled: Boolean(currentWorkspaceId),
   });
-  return { summary: query.data, isLoading: query.isLoading, error: query.error };
+}
+
+export function useUpdateAgentSettings() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: AgentSettingsUpdate) => backend.agent.settings.update(input),
+    onSuccess: (data) => {
+      client.setQueryData(keys.agentSettings(currentWorkspaceId), data);
+      // The mode banner, live counts and every contact's Live/Shadow come from these.
+      void client.invalidateQueries({ queryKey: keys.agentStats(currentWorkspaceId) });
+      void client.invalidateQueries({ queryKey: keys.agentLeadPanel(currentWorkspaceId) });
+    },
+  });
+}
+
+/** E2f (admin): "Reset go-live count" — the gate counts only decisions created from now on. */
+export function useResetReadiness() {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: () => backend.agent.settings.resetReadiness(),
+    onSuccess: (data) => {
+      client.setQueryData(keys.agentSettings(currentWorkspaceId), data);
+      void client.invalidateQueries({ queryKey: keys.agentStats(currentWorkspaceId) });
+    },
+  });
+}
+
+/** E2 (admin): the confirm dialog's numbers for switching to Live with `scope`; fresh each time. */
+export function useAgentLivePreview(scope: AgentLiveScope | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: [...keys.agentSettings(currentWorkspaceId), "live-preview", scope] as const,
+    queryFn: ({ signal }) => backend.agent.settings.livePreview(scope!, signal),
+    enabled: Boolean(currentWorkspaceId && scope),
+    staleTime: 0,
+  });
+}
+
+export function useAgentPlaybooks() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentPlaybooks(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.playbooks.list(signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** A new playbook version also changes settings.currentPlaybookVersion. */
+function usePlaybookWrite<A>(fn: (arg: A) => Promise<unknown>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () =>
+      Promise.all(
+        [keys.agentPlaybooks(currentWorkspaceId), keys.agentSettings(currentWorkspaceId)].map(
+          (queryKey) => client.invalidateQueries({ queryKey }),
+        ),
+      ),
+  });
+}
+
+export const useSavePlaybook = () =>
+  usePlaybookWrite((body: string) => backend.agent.playbooks.create(body));
+export const useRestorePlaybook = () =>
+  usePlaybookWrite((version: number) => backend.agent.playbooks.restore(version));
+
+// --- AI decision review (AI Activity page, lead AI panel; any CRM user) ----------
+
+export function useAgentDecisions(filters: AgentDecisionFilters) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey: keys.agentDecisions(currentWorkspaceId, filters),
+    queryFn: ({ pageParam, signal }) => backend.agent.decisions.list(filters, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useAgentDecision(id: string | null) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentDecision(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.agent.decisions.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+export function useAgentStats() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentStats(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.agent.stats(signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useLeadAgentPanel(leadId: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.agentLeadPanel(currentWorkspaceId, leadId),
+    queryFn: ({ signal }) => backend.agent.leads.panel(leadId, signal),
+    enabled: Boolean(currentWorkspaceId && leadId),
+  });
+}
+
+/** A rating, report or resolve: the decision, every decisions list, stats and the lead panels. */
+function useReviewWrite<A>(fn: (arg: A) => Promise<{ decisionId?: string; id: string }>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (result) =>
+      Promise.all(
+        [
+          keys.agentDecision(ws, result.decisionId ?? result.id),
+          keys.agentDecisions(ws),
+          keys.agentStats(ws),
+          keys.agentLeadPanel(ws),
+        ].map((queryKey) => client.invalidateQueries({ queryKey })),
+      ),
+  });
+}
+
+export const useRateDecision = () =>
+  useReviewWrite(({ id, input }: { id: string; input: AgentRatingInput }) =>
+    backend.agent.decisions.rate(id, input),
+  );
+export const useReportDecision = () =>
+  useReviewWrite(({ id, note }: { id: string; note: string }) =>
+    backend.agent.decisions.report(id, note),
+  );
+export const useResolveReport = () =>
+  useReviewWrite(({ reportId, note }: { reportId: string; note?: string | undefined }) =>
+    backend.agent.resolveReport(reportId, note),
+  );
+
+const ENROLL_CHUNK = 100;
+
+/** Admin: agent status changes refresh the contact(s) (refreshContact) and the AI stats. */
+function useAgentStatusWrite<A, R>(
+  fn: (arg: A) => Promise<R>,
+  leadIdOf: (arg: A) => string | null,
+) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (_, arg) =>
+      Promise.all([
+        refreshContact(client, ws, leadIdOf(arg) ?? undefined),
+        client.invalidateQueries({ queryKey: keys.agentStats(ws) }),
+      ]),
+  });
+}
+
+/** Sends the ids in chunks of 100, one after another; returns every result. */
+export const useEnrollLeads = () =>
+  useAgentStatusWrite(
+    async (leadIds: string[]) => {
+      const results: AgentEnrollResult[] = [];
+      for (let i = 0; i < leadIds.length; i += ENROLL_CHUNK) {
+        results.push(
+          ...(await backend.agent.leads.enroll(leadIds.slice(i, i + ENROLL_CHUNK))).data,
+        );
+      }
+      return results;
+    },
+    (leadIds) => (leadIds.length === 1 ? leadIds[0]! : null),
+  );
+export const usePauseLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.pause(leadId),
+    (id) => id,
+  );
+export const useResumeLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.resume(leadId),
+    (id) => id,
+  );
+export const useStopLead = () =>
+  useAgentStatusWrite(
+    ({ leadId, note }: { leadId: string; note?: string | undefined }) =>
+      backend.agent.leads.stop(leadId, note),
+    ({ leadId }) => leadId,
+  );
+export const useWakeLead = () =>
+  useAgentStatusWrite(
+    (leadId: string) => backend.agent.leads.wake(leadId),
+    (id) => id,
+  );
+/** E2 (admin): mark / unmark an AI live test contact. */
+export const useSetLiveTest = () =>
+  useAgentStatusWrite(
+    ({ leadId, enabled }: { leadId: string; enabled: boolean }) =>
+      backend.agent.leads.setLiveTest(leadId, enabled),
+    ({ leadId }) => leadId,
+  );
+
+export const SEARCH_MIN_CHARS = 2;
+export const SEARCH_DEBOUNCE_MS = 250;
+
+/** Global search (GET /search): debounced 250 ms, runs from 2 characters, per workspace. */
+export function useGlobalSearch(input: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  const enabled = Boolean(currentWorkspaceId) && q.length >= SEARCH_MIN_CHARS;
+  const result = useQuery({
+    queryKey: keys.search(currentWorkspaceId, q),
+    queryFn: ({ signal }) => backend.search(q, signal),
+    enabled,
+    staleTime: 30_000,
+  });
+  return {
+    ...result,
+    query: q,
+    enabled,
+    /** Typing has not settled yet, or the request is in flight. */
+    isSearching: input.trim() !== q || (enabled && result.isFetching),
+  };
+}
+
+// --- CRM v2 contacts (B4; UI says Contact, rows are leads) --------------------------
+
+export function useContacts(params: ContactListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey: keys.contacts(currentWorkspaceId, params),
+    queryFn: ({ pageParam, signal }) => backend.contacts.list(params, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** Same filters as `useContacts` (sort is not allowed on /count). */
+export function useContactsCount(params: ContactListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, ...filters } = params;
+  return useQuery({
+    queryKey: keys.contactsCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.contacts.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+export function useContact(id: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.contact(currentWorkspaceId, id),
+    queryFn: ({ signal }) => backend.contacts.get(id, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+const BULK_CHUNK = 100;
+
+/** POST /contacts/bulk in chunks of 100, one after another; returns every per-id result. */
+export function useBulkContacts() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: async (input: {
+      ids: string[];
+      action: "assignOwner" | "enrollAi";
+      ownerId?: string;
+    }) => {
+      const results: BulkResult[] = [];
+      for (let i = 0; i < input.ids.length; i += BULK_CHUNK) {
+        const ids = input.ids.slice(i, i + BULK_CHUNK);
+        results.push(...(await backend.contacts.bulk({ ...input, ids })).data);
+      }
+      return results;
+    },
+    onSuccess: () =>
+      Promise.all([
+        refreshContact(client, ws),
+        client.invalidateQueries({ queryKey: keys.agentStats(ws) }),
+      ]),
+  });
+}
+
+/** REL-1: switch automation for contacts — `ids` (one or a selection) or the whole filtered list (`filtered`). */
+export function useContactAutomation() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (
+      input:
+        | { ids: string[]; enabled: boolean }
+        | {
+            filtered: Omit<ContactListParams, "sort" | "limit">;
+            expectedCount: number;
+            enabled: boolean;
+          },
+    ) =>
+      "ids" in input
+        ? backend.contacts.setAutomation(input.ids, input.enabled)
+        : backend.contacts.setAutomationFiltered(
+            input.filtered,
+            input.enabled,
+            input.expectedCount,
+          ),
+    onSuccess: (_r, input) =>
+      refreshContact(
+        client,
+        ws,
+        "ids" in input && input.ids.length === 1 ? input.ids[0] : undefined,
+      ),
+  });
+}
+
+export function useSavedViews(object: SavedViewObject) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.savedViews(currentWorkspaceId, object),
+    queryFn: ({ signal }) => backend.savedViews.list(object, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+function useSavedViewWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => client.invalidateQueries({ queryKey: ["savedViews", ws] }),
+  });
+}
+
+export const useCreateSavedView = () =>
+  useSavedViewWrite((input: Parameters<typeof backend.savedViews.create>[0]) =>
+    backend.savedViews.create(input),
+  );
+export const useUpdateSavedView = () =>
+  useSavedViewWrite(({ id, input }: { id: string; input: SavedViewInput }) =>
+    backend.savedViews.update(id, input),
+  );
+export const useDeleteSavedView = () =>
+  useSavedViewWrite((id: string) => backend.savedViews.delete(id));
+
+/** Company picker / "matches an existing company" hint: debounced, from 2 characters, top 5. */
+export function useCompanySearch(input: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  return useQuery({
+    queryKey: keys.companySearch(currentWorkspaceId, q),
+    queryFn: ({ signal }) => backend.companies.list({ q, limit: 5 }, undefined, signal),
+    enabled: Boolean(currentWorkspaceId) && q.length >= SEARCH_MIN_CHARS,
+    staleTime: 30_000,
+  });
+}
+
+export function useCompany(id: string | null | undefined) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.company(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.companies.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+/** POST /leads (a new contact) without loading the old 500-row leads list. */
+export function useCreateContact() {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: CreateLeadInput) => backend.leads.create(input),
+    onSuccess: (lead) => refreshContact(client, ws, lead.id),
+  });
+}
+
+// --- CRM v2 companies + duplicate review (C3) -------------------------------------
+
+/** One keyset list: `{data, nextCursor}` pages, enabled once a workspace is selected. */
+export function useCursorList<T>(
+  queryKey: readonly unknown[],
+  fetchPage: (
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<{ data: T[]; nextCursor: string | null }>,
+  enabled = true,
+) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam, signal }) => fetchPage(pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: Boolean(currentWorkspaceId) && enabled,
+  });
+}
+
+export function useCompanies(params: CompanyListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(keys.companies(ws, params), (cursor, signal) =>
+    backend.companies.list(params, cursor, signal),
+  );
+}
+
+/** Same filters as `useCompanies` (sort/limit are not allowed on /count). */
+export function useCompaniesCount(params: CompanyListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.companiesCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.companies.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** Industry filter options (cached 5 min; refreshed with every company list). */
+export function useCompanyIndustries() {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.companyIndustries(currentWorkspaceId),
+    queryFn: ({ signal }) => backend.companies.industries(signal),
+    enabled: Boolean(currentWorkspaceId),
+    staleTime: 300_000,
+  });
+}
+
+export function useCompanyContacts(companyId: string, params: ContactListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyContacts(ws, companyId, params),
+    (cursor, signal) => backend.companies.contacts(companyId, params, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+export function useCompanyDeals(companyId: string, params: DealListParams) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyDeals(ws, companyId, params),
+    (cursor, signal) => backend.companies.deals(companyId, params, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+/** The company feed, newest first; `kind` filters server-side (empty = all). */
+export function useCompanyTimeline(companyId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyTimeline(ws, companyId, { kind }),
+    (cursor, signal) => backend.companies.timeline(companyId, kind, cursor, signal),
+    Boolean(companyId),
+  );
+}
+
+/**
+ * D2: one inbound reply's text, fetched only while `enabled` (after a click; never prefetched).
+ * Each fetch is an audited read, so no retries or focus refetches. The text leaves the cache
+ * when the caller hides it, unmounts or the workspace changes.
+ */
+export function useInboundReply(
+  contactId: string,
+  messageId: string,
+  enabled: boolean,
+  channel: ReplyChannel = "whatsapp",
+) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  const client = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    return () =>
+      client.removeQueries({ queryKey: keys.inboundReply(ws, contactId, messageId), exact: true });
+  }, [client, ws, contactId, messageId, enabled]);
+  return useQuery({
+    queryKey: keys.inboundReply(ws, contactId, messageId),
+    queryFn: ({ signal }) => backend.contacts.reply(contactId, messageId, signal, channel),
+    enabled,
+    staleTime: 0,
+    gcTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** D4a: change a reply's label; refreshes the contact (timeline, tasks). */
+export function useCorrectReplyLabel(contactId: string) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: (input: {
+      messageId: string;
+      label: Exclude<ReplyLabel, "unclassified">;
+      channel?: ReplyChannel;
+    }) => backend.contacts.setReplyLabel(contactId, input.messageId, input.label, input.channel),
+    onSuccess: () => refreshContact(client, ws, contactId),
+  });
+}
+
+/** E3b-2a: the contact's open (else latest sent) suggested reply, for the reply task's Sheet. */
+export function useLatestReplyDraft(contactId: string, enabled: boolean) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useQuery({
+    queryKey: keys.latestReplyDraft(ws, contactId),
+    queryFn: ({ signal }) => backend.contacts.latestReplyDraft(contactId, signal),
+    enabled: enabled && Boolean(contactId),
+    retry: false,
+  });
+}
+
+/** E3b-2a: Send (queued; the worker sends) or Discard a suggested reply; refreshes the contact and its tasks. */
+export function useReplyDraftActions(contactId: string) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  const onSuccess = () => refreshContact(client, ws, contactId);
+  return {
+    send: useMutation({
+      mutationFn: (input: { draftId: string; body: string }): Promise<ReplyDraft> =>
+        backend.contacts.sendReplyDraft(contactId, input.draftId, input.body),
+      onSuccess,
+    }),
+    discard: useMutation({
+      mutationFn: (draftId: string): Promise<ReplyDraft> =>
+        backend.contacts.discardReplyDraft(contactId, draftId),
+      onSuccess,
+    }),
+  };
+}
+
+/** A contact's timeline, newest first, paginated; `kind` filters server-side (empty = all). */
+export function useContactTimeline(leadId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.contactTimeline(ws, leadId, { kind }),
+    (cursor, signal) => backend.contacts.timeline(leadId, kind, cursor, signal),
+    Boolean(leadId),
+  );
+}
+
+function useCompanyWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({ mutationFn: fn, onSuccess: () => refreshCompany(client, ws) });
+}
+
+export const useCreateCompany = () =>
+  useCompanyWrite((input: CompanyInput & { name: string }) => backend.companies.create(input));
+export const useUpdateCompany = () =>
+  useCompanyWrite(({ id, input }: { id: string; input: CompanyInput }) =>
+    backend.companies.update(id, input),
+  );
+/** Admin: `targetId` stays, `sourceId` is merged into it. */
+export const useMergeCompanies = () =>
+  useCompanyWrite(({ targetId, sourceId }: { targetId: string; sourceId: string }) =>
+    backend.companies.merge(targetId, sourceId),
+  );
+
+export function useCompanyDuplicates(params: DuplicateListParams, enabled = true) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.companyDuplicates(ws, params),
+    (cursor, signal) => backend.companyDuplicates.list(params, cursor, signal),
+    enabled,
+  );
+}
+
+/** Admin only (pass `enabled: isAdmin`): open duplicate counts for buttons and the nav badge, cached 60 s. */
+export function useCompanyDuplicatesCount(params: DuplicateListParams, enabled = true) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.companyDuplicatesCount(currentWorkspaceId, params),
+    queryFn: ({ signal }) => backend.companyDuplicates.count(params, signal),
+    enabled: Boolean(currentWorkspaceId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+export const useMergeDuplicate = () =>
+  useCompanyWrite(({ id, targetId }: { id: string; targetId?: string }) =>
+    backend.companyDuplicates.merge(id, targetId),
+  );
+export const useDismissDuplicate = () =>
+  useCompanyWrite((id: string) => backend.companyDuplicates.dismiss(id));
+export const useRelinkDuplicate = () =>
+  useCompanyWrite(({ id, companyId }: { id: string; companyId?: string }) =>
+    backend.companyDuplicates.relink(id, companyId),
+  );
+
+// --- CRM v2 deals (C4) -------------------------------------------------------------
+
+export function useDeals(params: DealListParams, enabled = true) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.dealList(ws, params),
+    (cursor, signal) => backend.deals.list(params, cursor, signal),
+    enabled,
+  );
+}
+
+/** Same filters as `useDeals` (sort/limit are not allowed on /count). */
+export function useDealsCount(params: DealListParams) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.dealCount(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.deals.count(filters, signal),
+    enabled: Boolean(currentWorkspaceId),
+  });
+}
+
+/** The pipeline board (every stage; `stage`, `sort` and `limit` are not sent). */
+export function useDealBoard(params: DealListParams, enabled = true) {
+  const { currentWorkspaceId } = useWorkspace();
+  const { stage: _stage, sort: _sort, limit: _limit, ...filters } = params;
+  return useQuery({
+    queryKey: keys.dealBoard(currentWorkspaceId, filters),
+    queryFn: ({ signal }) => backend.deals.board(filters, signal),
+    enabled: Boolean(currentWorkspaceId) && enabled,
+  });
+}
+
+export function useDeal(id: string | null | undefined) {
+  const { currentWorkspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: keys.deal(currentWorkspaceId, id ?? ""),
+    queryFn: ({ signal }) => backend.deals.get(id!, signal),
+    enabled: Boolean(currentWorkspaceId && id),
+  });
+}
+
+/** The deal feed, newest first; `kind` filters server-side (empty = all). */
+export function useDealTimeline(dealId: string, kind: ActivityType[] = []) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useCursorList(
+    keys.dealTimeline(ws, dealId, { kind }),
+    (cursor, signal) => backend.deals.timeline(dealId, kind, cursor, signal),
+    Boolean(dealId),
+  );
+}
+
+function useDealWrite<A, R>(fn: (arg: A) => Promise<R>) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({ mutationFn: fn, onSuccess: () => refreshDeal(client, ws) });
+}
+
+export const useCreateDeal = () =>
+  useDealWrite((input: CreateDealInput) => backend.deals.create(input));
+export const useUpdateDeal = () =>
+  useDealWrite(({ id, input }: { id: string; input: UpdateDealInput }) =>
+    backend.deals.update(id, input),
+  );
+/** POST /deals/:id/stage; the backend decides what is allowed and what happens to the contact. */
+export const useMoveDealStage = () =>
+  useDealWrite(({ id, ...input }: MoveDealStageInput & { id: string }) =>
+    backend.deals.moveStage(id, input),
+  );
+
+/**
+ * Contact picker search over GET /contacts: debounced, from 2 characters, top 8 by name.
+ * With `companyId` it lists that company's contacts even before typing (first 20 by name).
+ */
+export function useContactSearch(input: string, companyId?: string) {
+  const { currentWorkspaceId } = useWorkspace();
+  const q = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  const term = q.length >= SEARCH_MIN_CHARS ? q : undefined;
+  return useQuery({
+    queryKey: keys.contactSearch(currentWorkspaceId, term ?? "", companyId),
+    queryFn: ({ signal }) =>
+      backend.contacts.list(
+        { q: term, companyId, sort: "name:asc", limit: companyId ? 20 : 8 },
+        undefined,
+        signal,
+      ),
+    enabled: Boolean(currentWorkspaceId) && (Boolean(term) || Boolean(companyId)),
+    staleTime: 30_000,
+  });
 }

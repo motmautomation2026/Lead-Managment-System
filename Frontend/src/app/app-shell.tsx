@@ -1,26 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { lazy, Suspense, useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Bell,
-  Bot,
-  CalendarDays,
-  Check,
-  ChevronsUpDown,
-  FileText,
-  Gauge,
-  ListChecks,
-  LogOut,
-  Plus,
-  Search,
-  Settings as SettingsIcon,
-  Users,
-} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { BrandLogo } from "@/components/common/brand-logo";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -29,60 +13,107 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import { toast } from "sonner";
-import { AddLeadContext } from "@/app/add-lead-context";
-import { AddLeadDialog } from "@/features/leads/add-lead-dialog";
-import { messageFromError, useLeads, useNotifications, useSession } from "@/store";
+  AddLeadContext,
+  CreateCompanyContext,
+  CreateDealContext,
+  CreateTaskContext,
+  ScheduleMeetingContext,
+  type CreateDealOptions,
+  type CreateTaskOptions,
+  type ScheduleMeetingOptions,
+} from "@/app/add-lead-context";
+import { AppSidebar } from "@/app/sidebar";
+import { TopBar } from "@/app/top-bar";
+import { ShortcutsDialog } from "@/app/shortcuts-dialog";
+import { focusListSearch, useShortcuts } from "@/app/shortcuts";
+import { messageFromError } from "@/store";
 import { backend } from "@/lib/backend-client";
 import { keys } from "@/store/query";
 import { useWorkspace } from "@/store/workspace-context";
+import { SIDEBAR_KEY, readPreference, writePreference } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
-import { relDay } from "@/lib/format";
-import { label } from "@/lib/labels";
-import { supabase } from "@/lib/supabase-client";
 
-const NAV = [
-  { to: "/", label: "Dashboard", icon: Gauge },
-  { to: "/leads", label: "Leads", icon: Users },
-  { to: "/tasks", label: "Tasks", icon: ListChecks },
-  { to: "/meetings", label: "Meetings", icon: CalendarDays },
-  { to: "/proposals", label: "Proposals", icon: FileText },
-  { to: "/automations", label: "Automations", icon: Bot },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
-] as const;
+export { PageHeader } from "@/components/crm/page-header";
 
+// Loaded on first open, so their libraries (cmdk, react-hook-form, libphonenumber, Radix
+// Select) stay out of the first load (C5).
+const CommandPalette = lazy(() =>
+  import("@/app/command-palette").then((m) => ({ default: m.CommandPalette })),
+);
+const CreateContactDialog = lazy(() =>
+  import("@/features/contacts/create-contact-dialog").then((m) => ({
+    default: m.CreateContactDialog,
+  })),
+);
+const CreateCompanyDialog = lazy(() =>
+  import("@/features/companies/create-company-dialog").then((m) => ({
+    default: m.CreateCompanyDialog,
+  })),
+);
+const CreateDealDialog = lazy(() =>
+  import("@/features/deals/create-deal-dialog").then((m) => ({ default: m.CreateDealDialog })),
+);
+const CreateTaskDialog = lazy(() =>
+  import("@/features/work/create-task-dialog").then((m) => ({ default: m.CreateTaskDialog })),
+);
+const ScheduleMeetingFlow = lazy(() =>
+  import("@/features/work/schedule-meeting-flow").then((m) => ({
+    default: m.ScheduleMeetingFlow,
+  })),
+);
+
+/** True from the first time `open` is true (keeps a lazy dialog mounted for its close animation). */
+function useOpenedOnce(open: boolean) {
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  return open || opened;
+}
+
+/** Signed-in layout: sidebar (docked lg+, Sheet below), top bar, page content. */
 export function AppShell({ children }: { children: ReactNode }) {
   const [addOpen, setAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => readPreference(SIDEBAR_KEY, ["true", "false"], "false") === "true",
+  );
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [addCompany, setAddCompany] = useState("");
+  // `n` remounts the dialog per opening so its form starts from that opening's options.
+  const [deal, setDeal] = useState<{ open: boolean; n: number; options: CreateDealOptions }>({
+    open: false,
+    n: 0,
+    options: {},
+  });
+  const openDeal = (options: CreateDealOptions = {}) =>
+    setDeal((d) => ({ open: true, n: d.n + 1, options }));
+  const [task, setTask] = useState<{ open: boolean; n: number; options: CreateTaskOptions }>({
+    open: false,
+    n: 0,
+    options: {},
+  });
+  const openTask = (options: CreateTaskOptions = {}) =>
+    setTask((t) => ({ open: true, n: t.n + 1, options }));
+  const [meeting, setMeeting] = useState<{
+    open: boolean;
+    n: number;
+    options: ScheduleMeetingOptions;
+  }>({ open: false, n: 0, options: {} });
+  const openMeeting = (options: ScheduleMeetingOptions = {}) =>
+    setMeeting((m) => ({ open: true, n: m.n + 1, options }));
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
-  const searchBoxRef = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
+  const paletteMounted = useOpenedOnce(paletteOpen);
+  const contactMounted = useOpenedOnce(addOpen);
+  const companyMounted = useOpenedOnce(companyOpen);
+  const dealMounted = useOpenedOnce(deal.open);
+  const taskMounted = useOpenedOnce(task.open);
+  const meetingMounted = useOpenedOnce(meeting.open);
   const client = useQueryClient();
-  const { leads } = useLeads();
-  const { notifications, markNotificationsRead } = useNotifications();
-  const { currentUser } = useSession();
-  const {
-    workspaces,
-    currentWorkspaceId,
-    currentWorkspace,
-    setCurrentWorkspaceId,
-    isLoading: workspacesLoading,
-  } = useWorkspace();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { setCurrentWorkspaceId } = useWorkspace();
 
   const createWorkspace = useMutation({
     mutationFn: (name: string) => backend.workspaces.create(name),
@@ -96,473 +127,184 @@ export function AppShell({ children }: { children: ReactNode }) {
     onError: (error: unknown) => toast.error(messageFromError(error)),
   });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setPaletteOpen((o) => !o);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const navigate = useNavigate();
+  useShortcuts({
+    palette: () => setPaletteOpen((o) => !o),
+    help: () => setShortcutsOpen(true),
+    search: focusListSearch,
+    create: () => setCreateMenuOpen(true),
+    goContacts: () => void navigate({ to: "/contacts" }),
+    goCompanies: () => void navigate({ to: "/companies" }),
+    goDeals: () => void navigate({ to: "/deals" }),
+    goTasks: () => void navigate({ to: "/tasks" }),
+    goMeetings: () => void navigate({ to: "/meetings" }),
+    goProposals: () => void navigate({ to: "/proposals" }),
+    goWorkflows: () => void navigate({ to: "/automations" }),
+    goAiActivity: () => void navigate({ to: "/ai-activity" }),
+    goKnowledge: () => void navigate({ to: "/knowledge" }),
+    goSettings: () => void navigate({ to: "/settings" }),
+  });
 
-  useEffect(() => {
-    if (!searchOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (!searchBoxRef.current?.contains(e.target as Node)) {
-        setSearchOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [searchOpen]);
-
-  const unread = notifications.filter((n) => !n.read).length;
-  const trimmedQuery = query.trim();
-  const results = useMemo(() => {
-    const tokens = trimmedQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return [];
-    return leads
-      .filter((l) => {
-        const text = [
-          l.firstName,
-          l.lastName,
-          l.company,
-          l.email,
-          l.phone,
-          l.jobTitle,
-          l.industry,
-          l.serviceInterest,
-          label(l.pipelineStage),
-        ]
-          .join(" ")
-          .toLowerCase();
-        return tokens.every((t) => text.includes(t));
-      })
-      .slice(0, 6);
-  }, [leads, trimmedQuery]);
-  const showSearchPanel = searchOpen && trimmedQuery.length > 0;
-
-  const resetSearch = () => {
-    setQuery("");
-    setSearchOpen(false);
-    setActiveIndex(-1);
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      writePreference(SIDEBAR_KEY, String(!c));
+      return !c;
+    });
   };
 
   return (
-    <AddLeadContext.Provider value={{ open: () => setAddOpen(true) }}>
-      <div className="flex min-h-screen bg-background">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
-          <div className="px-3 py-5">
-            <BrandLogo caption="MOTM Flow · Sales Automation" />
-          </div>
-
-          <div className="px-3 pb-3">
-            <Button
-              className="w-full justify-start gap-2"
-              size="sm"
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus className="size-4" /> Add Lead
-            </Button>
-          </div>
-
-          <ScrollArea className="flex-1 px-2">
-            <nav className="space-y-0.5 pb-4">
-              {NAV.map((item) => {
-                const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
+    <AddLeadContext.Provider
+      value={{
+        open: (prefill) => {
+          setAddCompany(prefill?.company ?? "");
+          setAddOpen(true);
+        },
+      }}
+    >
+      <CreateCompanyContext.Provider value={{ open: () => setCompanyOpen(true) }}>
+        <CreateDealContext.Provider value={{ open: openDeal }}>
+          <CreateTaskContext.Provider value={{ open: openTask }}>
+            <ScheduleMeetingContext.Provider value={{ open: openMeeting }}>
+              <TooltipProvider delayDuration={300}>
+                <div className="flex min-h-screen bg-background">
+                  <aside
                     className={cn(
-                      "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
-                      active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+                      "sticky top-0 hidden h-screen shrink-0 border-r border-sidebar-border transition-[width] lg:block",
+                      collapsed ? "w-14" : "w-60",
                     )}
                   >
-                    <item.icon className="size-4 text-muted-foreground" />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
-          </ScrollArea>
+                    <AppSidebar
+                      collapsed={collapsed}
+                      onToggleCollapsed={toggleCollapsed}
+                      onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
+                    />
+                  </aside>
 
-          <div className="border-t border-sidebar-border p-3">
-            <Popover open={switcherOpen} onOpenChange={setSwitcherOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-sidebar-accent"
-                  aria-label="Switch workspace"
-                >
-                  <BrandLogo variant="mark" className="size-6" />
-                  <div className="min-w-0 flex-1 text-xs">
-                    <div className="truncate font-medium">
-                      {currentWorkspace?.name ?? (workspacesLoading ? "Loading…" : "No workspace")}
-                    </div>
-                    <div className="text-muted-foreground">Workspace · IST</div>
-                  </div>
-                  <ChevronsUpDown className="size-3.5 text-muted-foreground" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-64 p-1">
-                <div className="max-h-64 overflow-y-auto">
-                  {workspaces.length === 0 && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      {workspacesLoading ? "Loading workspaces…" : "No workspaces yet."}
-                    </div>
-                  )}
-                  {workspaces.map((workspace) => (
-                    <button
-                      key={workspace.id}
-                      type="button"
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                        workspace.id === currentWorkspaceId && "bg-accent",
-                      )}
-                      onClick={() => {
-                        setCurrentWorkspaceId(workspace.id);
-                        setSwitcherOpen(false);
-                      }}
-                    >
-                      <span className="truncate">{workspace.name}</span>
-                      {workspace.id === currentWorkspaceId && (
-                        <Check className="size-3.5 shrink-0" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-1 border-t pt-1">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-primary hover:bg-accent"
-                    onClick={() => {
-                      setSwitcherOpen(false);
-                      setCreateWorkspaceOpen(true);
-                    }}
-                  >
-                    <Plus className="size-3.5" /> Create workspace
-                  </button>
-                </div>
-              </PopoverContent>
-            </Popover>
-            <div className="mt-1 flex items-center gap-2 rounded-md px-2 py-2">
-              <div className="grid size-7 place-items-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-                {currentUser?.initials ?? "-"}
-              </div>
-              <div className="min-w-0 flex-1 text-xs">
-                <div className="truncate font-medium">{currentUser?.name ?? "Loading…"}</div>
-                <div className="text-muted-foreground">{currentUser?.role ?? "Salesperson"}</div>
-              </div>
-              {supabase && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0"
-                  aria-label="Sign out"
-                  onClick={() => void supabase?.auth.signOut()}
-                >
-                  <LogOut className="size-3.5" />
-                </Button>
-              )}
-            </div>
-          </div>
-        </aside>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-card/80 px-4 backdrop-blur">
-            <Link to="/" aria-label="MOTM Flow home" className="shrink-0 lg:hidden">
-              <BrandLogo variant="mark" className="size-8" />
-            </Link>
-            <div ref={searchBoxRef} className="relative w-full max-w-md">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                role="combobox"
-                aria-expanded={showSearchPanel}
-                aria-controls="header-search-results"
-                aria-activedescendant={
-                  activeIndex >= 0 ? `header-search-result-${activeIndex}` : undefined
-                }
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setSearchOpen(true);
-                  setActiveIndex(-1);
-                }}
-                onFocus={() => {
-                  if (trimmedQuery) setSearchOpen(true);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setSearchOpen(false);
-                    e.currentTarget.blur();
-                  } else if (e.key === "ArrowDown") {
-                    if (results.length === 0) return;
-                    e.preventDefault();
-                    setActiveIndex((i) => Math.min(i + 1, results.length - 1));
-                  } else if (e.key === "ArrowUp") {
-                    if (results.length === 0) return;
-                    e.preventDefault();
-                    setActiveIndex((i) => Math.max(i - 1, 0));
-                  } else if (e.key === "Enter") {
-                    const target = activeIndex >= 0 ? results[activeIndex] : results[0];
-                    if (target) {
-                      e.preventDefault();
-                      resetSearch();
-                      void navigate({ to: "/leads/$leadId", params: { leadId: target.id } });
-                    }
-                  }
-                }}
-                placeholder="Search leads and companies…"
-                className="h-9 pl-8"
-              />
-              {showSearchPanel && (
-                <div
-                  id="header-search-results"
-                  role="listbox"
-                  className="absolute left-0 right-0 top-11 z-40 overflow-hidden rounded-md border bg-popover shadow-lg"
-                >
-                  {results.length > 0 ? (
-                    results.map((l, i) => (
-                      <Link
-                        key={l.id}
-                        id={`header-search-result-${i}`}
-                        role="option"
-                        aria-selected={i === activeIndex}
-                        to="/leads/$leadId"
-                        params={{ leadId: l.id }}
-                        onClick={resetSearch}
-                        onMouseEnter={() => setActiveIndex(i)}
-                        className={cn(
-                          "flex items-center justify-between px-3 py-2 text-sm hover:bg-accent",
-                          i === activeIndex && "bg-accent",
-                        )}
-                      >
-                        <span>
-                          {l.firstName} {l.lastName}
-                        </span>
-                        <span className="text-xs text-muted-foreground">{l.company}</span>
-                      </Link>
-                    ))
-                  ) : (
-                    <div className="px-3 py-2.5 text-sm text-muted-foreground">
-                      No leads match &ldquo;{trimmedQuery}&rdquo;
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="hidden gap-2 text-muted-foreground md:flex"
-                onClick={() => setPaletteOpen(true)}
-              >
-                <span className="text-xs">Quick actions</span>
-                <kbd className="rounded border bg-muted px-1 text-[10px]">⌘K</kbd>
-              </Button>
-
-              <Popover
-                onOpenChange={(o) => {
-                  if (o) {
-                    markNotificationsRead().catch((error: unknown) => {
-                      toast.error(messageFromError(error));
-                    });
-                  }
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="relative"
-                    aria-label="Notifications"
-                  >
-                    <Bell className="size-4" />
-                    {unread > 0 && (
-                      <span className="absolute right-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-destructive text-[9px] font-semibold text-destructive-foreground">
-                        {unread}
-                      </span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-96 p-0">
-                  <div className="border-b px-3 py-2 text-sm font-medium">Notifications</div>
-                  <ScrollArea className="h-96">
-                    {notifications.map((n) => (
-                      <button
-                        key={n.id}
-                        className="flex w-full gap-2 border-b px-3 py-2.5 text-left last:border-0 hover:bg-accent"
-                        onClick={() => {
-                          if (n.leadId)
-                            void navigate({ to: "/leads/$leadId", params: { leadId: n.leadId } });
-                          else if (n.href === "/automations/runs")
-                            void navigate({ to: "/automations/runs" });
-                          else if (n.href === "/automations") void navigate({ to: "/automations" });
-                          else if (n.href === "/meetings") void navigate({ to: "/meetings" });
+                  <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+                    <SheetContent side="left" className="w-72 gap-0 p-0 sm:max-w-72">
+                      <SheetTitle className="sr-only">Navigation</SheetTitle>
+                      <AppSidebar
+                        onNavigate={() => setMobileNavOpen(false)}
+                        onCreateWorkspace={() => {
+                          setMobileNavOpen(false);
+                          setCreateWorkspaceOpen(true);
                         }}
-                      >
-                        <span
-                          className={cn(
-                            "mt-1.5 size-2 shrink-0 rounded-full",
-                            n.kind === "danger" && "bg-destructive",
-                            n.kind === "warning" && "bg-warning",
-                            n.kind === "success" && "bg-success",
-                            n.kind === "info" && "bg-info",
-                          )}
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">{n.title}</span>
-                          <span className="block text-xs text-muted-foreground">{n.detail}</span>
-                          <span className="block pt-0.5 text-[11px] text-muted-foreground">
-                            {relDay(n.at)}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </ScrollArea>
-                </PopoverContent>
-              </Popover>
+                      />
+                    </SheetContent>
+                  </Sheet>
 
-              <Button size="sm" className="gap-1.5" onClick={() => setAddOpen(true)}>
-                <Plus className="size-4" /> Add Lead
-              </Button>
-            </div>
-          </header>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <TopBar
+                      onOpenMenu={() => setMobileNavOpen(true)}
+                      onOpenSearch={() => setPaletteOpen(true)}
+                      onCreateContact={() => setAddOpen(true)}
+                      onCreateCompany={() => setCompanyOpen(true)}
+                      onCreateDeal={() => openDeal()}
+                      onCreateTask={() => openTask()}
+                      onCreateMeeting={() => openMeeting()}
+                      createMenuOpen={createMenuOpen}
+                      onCreateMenuOpenChange={setCreateMenuOpen}
+                      onOpenShortcuts={() => setShortcutsOpen(true)}
+                    />
+                    <main className="min-w-0 flex-1">{children}</main>
+                  </div>
+                </div>
+              </TooltipProvider>
 
-          <main className="min-w-0 flex-1">{children}</main>
-        </div>
-      </div>
+              <Suspense fallback={null}>
+                {contactMounted && (
+                  <CreateContactDialog
+                    open={addOpen}
+                    onOpenChange={(open) => {
+                      setAddOpen(open);
+                      if (!open) setAddCompany("");
+                    }}
+                    defaultCompany={addCompany}
+                  />
+                )}
+                {companyMounted && (
+                  <CreateCompanyDialog open={companyOpen} onOpenChange={setCompanyOpen} />
+                )}
+                {dealMounted && (
+                  <CreateDealDialog
+                    key={deal.n}
+                    open={deal.open}
+                    onOpenChange={(open) => setDeal((d) => ({ ...d, open }))}
+                    options={deal.options}
+                  />
+                )}
+                {taskMounted && (
+                  <CreateTaskDialog
+                    key={`task-${task.n}`}
+                    open={task.open}
+                    onOpenChange={(open) => setTask((t) => ({ ...t, open }))}
+                    options={task.options}
+                  />
+                )}
+                {meetingMounted && (
+                  <ScheduleMeetingFlow
+                    key={`meeting-${meeting.n}`}
+                    leadId={meeting.options.leadId}
+                    dealId={meeting.options.dealId}
+                    open={meeting.open}
+                    onOpenChange={(open) => setMeeting((m) => ({ ...m, open }))}
+                  />
+                )}
+              </Suspense>
 
-      <AddLeadDialog open={addOpen} onOpenChange={setAddOpen} />
+              <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>
+                <DialogContent className="sm:max-w-sm">
+                  <DialogHeader>
+                    <DialogTitle>Create workspace</DialogTitle>
+                    <DialogDescription>
+                      Gives this brand or entity its own leads, workflows, templates, and
+                      Email/WhatsApp/ Calendar connections.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div>
+                    <Label className="mb-1.5 block text-xs">Name</Label>
+                    <Input
+                      autoFocus
+                      value={newWorkspaceName}
+                      onChange={(e) => setNewWorkspaceName(e.target.value)}
+                      placeholder="e.g. Northbeam Labs"
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setCreateWorkspaceOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      disabled={!newWorkspaceName.trim() || createWorkspace.isPending}
+                      onClick={() => createWorkspace.mutate(newWorkspaceName.trim())}
+                    >
+                      {createWorkspace.isPending ? "Creating…" : "Create workspace"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
-      <Dialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Create workspace</DialogTitle>
-            <DialogDescription>
-              Gives this brand or entity its own leads, workflows, templates, and Email/WhatsApp/
-              Calendar connections.
-            </DialogDescription>
-          </DialogHeader>
-          <div>
-            <Label className="mb-1.5 block text-xs">Name</Label>
-            <Input
-              autoFocus
-              value={newWorkspaceName}
-              onChange={(e) => setNewWorkspaceName(e.target.value)}
-              placeholder="e.g. Northbeam Labs"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateWorkspaceOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!newWorkspaceName.trim() || createWorkspace.isPending}
-              onClick={() => createWorkspace.mutate(newWorkspaceName.trim())}
-            >
-              {createWorkspace.isPending ? "Creating…" : "Create workspace"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
-      <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
-        <CommandInput placeholder="Type a command or search…" />
-        <CommandList>
-          <CommandEmpty>No results found.</CommandEmpty>
-          <CommandGroup heading="Actions">
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                setAddOpen(true);
-              }}
-            >
-              Add Lead
-            </CommandItem>
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                void navigate({ to: "/tasks" });
-              }}
-            >
-              Open Tasks
-            </CommandItem>
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                void navigate({ to: "/meetings" });
-              }}
-            >
-              Schedule Meeting
-            </CommandItem>
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                void navigate({ to: "/proposals" });
-              }}
-            >
-              Upload Proposal
-            </CommandItem>
-            <CommandItem
-              onSelect={() => {
-                setPaletteOpen(false);
-                void navigate({ to: "/automations" });
-              }}
-            >
-              Open Automations
-            </CommandItem>
-          </CommandGroup>
-          <CommandGroup heading="Leads">
-            {leads.slice(0, 8).map((l) => (
-              <CommandItem
-                key={l.id}
-                value={`${l.firstName} ${l.lastName} ${l.company}`}
-                onSelect={() => {
-                  setPaletteOpen(false);
-                  void navigate({ to: "/leads/$leadId", params: { leadId: l.id } });
-                }}
-              >
-                {l.firstName} {l.lastName} · {l.company}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </CommandList>
-      </CommandDialog>
+              <Suspense fallback={null}>
+                {paletteMounted && (
+                  <CommandPalette
+                    open={paletteOpen}
+                    onOpenChange={setPaletteOpen}
+                    onCreateContact={() => setAddOpen(true)}
+                    onCreateCompany={() => setCompanyOpen(true)}
+                    onCreateDeal={() => openDeal()}
+                    onCreateTask={() => openTask()}
+                    onScheduleMeeting={() => openMeeting()}
+                  />
+                )}
+              </Suspense>
+            </ScheduleMeetingContext.Provider>
+          </CreateTaskContext.Provider>
+        </CreateDealContext.Provider>
+      </CreateCompanyContext.Provider>
     </AddLeadContext.Provider>
-  );
-}
-
-export function PageHeader({
-  title,
-  description,
-  actions,
-  tabs,
-  heading,
-}: {
-  title: string;
-  description?: string;
-  actions?: ReactNode;
-  tabs?: ReactNode;
-  heading?: ReactNode;
-}) {
-  return (
-    <div className="border-b bg-card px-6 pt-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-4">
-        {heading ?? (
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-            {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
-      </div>
-      {tabs}
-    </div>
   );
 }

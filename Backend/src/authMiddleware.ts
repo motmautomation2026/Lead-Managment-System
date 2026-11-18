@@ -1,27 +1,34 @@
 import type { NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { supabaseAdmin } from "./supabaseAdmin.js";
-import { AuthenticationError, ForbiddenError, NotFoundError } from "./errors.js";
+import { AuthenticationError, ForbiddenError, NotFoundError, ValidationError } from "./errors.js";
+import { isUuid } from "./validation/parse.js";
 import { asyncHandler } from "./asyncHandler.js";
+import { effectiveWorkspaceRole, NO_WORKSPACE_ACCESS_MESSAGE, type WorkspaceRole } from "./domain/workspaceAccess.js";
 
-/** The authenticated CRM actor (salesperson) for the lifetime of one request. */
+/** The authenticated CRM actor (salesperson or admin) for the lifetime of one request. */
 export interface Actor {
   id: string;
   fullName: string;
   email: string;
   isActive: boolean;
+  /** Global profile role until requireWorkspace replaces it with the role in that workspace (E4b). */
   role: "admin" | "salesperson";
+  /** E4b: opens every workspace as admin (profiles.is_super_admin). */
+  isSuperAdmin?: boolean;
 }
 
 declare module "express-serve-static-core" {
   interface Request {
     actor?: Actor;
     workspaceId?: string;
+    /** Set by requestIdMiddleware; returned on 500s so a user can quote it. */
+    requestId?: string;
   }
 }
 
 /**
- * Establishes the authenticated salesperson for a request:
+ * Establishes the authenticated CRM user for a request:
  *  1. Verify the bearer token against Supabase Auth (proves the caller owns
  *     a real session issued by our auth foundation — we never trust a
  *     client-supplied user id).
@@ -56,7 +63,8 @@ export const requireAuth = asyncHandler(async (req: Request, _res: Response, nex
     email: string;
     is_active: boolean;
     role: "admin" | "salesperson";
-  }>(`select id, full_name, email, is_active, role from public.profiles where id = $1`, [data.user.id]);
+    is_super_admin: boolean;
+  }>(`select id, full_name, email, is_active, role, is_super_admin from public.profiles where id = $1`, [data.user.id]);
 
   const profile = result.rows[0];
   if (!profile) {
@@ -72,47 +80,74 @@ export const requireAuth = asyncHandler(async (req: Request, _res: Response, nex
     email: profile.email,
     isActive: profile.is_active,
     role: profile.role,
+    isSuperAdmin: profile.is_super_admin,
   };
   next();
 });
 
+/**
+ * Admin-only. Inside the CRM router (after requireWorkspace) `role` is the role in THAT workspace (E4b);
+ * on /admin (user management, no workspace) it is the global profile role. A super-admin always passes.
+ */
 export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
-  if (req.actor?.role !== "admin") {
+  if (req.actor?.role !== "admin" && !req.actor?.isSuperAdmin) {
     next(new ForbiddenError("Administrator access is required."));
     return;
   }
   next();
 }
 
-export function requireSalesperson(req: Request, _res: Response, next: NextFunction) {
-  if (req.actor?.role !== "salesperson") {
-    next(new ForbiddenError("Administrator accounts cannot access CRM business routes."));
+/** E4b: super-admin only (rule 10: every workspace and membership). */
+export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
+  if (!req.actor?.isSuperAdmin) {
+    next(new ForbiddenError("Super-admin access is required."));
+    return;
+  }
+  next();
+}
+
+/** Any CRM user: admins can do everything a salesperson can. Must run after requireAuth. */
+export function requireCrmUser(req: Request, _res: Response, next: NextFunction) {
+  if (req.actor?.role !== "salesperson" && req.actor?.role !== "admin") {
+    next(new ForbiddenError("This account cannot access the CRM."));
     return;
   }
   next();
 }
 
 /**
- * Resolves the workspace a CRM request is operating in from the
- * `X-Workspace-Id` header the frontend attaches to every request (see
- * Frontend/src/lib/backend-client.ts). Any active salesperson may address
- * any active workspace — there is no per-user workspace membership (see the
- * multi-workspace architecture plan) — so this only validates that the
- * header names a real, active workspace; it is not an authorization check
- * beyond that. Must run after requireAuth + requireSalesperson.
+ * E4b rule 3, the ONE workspace access check: resolves `X-Workspace-Id` (sent by
+ * Frontend/src/lib/backend-client.ts on every request) to an active workspace the user is a member of
+ * (or any, for a super-admin; 403 otherwise) and replaces `req.actor.role` with the role in that
+ * workspace, so every requireAdmin / `actor.role` check downstream is per workspace.
+ * Must run after requireAuth + requireCrmUser.
  */
 export const requireWorkspace = asyncHandler(async (req: Request, _res: Response, next: NextFunction) => {
   const header = req.header("x-workspace-id");
   if (!header) {
     throw new NotFoundError("Workspace");
   }
-  const result = await pool.query<{ id: string }>(
-    `select id from public.workspaces where id = $1 and is_active = true`,
-    [header],
+  if (!isUuid(header)) {
+    throw new ValidationError("Invalid workspace id.");
+  }
+  const actor = req.actor!;
+  const result = await pool.query<{ id: string; role: WorkspaceRole | null }>(
+    `select w.id, m.role
+       from public.workspaces w
+       left join public.workspace_members m on m.workspace_id = w.id and m.user_id = $2
+      where w.id = $1 and w.is_active = true`,
+    [header, actor.id],
   );
-  if (!result.rows[0]) {
+  const row = result.rows[0];
+  if (!row) {
     throw new NotFoundError("Workspace");
   }
-  req.workspaceId = result.rows[0].id;
+  const role = effectiveWorkspaceRole(row.role, actor.isSuperAdmin === true);
+  if (!role) {
+    throw new ForbiddenError(NO_WORKSPACE_ACCESS_MESSAGE);
+  }
+  req.workspaceId = row.id;
+  // A copy: the actor object may be shared (tests set req.actor directly).
+  req.actor = { ...actor, role };
   next();
 });

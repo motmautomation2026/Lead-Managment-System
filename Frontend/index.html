@@ -8,6 +8,18 @@
     <link rel="icon" href="/favicon.ico?v=motm-2026" sizes="any" />
     <link rel="icon" href="/favicon.svg?v=motm-2026" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=motm-2026" />
+    <script>
+      // Apply the saved theme/density before first paint (keys: src/lib/preferences.ts).
+      try {
+        var t = localStorage.getItem("motmflow.theme");
+        var dark =
+          t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        if (localStorage.getItem("motmflow.density") === "compact")
+          document.documentElement.dataset.density = "compact";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

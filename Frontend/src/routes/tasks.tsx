@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { TasksPage } from "@/features/tasks/tasks-page";
+import { validateTasksSearch } from "@/features/tasks/tasks-search";
 
 export const Route = createFileRoute("/tasks")({
   head: () => ({
@@ -16,5 +17,6 @@ export const Route = createFileRoute("/tasks")({
       },
     ],
   }),
+  validateSearch: validateTasksSearch,
   component: TasksPage,
 });

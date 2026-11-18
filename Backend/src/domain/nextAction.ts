@@ -1,0 +1,103 @@
+/**
+ * LL-1 safety net (pure rules): when a lead needs a next action, what that task is, and who is
+ * responsible for it. The SQL that reads these facts lives in services/nextAction.service.ts.
+ */
+import type { AutomationMode, LifecycleState, TaskType } from "./enums.js";
+import { reengagementDueAt, type LossFacts } from "./recovery.js";
+
+
+export interface NextActionFacts {
+  lifecycle: LifecycleState;
+  openTasks: number;
+  futureMeeting: boolean;
+  automationMode: AutomationMode;
+  /** An active workflow run (running / waiting) with a pending step. */
+  workflowStepPending: boolean;
+  ai: {
+    status: "none" | "active" | "paused" | "handed_off" | "stopped";
+    /** effectiveMode === 'live' (shadow never sends, so it never covers a lead). */
+    live: boolean;
+    touches: number;
+    maxTouches: number;
+  };
+}
+
+/** (a) a workflow step will still run: lifecycle active / long-term nurture (LL-3) and automation not manual/paused/stopped. */
+export function coveredByWorkflow(f: NextActionFacts): boolean {
+  return f.workflowStepPending && (f.lifecycle === "active" || f.lifecycle === "long_term_nurture") && f.automationMode === "active";
+}
+
+/** (b) the AI can still send: active, live, touches left (not waiting only because every journey message is used). */
+export function coveredByAi(f: NextActionFacts): boolean {
+  return f.ai.status === "active" && f.ai.live && f.ai.touches < f.ai.maxTouches;
+}
+
+/** Rule 2: active / long-term nurture, no open task, no future meeting, not covered by automation. */
+export function needsNextAction(f: NextActionFacts): boolean {
+  if (f.lifecycle !== "active" && f.lifecycle !== "long_term_nurture") return false;
+  if (f.openTasks > 0 || f.futureMeeting) return false;
+  return !coveredByWorkflow(f) && !coveredByAi(f);
+}
+
+export const DECIDE_NEXT_STEP_TITLE = "Decide the next step";
+export const PLAN_REENGAGEMENT_TITLE = "Plan re-engagement";
+export const NO_NEXT_ACTION_TIMELINE_TITLE = "No next action — task created";
+
+/** Rule 3: the sweep's task. Long-term nurture: re_engage, due by the loss reason (LL-3b) or +45 d (recovery.ts). */
+export function sweepTask(lifecycle: LifecycleState, now: Date, loss: LossFacts | null = null): { type: TaskType; title: string; dueAt: Date } {
+  return lifecycle === "long_term_nurture"
+    ? { type: "re_engage", title: PLAN_REENGAGEMENT_TITLE, dueAt: reengagementDueAt(now, loss) }
+    : { type: "follow_up", title: DECIDE_NEXT_STEP_TITLE, dueAt: now };
+}
+
+export interface ResponsibleInput {
+  owner: { id: string; name: string | null; active: boolean; member: boolean } | null;
+  /** The workspace's active admins (WORKSPACE_ADMIN_IDS_SQL). */
+  adminIds: string[];
+}
+
+export interface Responsible {
+  /** The task's owner: the lead owner when responsible, else null (unowned task). */
+  ownerId: string | null;
+  ownerName: string | null;
+  /** Who gets the bell. */
+  notify: string[];
+}
+
+/** Rule 1: the owner if an active member of the workspace, otherwise the workspace's active admins (task unowned). */
+export function resolveResponsible({ owner, adminIds }: ResponsibleInput): Responsible {
+  if (owner && owner.active && owner.member) return { ownerId: owner.id, ownerName: owner.name, notify: [owner.id] };
+  return { ownerId: null, ownerName: null, notify: [...new Set(adminIds)] };
+}
+
+/** Rule 3 batching: one bell per person per tick with the number of leads they were told about. */
+export function batchBells(items: { workspaceId: string; notify: string[] }[]): { workspaceId: string; recipientId: string; count: number }[] {
+  const counts = new Map<string, { workspaceId: string; recipientId: string; count: number }>();
+  for (const item of items) {
+    for (const recipientId of new Set(item.notify)) {
+      const key = `${item.workspaceId}:${recipientId}`;
+      const entry = counts.get(key) ?? { workspaceId: item.workspaceId, recipientId, count: 0 };
+      entry.count += 1;
+      counts.set(key, entry);
+    }
+  }
+  return [...counts.values()];
+}
+
+export const sweepBellTitle = (count: number) => (count === 1 ? "1 lead needs a next step" : `${count} leads need a next step`);
+
+/**
+ * Rule 5 (AI stop, every reason): the responsible person's task. no_response always moves the lead to
+ * long-term nurture (the decision may ask for it; the forced end of the journey is the default).
+ */
+export function aiStopTask(reason: string, channel?: "whatsapp" | "email"): { title: string; moveToLongTermNurture: boolean } {
+  if (reason === "no_response") return { title: "AI journey ended without a reply — decide next step", moveToLongTermNurture: true };
+  if (reason === "not_interested" || reason === "annoyed") return { title: "Lead not interested — close or nurture", moveToLongTermNurture: false };
+  if (reason === "asked_to_stop") {
+    const on = channel === "email" ? " on email" : channel === "whatsapp" ? " on WhatsApp" : "";
+    return { title: `Lead opted out${on} — review`, moveToLongTermNurture: false };
+  }
+  return { title: `AI stopped (${reason.replace(/_/g, " ")}) — decide next step`, moveToLongTermNurture: false };
+}
+
+export const RESCHEDULE_MEETING_TITLE = "Reschedule the meeting";

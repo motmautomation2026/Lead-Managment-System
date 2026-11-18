@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ProposalsPage } from "@/features/proposals/proposals-page";
+import { validateProposalsSearch } from "@/features/proposals/proposals-search";
 
 export const Route = createFileRoute("/proposals/")({
   head: () => ({
@@ -13,5 +14,6 @@ export const Route = createFileRoute("/proposals/")({
       { property: "og:description", content: "Simple proposal tracking with follow-up dates." },
     ],
   }),
+  validateSearch: validateProposalsSearch,
   component: ProposalsPage,
 });

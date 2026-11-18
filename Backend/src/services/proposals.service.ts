@@ -1,13 +1,19 @@
 import type { Queryable } from "../dto.js";
+import { withTransaction } from "../db.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, DoNotContactError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
 import type { EmailSendStatus, LeadLossReason, ProposalStatus, WhatsappSendStatus } from "../domain/enums.js";
-import { routeProposalStatus } from "../domain/proposalRouting.js";
+import { allowedNextProposalStatuses, LOSS_REASON_PROPOSAL_STATUSES, routeProposalStatus } from "../domain/proposalRouting.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead } from "./leads.service.js";
 import { autoEnroll } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
+import { dealStageForProposalStatus } from "../domain/dealRouting.js";
+import { attachDealSafely, moveLinkedDealSafely } from "./deals.service.js";
+import { defaultValidUntil } from "../domain/dealFollowUp.js";
+import { dateOnly } from "./leads.service.js";
 
 export interface ProposalRow {
   id: string;
@@ -40,16 +46,20 @@ export interface ProposalRow {
   whatsapp_attempt_count: number;
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
+  /** LL-3 rule 9: "YYYY-MM-DD" (pg date); default sent date + 30 days. */
+  valid_until: string | Date | null;
+  deal_id: string | null;
   created_by: string | null;
   created_by_name: string | null;
   created_at: Date;
   updated_at: Date;
 }
 
-function proposalToDto(row: ProposalRow) {
+export function proposalToDto(row: ProposalRow) {
   return {
     id: row.id,
     leadId: row.lead_id,
+    dealId: row.deal_id,
     ownerId: row.owner_id ?? undefined,
     ownerName: row.owner_name ?? undefined,
     title: row.title,
@@ -73,6 +83,7 @@ function proposalToDto(row: ProposalRow) {
     whatsappSendError: row.whatsapp_send_error ?? undefined,
     lossReason: row.loss_reason ?? undefined,
     lossNotes: row.loss_notes ?? undefined,
+    validUntil: dateOnly(row.valid_until),
     updatedAt: row.updated_at.toISOString(),
     createdAt: row.created_at.toISOString(),
   };
@@ -92,6 +103,10 @@ export interface CreateProposalInput {
   whatsappTemplateId?: string;
   emailSendStatus?: EmailSendStatus;
   whatsappSendStatus?: WhatsappSendStatus;
+  /** Attach to this open deal of the contact (else the newest open deal, else a new one). */
+  dealId?: string;
+  /** LL-3 rule 9: "YYYY-MM-DD"; null / missing = the sent date + 30 days. */
+  validUntil?: string;
 }
 
 export async function createProposal(db: Queryable, actor: Actor, workspaceId: string, input: CreateProposalInput) {
@@ -104,8 +119,8 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
       (workspace_id, lead_id, owner_id, title, document_reference, document_storage_path, document_file_name,
        document_mime_type, document_size_bytes, amount, status, notes,
        email_template_id, whatsapp_template_id, email_send_status, whatsapp_send_status,
-       created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17) returning id`,
+       created_by, created_by_name, valid_until)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
     [
       workspaceId,
       input.leadId,
@@ -124,11 +139,13 @@ export async function createProposal(db: Queryable, actor: Actor, workspaceId: s
       input.whatsappSendStatus ?? "not_applicable",
       actor.id,
       actor.fullName,
+      input.validUntil ?? null,
     ],
   );
   const id = result.rows[0]!.id;
 
-  await addTimelineEvent(db, { leadId: input.leadId, kind: "proposal", title: "Proposal Created", detail: input.title.trim(), ...actorEvent(actor) });
+  await addTimelineEvent(db, { leadId: input.leadId, kind: "proposal", title: "Proposal Created", detail: input.title.trim(), ...actorEvent(actor), relatedProposalId: id });
+  await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, proposalId: id, amount: input.amount ?? null });
   await updateLead(db, actor, workspaceId, input.leadId, { pipelineStage: "proposal_preparation" });
 
   return getProposalOr404(db, workspaceId, id);
@@ -177,11 +194,22 @@ export interface UpdateProposalInput {
   fileName?: string;
   amount?: number;
   notes?: string;
+  /** LL-3 rule 9: a new date re-arms the expiry tasks. */
+  validUntil?: string;
 }
 
-/** Plain field edits — use updateProposalStatus for status transitions (outcome routing). */
-export async function updateProposal(db: Queryable, workspaceId: string, id: string, patch: UpdateProposalInput) {
-  await getProposalRowOr404(db, workspaceId, id);
+/**
+ * Plain field edits — use updateProposalStatus for status transitions (outcome routing). LL-3b rule 5: "Valid until"
+ * (also after sending) only by an admin or the proposal's / contact's owner, with a timeline row.
+ */
+export async function updateProposal(db: Queryable, actor: Actor, workspaceId: string, id: string, patch: UpdateProposalInput) {
+  const current = await getProposalRowOr404(db, workspaceId, id);
+  const oldValidUntil = dateOnly(current.valid_until) ?? null;
+  const validUntilChanged = patch.validUntil !== undefined && patch.validUntil !== oldValidUntil;
+  if (validUntilChanged && actor.role !== "admin" && current.owner_id !== actor.id) {
+    const lead = await getLeadRowOr404(db, workspaceId, current.lead_id);
+    if (lead.owner_id !== actor.id) throw new ForbiddenError("Only the owner or an admin can change the proposal's valid-until date.");
+  }
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -193,20 +221,25 @@ export async function updateProposal(db: Queryable, workspaceId: string, id: str
   if (patch.fileName !== undefined) push("document_reference", patch.fileName || null);
   if (patch.amount !== undefined) push("amount", patch.amount);
   if (patch.notes !== undefined) push("notes", patch.notes);
+  if (validUntilChanged) {
+    push("valid_until", patch.validUntil);
+    sets.push("expiry_warned_at = null", "expired_task_at = null");
+  }
   if (sets.length === 0) return getProposalOr404(db, workspaceId, id);
   params.push(id);
   await db.query(`update public.proposals set ${sets.join(", ")} where id = $${i}`, params);
+  if (validUntilChanged) {
+    await addTimelineEvent(db, {
+      leadId: current.lead_id,
+      kind: "proposal",
+      title: "Proposal valid until changed",
+      detail: `${current.title}: ${oldValidUntil ?? "none"} → ${patch.validUntil}`,
+      ...actorEvent(actor),
+      relatedProposalId: id,
+    });
+  }
   return getProposalOr404(db, workspaceId, id);
 }
-
-/**
- * Terminal proposal statuses: their routing already moved the lead's
- * lifecycle (accepted -> won, rejected/expired -> long_term_nurture) or
- * ended the deal (withdrawn). Their side effects (cancelling tasks,
- * enrolling workflows, changing lifecycle) are one-way — re-running them by
- * transitioning back out is not a safe "undo", so it's blocked below.
- */
-const TERMINAL_PROPOSAL_STATUSES: ProposalStatus[] = ["accepted", "rejected", "withdrawn", "expired"];
 
 /**
  * Proposal status routing (product brief, "PROPOSALS"). This IS the
@@ -230,12 +263,12 @@ export async function updateProposalStatus(
 ) {
   const proposal = await getProposalRowOr404(db, workspaceId, id);
   if (proposal.status === status) return proposalToDto(proposal);
-  if (TERMINAL_PROPOSAL_STATUSES.includes(proposal.status)) {
+  if (!allowedNextProposalStatuses(proposal.status).includes(status)) {
     throw new ConflictError(
       `Proposal is already "${proposal.status}", a terminal status - it can't be moved to "${status}". Create a new proposal instead.`,
     );
   }
-  if ((status === "rejected" || status === "expired") && !options.lossReason) {
+  if (LOSS_REASON_PROPOSAL_STATUSES.includes(status) && !options.lossReason) {
     throw new ValidationError(`lossReason is required when moving a proposal to "${status}".`);
   }
 
@@ -243,16 +276,25 @@ export async function updateProposalStatus(
   const params: unknown[] = [id, status];
   let i = 3;
   if (status === "sent") {
-    sets.push(`sent_at = now()`, `follow_up_at = $${i++}`);
-    params.push(addDaysIso(3));
+    // LL-3 rule 9: valid until the sent date + 30 days unless a date was set.
+    sets.push(`sent_at = now()`, `follow_up_at = $${i++}`, `valid_until = coalesce(valid_until, $${i++}::date)`);
+    params.push(addDaysIso(3), defaultValidUntil(new Date()));
   }
-  if (status === "rejected" || status === "expired") {
+  if (LOSS_REASON_PROPOSAL_STATUSES.includes(status)) {
     sets.push(`loss_reason = $${i++}`, `loss_notes = $${i++}`);
     params.push(options.lossReason, options.lossNotes?.trim() || null);
   }
   await db.query(`update public.proposals set ${sets.join(", ")} where id = $1`, params);
 
   await addTimelineEvent(db, { leadId: proposal.lead_id, kind: "proposal", title: `Proposal ${status}`, detail: proposal.title, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR), relatedProposalId: id });
+
+  // Before today's contact routing below (markWon must see the deal already won).
+  await moveLinkedDealSafely(db, actor, workspaceId, proposal.lead_id, proposal.deal_id, dealStageForProposalStatus(status), {
+    event: status,
+    lossReason: options.lossReason,
+    lossNotes: options.lossNotes,
+    ...(status === "accepted" ? { amount: proposal.amount } : {}),
+  });
 
   const routing = routeProposalStatus(status);
 
@@ -267,7 +309,7 @@ export async function updateProposalStatus(
   }
 
   if (routing.cancelAllOpenTasks) {
-    await cancelOpenTasksForLead(db, actor, proposal.lead_id, "Lead Won");
+    await cancelOpenTasksForLead(db, actor, proposal.lead_id, "Lead Won", undefined, { keepOnboarding: true });
   } else if (routing.cancelOpenProposalFollowUps) {
     await cancelOpenTasksForLead(db, actor, proposal.lead_id, `Superseded - proposal ${status}`, ["proposal_follow_up"]);
   }
@@ -286,6 +328,23 @@ export async function updateProposalStatus(
   if (routing.workflowTrigger) {
     await autoEnroll(db, workspaceId, proposal.lead_id, routing.workflowTrigger, `Proposal ${status}: ${proposal.title}`);
   }
+  await onAgentEvent(db, { workspaceId, leadId: proposal.lead_id, event: "proposal_status", payload: { proposalId: id } });
 
   return getProposalOr404(db, workspaceId, id);
+}
+
+/**
+ * Advances the proposal's overall status to "sent" once a channel succeeds.
+ * Idempotent (updateProposalStatus no-ops if already "sent") and, if the
+ * proposal was independently moved to a terminal status in the meantime
+ * (e.g. a human clicked Accepted/Rejected before this channel finished),
+ * that race is logged and swallowed rather than turned into a false
+ * "this channel failed to send" — the send already happened.
+ */
+export async function tryAdvanceToSent(workspaceId: string, proposalId: string): Promise<void> {
+  try {
+    await withTransaction((client) => updateProposalStatus(client, null, workspaceId, proposalId, "sent"));
+  } catch (err) {
+    console.warn(`[proposalSending] Could not advance proposal ${proposalId} to "sent" after a successful channel send:`, err);
+  }
 }

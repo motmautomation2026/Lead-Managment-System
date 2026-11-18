@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { messageFromError, useLeads } from "@/store";
+import { messageFromError, useLeadMutations } from "@/store";
 import type { ImportLeadsResult } from "@/lib/backend-client";
 import {
   downloadSampleCsv,
@@ -33,7 +33,7 @@ export function ImportLeadsDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const { importLeadsCsv, isPending } = useLeads();
+  const { importLeadsCsv, isPending } = useLeadMutations();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>("select");
@@ -125,6 +125,7 @@ export function ImportLeadsDialog({
           phone: r.phone,
           source: r.source,
           serviceInterest: r.serviceInterest,
+          revenueRange: r.revenueRange,
         })),
       );
       setResult(data);
@@ -201,7 +202,7 @@ export function ImportLeadsDialog({
 
             {headerWarnings.unmatched.length > 0 && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning-soft-foreground" />
                 <span>
                   Unrecognized column{headerWarnings.unmatched.length === 1 ? "" : "s"} (ignored):{" "}
                   {headerWarnings.unmatched.join(", ")}
@@ -210,7 +211,7 @@ export function ImportLeadsDialog({
             )}
             {headerWarnings.duplicates.length > 0 && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning-soft-foreground" />
                 <span>
                   Duplicate column header{headerWarnings.duplicates.length === 1 ? "" : "s"} (first
                   occurrence used): {headerWarnings.duplicates.join(", ")}
@@ -306,7 +307,7 @@ export function ImportLeadsDialog({
                     {result.duplicates.map((r) => (
                       <tr key={`d-${r.rowNumber}`} className="border-t">
                         <td className="px-2 py-1.5 text-muted-foreground">{r.rowNumber}</td>
-                        <td className="px-2 py-1.5 text-warning-foreground">Duplicate</td>
+                        <td className="px-2 py-1.5 text-warning-soft-foreground">Duplicate</td>
                         <td className="px-2 py-1.5">{r.reason}</td>
                       </tr>
                     ))}

@@ -19,6 +19,7 @@ import {
   BackendError,
   backend,
   getCurrentWorkspaceId,
+  listQuery,
   setCurrentWorkspaceId,
 } from "./backend-client";
 
@@ -85,15 +86,33 @@ describe("backend client", () => {
     ],
     [
       "WhatsApp connect",
-      () => backend.connections.whatsapp.command("connect"),
+      () => backend.connections.whatsapp.command("n-1", "connect"),
       "POST",
-      "/api/v1/connections/whatsapp/connect",
+      "/api/v1/connections/whatsapp/numbers/n-1/connect",
     ],
     [
-      "website lead owner update",
-      () => backend.connections.websiteLeads.update({ defaultOwnerId: null }),
+      "assignment rules replace",
+      () => backend.assignmentRules.replace({ rules: [], fallbackOwnerId: null }),
       "PUT",
-      "/api/v1/connections/website-leads",
+      "/api/v1/assignment-rules",
+    ],
+    [
+      "agent settings update",
+      () => backend.agent.settings.update({ mode: "shadow", sendDays: [1, 2] }),
+      "PUT",
+      "/api/v1/agent/settings",
+    ],
+    [
+      "playbook save",
+      () => backend.agent.playbooks.create("Who we are"),
+      "POST",
+      "/api/v1/agent/playbooks",
+    ],
+    [
+      "playbook restore",
+      () => backend.agent.playbooks.restore(2),
+      "POST",
+      "/api/v1/agent/playbooks/2/restore",
     ],
     [
       "workspace create",
@@ -114,6 +133,23 @@ describe("backend client", () => {
       method,
       headers: { Authorization: "Bearer session-token", "Content-Type": "application/json" },
     });
+  });
+
+  it("reads agent settings and playbooks with GET, and sends the playbook body", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await backend.agent.settings.get();
+    await backend.agent.playbooks.list();
+    await backend.agent.playbooks.create("Tone: warm");
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"]);
+    expect(calls).toEqual([
+      ["https://api.example.test/api/v1/agent/settings", "GET"],
+      ["https://api.example.test/api/v1/agent/playbooks", "GET"],
+      ["https://api.example.test/api/v1/agent/playbooks", "POST"],
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[2]![1]!.body as string)).toEqual({ body: "Tone: warm" });
   });
 
   it("uploads a proposal document with its multipart fields", async () => {
@@ -143,32 +179,49 @@ describe("backend client", () => {
     expect(body.get("document")).toBe(document);
   });
 
-  it("omits retained email secrets from a connections update", async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => response({ provider: "resend" }));
+  it("saves email settings with PUT /connections/email/settings, retained secrets omitted", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response({ configured: true }));
     vi.stubGlobal("fetch", fetchMock);
 
     await backend.connections.email.update({
-      provider: "resend",
       enabled: true,
-      senderName: "Northbeam",
-      senderAddress: "sales@example.com",
+      smtpHost: "smtp.example.com",
+      smtpPort: 465,
+      smtpSecurity: "ssl",
+      fromAddress: "sales@example.com",
+      fromName: "Northbeam",
+      replyTo: "",
+      imapHost: "imap.example.com",
+      imapPort: 993,
+      imapSecurity: "ssl",
+      imapSameLogin: true,
+      imapFolder: "INBOX",
+      dailyCap: 100,
+      hourlyCap: 20,
+      minDelaySeconds: 30,
+      maxDelaySeconds: 90,
+      sendWindow: { days: [1, 2, 3, 4, 5, 6], start: "09:30", end: "19:00" },
+      alreadyWarmed: false,
     });
 
-    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
-    expect(body).not.toHaveProperty("resendApiKey");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.example.test/api/v1/connections/email/settings");
+    expect(init?.method).toBe("PUT");
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     expect(body).not.toHaveProperty("smtpPassword");
+    expect(body).not.toHaveProperty("provider");
   });
 
   it("attaches X-Workspace-Id once a workspace is selected, and omits it before then", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => response({ data: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await backend.leads.list();
+    await backend.workflows.list();
     expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty(["headers", "X-Workspace-Id"]);
 
     setCurrentWorkspaceId("workspace-1");
     expect(getCurrentWorkspaceId()).toBe("workspace-1");
-    await backend.leads.list();
+    await backend.workflows.list();
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       headers: { "X-Workspace-Id": "workspace-1" },
     });
@@ -199,5 +252,20 @@ describe("backend client", () => {
       }),
     );
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+  });
+});
+
+describe("listQuery", () => {
+  it("repeats array params and drops empty values (B4 multi-value filters)", () => {
+    expect(
+      listQuery("/contacts", {
+        ownerId: ["me", "none"],
+        q: "",
+        lifecycle: [],
+        limit: 50,
+        cursor: undefined,
+      }),
+    ).toBe("/contacts?ownerId=me&ownerId=none&limit=50");
+    expect(listQuery("/contacts", {})).toBe("/contacts");
   });
 });

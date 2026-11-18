@@ -40,8 +40,8 @@ Authentication starts in Supabase Auth. Every backend request with business data
 
 Roles are intentionally separated:
 
-- `admin`: can access `/api/v1/admin/*` (user management only) and `/api/v1/me`; cannot access CRM business routes.
-- `salesperson`: can access CRM business routes such as leads, tasks, meetings, proposals, workflows, dashboard, notifications, and profiles, plus `/workspaces` and the workspace-scoped `/connections/*` (Email, WhatsApp, Google Calendar, website-lead owner); cannot access admin routes.
+- `admin`: the full CRM (since 1A, `requireCrmUser`) plus the admin-only routes (`/api/v1/admin/*` user management, assignment rules, AI agent settings, …; `requireAdmin`).
+- `salesperson`: CRM business routes (contacts/leads, companies, deals, tasks, meetings, proposals, workflows, home, notifications, profiles, search), `/workspaces` and the workspace-scoped `/connections/*` (Email, WhatsApp, Google Calendar); not the admin-only routes.
 
 Every CRM route (and `/connections/*`) also requires an `X-Workspace-Id` header naming an active workspace (`requireWorkspace` in `Backend/src/authMiddleware.ts`). `/me`, `/profiles` and `/workspaces` do not.
 
@@ -120,9 +120,9 @@ Workspaces (salesperson; not workspace-scoped, so the list loads before one is s
 
 Connections (salesperson, scoped to the `X-Workspace-Id` workspace; `Backend/src/routes/connections.routes.ts`):
 
-- `GET /connections/email`
-- `PUT /connections/email`
-- `POST /connections/email/test`
+- `GET /connections/email/settings` (every CRM user, no secrets)
+- `PUT /connections/email/settings`, `POST /connections/email/test-smtp|test-imap|test-send|resume|check-now`,
+  `GET /connections/email/test-send/:id`, `GET /connections/email/deliverability` (admin only, E1b)
 - `GET /connections/website-leads`
 - `PUT /connections/website-leads`
 - `GET /connections/whatsapp/settings`
@@ -176,9 +176,11 @@ Tasks, meetings, proposals, workflows, runs, dashboard, notifications:
 - `GET /proposals`, `POST /proposals`, `PATCH /proposals/:id`, `POST /proposals/:id/status`
 - `GET /workflows`, `POST /workflows`, `GET /workflows/:id`, `PATCH /workflows/:id`, `POST /workflows/:id/draft`, `PUT /workflows/:id/versions/:version/steps`, `POST /workflows/:id/versions/:version/publish`, `DELETE /workflows/:id/versions/:version` (discard a draft version), `POST /workflows/:id/duplicate`, `DELETE /workflows/:id` (`?force=true` also deletes enrollment history)
 - `GET /templates`, `POST /templates`, `PATCH /templates/:id`, `DELETE /templates/:id`, `POST /templates/:id/attachments`, `DELETE /templates/:id/attachments/:attachmentId`
-- `GET /runs`, `POST /runs`, `POST /runs/:id/pause`, `POST /runs/:id/resume`, `POST /runs/:id/cancel`, `POST /runs/:id/retry`
-- `GET /scheduled-actions`
-- `GET /dashboard/summary`
+- `GET /runs/list`, `GET /runs/count`, `POST /runs`, `POST /runs/:id/pause`, `POST /runs/:id/resume`, `POST /runs/:id/cancel`, `POST /runs/:id/retry`
+- `GET /scheduled-actions/list`, `GET /scheduled-actions/count`
+- `GET /home/summary`
+- `GET /tasks|meetings|proposals/list` + `/count`, `GET /proposals/summary`, `GET /proposals/:id/document` (C6a/C6b; `docs/crm-v2/B4-api.md`)
+- Deprecated, kept for the production rollback (B4-api.md §9): `GET /tasks`, `GET /meetings`, `GET /proposals`, `GET /runs`, `GET /scheduled-actions`, `GET /dashboard/summary`
 - `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`
 
 ## Domain Model
@@ -235,7 +237,7 @@ Proposal routing (the Proposal Conversion Funnel and loss-reason taxonomy):
 
 - Creating a proposal requires a document upload plus email and WhatsApp template IDs.
 - The document is uploaded to `proposal-documents`.
-- Email send is attempted immediately through the configured email provider.
+- The email is queued (`email_send_status = pending`, shown as "Queued") and sent by the worker (E1b).
 - WhatsApp send is queued for the worker.
 - `sent` moves to `proposal_decision_pending`, creates a proposal follow-up task, and enrolls `proposal_pending` (the Day 2/4-5/7/10/14 follow-up cadence).
 - `revision_requested` moves back to `proposal_preparation`, creates a revision task, and cancels open proposal follow-ups.
@@ -281,34 +283,63 @@ On each tick it:
 - Rechecks lead lifecycle, DNC, automation mode, contactability, response state, workflow run state, and template resolution.
 - Executes internal actions directly (`create_call_task`, `create_follow_up_task`, `change_lead_stage`, `stop_workflow`).
 - Renders email/WhatsApp templates for message actions.
-- Sends email through configured Resend or SMTP.
+- Sends queued email (workflow steps, proposals, meeting notifications, tests) through the workspace's SMTP mailbox (`runEmailOutbound`).
+- Reads one due workspace's mailbox over IMAP, read-only, for replies, bounces and unsubscribes (`runEmailInbound`, D3).
 - Sends WhatsApp through the workspace's own Baileys socket (one per active workspace, see `Backend/src/providers/baileys-registry.ts`).
 - Records success, failure, deferred retry, or skipped outcomes.
 - Advances workflow runs to their next enabled step or completes/stops them.
 - Claims queued proposal WhatsApp sends.
 - Claims queued meeting WhatsApp notifications.
+- AI agent (behind `AGENT_RUNNER_ENABLED`): sends the live AI contacts' queued WhatsApp messages (`runAgentSends`), then
+  turns due wake-ups into decisions (`runAgentTick`).
 
 `WORKER_DRY_RUN=true` renders/logs messages and advances runs as if the send succeeded, without contacting providers.
+
+### AI agent: Shadow and Live (E2)
+
+The AI agent decides one action per wake-up for each contact it manages. In **Shadow** it only drafts (for review and
+rating). In **Live** an admin picks who is live: test contacts an admin marks "AI live test" (allowed at once), new leads
+from the switch-on moment (pilot), or all AI contacts — the last two only after the go-live gate (≥ 50 rated decisions,
+≥ 90 % good, no made-up facts or leaked internal info). Live contacts get real WhatsApp and email through the same queues
+and safety rules as workflows (send window, spacing, caps, warm-up, pause), re-checked right before sending (any reply, DNC,
+opt-out, bounce, mode or scope change, workflow run, limits, ≤ 24 h old); AI email only while the mailbox's reply reading
+(IMAP) works. Handoffs create a task for the owner; stop and allowed stage changes are applied. A live contact is never in
+a workflow. Everyone else stays in Shadow.
 
 ## Integrations
 
 Email:
 
-- Any salesperson configures Resend or TLS/STARTTLS SMTP per workspace on the Settings page (`/settings`, `PUT /connections/email`).
-- Secrets are write-only in the UI and encrypted in Postgres.
-- Empty secret fields retain existing saved values.
-- `RESEND_API_KEY` plus sender env vars are an optional legacy read-only fallback until a workspace saves database email settings.
-- Email can be disabled per workspace on the Settings page; sends then defer.
+- SMTP only (E1b; Resend was removed). An **admin** saves the workspace's mailbox in Settings → Workspace → Email: SMTP
+  (host, port, SSL/STARTTLS, login, from address, default from name, reply-to) plus an IMAP login for the same mailbox
+  (read for replies, bounces and unsubscribes, D3). Everyone else sees it read-only, without secrets.
+- Secrets are write-only and encrypted in Postgres (AAD `integration:email`); blank fields keep the saved values.
+- Only the worker sends: every email (workflow step, proposal, meeting notification, test, the AI agent's live emails) is a row in
+  `email_outbound_messages` (one per source), sent through one pooled SMTP connection per workspace with spacing, hourly and
+  daily caps, warm-up, a send window for automated email, recipient checks and auto-pause (`domain/emailSafety.ts`).
+- A workspace with no SMTP saved (or still on Resend) is "not set up": emails wait in the queue, they never fail for it.
+- Admins can test the SMTP/IMAP login, send themselves a test email, resume a paused mailbox, and run a DNS
+  deliverability check (MX, SPF, DKIM, DMARC). Every CRM user sees the sending numbers.
+- Replies (D3): every 2 minutes (`EMAIL_IMAP_POLL_SECONDS`) the worker reads new mail in the IMAP folder, read-only
+  (EXAMINE + BODY.PEEK; nothing is marked read, moved or deleted), only mail that arrived after the IMAP login was saved.
+  Bounces (DSN) mark our email bounced and the contact's email invalid / bounced (they count toward the 5 % auto-pause);
+  out-of-office replies get a timeline row; an "unsubscribe" email unsubscribes the contact; a real reply matched to one
+  contact (In-Reply-To / References → our Message-ID, else the sender's address) is stored encrypted and behaves like a
+  WhatsApp reply (automation stopped, reply task + AI handoff for AI contacts, keyword / AI label). Only the owner and admins
+  can read it (`GET /contacts/:id/email-replies/:replyId`, audited). Settings → Email → Replies & bounces shows the last
+  check and today's counts; an admin's "Check now" schedules the next read.
 
 WhatsApp:
 
 - Uses Baileys, an unofficial WhatsApp Web client.
 - The worker runs one Baileys socket per active workspace, each guarded by its own PostgreSQL advisory lock (keyed on the workspace id), with its own paired number, daily cap and send spacing.
-- Connect/restart/logout, the outbound enabled switch, and the daily cap are on the Settings page, per workspace (any salesperson).
+- Connect/restart/logout are on the Settings page for every CRM user. The Safety section (E1) — outbound switch, spacing, daily cap, new chats per day, send window, Resume — is **admin-only**; everyone sees its monitoring numbers.
 - QR codes are encrypted, shown only on the Settings page, and short-lived.
 - Baileys credentials and Signal keys are encrypted in Postgres.
 - Outbound messages support workflow scheduled actions, proposal sends, and meeting notification sends.
-- Sends respect an emergency switch, live connection state, WhatsApp reachout/new-chat restrictions, recipient registration, randomized send spacing, and Asia/Kolkata daily cap.
+- Every send goes through `domain/whatsappSafety.ts` `decideSend` (E1): random 45–120 s spacing (longer waits defer the send), "typing…" for 2–8 s first, Asia/Kolkata daily cap lowered during a new number's warm-up (20/40/80 for days 1–3/4–7/8–14), at most 20 first messages to new phones per day, workflow messages only Mon–Sat 09:30–19:00 IST (rep proposal/meeting messages are not held by the window), a first workflow message may not contain a link and always ends with an opt-out line. Live connection state, recipient registration and WhatsApp's reach-out/new-chat restrictions are still checked.
+- Sending pauses itself (`enabled` = false, admins notified) on a restriction, a forbidden/logged-out/replaced session, ≥ 5 send failures or ≥ 5 dropped connections in 30 min, or ≥ 3 STOP replies (or ≥ 5 % of ≥ 40 sends) in 24 h; paused sends defer and go out after an admin resumes.
+- Clearing a WhatsApp opt-out is admin-only and needs a reason.
 - Inbound direct replies store metadata only, never message body content, and atomically stop matching lead automation. Ambiguous/unmatched replies appear for review in the Settings page's WhatsApp panel.
 - Protocol and account-enforcement risk remains because Baileys is unofficial.
 
@@ -325,19 +356,19 @@ Google Calendar:
 
 Frontend routes are generated by TanStack Router and currently include:
 
-- `/`: Dashboard
-- `/leads`: Leads table and CSV import
-- `/leads/$leadId`: Lead detail workspace
-- `/tasks`: Task queue
-- `/meetings`: Meetings
-- `/proposals`: Proposals
-- `/automations`: Workflows overview
-- `/automations/workflows/$workflowId`: Workflow builder
-- `/automations/templates`: Templates and attachments
-- `/automations/runs`: Workflow runs
-- `/settings`: Workspace settings — website-lead owner, Email, WhatsApp, Google Calendar connections
+- `/`: Home (my day, my pipeline, proposals awaiting decision, AI drafts to review)
+- `/contacts`, `/contacts/$contactId`: Contacts list (CSV import, bulk actions) and the contact record (`/leads` and `/leads/$leadId` redirect here)
+- `/companies`, `/companies/$companyId`, `/companies/duplicates`: Companies list, record, duplicate review (admins)
+- `/deals`, `/deals/$dealId`: Deals table / pipeline board and the deal record
+- `/tasks`, `/meetings`, `/proposals`: Work lists (row Sheets)
+- `/automations`: Workflows list; `/automations/workflows/$workflowId`: Workflow builder; `/automations/templates`: Templates and attachments; `/automations/runs`: Runs and scheduled steps
+- `/ai-activity`: AI decisions for review; `/knowledge`: AI knowledge base and asset library
+- `/search`: Search results
+- `/settings?tab=`: Settings — Workspace (Email, WhatsApp, Google Calendar), Lead assignment, AI agent and Users (admins), Appearance
+- `/admin`: admin sign-in; opens Settings → Users (or, for the Google Calendar OAuth landing, Settings → Workspace)
 - `/privacy`: Public privacy policy page (no login required)
-- `/admin`: Admin user management only (admin accounts are redirected here; salespeople are redirected away)
+
+The UI conventions (components, list state in the URL, server-side lists) are in `docs/crm-v2/C1-ui.md`; the list API in `docs/crm-v2/B4-api.md`.
 
 Important frontend boundaries:
 
@@ -351,15 +382,12 @@ Important frontend boundaries:
 
 User-visible product areas:
 
-- Dashboard cards for active leads, due tasks/calls, meetings today, proposal follow-ups, overdue actions, attention items, pipeline funnel, and today's queue.
-- Leads page with search, owner/stage/automation filters, add lead, CSV import, missing-next-action warning, and next-action visibility that includes scheduled automation steps.
-- Lead detail with journey card, call logging, next action creation/rescheduling/completion, lead editing, permanent delete, DNC/reactivation, lifecycle actions, contactability, owner/stage/response edits, open tasks, timeline, meetings, proposals, workflow runs, scheduled actions, and notes.
-- Task page for open/completed/cancelled task management.
-- Meetings page for scheduling/updating meetings, participants, status/outcome recording, calendar sync visibility, and Meet links.
-- Proposals page for document upload, template selection, send status, and status transitions.
-- Automations area for workflows, runs, scheduled actions, templates, template body editing, template attachments, default meeting-scheduled templates, draft versions, step ordering, debounce autosave, publish, duplicate, delete, pause/resume/cancel/retry.
-- Admin page for salesperson account creation/update/deactivation only.
-- Settings page (per selected workspace) for the website-lead default owner and Email, WhatsApp, and Google Calendar connection control.
+- Home: overdue / due-today tasks, the next tasks, today's meetings with Join links, meetings needing an outcome, my open pipeline per stage, proposals awaiting decision, AI drafts to review.
+- Contacts, Companies and Deals: server-side lists with saved views, filters and bulk actions; record pages with About, Activity, Meetings & proposals (View document), Automation (workflow runs and scheduled steps), AI.
+- Tasks, Meetings and Proposals pages on the list standard with row Sheets.
+- Automation area: workflows list, builder (draft versions, step ordering, autosave, publish, duplicate, delete), templates (body editor, attachments, default meeting-scheduled template), runs and scheduled steps with pause/resume/cancel/retry.
+- AI Activity (decision review and rating) and Knowledge (documents, assets, retrieval test).
+- Settings (per selected workspace): Email, WhatsApp and Google Calendar connections, lead assignment rules (incl. the website-lead fallback owner), AI agent, Users (salesperson account creation/update/deactivation, admins), Appearance.
 
 ## Time, Locale, And Data Transport
 
@@ -398,14 +426,12 @@ Optional platform-wide Google OAuth app for the one-click "Connect Google Calend
 
 Worker/provider values:
 
-- `RESEND_API_KEY` optional fallback
-- `SMTP_FROM_NAME`
-- `SMTP_FROM_ADDRESS`
 - `WORKER_POLL_INTERVAL_MS`
 - `WORKER_BATCH_SIZE`
 - `WORKER_DRY_RUN`
 
-The API also sends email inline (test, proposal and meeting-scheduled emails), so under Compose the `backend` service receives `RESEND_API_KEY`, `SMTP_FROM_NAME` and `SMTP_FROM_ADDRESS` too, with the same defaults as `worker`.
+Email has no provider env settings (E1b): the mailbox is saved per workspace in Settings, and only the worker sends.
+`EMAIL_IMAP_POLL_SECONDS` (worker, default 120, 30–3600): how often each workspace's mailbox is read (D3).
 
 Docker Compose only (root `.env`, read by `compose.yaml`):
 
@@ -468,7 +494,8 @@ Integration tests skip when `TEST_DATABASE_URL` is absent. A full login-to-persi
 
 ## Production Rollout Notes
 
-1. Apply all migrations in filename order.
+1. Apply all migrations in filename order (latest `044`, E2: no workspace goes live by itself; AI email needs SMTP + a
+   healthy IMAP login; workflow runs are cancelled only when an admin turns Live on or widens the scope).
 2. Set one stable `INTEGRATION_ENCRYPTION_KEY` on both API and worker.
 3. Create the first Supabase Auth user, then promote it:
 
@@ -476,9 +503,9 @@ Integration tests skip when `TEST_DATABASE_URL` is absent. A full login-to-persi
 update public.profiles set role = 'admin' where email = 'admin@example.com';
 ```
 
-4. The admin creates a salesperson account (Admin page); the salesperson signs in and creates or selects a workspace (workspace switcher in the sidebar). Admin accounts cannot open the CRM or Settings, so steps 6-10 are done by that salesperson.
+4. The admin creates a salesperson account (Settings → Users); the salesperson signs in and creates or selects a workspace (workspace switcher in the sidebar). Steps 6-10 can be done by an admin or that salesperson.
 5. Deploy with outbound email and WhatsApp disabled
-6. Configure and test Email on the Settings page (per workspace).
+6. As an admin, configure Email on the Settings page (per workspace): SMTP + IMAP, Test SMTP login, Test IMAP login, Send test email to me, Deliverability check.
 7. Configure Google Calendar OAuth (env vars or the Settings page) and verify a test meeting creates/updates/cancels an event with participants and a Meet link.
 8. Pair a dedicated, opted-in WhatsApp account and verify worker restart reconnects without a second QR.
 9. Send one internal/opted-in email and WhatsApp message, reply on WhatsApp, and confirm automation is stopped without reply content being stored.
@@ -494,7 +521,7 @@ Rollback starts by disabling WhatsApp outbound and pausing workflows/runs as nee
 - Do not duplicate business routing tables in React.
 - Do not send provider messages from manual Email/WhatsApp activity buttons.
 - Do not execute workflow sends in request/response handlers; use the worker.
-- Do not store inbound WhatsApp message bodies.
+- Inbound WhatsApp text is stored only encrypted (AAD `whatsapp:inbound:<message_id>`), only for replies matched to exactly one lead, is never logged, and is not sent to the frontend except through explicit, access-checked endpoints.
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.

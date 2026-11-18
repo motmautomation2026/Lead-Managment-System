@@ -25,6 +25,8 @@ export type CalendarSyncStatus = "not_applicable" | "pending" | "synced" | "fail
 export interface Meeting {
   id: string;
   leadId: string;
+  /** The deal this meeting is attached to (CRM v2). */
+  dealId?: string | null;
   ownerId?: string;
   ownerName?: string;
   title: string;
@@ -37,6 +39,10 @@ export interface Meeting {
   meetLink?: string;
   calendarSyncStatus: CalendarSyncStatus;
   calendarSyncError?: string;
+  notifyEmailStatus?: "not_applicable" | "pending" | "skipped" | "sent" | "failed";
+  notifyEmailError?: string;
+  notifyWhatsappStatus?: "not_applicable" | "skipped" | "queued" | "sending" | "sent" | "failed";
+  notifyWhatsappError?: string;
   createdAt: string;
   updatedAt: string;
 }

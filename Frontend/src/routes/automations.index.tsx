@@ -4,7 +4,7 @@ import { WorkflowsPage } from "@/features/automations/workflows-page";
 export const Route = createFileRoute("/automations/")({
   head: () => ({
     meta: [
-      { title: "Automations - MOTM Flow" },
+      { title: "Workflows - MOTM Flow" },
       {
         name: "description",
         content:

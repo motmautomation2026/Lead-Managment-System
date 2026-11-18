@@ -31,6 +31,8 @@ const SPECIAL: Record<string, string> = {
   no_proposal_required: "No Proposal Required",
   // Loss reasons
   price_budget: "Price / Budget",
+  no_requirement: "No Requirement",
+  existing_supplier: "Existing Supplier",
   project_postponed: "Project Postponed",
   competitor_selected: "Competitor Selected",
   management_rejected: "Management Rejected",
@@ -52,6 +54,9 @@ const SPECIAL: Record<string, string> = {
   meeting_proposal_requested: "Meeting: Proposal Requested",
   meeting_not_a_fit: "Meeting: Not a Fit (Archive / Alternate Service)",
 };
+/** LL-3: the call retry ladder's label on a "Call attempt N" task (5 = backend MAX_CALL_ATTEMPTS). */
+export const attemptLabel = (attempt: number) => `Attempt ${attempt} of 5`;
+
 export function label(value?: string | null) {
   if (!value) return "-";
   return SPECIAL[value] ?? value.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());

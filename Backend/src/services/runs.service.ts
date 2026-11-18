@@ -3,8 +3,10 @@ import type { Actor } from "../authMiddleware.js";
 import { ConflictError, NotFoundError } from "../errors.js";
 import type { AutomationMode, LifecycleState, WorkflowRunStatus, WorkflowStepAction, WorkflowTrigger } from "../domain/enums.js";
 import { isTerminalLifecycle } from "../domain/pipeline.js";
+import { isAiLiveContact } from "./agentSendState.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { findActiveWorkflowsForTrigger, getWorkflowRowOr404 } from "./workflows.service.js";
+import { isLeadAutomated } from "./leadAutomation.service.js";
 
 export interface RunRow {
   id: string;
@@ -262,6 +264,10 @@ export async function autoEnroll(
   trigger: WorkflowTrigger,
   reason: string,
 ) {
+  // E2 rule 9: a live AI contact is never in a workflow.
+  if (await isAiLiveContact(db, workspaceId, leadId)) return [];
+  // REL-1: automatic triggers only for automated leads; a manual enrolment switches automation on (runs.routes.ts).
+  if (trigger !== "manual_enrollment" && !(await isLeadAutomated(db, leadId))) return [];
   const candidates = await findActiveWorkflowsForTrigger(db, workspaceId, trigger);
   const created: ReturnType<typeof runToDto>[] = [];
 
@@ -487,7 +493,11 @@ export async function listScheduledActions(db: Queryable, workspaceId: string, f
     `select * from public.scheduled_actions ${where} order by scheduled_for asc`,
     params,
   );
-  return result.rows.map((r) => ({
+  return result.rows.map(scheduledActionToDto);
+}
+
+export function scheduledActionToDto(r: ScheduledActionRow) {
+  return {
     id: r.id,
     leadId: r.lead_id,
     workflowRunId: r.workflow_run_id,
@@ -502,5 +512,5 @@ export async function listScheduledActions(db: Queryable, workspaceId: string, f
     executedAt: r.executed_at?.toISOString(),
     cancelledAt: r.cancelled_at?.toISOString(),
     cancelReason: r.cancel_reason ?? undefined,
-  }));
+  };
 }

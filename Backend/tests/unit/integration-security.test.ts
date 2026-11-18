@@ -3,7 +3,7 @@ import { decryptJson, encryptJson } from "../../src/security/encryption.js";
 import { normalizePhoneE164, jidToPhoneE164, phoneE164ToJid } from "../../src/domain/phone.js";
 import {
   isOutboundRestricted,
-  isTerminalDisconnect,
+  disconnectAction,
   randomSpacingMs,
   reconnectDelayMs,
 } from "../../src/domain/baileys-policy.js";
@@ -42,16 +42,26 @@ describe("phone normalization", () => {
 });
 
 describe("Baileys safety policy", () => {
-  it("classifies terminal and transient disconnects", () => {
-    expect(isTerminalDisconnect(DisconnectReason.loggedOut)).toBe(true);
-    expect(isTerminalDisconnect(DisconnectReason.connectionReplaced)).toBe(true);
-    expect(isTerminalDisconnect(DisconnectReason.connectionLost)).toBe(false);
+  it.each([
+    [DisconnectReason.loggedOut, "logged_out"],
+    [DisconnectReason.forbidden, "pause"],
+    [DisconnectReason.connectionReplaced, "pause"],
+    [DisconnectReason.multideviceMismatch, "repair"],
+    [DisconnectReason.badSession, "repair"],
+    [DisconnectReason.restartRequired, "reconnect_now"],
+    [DisconnectReason.connectionClosed, "reconnect"],
+    [DisconnectReason.connectionLost, "reconnect"],
+    [DisconnectReason.unavailableService, "reconnect"],
+    [undefined, "reconnect"],
+  ])("disconnect %s → %s (B4)", (code, action) => {
+    expect(disconnectAction(code)).toBe(action);
   });
 
-  it("caps reconnect backoff at five minutes before jitter", () => {
-    expect(reconnectDelayMs(0, 0.5)).toBe(1_000);
-    expect(reconnectDelayMs(20, 0.5)).toBe(300_000);
-    expect(reconnectDelayMs(20, 0)).toBe(225_000);
+  it("backs off 5 s → 10 min with jitter", () => {
+    expect(reconnectDelayMs(0, 0.5)).toBe(5_000);
+    expect(reconnectDelayMs(1, 0.5)).toBe(10_000);
+    expect(reconnectDelayMs(20, 0.5)).toBe(600_000);
+    expect(reconnectDelayMs(20, 0)).toBe(450_000);
   });
 
   it("keeps randomized send spacing within configured bounds", () => {

@@ -3,14 +3,18 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { SCHEDULED_ACTION_STATUSES, WORKFLOW_RUN_STATUSES } from "../domain/enums.js";
-import { ValidationError } from "../errors.js";
+import { ConflictError, ValidationError } from "../errors.js";
 import * as runsService from "../services/runs.service.js";
 import { autoEnroll, enrollLeadInWorkflow } from "../services/runs.service.js";
+import { switchOnForEnrolment } from "../services/leadAutomation.service.js";
+import { AI_MANAGED_CONFLICT, isAiLiveContact } from "../services/agentSendState.service.js";
+import * as lists from "../services/automationLists.service.js";
 
 export const runsRouter = Router();
 runsRouter.use(requireAuth);
+runsRouter.param("id", uuidParam("run"));
 
 const listQuerySchema = z.object({
   workflowId: z.string().uuid().optional(),
@@ -18,11 +22,27 @@ const listQuerySchema = z.object({
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
 });
 
+/** Deprecated (unpaginated): kept for the production rollback; the UI uses GET /runs/list since C6b. */
 runsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await runsService.listRuns(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6b list standard (docs/crm-v2/B4-api.md §7b). */
+runsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.listRunsPage(pool, req.workspaceId!, parseQuery(lists.runListSchema, req.query)));
+  }),
+);
+
+runsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.countRuns(pool, req.workspaceId!, parseQuery(lists.runFilterSchema, req.query)));
   }),
 );
 
@@ -39,9 +59,15 @@ runsRouter.post(
   asyncHandler(async (req, res) => {
     const { leadId, workflowId, reason } = parseBody(enrollSchema, req.body);
     const enrolledReason = reason ?? "Manually enrolled";
+    if (await isAiLiveContact(pool, req.workspaceId!, leadId)) throw new ConflictError(AI_MANAGED_CONFLICT);
 
     if (workflowId) {
-      const run = await withTransaction((client) => enrollLeadInWorkflow(client, req.workspaceId!, leadId, workflowId, enrolledReason));
+      const run = await withTransaction(async (client) => {
+        const created = await enrollLeadInWorkflow(client, req.workspaceId!, leadId, workflowId, enrolledReason);
+        // REL-1 rule 2: a manual enrolment switches the lead's automation on.
+        if (created) await switchOnForEnrolment(client, req.actor!, req.workspaceId!, leadId, "a manual workflow enrolment");
+        return created;
+      });
       if (!run) {
         throw new ValidationError("This lead already has an active run for that workflow.");
       }
@@ -49,7 +75,11 @@ runsRouter.post(
       return;
     }
 
-    const created = await withTransaction((client) => autoEnroll(client, req.workspaceId!, leadId, "manual_enrollment", enrolledReason));
+    const created = await withTransaction(async (client) => {
+      const runs = await autoEnroll(client, req.workspaceId!, leadId, "manual_enrollment", enrolledReason);
+      if (runs.length) await switchOnForEnrolment(client, req.actor!, req.workspaceId!, leadId, "a manual workflow enrolment");
+      return runs;
+    });
     if (created.length === 0) {
       throw new ValidationError("No active published workflow with trigger 'manual_enrollment' is available to enroll this lead in.");
     }
@@ -89,7 +119,7 @@ runsRouter.post(
   }),
 );
 
-// --- Scheduled actions (read/cancel only — no execution in this phase) -------
+// --- Scheduled actions (read only; the worker executes them) -------------------
 
 export const scheduledActionsRouter = Router();
 scheduledActionsRouter.use(requireAuth);
@@ -100,10 +130,25 @@ const scheduledQuerySchema = z.object({
   status: z.enum(SCHEDULED_ACTION_STATUSES).optional(),
 });
 
+/** Deprecated (unpaginated): kept for the production rollback; the UI uses GET /scheduled-actions/list since C6b. */
 scheduledActionsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const filters = parseQuery(scheduledQuerySchema, req.query);
     res.json({ data: await runsService.listScheduledActions(pool, req.workspaceId!, filters) });
+  }),
+);
+
+scheduledActionsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.listScheduledActionsPage(pool, req.workspaceId!, parseQuery(lists.scheduledActionListSchema, req.query)));
+  }),
+);
+
+scheduledActionsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await lists.countScheduledActions(pool, req.workspaceId!, parseQuery(lists.scheduledActionFilterSchema, req.query)));
   }),
 );

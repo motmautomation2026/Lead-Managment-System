@@ -1,7 +1,69 @@
 import { getContentType, type WAMessage } from "baileys";
 import { withTransaction } from "../db.js";
+import type { Queryable } from "../dto.js";
 import { jidToPhoneE164 } from "../domain/phone.js";
 import { addTimelineEvent, SYSTEM_ACTOR } from "./timeline.service.js";
+import { onAgentEvent } from "./agentEvents.service.js";
+import { createResponsibleTask, notifyResponsible } from "./nextAction.service.js";
+import { extractInboundText } from "../domain/whatsappInboundText.js";
+import { encryptText } from "../security/encryption.js";
+import type { AgentMode, AgentStatus } from "../agent/rules.js";
+import { matchReplyKeyword } from "../domain/replyKeywords.js";
+import { DEFAULT_REPLY_TASK_TITLE, REPLY_TASK_TITLES } from "../agent/replyClassification.js";
+import { applyReplyLabel } from "./replyLabels.service.js";
+import { isReplyFollowUp, markReplyForDraft } from "./replyDrafts.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
+import { numberPhoneLockKey } from "../domain/whatsappNumbers.js";
+
+export const REPLY_TASK_TITLE = DEFAULT_REPLY_TASK_TITLE;
+const IST_OFFSET_MS = 330 * 60_000;
+
+/** 23:59 today, Asia/Kolkata (fixed UTC+05:30). */
+export function endOfIstDay(now = new Date()) {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  ist.setUTCHours(23, 59, 0, 0);
+  return new Date(ist.getTime() - IST_OFFSET_MS);
+}
+
+/**
+ * A reply stops automation (4A; D3: email too): the contact responded, goes manual, and its
+ * workflow runs and scheduled actions are cancelled with `reason`.
+ */
+export async function stopAutomationForReply(db: Queryable, leadId: string, reason: string) {
+  await db.query(
+    `update public.leads
+        set response_state = 'responded', automation_mode = 'manual', last_activity_at = now()
+      where id = $1`,
+    [leadId],
+  );
+  await db.query(
+    `update public.workflow_runs
+        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2, next_run_at = null
+      where lead_id = $1 and status in ('running','waiting','paused')`,
+    [leadId, reason],
+  );
+  await db.query(
+    `update public.scheduled_actions
+        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2
+      where lead_id = $1 and status in ('pending','due','paused','executing')`,
+    [leadId, reason],
+  );
+}
+
+/**
+ * One open reply task per contact across channels (any reply-task title counts: a label may have re-titled it).
+ * LL-1: for every replying lead (AI, workflow or manual), owned by the responsible person (rule 1: the owner
+ * if an active member, else unowned); origin agent so the 2-hour reply escalation covers it. The reply's
+ * own bell (notifyResponsible) tells the owner or the admins.
+ */
+export async function ensureReplyTask(db: Queryable, workspaceId: string, leadId: string, title: string) {
+  const open = await db.query(
+    `select 1 from public.tasks where lead_id = $1 and origin = 'agent' and status = 'open' and title = any($2::text[]) limit 1`,
+    [leadId, REPLY_TASK_TITLES],
+  );
+  if (open.rowCount) return;
+  await createResponsibleTask(db, workspaceId, leadId, { type: "follow_up", title, dueAt: endOfIstDay(), origin: "agent" }, false);
+}
 
 function messageTime(message: WAMessage) {
   const raw = message.messageTimestamp;
@@ -15,8 +77,11 @@ function messageTime(message: WAMessage) {
  * lead matching is scoped to that workspace's leads only: a phone number
  * that happens to match a lead in a different workspace must never stop
  * that other workspace's automation or notify that other workspace's owner.
+ * E4a rule 7: `numberId` = the number whose socket received it (null only in tests without numbers):
+ * the event carries it, the lock is per (number, phone), a matched lead without a sticky number gets
+ * this one, and a reply on another number than the lead's is flagged `other_number` (sticky unchanged).
  */
-export async function processInboundUpsert(workspaceId: string, event: { messages: WAMessage[]; type: string; requestId?: string }) {
+export async function processInboundUpsert(workspaceId: string, event: { messages: WAMessage[]; type: string; requestId?: string }, numberId: string | null = null) {
   if (event.type !== "notify" || event.requestId) return;
   for (const message of event.messages) {
     const id = message.key.id;
@@ -29,19 +94,20 @@ export async function processInboundUpsert(workspaceId: string, event: { message
     const type = getContentType(message.message) ?? "unknown";
 
     await withTransaction(async (db) => {
-      await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [phone]);
+      await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [numberId ? numberPhoneLockKey(numberId, phone) : phone]);
       const inserted = await db.query(
         `insert into public.whatsapp_inbound_events
-          (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition)
-         values ($1,$2,$3,$4,$5,$6,'unmatched')
+          (workspace_id, message_id, sender_jid, sender_phone_e164, message_type, received_at, disposition, whatsapp_number_id)
+         values ($1,$2,$3,$4,$5,$6,'unmatched',$7)
          on conflict (message_id) do nothing
          returning message_id`,
-        [workspaceId, id, directJid, phone, type, messageTime(message).toISOString()],
+        [workspaceId, id, directJid, phone, type, messageTime(message).toISOString(), numberId],
       );
       if (inserted.rowCount === 0) return;
 
-      const matches = await db.query<{ id: string; owner_id: string | null }>(
-        `select id, owner_id from public.leads
+      const matches = await db.query<{ id: string; owner_id: string | null; owner_name: string | null; agent_status: AgentStatus; whatsapp_number_id: string | null }>(
+        `select id, owner_id, agent_status, whatsapp_number_id, (select full_name from public.profiles p where p.id = leads.owner_id) as owner_name
+           from public.leads
           where phone_e164 = $1 and workspace_id = $2 and lifecycle_state = 'active' and merged_into_lead_id is null
           for update`,
         [phone, workspaceId],
@@ -52,31 +118,42 @@ export async function processInboundUpsert(workspaceId: string, event: { message
         [id, matches.rowCount, disposition],
       );
 
+      // The text is stored only encrypted and only for a single matched lead; never log it.
+      let hasText = false;
+      let keyword: ReturnType<typeof matchReplyKeyword> = null;
+      if (disposition === "matched") {
+        const { text, truncated } = extractInboundText(message.message);
+        hasText = Boolean(text);
+        keyword = matchReplyKeyword(text);
+        const matched = matches.rows[0]!;
+        await db.query(`update public.whatsapp_inbound_events set lead_id = $2 where message_id = $1`, [id, matched.id]);
+        // E4a rules 3/7: the first inbound sets the sticky number; another number is only flagged.
+        if (numberId && !matched.whatsapp_number_id) {
+          await db.query(`update public.leads set whatsapp_number_id = $2 where id = $1 and whatsapp_number_id is null`, [matched.id, numberId]);
+        } else if (numberId && matched.whatsapp_number_id !== numberId) {
+          await db.query(`update public.whatsapp_inbound_events set other_number = true where message_id = $1`, [id]);
+        }
+        if (text) {
+          const body = encryptText(text, `whatsapp:inbound:${id}`);
+          await db.query(
+            `update public.whatsapp_inbound_events
+                set body_ciphertext = $2, body_iv = $3, body_tag = $4, body_key_version = $5, body_truncated = $6
+              where message_id = $1`,
+            [id, body.ciphertext, body.iv, body.tag, body.keyVersion, truncated],
+          );
+        }
+      }
+
       for (const lead of matches.rows) {
-        await db.query(
-          `update public.leads
-              set response_state = 'responded', automation_mode = 'manual', last_activity_at = now()
-            where id = $1`,
-          [lead.id],
-        );
-        await db.query(
-          `update public.workflow_runs
-              set status = 'cancelled', cancelled_at = now(), cancel_reason = 'Inbound WhatsApp reply', next_run_at = null
-            where lead_id = $1 and status in ('running','waiting','paused')`,
-          [lead.id],
-        );
-        await db.query(
-          `update public.scheduled_actions
-              set status = 'cancelled', cancelled_at = now(), cancel_reason = 'Inbound WhatsApp reply'
-            where lead_id = $1 and status in ('pending','due','paused','executing')`,
-          [lead.id],
-        );
+        await stopAutomationForReply(db, lead.id, "Inbound WhatsApp reply");
         await db.query(
           `insert into public.lead_contact_channels
             (lead_id, channel, status, reason, updated_by_name)
            values ($1, 'whatsapp', 'reachable', 'Inbound reply received', 'WhatsApp')
            on conflict (lead_id, channel) do update
-             set status = 'reachable', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'WhatsApp'`,
+             set status = 'reachable', reason = excluded.reason, updated_at = now(), updated_by = null, updated_by_name = 'WhatsApp'
+             -- A STOP opt-out (D4a) stays until a person clears it.
+             where lead_contact_channels.status <> 'opted_out'`,
           [lead.id],
         );
         await addTimelineEvent(db, {
@@ -86,20 +163,38 @@ export async function processInboundUpsert(workspaceId: string, event: { message
           metadata: { messageId: id, messageType: type, duplicatePhoneMatch: matches.rowCount! > 1 },
           ...SYSTEM_ACTOR,
         });
-        if (lead.owner_id) {
-          await db.query(
-            `insert into public.notifications (workspace_id, recipient_id, title, detail, kind, lead_id, href)
-             values ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-              workspaceId,
-              lead.owner_id,
-              "WhatsApp reply received",
-              matches.rowCount! > 1 ? "Automation stopped for multiple leads sharing this number." : "Automation was switched to manual.",
-              matches.rowCount! > 1 ? "warning" : "info",
-              lead.id,
-              `/leads/${lead.id}`,
-            ],
-          );
+        // LL-1 rule 1: the owner if an active member, else the workspace's admins.
+        await notifyResponsible(db, workspaceId, lead.id, {
+          title: "WhatsApp reply received",
+          detail: matches.rowCount! > 1 ? "Automation stopped for multiple leads sharing this number." : "Automation was switched to manual.",
+          kind: matches.rowCount! > 1 ? "warning" : "info",
+          href: `/leads/${lead.id}`,
+          // LL-2 rule 3: a lead replied → also by email.
+          email: disposition === "matched",
+        });
+        await onAgentEvent(db, { workspaceId, leadId: lead.id, event: "whatsapp_inbound", payload: { messageId: id } });
+        // In every agent mode: the reply is real. onAgentEvent's handoff already cancelled the pending wakeups.
+        // E3b-2a-2 rule 1: a follow-up reply (handed off by an earlier reply, conversation still open) is treated the same.
+        const wasManaged = lead.agent_status === "active" || lead.agent_status === "paused" || (disposition === "matched" && (await isReplyFollowUp(db, lead.id, lead.agent_status)));
+        // LL-1: every matched reply gets the reply task (AI, workflow or manual lead; unowned → unowned task).
+        if (disposition === "matched") await ensureReplyTask(db, workspaceId, lead.id, REPLY_TASK_TITLE);
+        // D4a: keyword labels in every mode; the AI step only for AI contacts in a non-off mode.
+        if (disposition === "matched") {
+          // E3b-2b rule 14: the reply's outcome goes to the last message we sent (≤ 14 days).
+          await attributeOutcome(db, lead.id, "reply");
+          const mode = (await db.query<{ mode: AgentMode }>(`select mode from public.agent_settings where workspace_id = $1`, [workspaceId])).rows[0]?.mode ?? "off";
+          if (keyword) {
+            await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: keyword, source: "keyword", status: "done" });
+          } else if (hasText && wasManaged && mode !== "off") {
+            await db.query(
+              `update public.whatsapp_inbound_events set classification_status = 'pending', classification_next_at = now() where message_id = $1`,
+              [id],
+            );
+          } else {
+            await applyReplyLabel(db, { workspaceId, leadId: lead.id, messageId: id, label: "unclassified", source: "keyword", status: "skipped" });
+          }
+          // E3b-2a rule 1: a suggested reply for the owner (written by the worker once the label is known).
+          await markReplyForDraft(db, { channel: "whatsapp", eventId: id, leadId: lead.id, eligible: hasText && wasManaged && mode !== "off" && Boolean(lead.owner_id) });
         }
       }
 

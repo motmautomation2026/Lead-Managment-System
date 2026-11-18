@@ -36,6 +36,8 @@ export type ObjectionType = (typeof OBJECTION_TYPES)[number];
 
 export const LEAD_LOSS_REASONS = [
   "price_budget",
+  "no_requirement",
+  "existing_supplier",
   "internal_hiring",
   "project_postponed",
   "competitor_selected",
@@ -45,6 +47,25 @@ export const LEAD_LOSS_REASONS = [
   "other",
 ] as const;
 export type LeadLossReason = (typeof LEAD_LOSS_REASONS)[number];
+/** LL-3 rule 7: a discard reason is required ("other" also needs the text). */
+export const DISCARD_REASONS = [
+  "spam",
+  "duplicate",
+  "wrong_person",
+  "not_a_sales_lead",
+  "other",
+] as const;
+export type DiscardReason = (typeof DISCARD_REASONS)[number];
+/** LL-3: the reasons offered for a new loss (older ones stay valid on old records). Mirrors domain/recovery.ts. */
+export const LOSS_REASON_CHOICES = [
+  "price_budget",
+  "no_requirement",
+  "existing_supplier",
+  "competitor_selected",
+  "no_response",
+  "project_postponed",
+  "other",
+] as const satisfies readonly LeadLossReason[];
 export const LIFECYCLE_STATES = [
   "active",
   "long_term_nurture",
@@ -104,7 +125,7 @@ export interface NextAction {
   dueAt: string;
   ownerId?: string;
   ownerName?: string;
-  origin: "manual" | "automation";
+  origin: "manual" | "automation" | "agent";
 }
 export interface LeadNote {
   id: string;
@@ -112,17 +133,29 @@ export interface LeadNote {
   at: string;
   body: string;
 }
+export type AgentStatus = "none" | "active" | "paused" | "handed_off" | "stopped";
+
 export interface Lead {
   id: string;
   firstName: string;
   lastName: string;
   company: string;
+  /** CRM v2 company link (read-only); null when the company text is a placeholder or not linked yet. */
+  companyId?: string | null;
   jobTitle: string;
   industry: string;
   phone: string;
   email: string;
   source: LeadSource;
   serviceInterest: string;
+  /** Company revenue as entered; revenueMin/MaxCr are the backend's parse in crore (null = open/unknown). */
+  revenueRange?: string;
+  revenueMinCr?: number | null;
+  revenueMaxCr?: number | null;
+  /** E3b-2b: hot-lead score 0–100, band and reason codes (null until the worker's first sweep). */
+  hotScore?: number | null;
+  hotBand?: string | null;
+  hotReasons?: string[];
   ownerId?: string;
   ownerName?: string;
   pipelineStage: PipelineStage;
@@ -140,7 +173,19 @@ export interface Lead {
   interestedLaterDecisionOwner?: string;
   lossReason?: LeadLossReason;
   lossNotes?: string;
+  /** LL-3: competitor (reason competitor_selected), project date (postponed), Lost recovery date, discard reason. */
+  lossCompetitorName?: string;
+  lossProjectDate?: string;
+  recoverAt?: string;
+  recoveredAt?: string;
+  discardReason?: DiscardReason;
   mergedIntoLeadId?: string;
+  /** AI agent state (read-only; managed from Settings → AI agent). */
+  agentStatus: AgentStatus;
+  agentStatusReason?: string;
+  agentStatusChangedAt?: string;
+  agentTouchCount: number;
+  agentLastTouchAt?: string;
   lastActivityAt: string;
   nextAction: NextAction | null;
   createdBy?: string;
@@ -177,6 +222,7 @@ export const CALL_CONNECTED_OUTCOMES = [
   "wrong_fit",
   "wrong_person",
   "do_not_contact",
+  "not_interested",
 ] as const;
 export type CallConnectedOutcome = (typeof CALL_CONNECTED_OUTCOMES)[number];
 export interface Call {

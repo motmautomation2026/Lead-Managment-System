@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import {
   LEAD_SOURCES,
   PIPELINE_STAGES,
@@ -16,6 +16,7 @@ import {
   LEAD_LOSS_REASONS,
 } from "../domain/enums.js";
 import * as leadsService from "../services/leads.service.js";
+import { DISCARD_REASONS } from "../domain/recovery.js";
 import { leadToDto } from "../services/leads.service.js";
 import { getLeadNextAction } from "../services/tasks.service.js";
 import { listTimelineForLead } from "../services/timeline.service.js";
@@ -26,6 +27,7 @@ import { listRuns } from "../services/runs.service.js";
 
 export const leadsRouter = Router();
 leadsRouter.use(requireAuth);
+leadsRouter.param("id", uuidParam("lead"));
 
 // firstName/company/source are bare optional strings, not z.string().min(1)/
 // z.enum(LEAD_SOURCES) -- a blank/unknown value is left for
@@ -44,6 +46,7 @@ const createLeadSchema = z.object({
   phone: z.string().optional(),
   source: z.string().optional(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
   ownerId: z.string().uuid().optional(),
 });
 
@@ -81,6 +84,7 @@ const importRowSchema = z.object({
   // all-or-nothing.
   source: z.string(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
 });
 
 const importLeadsSchema = z.object({
@@ -154,6 +158,7 @@ const updateLeadSchema = z.object({
   phone: z.string().optional(),
   source: z.string().optional(),
   serviceInterest: z.string().optional(),
+  revenueRange: z.string().max(200).optional(),
   ownerId: z.string().uuid().optional(),
   pipelineStage: z.enum(PIPELINE_STAGES).optional(),
   responseState: z.enum(RESPONSE_STATES).optional(),
@@ -170,10 +175,8 @@ leadsRouter.patch(
 
 /**
  * Permanent delete. Gated the same as every other lead-mutating route here
- * (requireAuth + requireSalesperson + requireWorkspace, applied at the
- * crmRouter level in routes/index.ts) -- admin accounts are walled off from
- * all CRM data in this app (see requireSalesperson), so there is no
- * more-privileged tier within leads to additionally require. Irreversible
+ * (requireAuth + requireCrmUser + requireWorkspace, applied at the
+ * crmRouter level in routes/index.ts) -- salespeople and admins alike. Irreversible
  * and cascades across every related table -- see leadsService.deleteLead
  * and 007_lead_hard_delete.sql.
  */
@@ -194,13 +197,13 @@ leadsRouter.get(
   }),
 );
 
-const addNoteSchema = z.object({ body: z.string().min(1) });
+const addNoteSchema = z.object({ body: z.string().min(1), dealId: z.string().uuid().optional() });
 
 leadsRouter.post(
   "/:id/notes",
   asyncHandler(async (req, res) => {
-    const { body } = parseBody(addNoteSchema, req.body);
-    const note = await withTransaction((client) => leadsService.addNote(client, req.actor!, req.workspaceId!, req.params.id!, body));
+    const { body, dealId } = parseBody(addNoteSchema, req.body);
+    const note = await withTransaction((client) => leadsService.addNote(client, req.actor!, req.workspaceId!, req.params.id!, body, dealId));
     res.status(201).json(note);
   }),
 );
@@ -246,27 +249,37 @@ leadsRouter.post(
   "/:id/won",
   asyncHandler(async (req, res) => {
     const { reason } = parseBody(optionalReasonSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markWon(client, req.actor!, req.workspaceId!, req.params.id!, reason));
+    const lead = await withTransaction((client) => leadsService.markWon(client, req.actor!, req.workspaceId!, req.params.id!, reason, true));
     res.json(await withNextAction(lead));
   }),
 );
 
-const markLostSchema = z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), notes: z.string().optional() });
+// LL-3: competitor name (competitor) / project date (postponed, required — checked in markLost).
+const lossDetailsSchema = {
+  competitorName: z.string().trim().max(200).optional(),
+  projectDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+};
+const markLostSchema = z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), notes: z.string().optional(), ...lossDetailsSchema });
 
 leadsRouter.post(
   "/:id/lost",
   asyncHandler(async (req, res) => {
-    const { lossReason, notes } = parseBody(markLostSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markLost(client, req.actor!, req.workspaceId!, req.params.id!, lossReason, notes));
+    const { lossReason, notes, competitorName, projectDate } = parseBody(markLostSchema, req.body);
+    const lead = await withTransaction((client) =>
+      leadsService.markLost(client, req.actor!, req.workspaceId!, req.params.id!, lossReason, notes, { competitorName, projectDate }),
+    );
     res.json(await withNextAction(lead));
   }),
 );
 
+// LL-3 rule 7: the discard reason is required; "other" also needs the text (checked in markDiscarded).
+const discardSchema = z.object({ discardReason: z.enum(DISCARD_REASONS), reason: z.string().trim().max(2000).optional() });
+
 leadsRouter.post(
   "/:id/discard",
   asyncHandler(async (req, res) => {
-    const { reason } = parseBody(optionalReasonSchema, req.body);
-    const lead = await withTransaction((client) => leadsService.markDiscarded(client, req.actor!, req.workspaceId!, req.params.id!, reason));
+    const { discardReason, reason } = parseBody(discardSchema, req.body);
+    const lead = await withTransaction((client) => leadsService.markDiscarded(client, req.actor!, req.workspaceId!, req.params.id!, discardReason, reason));
     res.json(await withNextAction(lead));
   }),
 );
@@ -342,6 +355,8 @@ const logCallSchema = z.object({
   // "Interested - Later" capture — only meaningful (and only read by
   // logCall) when connectedOutcome === 'interested_later'.
   interestedLater: interestedLaterCaptureSchema.optional(),
+  // LL-3 rule 4: only read when connectedOutcome === 'not_interested' (then required).
+  notInterested: z.object({ lossReason: z.enum(LEAD_LOSS_REASONS), ...lossDetailsSchema }).optional(),
 });
 
 leadsRouter.get(

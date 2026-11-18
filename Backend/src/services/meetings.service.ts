@@ -1,15 +1,21 @@
 import type { Queryable } from "../dto.js";
+import { onAgentEvent } from "./agentEvents.service.js";
 import type { Actor } from "../authMiddleware.js";
 import { DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import type { MeetingOutcome, MeetingStatus } from "../domain/enums.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
 import { routeMeetingOutcome } from "../domain/meetingRouting.js";
 import { addTimelineEvent, actorEvent } from "./timeline.service.js";
+import { attributeOutcome } from "./messageFacts.service.js";
 import { cancelOpenTasksForLead, createTask } from "./tasks.service.js";
+import { rescheduleAfterMeeting } from "./nextAction.service.js";
 import { getLeadRowOr404, markWon, moveToLongTermNurture, updateLead, type LeadRow } from "./leads.service.js";
 import { autoEnroll, cancelRunsForLead } from "./runs.service.js";
 import { addDaysIso } from "../dto.js";
 import { pipelineStageIndex } from "../domain/pipeline.js";
+import { DEAL_CLOSED_LOSS_REASON, dealStageForMeetingOutcome } from "../domain/dealRouting.js";
+import { attachDealSafely, moveLinkedDealSafely } from "./deals.service.js";
 
 export interface MeetingRow {
   id: string;
@@ -24,6 +30,7 @@ export interface MeetingRow {
   status: MeetingStatus;
   outcome: MeetingOutcome | null;
   notes: string | null;
+  deal_id: string | null;
   calendar_event_id: string | null;
   meet_link: string | null;
   calendar_sync_status: "not_applicable" | "pending" | "synced" | "failed";
@@ -42,10 +49,11 @@ export interface MeetingRow {
   updated_at: Date;
 }
 
-function meetingToDto(row: MeetingRow) {
+export function meetingToDto(row: MeetingRow) {
   return {
     id: row.id,
     leadId: row.lead_id,
+    dealId: row.deal_id,
     ownerId: row.owner_id ?? undefined,
     ownerName: row.owner_name ?? undefined,
     title: row.title,
@@ -80,6 +88,8 @@ export interface ScheduleMeetingInput {
   durationMin?: number;
   url?: string;
   participants?: ScheduleMeetingParticipant[];
+  /** Attach to this open deal of the contact (else the newest open deal, else a new one). */
+  dealId?: string;
 }
 
 /** The meeting's owner is usually the lead's owner or the acting salesperson — both names are already on hand; only an explicit cross-assignment (input.ownerId pointing at someone else) needs a lookup. */
@@ -95,6 +105,8 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
   const lead = await getLeadRowOr404(db, workspaceId, input.leadId);
   if (lead.lifecycle_state === "do_not_contact") throw new DoNotContactError();
 
+  // E4b rule 5: an explicitly chosen owner must be a member (the lead's existing owner is kept as it is).
+  if (input.ownerId && input.ownerId !== lead.owner_id) await assertAssignableUser(db, workspaceId, input.ownerId);
   const ownerId = input.ownerId ?? lead.owner_id ?? actor.id;
   const ownerName = await resolveOwnerName(db, ownerId, lead, actor);
 
@@ -117,7 +129,8 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
     ]);
   }
 
-  await addTimelineEvent(db, { leadId: input.leadId, kind: "meeting", title: "Meeting Scheduled", detail: input.title.trim(), ...actorEvent(actor) });
+  await addTimelineEvent(db, { leadId: input.leadId, kind: "meeting", title: "Meeting Scheduled", detail: input.title.trim(), ...actorEvent(actor), relatedMeetingId: id });
+  await attachDealSafely(db, actor, workspaceId, { leadId: input.leadId, requestedDealId: input.dealId, meetingId: id });
 
   // Only advance the funnel forward — a lead already past meeting_scheduled
   // (e.g. proposal_sent) must not be regressed by booking an additional
@@ -147,6 +160,8 @@ export async function scheduleMeeting(db: Queryable, actor: Actor, workspaceId: 
   });
 
   await autoEnroll(db, workspaceId, input.leadId, "meeting_scheduled", `Meeting scheduled: ${input.title.trim()}`);
+  await onAgentEvent(db, { workspaceId, leadId: input.leadId, event: "meeting_booked", payload: { meetingId: id } });
+  await attributeOutcome(db, input.leadId, "meeting_booked");
 
   return getMeetingOr404(db, workspaceId, id);
 }
@@ -258,10 +273,34 @@ export async function updateMeeting(db: Queryable, actor: Actor, workspaceId: st
     // or no-showing a meeting leaves a stale prep task behind.
     if (patch.status === "cancelled" || patch.status === "no_show" || patch.status === "failed") {
       await cancelOpenTasksForLead(db, actor, current.lead_id, "Meeting was cancelled", ["confirm_meeting"]);
+      // LL-1 rule 5: "Reschedule the meeting" (+1 d) for the responsible person, unless another future meeting exists.
+      await rescheduleAfterMeeting(db, workspaceId, current.lead_id, { id, ownerId: current.owner_id });
     }
   }
 
+  // A meeting that won't happen (cancelled / no-show / failed) ends the meeting pause like a cancel.
+  const statusChanged = patch.status !== undefined && patch.status !== current.status;
+  const agentEvent =
+    statusChanged && (patch.status === "cancelled" || patch.status === "no_show" || patch.status === "failed")
+      ? "meeting_cancelled"
+      : (statusChanged && patch.status === "rescheduled") || (patch.at !== undefined && Date.parse(patch.at) !== current.scheduled_at.getTime())
+        ? "meeting_rescheduled"
+        : null;
+  if (agentEvent) await onAgentEvent(db, { workspaceId, leadId: current.lead_id, event: agentEvent, payload: { meetingId: id } });
+
+  // LL-2 rule 4: a new time cancels the reminders queued for the old one and plans them again from now
+  // (the route then sends the "Updated: …" confirmation).
+  if (meetingTimeChanged(current, patch)) {
+    const { resetMeetingReminders } = await import("./meetingReminders.service.js");
+    await resetMeetingReminders(db, id);
+  }
+
   return getMeetingOr404(db, workspaceId, id);
+}
+
+/** LL-2: the PATCH moved the meeting's time (the reschedule that resets reminders and re-sends the confirmation). */
+export function meetingTimeChanged(current: Pick<MeetingRow, "scheduled_at">, patch: Pick<UpdateMeetingInput, "at">): boolean {
+  return patch.at !== undefined && Date.parse(patch.at) !== current.scheduled_at.getTime();
 }
 
 /**
@@ -293,6 +332,12 @@ export async function recordMeetingOutcome(db: Queryable, actor: Actor, workspac
     relatedMeetingId: id,
   });
 
+  // Before today's contact routing below (markWon must see the deal already won).
+  await moveLinkedDealSafely(db, actor, workspaceId, meeting.lead_id, meeting.deal_id, dealStageForMeetingOutcome(outcome), {
+    event: outcome,
+    ...(outcome === "not_interested" ? { lossReason: DEAL_CLOSED_LOSS_REASON, lossNotes: "Meeting outcome: not interested" } : {}),
+  });
+
   const routing = routeMeetingOutcome(outcome);
   // stage and objectionType must land in one update statement — see the
   // identical constraint note in calls.service.ts::logCall.
@@ -317,6 +362,7 @@ export async function recordMeetingOutcome(db: Queryable, actor: Actor, workspac
   if (routing.workflowTrigger) {
     await autoEnroll(db, workspaceId, meeting.lead_id, routing.workflowTrigger, `Meeting outcome: ${outcome}`);
   }
+  await onAgentEvent(db, { workspaceId, leadId: meeting.lead_id, event: "meeting_outcome", payload: { meetingId: id } });
 
   return getMeetingOr404(db, workspaceId, id);
 }

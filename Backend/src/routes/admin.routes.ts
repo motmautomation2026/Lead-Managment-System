@@ -2,21 +2,24 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAdmin, requireAuth } from "../authMiddleware.js";
-import { parseBody, parseParams } from "../validation/parse.js";
+import { parseBody, parseParams, parseQuery, uuidParam } from "../validation/parse.js";
 import * as users from "../services/admin-users.service.js";
+import { alertPrefsSchema, bookingUrlSchema } from "../services/profiles.service.js";
 
 /**
  * Admin is intentionally limited to user management only (see the
  * multi-workspace architecture plan). Email/WhatsApp/Google Calendar
  * connection management moved to the workspace-scoped
- * routes/connections.routes.ts, reachable by any active salesperson for
+ * routes/connections.routes.ts, reachable by any active CRM user for
  * whichever workspace they currently have selected — it is no longer an
  * admin-only concern.
  */
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireAdmin);
+adminRouter.param("id", uuidParam("user"));
 
-adminRouter.get("/users", asyncHandler(async (_req, res) => res.json({ data: await users.listSalespeople() })));
+// UX-1: keyset pages, newest first (`q`, `cursor`, `limit`).
+adminRouter.get("/users", asyncHandler(async (req, res) => res.json(await users.listSalespeoplePage(parseQuery(users.userListSchema, req.query)))));
 
 const createUserSchema = z.object({
   name: z.string().trim().min(1),
@@ -37,6 +40,10 @@ const updateUserSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(12).optional(),
   active: z.boolean().optional(),
+  // E3b-1 rule 5: an admin can set a salesperson's booking link.
+  bookingUrl: bookingUrlSchema.optional(),
+  // LL-2 rule 3: admins see / change the same email alert toggles as Settings → Profile.
+  ...alertPrefsSchema,
 });
 adminRouter.patch(
   "/users",

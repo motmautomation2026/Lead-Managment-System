@@ -3,14 +3,16 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { MEETING_OUTCOMES, MEETING_STATUSES } from "../domain/enums.js";
 import { getMeetingOr404, listMeetings, recordMeetingOutcome, scheduleMeeting, updateMeeting } from "../services/meetings.service.js";
 import { syncMeetingCancelled, syncMeetingCreated, syncMeetingRescheduled } from "../services/meeting-calendar-sync.service.js";
-import { notifyMeetingScheduled } from "../services/meetingScheduledNotification.service.js";
+import { notifyMeetingScheduled, notifyMeetingUpdated } from "../services/meetingScheduledNotification.service.js";
+import * as work from "../services/workLists.service.js";
 
 export const meetingsRouter = Router();
 meetingsRouter.use(requireAuth);
+meetingsRouter.param("id", uuidParam("meeting"));
 
 const listQuerySchema = z.object({
   leadId: z.string().uuid().optional(),
@@ -23,6 +25,21 @@ meetingsRouter.get(
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await listMeetings(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6a list standard (docs/crm-v2/B4-api.md §7a). The old GET / above is deprecated: kept for the production rollback. */
+meetingsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await work.listWorkMeetings(pool, req.actor!, req.workspaceId!, parseQuery(work.meetingListSchema, req.query)));
+  }),
+);
+
+meetingsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await work.countWorkMeetings(pool, req.actor!, req.workspaceId!, parseQuery(work.meetingFilterSchema, req.query)));
   }),
 );
 
@@ -39,6 +56,7 @@ const createSchema = z.object({
   durationMin: z.number().int().positive().optional(),
   url: z.string().url().optional(),
   participants: z.array(participantSchema).optional(),
+  dealId: z.string().uuid().optional(),
 });
 
 meetingsRouter.post(
@@ -69,6 +87,7 @@ meetingsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const patch = parseBody(updateSchema, req.body);
+    const before = await getMeetingOr404(pool, req.workspaceId!, req.params.id!);
     const meeting = await withTransaction((client) => updateMeeting(client, req.actor!, req.workspaceId!, req.params.id!, patch));
     // Same best-effort, non-transactional sync split as the create route.
     if (patch.status === "cancelled") {
@@ -76,6 +95,8 @@ meetingsRouter.patch(
     } else if (patch.at !== undefined || patch.title !== undefined || patch.durationMin !== undefined) {
       await syncMeetingRescheduled(meeting.id);
     }
+    // LL-2 rule 4: a new time → the confirmation again ("Updated: …"); reminders were reset in updateMeeting.
+    if (patch.at !== undefined && Date.parse(patch.at) !== Date.parse(before.at)) await notifyMeetingUpdated(meeting.id);
     res.json(await getMeetingOr404(pool, req.workspaceId!, meeting.id));
   }),
 );

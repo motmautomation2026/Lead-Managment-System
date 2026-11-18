@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { routeConnectedOutcome, routeNotConnected } from "../../src/domain/callRouting.js";
 
 describe("routeNotConnected", () => {
-  it("enrolls in Not Connected Nurture with a retry task", () => {
+  it("enrolls in Not Connected Nurture; the retry task comes from the LL-3 ladder (calls.service)", () => {
     const r = routeNotConnected("no_answer");
     expect(r.stage).toBe("not_connected_nurture");
     expect(r.automation).toBe("active");
     expect(r.workflowTrigger).toBe("call_not_connected");
-    expect(r.task).toMatchObject({ type: "call", dueInDays: 2 });
+    expect(r.task).toBeUndefined();
     expect(r.phoneContactStatus).toBeUndefined();
   });
 
@@ -41,17 +41,16 @@ describe("routeConnectedOutcome", () => {
     expect(r.promptScheduleMeeting).toBe(true);
   });
 
-  it("routes Interested - Later with a 30-day follow-up when no restart date is captured", () => {
+  it("routes Interested - Later (the service requires the restart date; without one a 30-day fallback)", () => {
     const r = routeConnectedOutcome("interested_later");
     expect(r.stage).toBe("interested_later");
     expect(r.workflowTrigger).toBe("call_outcome_interested_later");
-    expect(r.task).toMatchObject({ dueInDays: 30 });
+    expect(r.task).toMatchObject({ type: "call", title: "Call back — interested later", dueInDays: 30 });
   });
 
-  it("routes Interested - Later to reconnect 7 days before the captured restart date", () => {
-    const restartAt = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString();
-    const r = routeConnectedOutcome("interested_later", { restartAt });
-    expect(r.task?.dueInDays).toBe(13);
+  it("LL-3 rule 5: the call-back task is due 09:30 IST on the restart date (a Sunday → Monday)", () => {
+    expect(routeConnectedOutcome("interested_later", { restartAt: "2027-01-12" }).task?.dueAt).toEqual(new Date("2027-01-12T09:30:00+05:30"));
+    expect(routeConnectedOutcome("interested_later", { restartAt: "2027-01-10" }).task?.dueAt).toEqual(new Date("2027-01-11T09:30:00+05:30"));
   });
 
   it("routes Future Possibility to a low-intensity 90-day check", () => {

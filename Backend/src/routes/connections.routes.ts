@@ -1,62 +1,125 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
-import { parseBody } from "../validation/parse.js";
+import { pool } from "../db.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import * as connections from "../services/connections.service.js";
 import * as websiteLeadSettings from "../services/websiteLeadSettings.service.js";
-import { sendEmail } from "../providers/email.provider.js";
-import { withTransaction } from "../db.js";
-import { recordAdminAudit } from "../services/admin-audit.service.js";
+import { requireAdmin } from "../authMiddleware.js";
+import * as emailConnection from "../services/emailConnection.service.js";
+import { getTestEmail, queueTestEmail } from "../services/emailOutbound.service.js";
+import { checkDeliverability } from "../services/emailDeliverability.service.js";
+import * as safetyEvents from "../services/safetyEvents.service.js";
 
 /**
  * Workspace-scoped Email/WhatsApp/Google Calendar connection management.
  * Moved out of the admin-only app (see admin.routes.ts) per the
  * multi-workspace architecture plan: Admin stays limited to user
- * management, and every active salesperson can configure the connections
- * for whichever workspace they currently have selected (requireWorkspace,
- * applied at the crmRouter level in routes/index.ts, resolves req.workspaceId).
+ * management, and every active CRM user can use the connections for whichever
+ * workspace they currently have selected (requireWorkspace, applied at the
+ * crmRouter level in routes/index.ts, resolves req.workspaceId). Email (E1b) and
+ * WhatsApp safety (E1) settings are admin-only (requireAdmin below).
  */
 export const connectionsRouter = Router();
+connectionsRouter.param("testEmailId", uuidParam("test email"));
 
-connectionsRouter.get("/email", asyncHandler(async (req, res) => res.json(await connections.getEmailConnection(req.workspaceId!))));
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour).");
 
-const emailSchema = z.object({
-  provider: z.enum(["resend", "smtp"]),
-  enabled: z.boolean(),
-  senderName: z.string().trim().min(1),
-  senderAddress: z.string().email(),
-  resendApiKey: z.string().optional(),
-  smtpHost: z.string().trim().optional(),
-  smtpPort: z.number().int().min(1).max(65535).optional(),
-  smtpSecurity: z.enum(["tls", "starttls"]).optional(),
-  smtpUsername: z.string().optional(),
-  smtpPassword: z.string().optional(),
-});
-connectionsRouter.put(
-  "/email",
+// E1b email: SMTP only. Every CRM user may read the settings (no secrets) and the monitoring;
+// everything else is admin-only. Sending happens only in the worker.
+connectionsRouter.get("/email/settings", asyncHandler(async (req, res) => res.json(await emailConnection.getEmailSettings(req.workspaceId!))));
+// UX-1: the whole safety-event history as keyset pages (the settings carry the latest 20).
+connectionsRouter.get(
+  "/email/safety-events",
   asyncHandler(async (req, res) =>
-    res.json(await connections.updateEmailConnection(req.actor!, req.workspaceId!, parseBody(emailSchema, req.body))),
+    res.json(await safetyEvents.listEmailSafetyEvents(req.workspaceId!, parseQuery(safetyEvents.safetyEventListSchema, req.query))),
+  ),
+);
+connectionsRouter.get(
+  "/whatsapp/safety-events",
+  asyncHandler(async (req, res) =>
+    res.json(await safetyEvents.listWhatsAppSafetyEvents(req.workspaceId!, parseQuery(safetyEvents.safetyEventListSchema, req.query))),
   ),
 );
 
-const emailTestSchema = z.object({ to: z.string().email() });
-connectionsRouter.post(
-  "/email/test",
+const port = z.number().int().min(1).max(65535);
+const security = z.enum(["ssl", "starttls"]);
+const emailSettingsSchema = z
+  .object({
+    provider: z.literal("smtp", { errorMap: () => ({ message: "Email goes through SMTP only; Resend is no longer supported." }) }).optional(),
+    enabled: z.boolean(),
+    smtpHost: z.string().trim().min(1, "The SMTP host is required.").max(255),
+    smtpPort: port,
+    smtpSecurity: security,
+    smtpUsername: z.string().max(320).optional(),
+    smtpPassword: z.string().max(1000).optional(),
+    fromAddress: z.string().trim().email("Enter a valid from address."),
+    fromName: z.string().trim().min(1, "The from name is required.").max(120),
+    replyTo: z.union([z.string().trim().email("Enter a valid reply-to address."), z.literal(""), z.null()]).optional(),
+    imapHost: z.string().trim().min(1, "The IMAP host is required.").max(255),
+    imapPort: port,
+    imapSecurity: security,
+    imapSameLogin: z.boolean(),
+    imapUsername: z.string().max(320).optional(),
+    imapPassword: z.string().max(1000).optional(),
+    imapFolder: z.string().trim().min(1).max(255).default("INBOX"),
+    dailyCap: z.number().int().min(1).max(10_000),
+    hourlyCap: z.number().int().min(1).max(1000),
+    minDelaySeconds: z.number().int().min(1).max(3600),
+    maxDelaySeconds: z.number().int().min(1).max(3600),
+    sendWindow: z
+      .object({ days: z.array(z.number().int().min(1).max(7)).min(1).max(7), start: hhmm, end: hhmm })
+      .refine((w) => w.start < w.end, { message: "The send window must start before it ends.", path: ["end"] }),
+    alreadyWarmed: z.boolean(),
+  })
+  .refine((s) => s.minDelaySeconds <= s.maxDelaySeconds, { message: "The minimum spacing can't be more than the maximum.", path: ["maxDelaySeconds"] });
+connectionsRouter.put(
+  "/email/settings",
+  requireAdmin,
+  asyncHandler(async (req, res) =>
+    res.json(await emailConnection.updateEmailSettings(req.actor!, req.workspaceId!, parseBody(emailSettingsSchema, req.body))),
+  ),
+);
+// E3b-2b: "Track email opens" (admin only, default off).
+connectionsRouter.put(
+  "/email/track-opens",
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    const { to } = parseBody(emailTestSchema, req.body);
-    const workspaceId = req.workspaceId!;
-    try {
-      const result = await sendEmail(
-        workspaceId,
-        { to, subject: "CRM email connection test", html: "<p>Your CRM email connection is working.</p>" },
-        { allowDisabled: true },
-      );
-      await withTransaction((db) => recordAdminAudit(db, req.actor!, "connection.email.test_succeeded", "integration_connection", `${workspaceId}:email`, { to }));
-      res.json({ ok: true, providerMessageId: result.providerMessageId });
-    } catch (error) {
-      await withTransaction((db) => recordAdminAudit(db, req.actor!, "connection.email.test_failed", "integration_connection", `${workspaceId}:email`, { to }));
-      throw error;
-    }
+    const { enabled } = parseBody(z.object({ enabled: z.boolean() }).strict(), req.body);
+    res.json(await emailConnection.setTrackOpens(req.actor!, req.workspaceId!, enabled));
+  }),
+);
+// D3: the next worker tick reads the mailbox; this request never opens IMAP itself.
+connectionsRouter.post(
+  "/email/check-now",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    await emailConnection.requestImapCheck(pool, req.workspaceId!);
+    res.json(await emailConnection.getEmailSettings(req.workspaceId!));
+  }),
+);
+connectionsRouter.post("/email/resume", requireAdmin, asyncHandler(async (req, res) => res.json(await emailConnection.resumeEmail(req.actor!, req.workspaceId!))));
+connectionsRouter.post("/email/test-smtp", requireAdmin, asyncHandler(async (req, res) => res.json(await emailConnection.testSmtpLogin(req.actor!, req.workspaceId!))));
+connectionsRouter.post("/email/test-imap", requireAdmin, asyncHandler(async (req, res) => res.json(await emailConnection.testImapLogin(req.actor!, req.workspaceId!))));
+connectionsRouter.post(
+  "/email/test-send",
+  requireAdmin,
+  asyncHandler(async (req, res) => res.status(202).json(await queueTestEmail(req.workspaceId!, req.actor!))),
+);
+connectionsRouter.get(
+  "/email/test-send/:testEmailId",
+  requireAdmin,
+  asyncHandler(async (req, res) => res.json(await getTestEmail(req.workspaceId!, req.params.testEmailId!))),
+);
+const deliverabilitySchema = z
+  .object({ selector: z.union([z.literal(""), z.string().trim().regex(/^[A-Za-z0-9._-]{1,63}$/, 'Enter a DKIM selector like "google" or "s1".')]).optional() })
+  .strict();
+connectionsRouter.get(
+  "/email/deliverability",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { selector } = parseQuery(deliverabilitySchema, req.query);
+    res.json(await checkDeliverability(req.workspaceId!, selector || null));
   }),
 );
 
@@ -77,21 +140,78 @@ connectionsRouter.get(
   "/whatsapp/settings",
   asyncHandler(async (req, res) => res.json(await connections.getWhatsAppConnection(req.workspaceId!))),
 );
-const whatsappSettingsSchema = z.object({
-  enabled: z.boolean(),
-  dailyCap: z.number().int().min(1).max(10_000),
-});
+// E4a: workspace-level WhatsApp settings — the master switch for every number, the send window, max numbers.
+const whatsappSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    maxNumbers: z.number().int().min(1).max(20).optional(),
+    sendWindow: z
+      .object({ days: z.array(z.number().int().min(1).max(7)).min(1).max(7), start: hhmm, end: hhmm })
+      .refine((w) => w.start < w.end, { message: "The send window must start before it ends.", path: ["end"] })
+      .optional(),
+  })
+  .strict();
+// E1/E4a: WhatsApp settings, numbers, pause and resume are admin-only; connect/restart/logout of a number stay open.
 connectionsRouter.put(
   "/whatsapp/settings",
+  requireAdmin,
   asyncHandler(async (req, res) =>
     res.json(await connections.updateWhatsAppSettings(req.actor!, req.workspaceId!, parseBody(whatsappSettingsSchema, req.body))),
   ),
 );
 
+connectionsRouter.param("numberId", uuidParam("WhatsApp number"));
+const numberLabel = z.string().trim().min(1, "The label can't be blank.").max(60);
+const addNumberSchema = z.object({ label: numberLabel.optional(), ownerUserId: z.string().uuid().nullable().optional() }).strict();
+const numberSettingsSchema = z
+  .object({
+    label: numberLabel.optional(),
+    ownerUserId: z.string().uuid().nullable().optional(),
+    dailyCap: z.number().int().min(1).max(10_000).optional(),
+    minDelaySeconds: z.number().int().min(1).max(300).optional(),
+    maxDelaySeconds: z.number().int().min(1).max(600).optional(),
+    maxNewChatsPerDay: z.number().int().min(0).max(1000).optional(),
+  })
+  .strict()
+  .refine((s) => s.minDelaySeconds === undefined || s.maxDelaySeconds === undefined || s.minDelaySeconds <= s.maxDelaySeconds, {
+    message: "The minimum spacing can't be more than the maximum.",
+    path: ["maxDelaySeconds"],
+  });
+const removeNumberSchema = z
+  .object({ leads: z.enum(["move", "unassign"]).optional(), moveToNumberId: z.string().uuid().optional() })
+  .strict()
+  .refine((s) => s.leads !== "move" || s.moveToNumberId, { message: "Choose the number to move the contacts to.", path: ["moveToNumberId"] });
+
+connectionsRouter.post(
+  "/whatsapp/numbers",
+  requireAdmin,
+  asyncHandler(async (req, res) => res.status(201).json(await connections.addWhatsAppNumber(req.actor!, req.workspaceId!, parseBody(addNumberSchema, req.body ?? {})))),
+);
+connectionsRouter.put(
+  "/whatsapp/numbers/:numberId",
+  requireAdmin,
+  asyncHandler(async (req, res) =>
+    res.json(await connections.updateWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, parseBody(numberSettingsSchema, req.body))),
+  ),
+);
+connectionsRouter.delete(
+  "/whatsapp/numbers/:numberId",
+  requireAdmin,
+  asyncHandler(async (req, res) =>
+    res.json(await connections.removeWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, parseBody(removeNumberSchema, req.body ?? {}))),
+  ),
+);
+for (const action of ["pause", "resume"] as const) {
+  connectionsRouter.post(
+    `/whatsapp/numbers/:numberId/${action}`,
+    requireAdmin,
+    asyncHandler(async (req, res) => res.json(await connections.pauseWhatsAppNumber(req.actor!, req.workspaceId!, req.params.numberId!, action === "pause"))),
+  );
+}
 for (const command of ["connect", "restart", "logout"] as const) {
   connectionsRouter.post(
-    `/whatsapp/${command}`,
-    asyncHandler(async (req, res) => res.json(await connections.commandWhatsApp(req.actor!, req.workspaceId!, command))),
+    `/whatsapp/numbers/:numberId/${command}`,
+    asyncHandler(async (req, res) => res.json(await connections.commandWhatsApp(req.actor!, req.workspaceId!, req.params.numberId!, command))),
   );
 }
 

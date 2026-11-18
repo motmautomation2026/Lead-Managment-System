@@ -4,14 +4,16 @@ import { z } from "zod";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireAuth } from "../authMiddleware.js";
 import { pool, withTransaction } from "../db.js";
-import { parseBody, parseQuery } from "../validation/parse.js";
+import { parseBody, parseQuery, uuidParam } from "../validation/parse.js";
 import { ValidationError } from "../errors.js";
 import { LEAD_LOSS_REASONS, PROPOSAL_STATUSES } from "../domain/enums.js";
 import { listProposals, updateProposal, updateProposalStatus } from "../services/proposals.service.js";
-import { createAndSendProposal } from "../services/proposalSending.service.js";
+import { createAndSendProposal, getProposalDocumentLink } from "../services/proposalSending.service.js";
+import * as work from "../services/workLists.service.js";
 
 export const proposalsRouter = Router();
 proposalsRouter.use(requireAuth);
+proposalsRouter.param("id", uuidParam("proposal"));
 
 const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -55,11 +57,42 @@ const listQuerySchema = z.object({
   ownerId: z.string().uuid().optional(),
 });
 
+/** Deprecated (unpaginated): kept for the production rollback; the UI uses GET /proposals/list since C6a. */
 proposalsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const filters = parseQuery(listQuerySchema, req.query);
     res.json({ data: await listProposals(pool, req.workspaceId!, filters) });
+  }),
+);
+
+/** C6a list standard (docs/crm-v2/B4-api.md §7a). */
+proposalsRouter.get(
+  "/list",
+  asyncHandler(async (req, res) => {
+    res.json(await work.listWorkProposals(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalListSchema, req.query)));
+  }),
+);
+
+proposalsRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    res.json(await work.countWorkProposals(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalFilterSchema, req.query)));
+  }),
+);
+
+proposalsRouter.get(
+  "/summary",
+  asyncHandler(async (req, res) => {
+    res.json(await work.proposalSummary(pool, req.actor!, req.workspaceId!, parseQuery(work.proposalFilterSchema, req.query)));
+  }),
+);
+
+/** A signed URL (5 min) for the proposal's file; 404 for another workspace or no file. */
+proposalsRouter.get(
+  "/:id/document",
+  asyncHandler(async (req, res) => {
+    res.json(await getProposalDocumentLink(pool, req.workspaceId!, req.params.id!));
   }),
 );
 
@@ -72,6 +105,9 @@ const createSchema = z.object({
   notes: z.string().optional(),
   emailTemplateId: z.string().uuid(),
   whatsappTemplateId: z.string().uuid(),
+  dealId: z.string().uuid().optional(),
+  // LL-3 rule 9: default = the sent date + 30 days.
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 proposalsRouter.post(
@@ -95,13 +131,14 @@ const updateSchema = z.object({
   fileName: z.string().optional(),
   amount: z.number().nonnegative().optional(),
   notes: z.string().optional(),
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 proposalsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const patch = parseBody(updateSchema, req.body);
-    const proposal = await withTransaction((client) => updateProposal(client, req.workspaceId!, req.params.id!, patch));
+    const proposal = await withTransaction((client) => updateProposal(client, req.actor!, req.workspaceId!, req.params.id!, patch));
     res.json(proposal);
   }),
 );

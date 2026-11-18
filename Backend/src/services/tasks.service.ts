@@ -1,8 +1,10 @@
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { addTimelineEvent, actorEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
-import type { TaskType } from "../domain/enums.js";
+import type { TaskOrigin, TaskType } from "../domain/enums.js";
+import { AGENT_ACTOR_NAME } from "../agent/constants.js";
 
 export interface TaskRow {
   id: string;
@@ -13,7 +15,7 @@ export interface TaskRow {
   title: string;
   due_at: Date;
   status: "open" | "completed" | "cancelled";
-  origin: "manual" | "automation";
+  origin: TaskOrigin;
   created_by: string | null;
   created_by_name: string | null;
   source_workflow_run_id: string | null;
@@ -21,9 +23,25 @@ export interface TaskRow {
   completed_at: Date | null;
   cancelled_at: Date | null;
   cancel_reason: string | null;
+  /** LL-3 (060): what created the task (TaskMarker); call_attempt = the ladder's attempt number. */
+  marker?: TaskMarker | null;
+  call_attempt?: number | null;
   created_at: Date;
   updated_at: Date;
 }
+
+/** LL-3: tasks.marker values (tasks_marker_valid). An 'onboarding' task survives the lead being marked Won. */
+export type TaskMarker =
+  | "call_attempt"
+  | "fix_phone"
+  | "interested_later_callback"
+  | "lost_recovery"
+  | "proposal_expiring"
+  | "proposal_expired"
+  | "decision_overdue"
+  | "manager_review"
+  | "onboarding"
+  | "call_ladder_end";
 
 export function taskToDto(row: TaskRow) {
   return {
@@ -41,6 +59,7 @@ export function taskToDto(row: TaskRow) {
     completedAt: row.completed_at?.toISOString(),
     cancelledAt: row.cancelled_at?.toISOString(),
     cancelReason: row.cancel_reason ?? undefined,
+    callAttempt: row.call_attempt ?? undefined,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -53,9 +72,11 @@ export interface CreateTaskInput {
   type: TaskType;
   title: string;
   dueAt: string;
-  origin?: "manual" | "automation";
+  origin?: TaskOrigin;
   sourceWorkflowRunId?: string | null;
   sourceWorkflowStepId?: string | null;
+  marker?: TaskMarker | null;
+  callAttempt?: number | null;
 }
 
 /**
@@ -87,8 +108,8 @@ export async function createTask(
   const result = await db.query<TaskRow>(
     `insert into public.tasks
       (workspace_id, lead_id, owner_id, owner_name, task_type, title, due_at, origin,
-       source_workflow_run_id, source_workflow_step_id, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       source_workflow_run_id, source_workflow_step_id, created_by, created_by_name, marker, call_attempt)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      returning *`,
     [
       workspaceId,
@@ -102,12 +123,21 @@ export async function createTask(
       input.sourceWorkflowRunId ?? null,
       input.sourceWorkflowStepId ?? null,
       actor?.id ?? null,
-      actor?.fullName ?? (origin === "automation" ? "Automation" : null),
+      actor?.fullName ?? (origin === "automation" ? "Automation" : origin === "agent" ? AGENT_ACTOR_NAME : null),
+      input.marker ?? null,
+      input.callAttempt ?? null,
     ],
   );
   const task = result.rows[0]!;
 
-  const who = origin === "automation" ? AUTOMATION_ACTOR : actor ? actorEvent(actor) : AUTOMATION_ACTOR;
+  const who =
+    origin === "agent"
+      ? { ...AUTOMATION_ACTOR, actorName: AGENT_ACTOR_NAME }
+      : origin === "automation"
+        ? AUTOMATION_ACTOR
+        : actor
+          ? actorEvent(actor)
+          : AUTOMATION_ACTOR;
   await addTimelineEvent(db, {
     leadId: input.leadId,
     kind: "task",
@@ -145,7 +175,10 @@ export async function updateTask(db: Queryable, actor: Actor, workspaceId: strin
   const params: unknown[] = [];
   let i = 1;
   const push = (column: string, value: unknown) => { sets.push(`${column} = $${i++}`); params.push(value); };
-  if (patch.ownerId !== undefined) push("owner_id", patch.ownerId);
+  if (patch.ownerId !== undefined) {
+    if (patch.ownerId !== current.owner_id) await assertAssignableUser(db, workspaceId, patch.ownerId);
+    push("owner_id", patch.ownerId);
+  }
   if (patch.type !== undefined) push("task_type", patch.type);
   if (patch.title !== undefined) push("title", patch.title.trim());
   if (patch.dueAt !== undefined) push("due_at", patch.dueAt);
@@ -171,6 +204,29 @@ export async function completeTask(db: Queryable, actor: Actor, workspaceId: str
     leadId: task.lead_id,
     kind: "task",
     title: "Task Completed",
+    detail: task.title,
+    ...actorEvent(actor),
+    relatedTaskId: task.id,
+  });
+  return task;
+}
+
+/**
+ * UX-3 Undo for Complete: a completed task back to open (owner or admin; audited on the timeline like
+ * complete / cancel). The LL-2 once-only markers (`due_notified_at`, `escalated_at`) stay set, so a
+ * reopened task never gets its due bell or escalation again. An open task is returned unchanged.
+ */
+export async function reopenTask(db: Queryable, actor: Actor, workspaceId: string, id: string): Promise<TaskRow> {
+  const existing = await getTaskOr404(db, workspaceId, id);
+  if (actor.role !== "admin" && existing.owner_id !== actor.id) throw new ForbiddenError("Only the task's owner or an admin can reopen it.");
+  if (existing.status === "open") return existing;
+  if (existing.status !== "completed") throw new ConflictError("Only a completed task can be reopened.");
+  const result = await db.query<TaskRow>(`update public.tasks set status = 'open', completed_at = null where id = $1 and status = 'completed' returning *`, [id]);
+  const task = result.rows[0] ?? (await getTaskOr404(db, workspaceId, id));
+  await addTimelineEvent(db, {
+    leadId: task.lead_id,
+    kind: "task",
+    title: "Task Reopened",
     detail: task.title,
     ...actorEvent(actor),
     relatedTaskId: task.id,
@@ -223,10 +279,20 @@ export async function cancelOpenTasksForLead(
   leadId: string,
   reason: string,
   taskTypeFilter?: TaskType[],
+  opts: { markers?: TaskMarker[]; keepOnboarding?: boolean } = {},
 ): Promise<number> {
-  const filterClause = taskTypeFilter?.length ? `and task_type = any($3::public.task_type[])` : "";
   const params: unknown[] = [leadId, reason];
-  if (taskTypeFilter?.length) params.push(taskTypeFilter);
+  let filterClause = "";
+  if (taskTypeFilter?.length) {
+    params.push(taskTypeFilter);
+    filterClause += ` and task_type = any($${params.length}::public.task_type[])`;
+  }
+  if (opts.markers?.length) {
+    params.push(opts.markers);
+    filterClause += ` and marker = any($${params.length}::text[])`;
+  }
+  // LL-3: Won cancels the acquisition tasks, never the "Onboarding: <deal>" task.
+  if (opts.keepOnboarding) filterClause += ` and marker is distinct from 'onboarding'`;
   const result = await db.query<TaskRow>(
     `update public.tasks
        set status = 'cancelled', cancelled_at = now(), cancel_reason = $2

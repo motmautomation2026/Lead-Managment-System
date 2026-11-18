@@ -3,8 +3,7 @@ import { Phone, Workflow as WorkflowIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { useAutomations } from "@/store";
-import type { PipelineStage } from "@/types";
+import type { PipelineStage, Run, ScheduledAction } from "@/types";
 import { ScheduledFollowupTimeline } from "./scheduled-followups";
 
 const CALL_STAGES: PipelineStage[] = [
@@ -57,23 +56,23 @@ const PHASES: { key: Phase; label: string }[] = [
  * of the many possible next steps applies to this lead.
  */
 export function LeadJourneyCard({
-  leadId,
+  runs,
+  scheduledActions,
   pipelineStage,
   doNotContact,
   onCallClick,
   onEnrollClick,
 }: {
-  leadId: string;
+  /** The contact's runs and scheduled steps (from the lists, filtered by contact). */
+  runs: Run[];
+  scheduledActions: ScheduledAction[];
   pipelineStage: PipelineStage;
   doNotContact: boolean;
   onCallClick: () => void;
   onEnrollClick: () => void;
 }) {
-  const automationStore = useAutomations();
   const phase = phaseFor(pipelineStage);
-  const hasActiveRun = automationStore.runs.some(
-    (run) => run.leadId === leadId && ["running", "waiting", "paused"].includes(run.status),
-  );
+  const hasActiveRun = runs.some((run) => ["running", "waiting", "paused"].includes(run.status));
 
   return (
     <Card>
@@ -114,7 +113,8 @@ export function LeadJourneyCard({
           </div>
         ) : phase === "nurture" ? (
           <ScheduledFollowupTimeline
-            leadId={leadId}
+            runs={runs}
+            scheduledActions={scheduledActions}
             doNotContact={doNotContact}
             onEnrollClick={onEnrollClick}
           />

@@ -10,7 +10,9 @@ services:
       PORT: 8787
       NODE_ENV: production
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      # DB-3: transaction pooler (6543); session pooler (5432), blank = DATABASE_URL (warned).
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SESSION_URL: ${DATABASE_SESSION_URL:-}
       SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
@@ -24,11 +26,19 @@ services:
       # both blank (endpoint stays disabled). Only the API uses them.
       INGEST_API_KEY: ${INGEST_API_KEY:-}
       INGEST_WORKSPACE_ID: ${INGEST_WORKSPACE_ID:-}
-      # Legacy env email fallback; the API also sends email inline (test email,
-      # proposal and meeting-scheduled emails), not only the worker.
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MOTM Technologies}
-      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+      # Knowledge-base embeddings. Optional; backend and worker only.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # REL-1: everything else the API reads (blank = the code's default; see docs/release/04-env-vars.md).
+      OPENAI_DECISION_MODEL: ${OPENAI_DECISION_MODEL:-}
+      OPENAI_GROUNDING_MODEL: ${OPENAI_GROUNDING_MODEL:-}
+      OPENAI_PRICES_JSON: ${OPENAI_PRICES_JSON:-}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_SESSION_POOL_MAX: ${DB_SESSION_POOL_MAX:-}
+      DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-}
+      SESSION_POOLER_MAX_CLIENTS: ${SESSION_POOLER_MAX_CLIENTS:-}
     restart: unless-stopped
 
   worker:
@@ -41,16 +51,33 @@ services:
       disable: true
     environment:
       NODE_ENV: production
+      # DB-3: the WhatsApp session locks need the session pooler (5432).
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SESSION_URL: ${DATABASE_SESSION_URL:-}
       SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-MOTM Technologies}
-      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-10000}
       WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
       WORKER_DRY_RUN: ${WORKER_DRY_RUN:-false}
+      EMAIL_IMAP_POLL_SECONDS: ${EMAIL_IMAP_POLL_SECONDS:-120}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # REL-1: everything else the worker reads (blank = the code's default; see docs/release/04-env-vars.md).
+      AGENT_RUNNER_ENABLED: ${AGENT_RUNNER_ENABLED:-false}
+      OPENAI_DECISION_MODEL: ${OPENAI_DECISION_MODEL:-}
+      OPENAI_GROUNDING_MODEL: ${OPENAI_GROUNDING_MODEL:-}
+      OPENAI_PRICES_JSON: ${OPENAI_PRICES_JSON:-}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      CRM_COMPANY_SWEEP_ENABLED: ${CRM_COMPANY_SWEEP_ENABLED:-true}
+      CRM_DEAL_SWEEP_ENABLED: ${CRM_DEAL_SWEEP_ENABLED:-true}
+      WORKER_DB_POOL_MAX: ${WORKER_DB_POOL_MAX:-}
+      DB_SESSION_POOL_MAX: ${DB_SESSION_POOL_MAX:-}
+      DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-}
+      SESSION_POOLER_MAX_CLIENTS: ${SESSION_POOLER_MAX_CLIENTS:-}
     restart: unless-stopped
     depends_on:
       - backend

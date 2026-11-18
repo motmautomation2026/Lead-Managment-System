@@ -30,21 +30,21 @@ function encode(value: unknown, aad: string): EncryptedValue {
   return encryptBytes(Buffer.from(JSON.stringify(value, BufferJSON.replacer), "utf8"), aad);
 }
 
-/** One workspace's Baileys credentials/keys — every table here is now keyed by workspace_id (see 015_workspaces.sql), so each workspace's WhatsApp session is fully independent. */
-export async function loadBaileysAuthState(workspaceId: string): Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }> {
+/** One NUMBER's Baileys credentials/keys (E4a, migration 054: whatsapp_number_auth_*, keyed by number_id), so every number's session is fully independent. */
+export async function loadBaileysAuthState(numberId: string, workspaceId: string): Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }> {
   const result = await pool.query<EncryptedRow>(
-    `select ciphertext, iv, tag, key_version from public.whatsapp_auth_credentials where workspace_id = $1`,
-    [workspaceId],
+    `select ciphertext, iv, tag, key_version from public.whatsapp_number_auth_credentials where number_id = $1`,
+    [numberId],
   );
   // AAD strings here are deliberately NOT workspace-namespaced (unlike the
-  // SQL, which is already workspace_id-scoped at the row/PK level): existing
+  // SQL, which is already number_id-scoped at the row/PK level): existing
   // production secrets were encrypted under these exact static AAD values
   // before multi-workspace support shipped, and AES-GCM authentication
   // fails closed (throws "Unsupported state or unable to authenticate
   // data") if the AAD used to decrypt doesn't byte-for-byte match the AAD
   // used to encrypt. Changing these would permanently break every
   // already-stored secret. Row-level workspace isolation is already fully
-  // enforced by the `where workspace_id = $1` queries below.
+  // enforced by the `where number_id = $1` queries below (054 copied the rows unchanged).
   const creds = result.rows[0] ? decode<AuthenticationCreds>(result.rows[0], "whatsapp:auth:creds") : initAuthCreds();
 
   const keys: SignalKeyStore = {
@@ -52,9 +52,9 @@ export async function loadBaileysAuthState(workspaceId: string): Promise<{ state
       if (ids.length === 0) return {};
       const rows = await pool.query<EncryptedRow & { key_id: string }>(
         `select key_id, ciphertext, iv, tag, key_version
-           from public.whatsapp_auth_keys
-          where workspace_id = $1 and key_type = $2 and key_id = any($3::text[])`,
-        [workspaceId, type, ids],
+           from public.whatsapp_number_auth_keys
+          where number_id = $1 and key_type = $2 and key_id = any($3::text[])`,
+        [numberId, type, ids],
       );
       const values: Partial<Record<string, SignalDataTypeMap[T]>> = {};
       for (const row of rows.rows) {
@@ -71,25 +71,25 @@ export async function loadBaileysAuthState(workspaceId: string): Promise<{ state
         for (const [type, entries] of Object.entries(data)) {
           for (const [id, value] of Object.entries(entries ?? {})) {
             if (value == null) {
-              await db.query(`delete from public.whatsapp_auth_keys where workspace_id = $1 and key_type = $2 and key_id = $3`, [workspaceId, type, id]);
+              await db.query(`delete from public.whatsapp_number_auth_keys where number_id = $1 and key_type = $2 and key_id = $3`, [numberId, type, id]);
               continue;
             }
             const encrypted = encode(value, `whatsapp:auth:key:${type}:${id}`);
             await db.query(
-              `insert into public.whatsapp_auth_keys
-                (workspace_id, key_type, key_id, ciphertext, iv, tag, key_version)
-               values ($1,$2,$3,$4,$5,$6,$7)
-               on conflict (workspace_id, key_type, key_id) do update
+              `insert into public.whatsapp_number_auth_keys
+                (number_id, workspace_id, key_type, key_id, ciphertext, iv, tag, key_version)
+               values ($1,$8,$2,$3,$4,$5,$6,$7)
+               on conflict (number_id, key_type, key_id) do update
                  set ciphertext = excluded.ciphertext, iv = excluded.iv, tag = excluded.tag,
                      key_version = excluded.key_version, updated_at = now()`,
-              [workspaceId, type, id, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion],
+              [numberId, type, id, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion, workspaceId],
             );
           }
         }
       });
     },
     async clear() {
-      await pool.query(`delete from public.whatsapp_auth_keys where workspace_id = $1`, [workspaceId]);
+      await pool.query(`delete from public.whatsapp_number_auth_keys where number_id = $1`, [numberId]);
     },
   };
 
@@ -98,21 +98,21 @@ export async function loadBaileysAuthState(workspaceId: string): Promise<{ state
     saveCreds: async () => {
       const encrypted = encode(creds, "whatsapp:auth:creds");
       await pool.query(
-        `insert into public.whatsapp_auth_credentials (workspace_id, ciphertext, iv, tag, key_version)
-         values ($1,$2,$3,$4,$5)
-         on conflict (workspace_id) do update
+        `insert into public.whatsapp_number_auth_credentials (number_id, ciphertext, iv, tag, key_version, workspace_id)
+         values ($1,$2,$3,$4,$5,$6)
+         on conflict (number_id) do update
            set ciphertext = excluded.ciphertext, iv = excluded.iv, tag = excluded.tag,
                key_version = excluded.key_version, updated_at = now()`,
-        [workspaceId, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion],
+        [numberId, encrypted.ciphertext, encrypted.iv, encrypted.tag, encrypted.keyVersion, workspaceId],
       );
     },
   };
 }
 
-export async function clearBaileysAuthState(workspaceId: string) {
+export async function clearBaileysAuthState(numberId: string) {
   await withTransaction(async (db) => {
-    await db.query(`delete from public.whatsapp_auth_keys where workspace_id = $1`, [workspaceId]);
-    await db.query(`delete from public.whatsapp_auth_credentials where workspace_id = $1`, [workspaceId]);
+    await db.query(`delete from public.whatsapp_number_auth_keys where number_id = $1`, [numberId]);
+    await db.query(`delete from public.whatsapp_number_auth_credentials where number_id = $1`, [numberId]);
   });
 }
 

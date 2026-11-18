@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { routeProposalStatus } from "../../src/domain/proposalRouting.js";
+import { allowedNextProposalStatuses, lossReasonStatusesFrom, PROPOSAL_STATUS_GROUPS, routeProposalStatus, TERMINAL_PROPOSAL_STATUSES } from "../../src/domain/proposalRouting.js";
+import { PROPOSAL_STATUSES } from "../../src/domain/enums.js";
 
 describe("routeProposalStatus", () => {
   it("Sent -> Proposal Decision Pending + follow-up task + proposal_pending trigger", () => {
@@ -27,5 +28,38 @@ describe("routeProposalStatus", () => {
     expect(routeProposalStatus("draft")).toEqual({});
     expect(routeProposalStatus("uploaded")).toEqual({});
     expect(routeProposalStatus("ready_to_send")).toEqual({});
+  });
+});
+
+describe("allowedNextProposalStatuses", () => {
+  it("terminal statuses allow nothing", () => {
+    for (const s of TERMINAL_PROPOSAL_STATUSES) expect(allowedNextProposalStatuses(s)).toEqual([]);
+  });
+  it("an open status allows every other status, never itself", () => {
+    const next = allowedNextProposalStatuses("sent");
+    expect(next).not.toContain("sent");
+    expect(next).toHaveLength(PROPOSAL_STATUSES.length - 1);
+    expect(next).toEqual(expect.arrayContaining(["accepted", "rejected", "expired", "revision_requested"]));
+  });
+  it("groups cover every status once, except sent (open + awaiting decision)", () => {
+    const { open, won, lost, awaiting_decision } = PROPOSAL_STATUS_GROUPS;
+    expect([...open, ...won, ...lost].sort()).toEqual([...PROPOSAL_STATUSES].sort());
+    expect(awaiting_decision.every((s) => (open as readonly string[]).includes(s))).toBe(true);
+  });
+});
+
+describe("lossReasonStatusesFrom", () => {
+  it("open statuses: rejected and expired need a loss reason", () => {
+    expect(lossReasonStatusesFrom("sent")).toEqual(["rejected", "expired"]);
+    expect(lossReasonStatusesFrom("draft")).toEqual(["rejected", "expired"]);
+  });
+  it("is always a subset of the allowed next statuses", () => {
+    for (const s of PROPOSAL_STATUSES) {
+      const allowed = allowedNextProposalStatuses(s);
+      expect(lossReasonStatusesFrom(s).every((x) => allowed.includes(x))).toBe(true);
+    }
+  });
+  it("terminal statuses need nothing", () => {
+    for (const s of TERMINAL_PROPOSAL_STATUSES) expect(lossReasonStatusesFrom(s)).toEqual([]);
   });
 });

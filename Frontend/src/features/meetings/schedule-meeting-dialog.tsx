@@ -10,20 +10,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { dateInputValue, toIsoFromIst } from "@/lib/dates";
-import { useLeads } from "@/store";
-import type { Meeting } from "@/types";
+import { ContactPicker } from "@/features/contacts/contact-picker";
+import type { IdName, Meeting } from "@/types";
+
+/** What rescheduling needs from a meeting (old Meeting or a C6a list row). */
+export type MeetingToEdit = Pick<Meeting, "id" | "leadId" | "title" | "at" | "durationMin" | "url">;
 
 /**
- * Schedule/reschedule-meeting dialog — shared between the Meetings page (its
- * own "Schedule meeting" button, full lead picker) and the lead detail page
+ * Schedule/reschedule-meeting dialog — shared between the Meetings page and + Create
+ * (no `leadId`: a ContactPicker) and the contact record page
  * (opened with a fixed `leadId`, e.g. automatically after a Positive call
  * outcome — see LogCallDialog's `onScheduleMeetingPrompt`). When `leadId` is
  * given, the Lead field is skipped entirely since it's already implied by
@@ -34,6 +30,7 @@ import type { Meeting } from "@/types";
  */
 export function ScheduleMeetingDialog({
   leadId,
+  dealId,
   open,
   meeting,
   isSaving,
@@ -41,8 +38,10 @@ export function ScheduleMeetingDialog({
   onSave,
 }: {
   leadId?: string;
+  /** New meetings only: attach to this deal (from a deal record). */
+  dealId?: string;
   open: boolean;
-  meeting: Meeting | null;
+  meeting: MeetingToEdit | null;
   isSaving?: boolean;
   onOpenChange: (value: boolean) => void;
   onSave: (value: {
@@ -53,11 +52,11 @@ export function ScheduleMeetingDialog({
     durationMin: number;
     url?: string | undefined;
     participants?: { name?: string | undefined; email: string }[] | undefined;
+    dealId?: string | undefined;
   }) => void;
 }) {
-  const { leads } = useLeads();
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  const [pickedLeadId, setPickedLeadId] = useState("");
+  const [picked, setPicked] = useState<IdName | null>(null);
   const [title, setTitle] = useState("Discovery call");
   const [date, setDate] = useState(dateInputValue(1));
   const [time, setTime] = useState("11:00");
@@ -67,7 +66,7 @@ export function ScheduleMeetingDialog({
   const key = meeting?.id ?? "new";
   if (open && loadedFor !== key) {
     setLoadedFor(key);
-    setPickedLeadId(meeting?.leadId ?? leadId ?? leads[0]?.id ?? "");
+    setPicked(null);
     setTitle(meeting?.title ?? "Discovery call");
     const at = meeting ? new Date(meeting.at) : null;
     setDate(
@@ -91,7 +90,7 @@ export function ScheduleMeetingDialog({
   }
   if (!open && loadedFor !== null) setLoadedFor(null);
 
-  const effectiveLeadId = leadId ?? pickedLeadId;
+  const effectiveLeadId = leadId ?? meeting?.leadId ?? picked?.id ?? "";
   const addParticipant = () => setParticipants((prev) => [...prev, { name: "", email: "" }]);
   const updateParticipant = (index: number, patch: Partial<{ name: string; email: string }>) =>
     setParticipants((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
@@ -105,25 +104,12 @@ export function ScheduleMeetingDialog({
           <DialogTitle>{meeting ? "Reschedule meeting" : "Schedule meeting"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {!leadId && (
+          {!leadId && !meeting && (
             <div>
-              <Label className="mb-1.5 block text-xs">Lead</Label>
-              <Select
-                value={pickedLeadId}
-                disabled={Boolean(meeting)}
-                onValueChange={setPickedLeadId}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {leads.map((lead) => (
-                    <SelectItem key={lead.id} value={lead.id}>
-                      {lead.firstName} {lead.lastName} · {lead.company}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="meeting-contact" className="mb-1.5 block text-xs">
+                Contact
+              </Label>
+              <ContactPicker id="meeting-contact" value={picked} onChange={setPicked} />
             </div>
           )}
           <div>
@@ -175,7 +161,12 @@ export function ScheduleMeetingDialog({
                       value={participant.email}
                       onChange={(event) => updateParticipant(index, { email: event.target.value })}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => removeParticipant(index)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Remove participant"
+                      onClick={() => removeParticipant(index)}
+                    >
                       <X className="size-4" />
                     </Button>
                   </div>
@@ -205,6 +196,7 @@ export function ScheduleMeetingDialog({
                   : participants
                       .filter((p) => p.email.trim())
                       .map((p) => ({ name: p.name.trim() || undefined, email: p.email.trim() })),
+                dealId: meeting ? undefined : dealId,
               });
               onOpenChange(false);
             }}

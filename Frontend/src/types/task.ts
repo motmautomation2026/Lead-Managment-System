@@ -28,11 +28,13 @@ export interface Task {
   dueAt: string;
   status: TaskStatus;
   done: boolean;
-  origin: "manual" | "automation";
+  origin: "manual" | "automation" | "agent";
   sourceWorkflowRunId?: string;
   completedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
+  /** LL-3: "Call attempt N" of the retry ladder (shown as "Attempt N of 5"). */
+  callAttempt?: number;
   createdAt: string;
   updatedAt: string;
 }

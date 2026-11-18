@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { MeetingsPage } from "@/features/meetings/meetings-page";
+import { validateMeetingsSearch } from "@/features/meetings/meetings-search";
 
 export const Route = createFileRoute("/meetings")({
   head: () => ({
@@ -14,5 +15,6 @@ export const Route = createFileRoute("/meetings")({
       { property: "og:description", content: "Book meetings and record what happened." },
     ],
   }),
+  validateSearch: validateMeetingsSearch,
   component: MeetingsPage,
 });

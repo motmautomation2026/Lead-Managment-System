@@ -47,6 +47,8 @@ export type ObjectionType = (typeof OBJECTION_TYPES)[number];
 
 export const LEAD_LOSS_REASONS = [
   "price_budget",
+  "no_requirement",
+  "existing_supplier",
   "internal_hiring",
   "project_postponed",
   "competitor_selected",
@@ -148,6 +150,8 @@ export const CALL_CONNECTED_OUTCOMES = [
   "wrong_fit",
   "wrong_person",
   "do_not_contact",
+  // LL-3: reason required; the lead becomes Lost through the existing Lost path (calls.service.ts).
+  "not_interested",
 ] as const;
 export type CallConnectedOutcome = (typeof CALL_CONNECTED_OUTCOMES)[number];
 
@@ -174,7 +178,8 @@ export type TaskType = (typeof TASK_TYPES)[number];
 export const TASK_STATUSES = ["open", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-export const TASK_ORIGINS = ["manual", "automation"] as const;
+/** `agent` = an AI agent handoff task (migration 024); `automation` requires a workflow run. */
+export const TASK_ORIGINS = ["manual", "automation", "agent"] as const;
 export type TaskOrigin = (typeof TASK_ORIGINS)[number];
 
 export const MEETING_STATUSES = [
@@ -223,6 +228,19 @@ export const PROPOSAL_STATUSES = [
 ] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
+/** CRM v2 deal pipeline (migration 032), in board order. */
+export const DEAL_STAGES = [
+  "qualified",
+  "meeting_scheduled",
+  "meeting_follow_up",
+  "proposal_preparation",
+  "proposal_sent",
+  "negotiation",
+  "won",
+  "lost",
+] as const;
+export type DealStage = (typeof DEAL_STAGES)[number];
+
 /**
  * `call_outcome_maybe`/`call_outcome_negative` are intentionally omitted
  * (see CALL_CONNECTED_OUTCOMES comment) — replaced by
@@ -255,6 +273,17 @@ export const WORKFLOW_TRIGGERS = [
   "manual_enrollment",
 ] as const;
 export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
+
+/** Triggers that fire from a meeting, so the lead always has one to fill {{meeting.*}} variables. */
+export const MEETING_TRIGGERS: readonly WorkflowTrigger[] = [
+  "meeting_scheduled",
+  "meeting_agreed",
+  "meeting_highly_interested",
+  "meeting_proposal_requested",
+  "meeting_needs_more_information",
+  "meeting_not_ready",
+  "meeting_not_a_fit",
+];
 
 export const WORKFLOW_STATUSES = ["active", "paused"] as const;
 export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];

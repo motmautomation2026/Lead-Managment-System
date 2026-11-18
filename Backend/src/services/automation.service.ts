@@ -1,13 +1,15 @@
 import type { Queryable } from "../dto.js";
-import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
+import { AppError, ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import type { WorkflowStepAction, WorkflowRunStatus, TaskType } from "../domain/enums.js";
 import { assertPipelineStageEditable, assertValidPipelineStage } from "../domain/pipeline.js";
 import { addTimelineEvent, AUTOMATION_ACTOR } from "./timeline.service.js";
 import { getRunRowOr404, scheduleStepAfter, type RunRow } from "./runs.service.js";
-import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
+import { dateOnly, getLeadRowOr404, type LeadRow } from "./leads.service.js";
+import { workingMorningOf } from "../domain/recovery.js";
 import { createTask } from "./tasks.service.js";
 import { getLatestMeetingForLead, toRenderMeeting } from "./meetings.service.js";
 import type { TemplateRenderMeeting } from "../domain/templateRenderer.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * This module is the ONLY place business rules run for automation
@@ -61,9 +63,14 @@ interface TemplateRow {
   is_active: boolean;
 }
 
+/** LL-3 rule 8: the lifecycles a workflow step runs in. */
+export const WORKFLOW_LIFECYCLES: readonly string[] = ["active", "long_term_nurture"];
+
 export interface Eligibility {
   ok: boolean;
   reason?: string;
+  /** LL-3 rule 5: not yet — the message step waits (no attempt) until this time. */
+  deferUntil?: Date;
 }
 
 function computeEligibility(
@@ -72,15 +79,23 @@ function computeEligibility(
   run: RunRow,
   template: TemplateRow | null,
   contactStatus: string | undefined,
+  now = new Date(),
 ): Eligibility {
   if (!["running", "waiting"].includes(run.status)) {
     return { ok: false, reason: `Workflow run status is "${run.status}".` };
   }
-  if (lead.lifecycle_state !== "active") {
+  // LL-3 rule 8: workflows also run in long-term nurture.
+  if (!WORKFLOW_LIFECYCLES.includes(lead.lifecycle_state)) {
     return { ok: false, reason: `Lead lifecycle is "${lead.lifecycle_state}".` };
   }
   if (["paused", "manual", "stopped"].includes(lead.automation_mode)) {
     return { ok: false, reason: `Lead automation mode is "${lead.automation_mode}".` };
+  }
+  // LL-3 rule 5: no workflow message before the interested-later restart date (09:30 IST).
+  const restartDate = dateOnly(lead.interested_later_restart_at);
+  if ((action.action_type === "send_email" || action.action_type === "send_whatsapp") && restartDate) {
+    const restartAt = workingMorningOf(restartDate);
+    if (restartAt.getTime() > now.getTime()) return { ok: false, reason: "Waiting for the interested-later restart date.", deferUntil: restartAt };
   }
 
   if (action.action_type === "send_email") {
@@ -249,16 +264,24 @@ async function buildContext(db: Queryable, action: ScheduledActionRow): Promise<
  * for >15 minutes (a crashed worker process never reported back), so a
  * crash can't strand an action forever.
  */
+// P7: round-robin across workspaces, oldest due first.
+const DUE_ACTIONS_FAIR = fairPickSql({
+  from: "public.scheduled_actions x",
+  where: `(x.status in ('pending', 'due') and x.scheduled_for <= now()) or (x.status = 'executing' and x.last_attempt_at < now() - interval '15 minutes')`,
+  order: "x.scheduled_for",
+  limit: "$1",
+});
+
 export async function claimDueActions(db: Queryable, limit: number): Promise<ActionContext[]> {
   const claimed = await db.query<ScheduledActionRow>(
     `update public.scheduled_actions
         set status = 'executing', last_attempt_at = now()
       where id in (
         select id from public.scheduled_actions
-         where (status in ('pending', 'due') and scheduled_for <= now())
-            or (status = 'executing' and last_attempt_at < now() - interval '15 minutes')
-         order by scheduled_for asc
-         limit $1
+         where id in (${DUE_ACTIONS_FAIR})
+           -- Repeated so the lock re-checks them on the latest row.
+           and ((status in ('pending', 'due') and scheduled_for <= now())
+             or (status = 'executing' and last_attempt_at < now() - interval '15 minutes'))
          for update skip locked
       )
       returning *`,
@@ -372,7 +395,7 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
   const leadRow = await getLeadRowOr404(db, action.workspace_id, action.lead_id);
   const lead = leadRow as LeadRow & { owner_name: string | null };
 
-  if (lead.lifecycle_state !== "active" || !["running", "waiting"].includes(run.status)) {
+  if (!WORKFLOW_LIFECYCLES.includes(lead.lifecycle_state) || !["running", "waiting"].includes(run.status)) {
     const reason = `Lead/run no longer eligible at execution time (lifecycle=${lead.lifecycle_state}, run=${run.status}).`;
     const context = await skipAction(db, actionId, reason);
     return { action: context.action, run: await getRunRowOr404(db, action.workspace_id, run.id), skipped: true };
@@ -393,6 +416,10 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
       sourceWorkflowRunId: run.id,
       sourceWorkflowStepId: action.workflow_step_id,
     });
+  } else if (action.action_type === "change_lead_stage" && lead.lifecycle_state === "long_term_nurture") {
+    // The pipeline stage is fixed while in long-term nurture (assertPipelineStageEditable): the step is skipped.
+    const context = await skipAction(db, actionId, "The pipeline stage can't change in long-term nurture.");
+    return { action: context.action, run: await getRunRowOr404(db, action.workspace_id, run.id), skipped: true };
   } else if (action.action_type === "change_lead_stage") {
     if (!config) throw new ValidationError("This change_lead_stage step has no target stage configured.");
     assertValidPipelineStage(config);
@@ -420,6 +447,34 @@ export async function executeInternalAction(db: Queryable, actionId: string) {
   return { action: (await getActionContext(db, actionId)).action, run: finalRun, skipped: false };
 }
 
+/** Validation-type failures (bad step config, invalid transition, check violation) will fail the same way on every retry. */
+function isPermanentInternalError(err: unknown): boolean {
+  if (err instanceof AppError) return err.status === 400 || err.status === 422;
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "23514" || (typeof code === "string" && code.startsWith("22")); // check_violation, data_exception class
+}
+
+/**
+ * Worker entry point for internal actions (audit B7). A throw from
+ * executeInternalAction is rolled back to a savepoint and reported through
+ * the normal failure path (attempt_count, backoff, max_attempts, Workflow
+ * Failed) instead of leaving the action 'executing' to be reclaimed forever.
+ * `db` must be inside a transaction.
+ */
+export async function runInternalAction(db: Queryable, actionId: string) {
+  await db.query("savepoint internal_action");
+  try {
+    const result = await executeInternalAction(db, actionId);
+    await db.query("release savepoint internal_action");
+    return result;
+  } catch (err) {
+    await db.query("rollback to savepoint internal_action");
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[automation] Internal action ${actionId} failed: ${message}`);
+    return recordActionResult(db, actionId, { outcome: "failure", error: message, retryable: !isPermanentInternalError(err) });
+  }
+}
+
 export interface RecordResultInput {
   outcome: "success" | "failure" | "deferred";
   providerMessageId?: string;
@@ -437,6 +492,23 @@ export interface RecordResultInput {
  */
 export async function recordActionResult(db: Queryable, actionId: string, input: RecordResultInput) {
   const action = await getActionRowOr404(db, actionId);
+  // B37: an inbound reply cancelled the action mid-send. It stays cancelled and the run isn't touched;
+  // a send that went out anyway is recorded on the timeline, a failed/deferred one is dropped.
+  if (action.status === "cancelled") {
+    const run = await getRunRowOr404(db, action.workspace_id, action.workflow_run_id);
+    if (input.outcome === "success") {
+      await addTimelineEvent(db, {
+        leadId: action.lead_id,
+        kind: "automation",
+        title: "A message was already being sent when the reply arrived",
+        detail: input.providerMessageId ? `Provider message id: ${input.providerMessageId}` : undefined,
+        ...AUTOMATION_ACTOR,
+        relatedWorkflowRunId: run.id,
+        metadata: { actionType: action.action_type, providerMessageId: input.providerMessageId ?? null },
+      });
+    }
+    return { action: (await getActionContext(db, actionId)).action, run };
+  }
   if (action.status !== "executing") {
     throw new ConflictError(`Scheduled action is "${action.status}", expected "executing".`);
   }

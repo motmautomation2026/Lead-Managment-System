@@ -3,6 +3,8 @@ import { pool, withTransaction } from "../db.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
+import { z } from "zod";
+import { containsPattern, defineSorts, pageParams, runPage, searchQuery, sortParam, SqlBuilder } from "../lists/listQuery.js";
 
 const LONG_BAN = "876000h";
 
@@ -16,6 +18,40 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+const USER_SORTS = defineSorts({ fields: { createdAt: { columns: ["created_at"], type: "timestamptz" } }, idColumn: "id", defaultSort: "createdAt:desc" });
+export const userListSchema = z.object({ ...pageParams, sort: sortParam(USER_SORTS), q: searchQuery.optional() }).strict();
+
+/** UX-1: Settings → User accounts, a keyset page (newest first; `q` = name or email). */
+export async function listSalespeoplePage(query: z.infer<typeof userListSchema>) {
+  const b = new SqlBuilder();
+  b.and("role = 'salesperson'");
+  if (query.q) {
+    const pattern = b.p(containsPattern(query.q));
+    b.and(`(full_name ilike ${pattern} or email ilike ${pattern})`);
+  }
+  const page = await runPage<{
+    id: string;
+    name: string;
+    email: string;
+    initials: string;
+    active: boolean;
+    createdAt: Date;
+    bookingUrl: string | null;
+    emailAlertsEnabled: boolean;
+    emailDigestEnabled: boolean;
+  }>(
+    pool,
+    b,
+    query.sort,
+    query,
+    ({ where, orderBy, limit, cursorSelect }) =>
+      `select id, full_name as name, email, initials, is_active as active, created_at as "createdAt", booking_url as "bookingUrl",
+              email_alerts_enabled as "emailAlertsEnabled", email_digest_enabled as "emailDigestEnabled", ${cursorSelect}
+         from public.profiles ${where} order by ${orderBy} limit ${limit}`,
+  );
+  return { data: page.data.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })), nextCursor: page.nextCursor };
+}
+
 export async function listSalespeople() {
   const result = await pool.query<{
     id: string;
@@ -24,8 +60,11 @@ export async function listSalespeople() {
     initials: string;
     is_active: boolean;
     created_at: Date;
+    booking_url: string | null;
+    email_alerts_enabled: boolean;
+    email_digest_enabled: boolean;
   }>(
-    `select id, full_name, email, initials, is_active, created_at
+    `select id, full_name, email, initials, is_active, created_at, booking_url, email_alerts_enabled, email_digest_enabled
        from public.profiles
       where role = 'salesperson'
       order by created_at desc`,
@@ -37,6 +76,9 @@ export async function listSalespeople() {
     initials: row.initials,
     active: row.is_active,
     createdAt: row.created_at.toISOString(),
+    bookingUrl: row.booking_url,
+    emailAlertsEnabled: row.email_alerts_enabled,
+    emailDigestEnabled: row.email_digest_enabled,
   }));
 }
 
@@ -74,11 +116,16 @@ export interface UpdateSalespersonInput {
   email?: string;
   password?: string;
   active?: boolean;
+  /** E3b-1: undefined = unchanged, null = removed. */
+  bookingUrl?: string | null;
+  /** LL-2 rule 3: undefined = unchanged. */
+  emailAlertsEnabled?: boolean;
+  emailDigestEnabled?: boolean;
 }
 
 export async function updateSalesperson(actor: Actor, input: UpdateSalespersonInput) {
-  const existing = await pool.query<{ id: string; full_name: string; email: string; is_active: boolean }>(
-    `select id, full_name, email, is_active from public.profiles where id = $1 and role = 'salesperson'`,
+  const existing = await pool.query<{ id: string; full_name: string; email: string; is_active: boolean; booking_url: string | null }>(
+    `select id, full_name, email, is_active, booking_url from public.profiles where id = $1 and role = 'salesperson'`,
     [input.id],
   );
   const existingProfile = existing.rows[0];
@@ -107,7 +154,10 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
             set full_name = coalesce($2, full_name),
                 email = coalesce($3, email),
                 initials = case when $2::text is null then initials else $4 end,
-                is_active = coalesce($5, is_active)
+                is_active = coalesce($5, is_active),
+                booking_url = case when $6::boolean then $7 else booking_url end,
+                email_alerts_enabled = coalesce($8, email_alerts_enabled),
+                email_digest_enabled = coalesce($9, email_digest_enabled)
           where id = $1`,
         [
           input.id,
@@ -115,6 +165,10 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
           input.email?.trim().toLowerCase() ?? null,
           input.name ? initials(input.name) : null,
           input.active ?? null,
+          input.bookingUrl !== undefined,
+          input.bookingUrl ?? null,
+          input.emailAlertsEnabled ?? null,
+          input.emailDigestEnabled ?? null,
         ],
       );
       if (input.name !== undefined || input.email !== undefined) {
@@ -124,8 +178,19 @@ export async function updateSalesperson(actor: Actor, input: UpdateSalespersonIn
         });
       }
       if (input.password !== undefined) await recordAdminAudit(db, actor, "user.password_reset", "profile", input.id);
+      // E3b-2a rule 7b: an admin changed someone else's booking link (the AI adds it to their messages).
+      if (input.bookingUrl !== undefined && input.id !== actor.id && (input.bookingUrl ?? null) !== existingProfile.booking_url) {
+        await recordAdminAudit(db, actor, "user.booking_url_changed", "profile", input.id, { removed: input.bookingUrl === null, hadLink: existingProfile.booking_url !== null });
+      }
       if (input.active !== undefined) {
         await recordAdminAudit(db, actor, input.active ? "user.reactivated" : "user.deactivated", "profile", input.id);
+      }
+      // LL-2: an admin changed someone else's email alert toggles.
+      if ((input.emailAlertsEnabled !== undefined || input.emailDigestEnabled !== undefined) && input.id !== actor.id) {
+        await recordAdminAudit(db, actor, "user.email_alerts_changed", "profile", input.id, {
+          emailAlertsEnabled: input.emailAlertsEnabled ?? null,
+          emailDigestEnabled: input.emailDigestEnabled ?? null,
+        });
       }
     });
   } catch (error) {

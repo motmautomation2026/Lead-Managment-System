@@ -5,23 +5,21 @@ import { getLeadRowOr404, type LeadRow } from "./leads.service.js";
 import { toRenderMeeting, type MeetingRow } from "./meetings.service.js";
 import { renderTemplate, type TemplateRenderLead } from "../domain/templateRenderer.js";
 import { htmlToWhatsAppText } from "../domain/htmlToWhatsAppText.js";
-import { sendEmail } from "../providers/email.provider.js";
-import { sendWhatsApp } from "../providers/whatsapp.provider.js";
+import { enqueueEmail } from "./emailOutbound.service.js";
+import { sendWhatsApp, wasSentForSource } from "../providers/whatsapp.provider.js";
 import { ProviderDeferredError } from "../providers/provider-errors.js";
+import { fairPickSql } from "./fairPick.js";
 
 /**
  * Sends the "meeting scheduled" confirmation to the lead on both channels,
  * using ONE fixed default template per channel (set once by an admin in
  * Templates — see the is_default_meeting_scheduled_* columns). Same division
- * of labor as proposalSending.service.ts's createAndSendProposal: email sent
- * synchronously inline (the API process can call sendEmail directly), the
- * WhatsApp side left "queued" for the worker's poll loop to drain (only the
- * worker process ever holds the live Baileys socket). Called as a
+ * of labor as proposalSending.service.ts's createAndSendProposal: only the
+ * worker sends — the email through the outbound email queue (E1b), the
+ * WhatsApp side left "queued" for the worker's poll loop to drain. Called as a
  * best-effort step after the meeting is already scheduled and synced to
  * Calendar — never blocks or fails meeting creation.
  */
-
-const MAX_WHATSAPP_ATTEMPTS = 5;
 
 interface NotificationTemplateRow {
   id: string;
@@ -46,10 +44,16 @@ async function getMeetingRowById(meetingId: string): Promise<MeetingRow> {
   return row;
 }
 
-async function getDefaultTemplate(channel: "email" | "whatsapp"): Promise<NotificationTemplateRow | null> {
+/** The workspace's active default "Meeting Scheduled" template for a channel (at most one, per 019's indexes). */
+export async function getDefaultTemplate(
+  workspaceId: string,
+  channel: "email" | "whatsapp",
+  db: Queryable = pool,
+): Promise<NotificationTemplateRow | null> {
   const column = channel === "email" ? "is_default_meeting_scheduled_email" : "is_default_meeting_scheduled_whatsapp";
-  const result = await pool.query<NotificationTemplateRow>(
-    `select * from public.message_templates where ${column} = true and is_active = true limit 1`,
+  const result = await db.query<NotificationTemplateRow>(
+    `select * from public.message_templates where workspace_id = $1 and ${column} = true and is_active = true limit 1`,
+    [workspaceId],
   );
   return result.rows[0] ?? null;
 }
@@ -66,24 +70,29 @@ function toRenderLead(lead: LeadRow): TemplateRenderLead {
   };
 }
 
-async function sendMeetingEmailNow(meeting: MeetingRow, lead: LeadRow): Promise<void> {
+/** Renders the default email template and queues it (status "pending" = queued); the worker sends it. */
+async function queueMeetingEmail(meeting: MeetingRow, lead: LeadRow): Promise<void> {
   try {
-    if (!lead.email) throw new Error("Email-eligible meeting notification has no lead email (invariant violation).");
-    const template = await getDefaultTemplate("email");
+    const template = await getDefaultTemplate(meeting.workspace_id, "email");
     if (!template) {
       await pool.query(
         `update public.meetings set notify_email_status = 'skipped', notify_email_error = $2 where id = $1`,
-        [meeting.id, "No default \"Meeting Scheduled\" email template is configured (Admin → Templates)."],
+        [meeting.id, "No default \"Meeting Scheduled\" email template is configured (Automations → Templates)."],
       );
       return;
     }
     const rendered = renderTemplate(template, toRenderLead(lead), toRenderMeeting(meeting));
-    const subject = rendered.subject?.trim() || template.name;
-    await sendEmail(meeting.workspace_id, { to: lead.email, subject, html: rendered.body });
-    await pool.query(
-      `update public.meetings set notify_email_status = 'sent', notify_email_sent_at = now(), notify_email_error = null where id = $1`,
-      [meeting.id],
-    );
+    // Pending first: the worker may send (→ sent) as soon as the row is queued.
+    await pool.query(`update public.meetings set notify_email_status = 'pending', notify_email_error = null where id = $1`, [meeting.id]);
+    await enqueueEmail(pool, {
+      workspaceId: meeting.workspace_id,
+      source: "meeting",
+      sourceId: meeting.id,
+      leadId: lead.id,
+      to: lead.email!,
+      subject: rendered.subject?.trim() || template.name,
+      html: rendered.body,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await pool.query(`update public.meetings set notify_email_status = 'failed', notify_email_error = $2 where id = $1`, [meeting.id, message]);
@@ -96,7 +105,7 @@ export async function notifyMeetingScheduled(meetingId: string): Promise<void> {
   const lead = await getLeadRowOr404(pool, meeting.workspace_id, meeting.lead_id);
 
   if (lead.email) {
-    await sendMeetingEmailNow(meeting, lead);
+    await queueMeetingEmail(meeting, lead);
   } else {
     await pool.query(`update public.meetings set notify_email_status = 'skipped' where id = $1`, [meetingId]);
   }
@@ -107,17 +116,64 @@ export async function notifyMeetingScheduled(meetingId: string): Promise<void> {
   ]);
 }
 
-/** SKIP LOCKED claim, mirroring proposalSending.service.ts's claimQueuedProposalWhatsappSends. */
+export const UPDATED_PREFIX = "Updated: ";
+
+/**
+ * LL-2 rule 4 (reschedule): the confirmation again, same default templates and channels as notifyMeetingScheduled,
+ * worded "Updated: …", as `meeting_reminders` rows of kind `updated` (the meeting's own confirmation source is used
+ * once). Only for a still-scheduled future meeting of a lead that isn't DNC; WhatsApp also not when opted out
+ * (re-checked at send). Best-effort — never throws.
+ */
+export async function notifyMeetingUpdated(meetingId: string, now = new Date()): Promise<void> {
+  try {
+    const meeting = await getMeetingRowById(meetingId);
+    if (meeting.status !== "scheduled" || meeting.scheduled_at.getTime() <= now.getTime()) return;
+    const lead = await getLeadRowOr404(pool, meeting.workspace_id, meeting.lead_id);
+    if (lead.lifecycle_state === "do_not_contact" || lead.lifecycle_state === "merged") return;
+    const { insertUpdatedReminder } = await import("./meetingReminders.service.js");
+
+    const emailTemplate = lead.email ? await getDefaultTemplate(meeting.workspace_id, "email") : null;
+    if (emailTemplate && lead.email) {
+      const rendered = renderTemplate(emailTemplate, toRenderLead(lead), toRenderMeeting(meeting));
+      const id = await insertUpdatedReminder(pool, meeting, "email", null);
+      if (id) {
+        await enqueueEmail(pool, {
+          workspaceId: meeting.workspace_id,
+          source: "meeting_reminder",
+          sourceId: id,
+          leadId: lead.id,
+          to: lead.email,
+          subject: `${UPDATED_PREFIX}${rendered.subject?.trim() || emailTemplate.name}`,
+          html: rendered.body,
+        });
+      }
+    }
+    const whatsappTemplate = lead.phone_e164 ? await getDefaultTemplate(meeting.workspace_id, "whatsapp") : null;
+    if (whatsappTemplate) {
+      const rendered = renderTemplate(whatsappTemplate, toRenderLead(lead), toRenderMeeting(meeting));
+      await insertUpdatedReminder(pool, meeting, "whatsapp", `${UPDATED_PREFIX}${htmlToWhatsAppText(rendered.body)}`);
+    }
+  } catch (err) {
+    console.error(`[meetings] Updated confirmation for ${meetingId} failed: ${err instanceof Error ? err.name : "error"}`);
+  }
+}
+
+/** SKIP LOCKED claim with a 15-minute reclaim of stuck 'sending' rows, mirroring claimQueuedProposalWhatsappSends. */
 export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: number): Promise<MeetingRow[]> {
   const claimed = await db.query<MeetingRow>(
     `update public.meetings
-        set notify_whatsapp_status = 'sending'
+        set notify_whatsapp_status = 'sending', notify_whatsapp_next_attempt_at = now() + interval '15 minutes'
       where id in (
         select id from public.meetings
-         where notify_whatsapp_status = 'queued'
+         where id in (${fairPickSql({
+           from: "public.meetings x",
+           where: "x.notify_whatsapp_status in ('queued', 'sending') and (x.notify_whatsapp_next_attempt_at is null or x.notify_whatsapp_next_attempt_at <= now())",
+           order: "x.created_at",
+           limit: "$1",
+         })})
+           -- P7: round-robin across workspaces; repeated so the lock re-checks the latest row.
+           and notify_whatsapp_status in ('queued', 'sending')
            and (notify_whatsapp_next_attempt_at is null or notify_whatsapp_next_attempt_at <= now())
-         order by created_at asc
-         limit $1
          for update skip locked
       )
       returning *`,
@@ -128,6 +184,13 @@ export async function claimQueuedMeetingWhatsappSends(db: Queryable, limit: numb
 
 export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise<void> {
   try {
+    if (await wasSentForSource(pool, { type: "meeting", id: row.id })) {
+      await pool.query(
+        `update public.meetings set notify_whatsapp_status = 'sent', notify_whatsapp_sent_at = coalesce(notify_whatsapp_sent_at, now()), notify_whatsapp_error = null where id = $1`,
+        [row.id],
+      );
+      return;
+    }
     const lead = await getLeadRowOr404(pool, row.workspace_id, row.lead_id);
     if (lead.lifecycle_state === "do_not_contact" || !lead.phone_e164) {
       await pool.query(`update public.meetings set notify_whatsapp_status = 'failed', notify_whatsapp_error = $2 where id = $1`, [
@@ -136,11 +199,11 @@ export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise
       ]);
       return;
     }
-    const template = await getDefaultTemplate("whatsapp");
+    const template = await getDefaultTemplate(row.workspace_id, "whatsapp");
     if (!template) {
       await pool.query(
         `update public.meetings set notify_whatsapp_status = 'failed', notify_whatsapp_error = $2 where id = $1`,
-        [row.id, "No default \"Meeting Scheduled\" WhatsApp template is configured (Admin → Templates)."],
+        [row.id, "No default \"Meeting Scheduled\" WhatsApp template is configured (Automations → Templates)."],
       );
       return;
     }
@@ -154,23 +217,22 @@ export async function processQueuedMeetingWhatsappSend(row: MeetingRow): Promise
       [row.id],
     );
   } catch (err) {
+    // A deferral (disconnected, manager starting, daily cap, restriction) is not
+    // an attempt; the notification is only pointless once the meeting has started.
     if (err instanceof ProviderDeferredError) {
-      const attempts = row.notify_whatsapp_attempt_count + 1;
-      if (attempts >= MAX_WHATSAPP_ATTEMPTS) {
-        await pool.query(
-          `update public.meetings
-              set notify_whatsapp_status = 'failed', notify_whatsapp_attempt_count = $2, notify_whatsapp_error = $3
-            where id = $1`,
-          [row.id, attempts, `Gave up after ${attempts} attempts: ${err.message}`],
-        );
+      if (row.scheduled_at.getTime() <= Date.now()) {
+        await pool.query(`update public.meetings set notify_whatsapp_status = 'skipped', notify_whatsapp_error = $2 where id = $1`, [
+          row.id,
+          `Not sent: the meeting time passed while WhatsApp was unavailable. Last reason: ${err.message}`,
+        ]);
         return;
       }
       await pool.query(
         `update public.meetings
-            set notify_whatsapp_status = 'queued', notify_whatsapp_attempt_count = $2,
-                notify_whatsapp_next_attempt_at = now() + ($3 || ' milliseconds')::interval, notify_whatsapp_error = $4
+            set notify_whatsapp_status = 'queued',
+                notify_whatsapp_next_attempt_at = now() + ($2 || ' milliseconds')::interval, notify_whatsapp_error = $3
           where id = $1`,
-        [row.id, attempts, String(err.retryAfterMs), err.message],
+        [row.id, String(err.retryAfterMs), err.message],
       );
       return;
     }

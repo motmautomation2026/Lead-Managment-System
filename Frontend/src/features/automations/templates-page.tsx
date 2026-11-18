@@ -1,8 +1,9 @@
 import { convertToVisualHtml } from "@/lib/template-editor-schema";
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
-import { Paperclip, Plus, Search, Trash2, X } from "lucide-react";
-import { PageHeader } from "@/app/app-shell";
+import { FileText, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
+import { PageHeader } from "@/components/crm/page-header";
+import { EmptyState } from "@/components/crm/empty-state";
 import { AutomationTabs } from "@/features/automations/automation-tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,37 +78,44 @@ export function TemplatesPage() {
   return (
     <div className="pb-10">
       <PageHeader
-        title="Automations"
+        title="Templates"
+        count={isLoading ? null : templates.length}
         description="Templates are referenced by workflow steps. Editing a template changes what the next send says."
         tabs={<AutomationTabs />}
-        actions={
-          <Button size="sm" onClick={() => setCreating(true)}>
-            <Plus className="mr-1 size-4" /> New template
+        primaryAction={
+          <Button onClick={() => setCreating(true)}>
+            <Plus /> New template
           </Button>
         }
       />
 
-      <div className="px-6 pt-6">
-        <div className="relative w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="px-4 pt-4 sm:px-6">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search templates"
+            aria-label="Search templates"
+            data-list-search
             className="pl-8"
           />
         </div>
       </div>
 
-      <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 p-4 sm:p-6 md:grid-cols-2 xl:grid-cols-3">
         {isLoading ? (
           <LoadingBlock label="Loading templates…" />
         ) : error ? (
           <ErrorBlock error={error} />
         ) : filteredTemplates.length === 0 ? (
-          <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-            No templates match &quot;{q}&quot;.
-          </p>
+          <div className="col-span-full">
+            <EmptyState
+              icon={FileText}
+              title={q.trim() ? `No templates match "${q.trim()}"` : "No templates yet"}
+              text="Workflow email and WhatsApp steps send these templates."
+            />
+          </div>
         ) : (
           <>
             {filteredTemplates.map((t) => (

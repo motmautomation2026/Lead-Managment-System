@@ -18,8 +18,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { messageFromError, useAutomations, useLeads } from "@/store";
-import type { Proposal } from "@/types";
+import { ContactPicker } from "@/features/contacts/contact-picker";
+import { dateInputValue } from "@/lib/dates";
+import { messageFromError, useAutomations } from "@/store";
+import type { IdName, Proposal } from "@/types";
 
 const DOCUMENT_ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp";
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
@@ -38,23 +40,33 @@ export interface SendProposalValue {
   emailTemplateId: string;
   whatsappTemplateId: string;
   document: File;
+  /** Set when opened from a deal record: the proposal attaches to that deal. */
+  dealId?: string | undefined;
+  /** LL-3: "YYYY-MM-DD"; empty = the sent date + 30 days. */
+  validUntil: string;
 }
 
 export function SendProposalDialog({
+  leadId: fixedLeadId,
+  dealId,
   open,
   onOpenChange,
   onSend,
 }: {
+  /** From a contact record: that contact, no picker (B11). Otherwise a ContactPicker. */
+  leadId?: string;
+  /** From a deal record: attach the proposal to this deal. */
+  dealId?: string;
   open: boolean;
   onOpenChange: (value: boolean) => void;
   onSend: (value: SendProposalValue) => Promise<Proposal>;
 }) {
-  const { leads } = useLeads();
   const { templates } = useAutomations();
-  const [leadId, setLeadId] = useState("");
+  const [contact, setContact] = useState<IdName | null>(null);
   const [title, setTitle] = useState("Sales Automation Proposal");
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
+  const [validUntil, setValidUntil] = useState("");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [whatsappTemplateId, setWhatsappTemplateId] = useState("");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
@@ -65,17 +77,18 @@ export function SendProposalDialog({
   // here, reopening "Send proposal" shows whatever was left over last time.
   if (open && !loadedFor) {
     setLoadedFor(true);
-    setLeadId("");
+    setContact(null);
     setTitle("Sales Automation Proposal");
     setAmount("");
     setNotes("");
+    setValidUntil("");
     setEmailTemplateId("");
     setWhatsappTemplateId("");
     setDocumentFile(null);
   }
   if (!open && loadedFor) setLoadedFor(false);
 
-  const selectedLead = leadId || leads[0]?.id || "";
+  const selectedLead = fixedLeadId ?? contact?.id ?? "";
   const emailTemplates = templates.filter((t) => t.type === "email" && t.active);
   const whatsappTemplates = templates.filter((t) => t.type === "whatsapp" && t.active);
 
@@ -111,9 +124,16 @@ export function SendProposalDialog({
         emailTemplateId,
         whatsappTemplateId,
         document: documentFile,
+        dealId,
+        validUntil,
       });
       onOpenChange(false);
-      toast.success("Proposal sent");
+      // E1b: the request only queues the email; the worker sends it (the status pill follows it).
+      toast.success(
+        proposal.emailSendStatus === "pending"
+          ? "Proposal created. The email is queued and goes out shortly."
+          : "Proposal created",
+      );
       if (proposal.emailSendStatus === "skipped") {
         toast.warning("Email skipped - this lead has no email address.");
       } else if (proposal.emailSendStatus === "failed") {
@@ -138,21 +158,14 @@ export function SendProposalDialog({
           <DialogTitle>Send proposal</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
-            <Label className="mb-1.5 block text-xs">Lead</Label>
-            <Select value={selectedLead} onValueChange={setLeadId}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {leads.map((lead) => (
-                  <SelectItem key={lead.id} value={lead.id}>
-                    {lead.firstName} {lead.lastName} · {lead.company}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!fixedLeadId && (
+            <div>
+              <Label htmlFor="proposal-contact" className="mb-1.5 block text-xs">
+                Contact
+              </Label>
+              <ContactPicker id="proposal-contact" value={contact} onChange={setContact} />
+            </div>
+          )}
           <div>
             <Label className="mb-1.5 block text-xs">Title</Label>
             <Input value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -160,14 +173,16 @@ export function SendProposalDialog({
           <div>
             <Label className="mb-1.5 block text-xs">Proposal document</Label>
             {documentFile ? (
-              <div className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs">
-                <span className="truncate">
-                  {documentFile.name}{" "}
-                  <span className="text-muted-foreground">({formatBytes(documentFile.size)})</span>
+              <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs">
+                <span className="min-w-0 flex-1 truncate" title={documentFile.name}>
+                  {documentFile.name}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  ({formatBytes(documentFile.size)})
                 </span>
                 <button
                   type="button"
-                  className="text-muted-foreground hover:text-foreground"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
                   onClick={() => setDocumentFile(null)}
                 >
                   Remove
@@ -227,6 +242,19 @@ export function SendProposalDialog({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
               />
+            </div>
+            <div>
+              <Label htmlFor="proposal-valid-until" className="mb-1.5 block text-xs">
+                Valid until
+              </Label>
+              <Input
+                id="proposal-valid-until"
+                type="date"
+                min={dateInputValue(1)}
+                value={validUntil}
+                onChange={(event) => setValidUntil(event.target.value)}
+              />
+              <p className="pt-1 text-xs text-muted-foreground">Empty = 30 days after sending.</p>
             </div>
           </div>
           <div>

@@ -14,5 +14,7 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     restoreMocks: true,
     clearMocks: true,
+    // The heavier page tests pass alone in < 5 s but time out at the 5 s default when every core runs jsdom at once.
+    testTimeout: 15_000,
   },
 });

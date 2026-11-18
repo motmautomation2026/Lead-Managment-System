@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { Queryable } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
 import { ConflictError, InvalidTransitionError, NotFoundError, ValidationError } from "../errors.js";
-import type { WorkflowStatus, WorkflowStepAction, WorkflowTrigger, WorkflowVersionStatus } from "../domain/enums.js";
-import { findUnknownTemplateTokens } from "../domain/templateRenderer.js";
+import { MEETING_TRIGGERS, type WorkflowStatus, type WorkflowStepAction, type WorkflowTrigger, type WorkflowVersionStatus } from "../domain/enums.js";
+import { findUnknownTemplateTokens, meetingVariablesIn } from "../domain/templateRenderer.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 
 const TEMPLATE_ATTACHMENTS_BUCKET = "template-attachments";
@@ -72,50 +72,64 @@ async function getStepsForVersion(db: Queryable, versionId: string) {
   return result.rows.map(stepToDto);
 }
 
-async function getVersionsForWorkflow(db: Queryable, workflowId: string) {
-  const result = await db.query<WorkflowVersionRow>(
-    `select * from public.workflow_versions where workflow_id = $1 order by version_number asc`,
-    [workflowId],
+/**
+ * Workflow DTOs (every version with its steps, active/failed run counts) in a fixed
+ * number of queries whatever the workflow count: versions, steps and run counts are
+ * each one query over all the ids (audit D: listWorkflows was N+1).
+ */
+async function workflowsToDtos(db: Queryable, rows: WorkflowRow[]) {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  // Sequential: `db` may be one transaction client (createDraft, publish…), which runs one query at a time.
+  const versions = await db.query<WorkflowVersionRow>(`select * from public.workflow_versions where workflow_id = any($1::uuid[]) order by version_number asc`, [ids]);
+  const steps = await db.query<WorkflowStepRow>(
+    `select s.* from public.workflow_steps s join public.workflow_versions v on v.id = s.workflow_version_id
+      where v.workflow_id = any($1::uuid[]) order by s.step_order asc`,
+    [ids],
   );
-  const versions = [];
-  for (const v of result.rows) {
-    versions.push({
-      version: v.version_number,
-      status: v.status,
-      createdBy: v.created_by_name ?? "-",
-      createdAt: v.created_at.toISOString(),
-      publishedAt: v.published_at?.toISOString(),
-      steps: await getStepsForVersion(db, v.id),
-    });
+  const runCounts = await db.query<{ workflow_id: string; active: number; failed: number }>(
+    `select workflow_id, count(*) filter (where status in ('running','waiting','paused'))::int as active,
+            count(*) filter (where status = 'failed')::int as failed
+       from public.workflow_runs where workflow_id = any($1::uuid[]) group by workflow_id`,
+    [ids],
+  );
+  const stepsByVersion = new Map<string, ReturnType<typeof stepToDto>[]>();
+  for (const step of steps.rows) {
+    const list = stepsByVersion.get(step.workflow_version_id) ?? [];
+    list.push(stepToDto(step));
+    stepsByVersion.set(step.workflow_version_id, list);
   }
-  return versions;
+  const counts = new Map(runCounts.rows.map((r) => [r.workflow_id, r]));
+  return rows.map((row) => {
+    const own = versions.rows
+      .filter((v) => v.workflow_id === row.id)
+      .map((v) => ({
+        version: v.version_number,
+        status: v.status,
+        createdBy: v.created_by_name ?? "-",
+        createdAt: v.created_at.toISOString(),
+        publishedAt: v.published_at?.toISOString(),
+        steps: stepsByVersion.get(v.id) ?? [],
+      }));
+    const published = own.find((v) => v.status === "published");
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? "",
+      trigger: row.trigger,
+      status: row.status,
+      currentVersion: published?.version ?? own.at(-1)?.version ?? 0,
+      activeLeads: counts.get(row.id)?.active ?? 0,
+      failures: counts.get(row.id)?.failed ?? 0,
+      ownerId: row.owner_id ?? undefined,
+      updatedAt: row.updated_at.toISOString(),
+      versions: own,
+    };
+  });
 }
 
 async function workflowToDto(db: Queryable, row: WorkflowRow) {
-  const versions = await getVersionsForWorkflow(db, row.id);
-  const published = versions.find((v) => v.status === "published");
-  const activeLeads = await db.query<{ count: string }>(
-    `select count(*)::text as count from public.workflow_runs
-      where workflow_id = $1 and status in ('running','waiting','paused')`,
-    [row.id],
-  );
-  const failures = await db.query<{ count: string }>(
-    `select count(*)::text as count from public.workflow_runs where workflow_id = $1 and status = 'failed'`,
-    [row.id],
-  );
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description ?? "",
-    trigger: row.trigger,
-    status: row.status,
-    currentVersion: published?.version ?? versions.at(-1)?.version ?? 0,
-    activeLeads: Number(activeLeads.rows[0]?.count ?? 0),
-    failures: Number(failures.rows[0]?.count ?? 0),
-    ownerId: row.owner_id ?? undefined,
-    updatedAt: row.updated_at.toISOString(),
-    versions,
-  };
+  return (await workflowsToDtos(db, [row]))[0]!;
 }
 
 export async function getWorkflowRowOr404(db: Queryable, workspaceId: string, id: string): Promise<WorkflowRow> {
@@ -127,9 +141,7 @@ export async function getWorkflowRowOr404(db: Queryable, workspaceId: string, id
 
 export async function listWorkflows(db: Queryable, workspaceId: string) {
   const result = await db.query<WorkflowRow>(`select * from public.workflows where workspace_id = $1 order by updated_at desc`, [workspaceId]);
-  const out = [];
-  for (const row of result.rows) out.push(await workflowToDto(db, row));
-  return out;
+  return workflowsToDtos(db, result.rows);
 }
 
 export async function getWorkflow(db: Queryable, workspaceId: string, id: string) {
@@ -376,6 +388,31 @@ async function assertNoUnknownTemplateVariables(db: Queryable, versionId: string
 }
 
 /**
+ * A send step whose template uses {{meeting.*}} fails on every run unless the
+ * trigger guarantees a meeting (8 failed production runs before this check).
+ */
+async function assertMeetingVariablesHaveMeeting(db: Queryable, versionId: string, trigger: WorkflowTrigger): Promise<void> {
+  if (MEETING_TRIGGERS.includes(trigger)) return;
+  const result = await db.query<{ step_order: number; template_name: string; subject: string | null; body: string }>(
+    `select ws.step_order, mt.name as template_name, mt.subject, mt.body
+       from public.workflow_steps ws
+       join public.message_templates mt on mt.id = ws.template_id
+      where ws.workflow_version_id = $1 and ws.action in ('send_email', 'send_whatsapp')
+      order by ws.step_order`,
+    [versionId],
+  );
+  const problems = result.rows.flatMap((row) => {
+    const variables = meetingVariablesIn(row);
+    return variables.length ? [`Step ${row.step_order + 1} template "${row.template_name}" uses {{${variables.join("}}, {{")}}}`] : [];
+  });
+  if (problems.length > 0) {
+    throw new ValidationError(
+      `Cannot publish - ${problems.join("; ")}, but the "${trigger}" trigger has no meeting. Use a meeting trigger or remove the meeting variables.`,
+    );
+  }
+}
+
+/**
  * Publishing never touches existing workflow_runs (Rule 11: a run keeps the
  * version it entered) — this is the "safe default" the product brief asks
  * for while the real migration UX isn't finalized. Only `keep_existing` is
@@ -390,7 +427,7 @@ export async function publishVersion(db: Queryable, actor: Actor, workspaceId: s
     );
   }
 
-  await getWorkflowRowOr404(db, workspaceId, workflowId);
+  const workflow = await getWorkflowRowOr404(db, workspaceId, workflowId);
   const versionRow = await db.query<WorkflowVersionRow>(
     `select * from public.workflow_versions where workflow_id = $1 and version_number = $2`,
     [workflowId, version],
@@ -405,6 +442,7 @@ export async function publishVersion(db: Queryable, actor: Actor, workspaceId: s
   }
 
   await assertNoUnknownTemplateVariables(db, v.id);
+  await assertMeetingVariablesHaveMeeting(db, v.id, workflow.trigger);
 
   // Demote the currently-published version first, then promote the new one
   // — the partial unique index (one Published per workflow) is not
@@ -612,6 +650,28 @@ export async function updateTemplate(
 ) {
   const current = await getTemplateRowOr404(db, workspaceId, id);
 
+  if (patch.subject !== undefined || patch.body !== undefined) {
+    const variables = meetingVariablesIn({ subject: patch.subject ?? current.subject, body: patch.body ?? current.body });
+    if (variables.length) {
+      const users = await db.query<{ workflow_name: string; trigger: string; step_order: number }>(
+        `select w.name as workflow_name, w.trigger, ws.step_order
+           from public.workflow_steps ws
+           join public.workflow_versions v on v.id = ws.workflow_version_id
+           join public.workflows w on w.id = v.workflow_id
+          where ws.template_id = $1 and v.status = 'published' and ws.action in ('send_email', 'send_whatsapp')
+            and w.trigger::text <> all($2::text[])
+          order by w.name, ws.step_order`,
+        [id, MEETING_TRIGGERS],
+      );
+      if (users.rows.length) {
+        const where = users.rows.map((row) => `"${row.workflow_name}" step ${row.step_order + 1} (trigger "${row.trigger}")`).join("; ");
+        throw new ValidationError(
+          `Template "${current.name}" cannot use {{${variables.join("}}, {{")}}}: it is used by published workflow(s) whose trigger has no meeting: ${where}.`,
+        );
+      }
+    }
+  }
+
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -632,17 +692,16 @@ export async function updateTemplate(
     params.push(patch.active);
   }
   if (patch.isDefaultMeetingScheduled !== undefined) {
-    // Only one template per channel (within this workspace) may hold this
-    // flag — clear the previous default (if any) before setting this one,
-    // matching the partial unique index in
-    // 006_google_calendar_meeting_sync.sql (that index is global, not
-    // workspace-scoped, so "default meeting-scheduled template" is
-    // currently a single cross-workspace flag — acceptable for now since
-    // only one workspace, MOTM, uses it today; a future workspace enabling
-    // this feature would need that index revisited to be workspace-scoped).
+    // Only one template per channel per workspace may hold this flag — clear
+    // this workspace's previous default (if any) before setting this one,
+    // matching the per-workspace partial unique indexes in
+    // 019_workspace_default_meeting_templates.sql.
     const column = current.channel === "email" ? "is_default_meeting_scheduled_email" : "is_default_meeting_scheduled_whatsapp";
     if (patch.isDefaultMeetingScheduled) {
-      await db.query(`update public.message_templates set ${column} = false where ${column} = true and id != $1`, [id]);
+      await db.query(`update public.message_templates set ${column} = false where workspace_id = $1 and ${column} = true and id != $2`, [
+        current.workspace_id,
+        id,
+      ]);
     }
     sets.push(`${column} = $${i++}`);
     params.push(patch.isDefaultMeetingScheduled);
@@ -730,26 +789,30 @@ export async function deleteTemplateAttachment(db: Queryable, workspaceId: strin
 }
 
 /**
- * `workflow_steps.template_id` is ON DELETE SET NULL, so deleting a template
- * never fails outright — but a step in a *published* version that loses its
- * template would silently stop sending the next time it's due
- * (computeEligibility in automation.service.ts reports "No template
- * resolved" rather than crashing, which is easy to miss). Deleting a
- * template only referenced by draft steps is fine (that's normal workflow-
- * builder editing) and still allowed.
+ * `workflow_steps.template_id` is ON DELETE SET NULL. Steps in a published or
+ * previous version can't be changed (the draft-only trigger rejects that
+ * SET NULL, audit B6), and a published step that lost its template would
+ * silently stop sending. So only templates used by draft steps alone (normal
+ * workflow-builder editing) may be deleted.
  */
 export async function deleteTemplate(db: Queryable, workspaceId: string, id: string) {
   await getTemplateRowOr404(db, workspaceId, id);
 
-  const liveUsage = await db.query<{ count: string }>(
-    `select count(*)::text as count
+  const usage = await db.query<{ name: string }>(
+    `select distinct w.name
        from public.workflow_steps ws
        join public.workflow_versions wv on wv.id = ws.workflow_version_id
-      where ws.template_id = $1 and wv.status = 'published'`,
+       join public.workflows w on w.id = wv.workflow_id
+      where ws.template_id = $1 and wv.status <> 'draft'
+      order by w.name`,
     [id],
   );
-  if (Number(liveUsage.rows[0]?.count ?? 0) > 0) {
-    throw new ConflictError("Cannot delete a template used by a published workflow step - remove it from that step first.");
+  if (usage.rows.length > 0) {
+    const names = usage.rows.map((row) => `"${row.name}"`).join(", ");
+    throw new ConflictError(
+      `This template is used by workflow${usage.rows.length > 1 ? "s" : ""} ${names} (a published or older version) and can't be deleted. Deactivate it instead.`,
+      { workflows: usage.rows.map((row) => row.name) },
+    );
   }
 
   await db.query(`delete from public.message_templates where id = $1`, [id]);

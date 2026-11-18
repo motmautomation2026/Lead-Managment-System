@@ -6,10 +6,10 @@ type Tone = "neutral" | "info" | "success" | "warning" | "danger" | "primary" | 
 const toneClass: Record<Tone, string> = {
   neutral: "bg-secondary text-secondary-foreground border-border",
   muted: "bg-muted text-muted-foreground border-border",
-  info: "bg-info/10 text-info border-info/25",
-  success: "bg-success/10 text-success border-success/25",
-  warning: "bg-warning/15 text-warning-foreground border-warning/40",
-  danger: "bg-destructive/10 text-destructive border-destructive/25",
+  info: "bg-info-soft text-info-soft-foreground border-info/25",
+  success: "bg-success-soft text-success-soft-foreground border-success/25",
+  warning: "bg-warning-soft text-warning-soft-foreground border-warning/40",
+  danger: "bg-danger-soft text-danger-soft-foreground border-destructive/25",
   primary: "bg-primary/10 text-primary border-primary/25",
 };
 
@@ -91,15 +91,22 @@ export function StatusBadge({
   tone,
   dot = false,
   className,
+  display,
+  title,
 }: {
   value: string;
+  /** Tooltip, e.g. the reason behind a status. */
+  title?: string | undefined;
   tone?: Tone;
+  /** Text shown as given instead of label(value). */
+  display?: string;
   dot?: boolean;
   className?: string;
 }) {
   const t = tone ?? MAP[value] ?? "neutral";
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium",
         toneClass[t],
@@ -107,7 +114,21 @@ export function StatusBadge({
       )}
     >
       {dot && <span className="size-1.5 rounded-full bg-current" />}
-      {label(value)}
+      {display ?? label(value)}
     </span>
+  );
+}
+
+const ORIGIN_TONE: Record<string, Tone> = { automation: "primary", agent: "info", manual: "muted" };
+const ORIGIN_TEXT: Record<string, string> = { agent: "AI Agent" };
+
+/** Who created a task: Manual, Automation (workflow) or AI Agent. */
+export function TaskOriginBadge({ origin }: { origin: string }) {
+  return (
+    <StatusBadge
+      value={origin}
+      tone={ORIGIN_TONE[origin] ?? "muted"}
+      {...(ORIGIN_TEXT[origin] ? { display: ORIGIN_TEXT[origin] } : {})}
+    />
   );
 }

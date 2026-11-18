@@ -36,6 +36,8 @@ export type WhatsappSendStatus = (typeof PROPOSAL_WHATSAPP_SEND_STATUSES)[number
 export interface Proposal {
   id: string;
   leadId: string;
+  /** The deal this proposal is attached to (CRM v2). */
+  dealId?: string | null;
   ownerId?: string;
   ownerName?: string;
   title: string;
@@ -59,6 +61,8 @@ export interface Proposal {
   whatsappSendError?: string;
   lossReason?: LeadLossReason;
   lossNotes?: string;
+  /** LL-3: default the sent date + 30 days ("YYYY-MM-DD"). */
+  validUntil?: string;
   updatedAt: string;
   createdAt: string;
 }

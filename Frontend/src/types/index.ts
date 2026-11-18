@@ -3,6 +3,7 @@
 // These shapes are the contract the backend will have to satisfy — when the
 // Supabase schema lands, generated row types should be mapped onto these
 // rather than replacing them, so the UI stays independent of the transport.
+export * from "./crm";
 export * from "./lead";
 export * from "./meeting";
 export * from "./notification";
@@ -11,3 +12,5 @@ export * from "./task";
 export * from "./timeline";
 export * from "./user";
 export * from "./workflow";
+export * from "./work";
+export * from "./automation";

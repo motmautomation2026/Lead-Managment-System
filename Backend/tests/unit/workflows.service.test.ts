@@ -44,7 +44,7 @@ function createWorkflowDb() {
           });
           return { rows: [] };
         }
-        if (sql.startsWith("select * from public.workflow_versions")) {
+        if (sql.startsWith("select * from public.workflow_versions") || sql.startsWith("select s.* from public.workflow_steps")) {
           return { rows: [] };
         }
         if (sql.includes("from public.workflow_runs")) {

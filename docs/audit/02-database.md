@@ -387,6 +387,8 @@ Views (created in 001, never recreated; their column lists are frozen without `w
 
 ## 5. Row-Level Security model
 
+> **SEC-1 (migration 056):** every policy below was dropped and anon/authenticated lost all table, sequence and function privileges in `public`; RLS stays on everywhere with no policies. The notes below describe the state before 056.
+
 - The backend connects with an RLS-bypassing role (`DATABASE_URL`), so none of these policies applies to the app. They only constrain direct PostgREST or anon-key clients.
 - CRM tables: policies for the `authenticated` role, all gated on `is_active_salesperson()`. Policies are **not workspace-aware**: a salesperson using PostgREST directly could read every workspace.
 - Integration, secret and audit tables (`integration_connections`, `admin_audit_events`, `whatsapp_*`, `google_calendar_connection`): RLS is enabled with **no policies**, which denies all non-bypass access.

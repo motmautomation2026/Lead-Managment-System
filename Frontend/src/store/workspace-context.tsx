@@ -27,6 +27,16 @@ function writeStoredWorkspaceId(id: string) {
   }
 }
 
+/** E4b: a workspace link (`?workspace=<id>`) picks that workspace when the user may open it. */
+// eslint-disable-next-line react-refresh/only-export-components -- read by the auth gate too
+export function requestedWorkspaceId(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get("workspace");
+  } catch {
+    return null;
+  }
+}
+
 export interface WorkspaceControls {
   workspaces: Workspace[];
   currentWorkspaceId: string | null;
@@ -43,6 +53,7 @@ const WorkspaceContext = createContext<WorkspaceControls>({
   isLoading: true,
 });
 
+// eslint-disable-next-line react-refresh/only-export-components -- the hook belongs with its provider
 export function useWorkspace() {
   return useContext(WorkspaceContext);
 }
@@ -62,11 +73,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   });
   const workspaces = useMemo(() => query.data?.data ?? [], [query.data]);
 
-  const [storedId, setStoredId] = useState<string | null>(() => readStoredWorkspaceId());
+  const [storedId, setStoredId] = useState<string | null>(
+    () => requestedWorkspaceId() ?? readStoredWorkspaceId(),
+  );
 
   // Once the list resolves, fall back to the first workspace when the
-  // stored id was never set, or names a workspace that's been deleted or
-  // deactivated since — covers a stale localStorage value without crashing.
+  // stored id was never set, or names a workspace that's been deleted,
+  // deactivated or (E4b) is no longer allowed for this user.
   const currentWorkspaceId = useMemo(() => {
     if (workspaces.length === 0) return null;
     if (storedId && workspaces.some((workspace) => workspace.id === storedId)) return storedId;

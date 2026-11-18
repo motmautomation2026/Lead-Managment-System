@@ -3,6 +3,7 @@ import { pool, withTransaction } from "../db.js";
 import type { Queryable } from "../dto.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { recordAdminAudit } from "./admin-audit.service.js";
+import { effectiveWorkspaceRole, type WorkspaceRole } from "../domain/workspaceAccess.js";
 
 export interface WorkspaceRow {
   id: string;
@@ -33,11 +34,34 @@ function slugify(name: string): string {
   return base || "workspace";
 }
 
-export async function listWorkspaces(db: Queryable = pool) {
-  const result = await db.query<WorkspaceRow>(
-    `select * from public.workspaces where is_active = true order by created_at asc`,
+/** E4b rule 4: the actor's workspaces with their role there (a super-admin: every workspace, as admin). */
+export async function listWorkspaces(actor: Pick<Actor, "id" | "isSuperAdmin">, db: Queryable = pool) {
+  const result = await db.query<WorkspaceRow & { role: WorkspaceRole | null }>(
+    `select w.*, m.role
+       from public.workspaces w
+       left join public.workspace_members m on m.workspace_id = w.id and m.user_id = $1
+      where w.is_active = true and (m.user_id is not null or $2)
+      order by w.created_at asc`,
+    [actor.id, actor.isSuperAdmin === true],
   );
-  return result.rows.map(workspaceToDto);
+  return result.rows.map((row) => ({ ...workspaceToDto(row), role: effectiveWorkspaceRole(row.role, actor.isSuperAdmin === true)! }));
+}
+
+/** E4b: one row in the membership audit (who, what, when). */
+export async function recordMemberEvent(
+  db: Queryable,
+  actor: Pick<Actor, "id" | "email">,
+  workspaceId: string,
+  userId: string | null,
+  action: "added" | "role_changed" | "removed" | "workspace_created",
+  oldRole: WorkspaceRole | null,
+  newRole: WorkspaceRole | null,
+) {
+  await db.query(
+    `insert into public.workspace_member_events (workspace_id, user_id, action, old_role, new_role, actor_id, actor_email)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [workspaceId, userId, action, oldRole, newRole, actor.id, actor.email],
+  );
 }
 
 async function uniqueSlug(db: Queryable, name: string): Promise<string> {
@@ -77,11 +101,16 @@ export async function createWorkspace(actor: Actor, input: { name: string }) {
 
     await db.query(`insert into public.integration_connections (workspace_id, id) values ($1, 'email')`, [workspace.id]);
     await db.query(`insert into public.whatsapp_connection (workspace_id) values ($1)`, [workspace.id]);
+    // E4a: every workspace starts with WhatsApp number #1 (not paired).
+    await db.query(`insert into public.whatsapp_numbers (workspace_id, label) values ($1, '#1')`, [workspace.id]);
     await db.query(`insert into public.google_calendar_connection (workspace_id) values ($1)`, [workspace.id]);
 
     await recordAdminAudit(db, actor, "workspace.created", "workspace", workspace.id, { name: workspace.name });
+    // E4b rule 11: the creator becomes its admin (a super-admin too: never auto-added anywhere else).
+    await db.query(`insert into public.workspace_members (workspace_id, user_id, role, created_by) values ($1, $2, 'admin', $2)`, [workspace.id, actor.id]);
+    await recordMemberEvent(db, actor, workspace.id, actor.id, "workspace_created", null, "admin");
 
-    return workspaceToDto(workspace);
+    return { ...workspaceToDto(workspace), role: "admin" as const };
   });
 }
 

@@ -62,3 +62,17 @@ export function initials(name: string) {
     .slice(0, 2)
     .join("");
 }
+/**
+ * INR amount with Indian grouping (₹12,50,000), or lakh/crore when `compact`
+ * (₹12.5 L, ₹1.25 Cr). Other currencies use their own symbol. null → "–".
+ */
+export function formatMoney(amount: number | null | undefined, currency = "INR", compact = false) {
+  if (amount == null) return "–";
+  if (currency === "INR" && compact) return amount < 0 ? `-${money(-amount)}` : money(amount);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  }).format(amount);
+}

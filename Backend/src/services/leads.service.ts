@@ -1,7 +1,8 @@
 import type { Queryable } from "../dto.js";
 import { addDaysIso } from "../dto.js";
 import type { Actor } from "../authMiddleware.js";
-import { ConflictError, DoNotContactError, NotFoundError, ValidationError } from "../errors.js";
+import { ConflictError, DoNotContactError, ForbiddenError, NotFoundError, ValidationError } from "../errors.js";
+import { assertAssignableUser } from "./profiles.service.js";
 import { assertPipelineStageEditable, assertValidLifecycleState, assertValidPipelineStage, isTerminalLifecycle } from "../domain/pipeline.js";
 import type {
   AutomationMode,
@@ -19,10 +20,22 @@ import { cancelOpenTasksForLead, createTask, getLeadNextAction } from "./tasks.s
 import { applyAutomationModeToRuns, autoEnroll } from "./runs.service.js";
 import { normalizePhoneE164 } from "../domain/phone.js";
 import { normalizeEmail } from "../domain/email.js";
+import { parseRevenueRange, type RevenueRange } from "../domain/revenue.js";
+import { onAgentEvent } from "./agentEvents.service.js";
+import { linkCompanySafely } from "./companies.service.js";
+import { closeOpenDealsSafely, winSingleOpenDealSafely } from "./deals.service.js";
+import type { AgentStatus } from "../agent/rules.js";
+import { containsPattern, leadSearchSql } from "../lists/listQuery.js";
+import { DISCARD_REASON_LABELS, lossDetailsProblem, recoverAt, type DiscardReason, type LossDetails } from "../domain/recovery.js";
+import { assignFromContext, assignOwnerForNewLead, loadAssignmentContext, notifyOwner, recordAssignment, type LeadAssignment } from "./leadAssignment.service.js";
 
 export interface LeadRow {
   id: string;
   workspace_id: string;
+  hot_score?: number | null;
+  hot_band?: string | null;
+  hot_reasons?: string[] | null;
+  hot_score_at?: Date | null;
   first_name: string;
   last_name: string;
   company: string;
@@ -33,6 +46,10 @@ export interface LeadRow {
   phone_e164: string | null;
   source: LeadSource;
   service_interest: string | null;
+  revenue_range: string | null;
+  /** numeric columns come back from pg as strings */
+  revenue_min_cr: string | null;
+  revenue_max_cr: string | null;
   owner_id: string | null;
   owner_name: string | null;
   pipeline_stage: PipelineStage;
@@ -50,7 +67,19 @@ export interface LeadRow {
   interested_later_decision_owner: string | null;
   loss_reason: LeadLossReason | null;
   loss_notes: string | null;
+  /** LL-3 (060). */
+  loss_competitor_name?: string | null;
+  loss_project_date?: string | Date | null;
+  recover_at?: Date | null;
+  recovered_at?: Date | null;
+  discard_reason?: DiscardReason | null;
   merged_into_lead_id: string | null;
+  agent_status: AgentStatus;
+  agent_status_reason: string | null;
+  agent_status_changed_at: Date | null;
+  agent_touch_count: number;
+  agent_last_touch_at: Date | null;
+  company_id: string | null;
   last_activity_at: Date;
   created_by: string | null;
   created_by_name: string | null;
@@ -64,18 +93,30 @@ const LEAD_SELECT = `
   left join public.profiles o on o.id = l.owner_id
 `;
 
+/** A pg `date` column (Date at local midnight, or text) as "YYYY-MM-DD". */
+export const dateOnly = (value: string | Date | null | undefined) =>
+  value == null ? undefined : typeof value === "string" ? value.slice(0, 10) : `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
 export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof getLeadNextAction>>) {
   return {
     id: row.id,
     firstName: row.first_name,
     lastName: row.last_name,
     company: row.company,
+    companyId: row.company_id,
     jobTitle: row.job_title ?? "",
     industry: row.industry ?? "",
     email: row.email ?? "",
     phone: row.phone ?? "",
     source: row.source,
     serviceInterest: row.service_interest ?? "",
+    // E3b-2b rule 15: recomputed by the worker; null until the first sweep.
+    hotScore: row.hot_score ?? null,
+    hotBand: row.hot_band ?? null,
+    hotReasons: row.hot_reasons ?? [],
+    revenueRange: row.revenue_range ?? "",
+    revenueMinCr: row.revenue_min_cr === null ? null : Number(row.revenue_min_cr),
+    revenueMaxCr: row.revenue_max_cr === null ? null : Number(row.revenue_max_cr),
     ownerId: row.owner_id ?? undefined,
     ownerName: row.owner_name ?? undefined,
     pipelineStage: row.pipeline_stage,
@@ -93,7 +134,17 @@ export function leadToDto(row: LeadRow, nextAction?: Awaited<ReturnType<typeof g
     interestedLaterDecisionOwner: row.interested_later_decision_owner ?? undefined,
     lossReason: row.loss_reason ?? undefined,
     lossNotes: row.loss_notes ?? undefined,
+    lossCompetitorName: row.loss_competitor_name ?? undefined,
+    lossProjectDate: dateOnly(row.loss_project_date),
+    recoverAt: row.recover_at?.toISOString(),
+    recoveredAt: row.recovered_at?.toISOString(),
+    discardReason: row.discard_reason ?? undefined,
     mergedIntoLeadId: row.merged_into_lead_id ?? undefined,
+    agentStatus: row.agent_status,
+    agentStatusReason: row.agent_status_reason ?? undefined,
+    agentStatusChangedAt: row.agent_status_changed_at?.toISOString(),
+    agentTouchCount: row.agent_touch_count,
+    agentLastTouchAt: row.agent_last_touch_at?.toISOString(),
     lastActivityAt: row.last_activity_at.toISOString(),
     createdBy: row.created_by_name ?? undefined,
     createdAt: row.created_at.toISOString(),
@@ -112,6 +163,9 @@ export interface CreateLeadInput {
   phone?: string;
   source: string;
   serviceInterest?: string;
+  /** Free text, stored as entered and parsed to crore. */
+  revenueRange?: string;
+  /** Explicit owner; when absent the workspace's revenue rules pick one. */
   ownerId?: string;
 }
 
@@ -126,6 +180,7 @@ export interface LeadFieldsInput {
   phone?: string;
   source: string;
   serviceInterest?: string;
+  revenueRange?: string;
 }
 
 export interface ValidatedLeadFields {
@@ -139,6 +194,8 @@ export interface ValidatedLeadFields {
   phoneE164: string | null;
   source: LeadSource;
   serviceInterest: string | null;
+  revenueRange: string | null;
+  revenue: RevenueRange | null;
 }
 
 /**
@@ -180,18 +237,88 @@ export function validateLeadFields(input: LeadFieldsInput): ValidatedLeadFields 
     phoneE164,
     source: input.source as LeadSource,
     serviceInterest: input.serviceInterest?.trim() || null,
+    revenueRange: input.revenueRange?.trim() || null,
+    revenue: parseRevenueRange(input.revenueRange),
   };
+}
+
+/**
+ * UX-3: the owner's bell for a lead a rep added by hand. LL-2: its first call is due now, so an inbound
+ * enquiry entered manually says "call now" (the website-form ingest has its own 1-working-hour bell).
+ */
+export function manualLeadBellTitle(source: string): string {
+  return source === "website" || source === "inbound_form" ? "New lead — call now" : "New lead assigned to you";
 }
 
 export async function createLead(db: Queryable, actor: Actor, workspaceId: string, input: CreateLeadInput): Promise<LeadRow> {
   const fields = validateLeadFields(input);
+  if (input.ownerId) await assertAssignableUser(db, workspaceId, input.ownerId);
 
-  const ownerId = input.ownerId ?? actor.id;
+  // An explicit owner is kept; otherwise the workspace's revenue rules decide (possibly unassigned).
+  const assignment: LeadAssignment = input.ownerId
+    ? { ownerId: input.ownerId, ownerName: null, reason: null }
+    : await assignOwnerForNewLead(db, workspaceId, fields.revenue);
+  const id = await insertLead(db, workspaceId, fields, assignment.ownerId, actor.id, actor.fullName);
+  if (input.ownerId) {
+    const owner = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [input.ownerId]);
+    assignment.ownerName = owner.rows[0]?.full_name ?? null;
+  }
+  const ownerId = assignment.ownerId;
+
+  await addTimelineEvent(db, {
+    leadId: id,
+    kind: "system",
+    title: "Lead Created",
+    detail: `Source: ${fields.source}`,
+    ...actorEvent(actor),
+  });
+  await recordAssignment(db, id, assignment, actorEvent(actor));
+  if (ownerId && ownerId !== actor.id) {
+    const who = `${fields.firstName} ${fields.lastName}`.trim();
+    const detail = `${actor.fullName} added ${who} (${fields.company})${assignment.reason ? ` - ${assignment.reason}` : ""}.`;
+    await notifyOwner(db, workspaceId, ownerId, manualLeadBellTitle(fields.source), detail, id, `/leads/${id}`);
+  }
+
+  // Every new lead needs a next action from the moment it exists (Rule: an
+  // active lead should never sit with nothing assigned — see the leads list
+  // page's "no next action" warning) rather than waiting for a rep to
+  // remember to add one manually.
+  await createTask(db, actor, workspaceId, {
+    leadId: id,
+    ownerId,
+    ownerName: assignment.ownerName,
+    type: "call",
+    title: "First call",
+    // LL-2: a manually added (or CSV) lead's first call is due now, whatever its source.
+    dueAt: addDaysIso(0),
+    origin: "manual",
+  });
+
+  // Stage 1 of the nurture funnel: the welcome email + WhatsApp sequence
+  // starts immediately in parallel with the human BD call task above, not
+  // after it. Enrollment is a quiet no-op if no active published workflow
+  // is configured for this trigger yet (see autoEnroll).
+  await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence");
+  await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
+  await linkCompanySafely(db, workspaceId, id);
+
+  return getLeadRowOr404(db, workspaceId, id);
+}
+
+/** The one INSERT for a new lead, shared by createLead, importLeads and the website-form ingest. */
+export async function insertLead(
+  db: Queryable,
+  workspaceId: string,
+  fields: ValidatedLeadFields,
+  ownerId: string | null,
+  createdBy: string | null,
+  createdByName: string,
+): Promise<string> {
   const result = await db.query<{ id: string }>(
     `insert into public.leads
       (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
-       service_interest, owner_id, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       service_interest, revenue_range, revenue_min_cr, revenue_max_cr, owner_id, created_by, created_by_name)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      returning id`,
     [
       workspaceId,
@@ -205,51 +332,15 @@ export async function createLead(db: Queryable, actor: Actor, workspaceId: strin
       fields.phoneE164,
       fields.source,
       fields.serviceInterest,
+      fields.revenueRange,
+      fields.revenue?.minCr ?? null,
+      fields.revenue?.maxCr ?? null,
       ownerId,
-      actor.id,
-      actor.fullName,
+      createdBy,
+      createdByName,
     ],
   );
-  const id = result.rows[0]!.id;
-
-  const owner = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [ownerId]);
-  const ownerName = owner.rows[0]?.full_name ?? "Unassigned";
-
-  await addTimelineEvent(db, {
-    leadId: id,
-    kind: "system",
-    title: "Lead Created",
-    detail: `Source: ${fields.source}`,
-    ...actorEvent(actor),
-  });
-  await addTimelineEvent(db, {
-    leadId: id,
-    kind: "system",
-    title: "Lead Assigned",
-    detail: `Owner: ${ownerName}`,
-    ...actorEvent(actor),
-  });
-
-  // Every new lead needs a next action from the moment it exists (Rule: an
-  // active lead should never sit with nothing assigned — see the leads list
-  // page's "no next action" warning) rather than waiting for a rep to
-  // remember to add one manually.
-  await createTask(db, actor, workspaceId, {
-    leadId: id,
-    ownerId,
-    type: "call",
-    title: "First call",
-    dueAt: addDaysIso(0),
-    origin: "manual",
-  });
-
-  // Stage 1 of the nurture funnel: the welcome email + WhatsApp sequence
-  // starts immediately in parallel with the human BD call task above, not
-  // after it. Enrollment is a quiet no-op if no active published workflow
-  // is configured for this trigger yet (see autoEnroll).
-  await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence");
-
-  return getLeadRowOr404(db, workspaceId, id);
+  return result.rows[0]!.id;
 }
 
 export async function getLeadRowOr404(db: Queryable, workspaceId: string, id: string): Promise<LeadRow> {
@@ -318,8 +409,9 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
   const existingEmails = new Set(existing.rows.flatMap((r) => (r.email ? [r.email] : [])));
   const existingPhones = new Set(existing.rows.flatMap((r) => (r.phone_e164 ? [r.phone_e164] : [])));
 
-  const ownerRow = await db.query<{ full_name: string }>(`select full_name from public.profiles where id = $1`, [actor.id]);
-  const ownerName = ownerRow.rows[0]?.full_name ?? actor.fullName;
+  // Rows carry no owner: the revenue rules assign every one. Loaded once for the whole file.
+  const assignmentContext = await loadAssignmentContext(db, workspaceId);
+  const assignedCounts = new Map<string, number>();
 
   const seenEmails = new Set<string>();
   const seenPhones = new Set<string>();
@@ -340,30 +432,11 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     if (emailKey) seenEmails.add(emailKey);
     if (phoneKey) seenPhones.add(phoneKey);
 
-    const result = await db.query<{ id: string }>(
-      `insert into public.leads
-        (workspace_id, first_name, last_name, company, job_title, industry, email, phone, phone_e164, source,
-         service_interest, owner_id, created_by, created_by_name)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       returning id`,
-      [
-        workspaceId,
-        fields.firstName,
-        fields.lastName,
-        fields.company,
-        fields.jobTitle,
-        fields.industry,
-        fields.email,
-        fields.phone,
-        fields.phoneE164,
-        fields.source,
-        fields.serviceInterest,
-        actor.id,
-        actor.id,
-        actor.fullName,
-      ],
-    );
-    const id = result.rows[0]!.id;
+    const assignment = assignFromContext(assignmentContext, fields.revenue);
+    const id = await insertLead(db, workspaceId, fields, assignment.ownerId, actor.id, actor.fullName);
+    if (assignment.ownerId && assignment.ownerId !== actor.id) {
+      assignedCounts.set(assignment.ownerId, (assignedCounts.get(assignment.ownerId) ?? 0) + 1);
+    }
 
     await addTimelineEvent(db, {
       leadId: id,
@@ -372,16 +445,11 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
       detail: `Source: ${fields.source} (CSV import)`,
       ...actorEvent(actor),
     });
-    await addTimelineEvent(db, {
-      leadId: id,
-      kind: "system",
-      title: "Lead Assigned",
-      detail: `Owner: ${ownerName}`,
-      ...actorEvent(actor),
-    });
+    await recordAssignment(db, id, assignment, actorEvent(actor));
     await createTask(db, actor, workspaceId, {
       leadId: id,
-      ownerId: actor.id,
+      ownerId: assignment.ownerId,
+      ownerName: assignment.ownerName,
       type: "call",
       title: "First call",
       dueAt: addDaysIso(0),
@@ -391,8 +459,16 @@ export async function importLeads(db: Queryable, actor: Actor, workspaceId: stri
     // Same Stage 1 welcome sequence as a single lead create — every
     // imported row gets it, not just leads added one at a time.
     await autoEnroll(db, workspaceId, id, "lead_created", "New lead entered CRM - Stage 1 welcome sequence (CSV import)");
+    await onAgentEvent(db, { workspaceId, leadId: id, event: "lead_created" });
+    await linkCompanySafely(db, workspaceId, id);
 
     created.push(await getLeadRowOr404(db, workspaceId, id));
+  }
+
+  // One summary per owner, not one notification per imported lead.
+  for (const [ownerId, count] of assignedCounts) {
+    const title = `${count} new lead${count === 1 ? "" : "s"} assigned to you`;
+    await notifyOwner(db, workspaceId, ownerId, title, `From a CSV import by ${actor.fullName}.`, null, "/leads");
   }
 
   return { created, duplicates, failed, totalRows: rows.length };
@@ -435,10 +511,8 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
     params.push(filters.automationMode);
   }
   if (filters.search) {
-    clauses.push(
-      `(l.first_name ilike $${i} or l.last_name ilike $${i} or l.company ilike $${i} or l.email ilike $${i} or l.phone ilike $${i})`,
-    );
-    params.push(`%${filters.search}%`);
+    clauses.push(leadSearchSql(`$${i}`));
+    params.push(containsPattern(filters.search));
     i++;
   }
 
@@ -452,8 +526,12 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
     params,
   );
 
-  // Batch-load next actions for the page rather than N+1 querying per lead.
-  const ids = result.rows.map((r) => r.id);
+  const nextActions = await loadNextActions(db, result.rows.map((r) => r.id));
+  return result.rows.map((row) => leadToDto(row, nextActions.get(row.id) ?? null));
+}
+
+/** Batch-loads next actions for a page of leads rather than N+1 querying per lead. */
+export async function loadNextActions(db: Queryable, ids: string[]) {
   const nextActions = new Map<string, Awaited<ReturnType<typeof getLeadNextAction>>>();
   if (ids.length > 0) {
     const naResult = await db.query<{
@@ -478,8 +556,7 @@ export async function listLeads(db: Queryable, workspaceId: string, filters: Lis
       });
     }
   }
-
-  return result.rows.map((row) => leadToDto(row, nextActions.get(row.id) ?? null));
+  return nextActions;
 }
 
 export interface UpdateLeadInput {
@@ -492,6 +569,7 @@ export interface UpdateLeadInput {
   phone?: string;
   source?: string;
   serviceInterest?: string;
+  revenueRange?: string;
   ownerId?: string;
   pipelineStage?: PipelineStage;
   responseState?: ResponseState;
@@ -526,6 +604,8 @@ export async function updateLead(
   patch: UpdateLeadInput,
 ): Promise<LeadRow> {
   const current = await getLeadRowOr404(db, workspaceId, id);
+  // E4b rule 5: a new owner must be a member of this workspace (an unchanged owner is kept as it is).
+  if (patch.ownerId && patch.ownerId !== current.owner_id) await assertAssignableUser(db, workspaceId, patch.ownerId);
 
   if (patch.pipelineStage) {
     assertValidPipelineStage(patch.pipelineStage);
@@ -577,6 +657,13 @@ export async function updateLead(
     push("source", patch.source);
   }
   if (patch.serviceInterest !== undefined) push("service_interest", patch.serviceInterest.trim() || null);
+  // Revenue is informational after creation: changing it never reassigns the lead.
+  if (patch.revenueRange !== undefined) {
+    const revenue = parseRevenueRange(patch.revenueRange);
+    push("revenue_range", patch.revenueRange.trim() || null);
+    push("revenue_min_cr", revenue?.minCr ?? null);
+    push("revenue_max_cr", revenue?.maxCr ?? null);
+  }
   if (patch.ownerId !== undefined) push("owner_id", patch.ownerId);
   if (patch.pipelineStage !== undefined) push("pipeline_stage", patch.pipelineStage);
   if (patch.responseState !== undefined) push("response_state", patch.responseState);
@@ -588,7 +675,8 @@ export async function updateLead(
 
   if (sets.length === 0) return current;
 
-  sets.push(`last_activity_at = now()`);
+  // E3b-2b rule 17: any edit (enquiry facts, company, email, lifecycle…) → the hot score is recomputed by the worker.
+  sets.push(`last_activity_at = now()`, `hot_score_dirty = true`);
   params.push(id);
   await db.query(`update public.leads set ${sets.join(", ")} where id = $${i}`, params);
 
@@ -610,6 +698,10 @@ export async function updateLead(
       ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR),
     });
   }
+  // Relink the company when its text or the email (domain) changed; a placeholder unlinks.
+  const companyChanged = patch.company !== undefined && patch.company.trim() !== current.company;
+  const emailChanged = patch.email !== undefined && (normalizeEmail(patch.email.trim()) ?? null) !== (current.email ?? null);
+  if (companyChanged || emailChanged) await linkCompanySafely(db, workspaceId, id);
 
   return getLeadRowOr404(db, workspaceId, id);
 }
@@ -635,9 +727,14 @@ export async function deleteLead(db: Queryable, actor: Actor, workspaceId: strin
   await db.query(`delete from public.leads where id = $1`, [id]);
 }
 
-export async function addNote(db: Queryable, actor: Actor, workspaceId: string, leadId: string, body: string) {
+export async function addNote(db: Queryable, actor: Actor, workspaceId: string, leadId: string, body: string, dealId?: string) {
   if (!body.trim()) throw new ValidationError("Note body is required.");
   await getLeadRowOr404(db, workspaceId, leadId);
+  // UX-3: a note written on a deal page is the contact's note that also shows in that deal's feed.
+  if (dealId) {
+    const deal = await db.query(`select 1 from public.deals where id = $1 and lead_id = $2 and workspace_id = $3`, [dealId, leadId, workspaceId]);
+    if (deal.rowCount === 0) throw new ValidationError("That deal doesn't belong to this contact.");
+  }
 
   const result = await db.query<{ id: string; created_at: Date }>(
     `insert into public.lead_notes (lead_id, author_id, author_name, body)
@@ -651,7 +748,9 @@ export async function addNote(db: Queryable, actor: Actor, workspaceId: string, 
     title: "Note Added",
     detail: body.trim(),
     ...actorEvent(actor),
+    ...(dealId ? { relatedDealId: dealId } : {}),
   });
+  await onAgentEvent(db, { workspaceId, leadId, event: "note_added" });
   return { id: result.rows[0]!.id, author: actor.fullName, at: result.rows[0]!.created_at.toISOString(), body: body.trim() };
 }
 
@@ -725,6 +824,7 @@ export async function markDnc(db: Queryable, actor: Actor, workspaceId: string, 
   );
 
   await cancelOpenTasksForLead(db, actor, leadId, "Lead marked Do Not Contact");
+  await closeOpenDealsSafely(db, actor, workspaceId, leadId, "do_not_contact");
   await addTimelineEvent(db, {
     leadId,
     kind: "system",
@@ -763,6 +863,17 @@ export async function reactivateFromDnc(db: Queryable, actor: Actor, workspaceId
   return getLeadRowOr404(db, workspaceId, leadId);
 }
 
+const DNC_EXIT_MESSAGE = "This lead is Do Not Contact. Reactivate it with a reason first.";
+
+/**
+ * Do Not Contact may only be left through reactivateFromDnc (which records a
+ * reason). Any other lifecycle move would silently lift the suppression; the
+ * DB trigger (020_dnc_exit_only_to_active.sql) enforces the same rule.
+ */
+function assertNotDnc(lead: LeadRow) {
+  if (lead.lifecycle_state === "do_not_contact") throw new DoNotContactError(DNC_EXIT_MESSAGE);
+}
+
 async function setTerminalLifecycle(
   db: Queryable,
   actor: Actor | null,
@@ -772,9 +883,11 @@ async function setTerminalLifecycle(
   timelineTitle: string,
   reason?: string,
   extraColumns?: Record<string, unknown>,
+  winSingleOpenDeal = false,
 ) {
   assertValidLifecycleState(lifecycle);
   const current = await getLeadRowOr404(db, workspaceId, leadId);
+  assertNotDnc(current);
   if (current.lifecycle_state === lifecycle) return current;
 
   const extraEntries = Object.entries(extraColumns ?? {});
@@ -784,13 +897,20 @@ async function setTerminalLifecycle(
     `update public.leads set lifecycle_state = $${extraParams.length + 2}, last_activity_at = now()${extraSets.length ? ", " + extraSets.join(", ") : ""} where id = $1`,
     [leadId, ...extraParams, lifecycle],
   );
-  await cancelOpenTasksForLead(db, actor, leadId, `Lead ${timelineTitle}`);
+  await cancelOpenTasksForLead(db, actor, leadId, `Lead ${timelineTitle}`, undefined, { keepOnboarding: lifecycle === "won" });
   await addTimelineEvent(db, { leadId, kind: "system", title: timelineTitle, detail: reason, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR) });
+  if (lifecycle !== "won") await closeOpenDealsSafely(db, actor, workspaceId, leadId, lifecycle);
+  else if (winSingleOpenDeal) await winSingleOpenDealSafely(db, actor, workspaceId, leadId);
   return getLeadRowOr404(db, workspaceId, leadId);
 }
 
-export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "won", "Won", reason);
+/**
+ * `fromWonButton`: the rep's Won button also wins the contact's deal when it has
+ * exactly one open deal (design §2.2). Meeting/proposal/deal paths move their
+ * own deal and leave it false.
+ */
+export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string, fromWonButton = false) =>
+  setTerminalLifecycle(db, actor, workspaceId, leadId, "won", "Won", reason, undefined, fromWonButton);
 
 /**
  * A loss reason is required on every Lost lead (drives the reactivation
@@ -798,14 +918,40 @@ export const markWon = (db: Queryable, actor: Actor | null, workspaceId: string,
  * (leads_lost_has_reason), so lossReason must land in the SAME update
  * statement as lifecycle_state = 'lost', not a follow-up call.
  */
-export const markLost = (db: Queryable, actor: Actor, workspaceId: string, leadId: string, lossReason: LeadLossReason, notes?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "lost", "Lost", notes ?? lossReason, { loss_reason: lossReason, loss_notes: notes?.trim() || null });
+export async function markLost(
+  db: Queryable,
+  actor: Actor,
+  workspaceId: string,
+  leadId: string,
+  lossReason: LeadLossReason,
+  notes?: string,
+  details: LossDetails = {},
+) {
+  const now = new Date();
+  const problem = lossDetailsProblem(lossReason, details, now);
+  if (problem) throw new ValidationError(problem);
+  // LL-3 rule 6: every loss (re)sets the recovery date by reason; recovered_at cleared = once per loss.
+  return setTerminalLifecycle(db, actor, workspaceId, leadId, "lost", "Lost", notes ?? lossReason, {
+    loss_reason: lossReason,
+    loss_notes: notes?.trim() || null,
+    loss_competitor_name: lossReason === "competitor_selected" ? details.competitorName?.trim() || null : null,
+    loss_project_date: lossReason === "project_postponed" ? details.projectDate : null,
+    recover_at: recoverAt(lossReason, now, details),
+    recovered_at: null,
+  });
+}
 
-export const markDiscarded = (db: Queryable, actor: Actor, workspaceId: string, leadId: string, reason?: string) =>
-  setTerminalLifecycle(db, actor, workspaceId, leadId, "discarded", "Discarded", reason);
+/** LL-3 rule 7: a discard reason is required ("other" also needs the text). Discarded leads never recover. */
+export async function markDiscarded(db: Queryable, actor: Actor, workspaceId: string, leadId: string, discardReason: DiscardReason, notes?: string) {
+  const text = notes?.trim();
+  if (discardReason === "other" && !text) throw new ValidationError("Say why the contact is discarded.");
+  const detail = [DISCARD_REASON_LABELS[discardReason], text].filter(Boolean).join(" — ");
+  return setTerminalLifecycle(db, actor, workspaceId, leadId, "discarded", "Discarded", detail, { discard_reason: discardReason });
+}
 
 export async function moveToLongTermNurture(db: Queryable, actor: Actor | null, workspaceId: string, leadId: string, reason?: string) {
   const current = await getLeadRowOr404(db, workspaceId, leadId);
+  assertNotDnc(current);
   if (current.lifecycle_state === "long_term_nurture") return current;
   await db.query(`update public.leads set lifecycle_state = 'long_term_nurture', last_activity_at = now() where id = $1`, [leadId]);
   await addTimelineEvent(db, { leadId, kind: "system", title: "Moved to Long-Term Nurture", detail: reason, ...(actor ? actorEvent(actor) : AUTOMATION_ACTOR) });
@@ -826,8 +972,9 @@ export async function reactivateLead(db: Queryable, actor: Actor, workspaceId: s
   }
   if (current.lifecycle_state === "active") return current;
 
+  // LL-3 rule 6: reopening cancels a pending Lost recovery.
   await db.query(
-    `update public.leads set lifecycle_state = 'active', automation_mode = 'manual', last_activity_at = now() where id = $1`,
+    `update public.leads set lifecycle_state = 'active', automation_mode = 'manual', last_activity_at = now(), recover_at = null where id = $1`,
     [leadId],
   );
   await addTimelineEvent(db, { leadId, kind: "system", title: "Reactivated", detail: reason, ...actorEvent(actor) });
@@ -847,6 +994,8 @@ export async function mergeLead(db: Queryable, actor: Actor, workspaceId: string
   const source = await getLeadRowOr404(db, workspaceId, sourceLeadId);
   const target = await getLeadRowOr404(db, workspaceId, targetLeadId);
   if (source.lifecycle_state === "merged") throw new ConflictError("Source lead is already merged.");
+  // Merging would end the source's suppression without a recorded reason.
+  assertNotDnc(source);
   if (target.lifecycle_state === "merged") throw new ConflictError("Target lead is itself a merged (absorbed) lead.");
 
   await db.query(
@@ -854,6 +1003,7 @@ export async function mergeLead(db: Queryable, actor: Actor, workspaceId: string
     [sourceLeadId, targetLeadId],
   );
   await cancelOpenTasksForLead(db, actor, sourceLeadId, "Lead merged");
+  await closeOpenDealsSafely(db, actor, workspaceId, sourceLeadId, "merged");
   await addTimelineEvent(db, {
     leadId: sourceLeadId,
     kind: "system",
@@ -889,6 +1039,24 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
   }
   await getLeadRowOr404(db, workspaceId, leadId);
 
+  // E1 rule 8: only an admin clears a WhatsApp opt-out (the contact asked us to stop), with a reason.
+  const current = await db.query<{ status: string }>(`select status from public.lead_contact_channels where lead_id = $1 and channel = $2 for update`, [
+    leadId,
+    input.channel,
+  ]);
+  const clearsOptOut = input.channel === "whatsapp" && current.rows[0]?.status === "opted_out" && input.status !== "opted_out";
+  if (clearsOptOut) {
+    if (actor.role !== "admin") throw new ForbiddenError("Only an admin can clear a WhatsApp opt-out.");
+    if (!input.reason?.trim()) throw new ValidationError("A reason is required to clear a WhatsApp opt-out.");
+  }
+  // D3 rule 6: same for an email bounce / unsubscribe (the address bounced or the contact asked).
+  const EMAIL_BLOCKS = ["invalid", "permanent_bounce", "unsubscribed"];
+  const clearsEmail = input.channel === "email" && EMAIL_BLOCKS.includes(current.rows[0]?.status ?? "") && !EMAIL_BLOCKS.includes(input.status);
+  if (clearsEmail) {
+    if (actor.role !== "admin") throw new ForbiddenError("Only an admin can clear an email bounce or unsubscribe.");
+    if (!input.reason?.trim()) throw new ValidationError("A reason is required to clear an email bounce or unsubscribe.");
+  }
+
   await db.query(
     `insert into public.lead_contact_channels (lead_id, channel, status, reason, updated_by, updated_by_name)
      values ($1,$2,$3,$4,$5,$6)
@@ -901,7 +1069,11 @@ export async function setContactability(db: Queryable, actor: Actor, workspaceId
   await addTimelineEvent(db, {
     leadId,
     kind: "system",
-    title: `${input.channel} contactability: ${input.status}`,
+    title: clearsOptOut
+      ? `WhatsApp opt-out cleared by ${actor.fullName}: ${input.reason!.trim()}`
+      : clearsEmail
+        ? `Email status cleared by ${actor.fullName}: ${input.reason!.trim()}`
+        : `${input.channel} contactability: ${input.status}`,
     detail: input.reason,
     ...actorEvent(actor),
   });

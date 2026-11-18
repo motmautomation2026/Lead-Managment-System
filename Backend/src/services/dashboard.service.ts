@@ -15,6 +15,10 @@ import type { Queryable } from "../dto.js";
  * already-created view. 015_workspaces.sql never recreates them, so neither
  * view actually exposes a workspace_id column to filter on. The underlying
  * table logic is inlined below instead of relying on those views.
+ *
+ * Deprecated since C6b (Home uses home.service.ts); kept for the production rollback.
+ * B38: meetings that did not happen (cancelled / no-show / failed) and withdrawn
+ * proposals are not counted, today or in the funnel.
  */
 export async function getDashboardSummary(db: Queryable, workspaceId: string) {
   const [activeLeads, dueToday, overdue, meetingsToday, proposalFollowUps, missingNextAction, automationFailures, funnel] = await Promise.all([
@@ -34,7 +38,7 @@ export async function getDashboardSummary(db: Queryable, workspaceId: string) {
     db.query<{ count: string }>(
       `select count(*)::text as count from public.meetings
         where workspace_id = $1
-          and status not in ('cancelled')
+          and status not in ('cancelled', 'no_show', 'failed')
           and scheduled_at >= date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata'
           and scheduled_at < (date_trunc('day', now() at time zone 'Asia/Kolkata') + interval '1 day') at time zone 'Asia/Kolkata'`,
       [workspaceId],
@@ -81,11 +85,11 @@ async function getPipelineFunnel(db: Queryable, workspaceId: string) {
     [workspaceId],
   );
   const meetings = await db.query<{ count: string }>(
-    `select count(distinct lead_id)::text as count from public.meetings where workspace_id = $1`,
+    `select count(distinct lead_id)::text as count from public.meetings where workspace_id = $1 and status not in ('cancelled', 'no_show', 'failed')`,
     [workspaceId],
   );
   const proposals = await db.query<{ count: string }>(
-    `select count(distinct lead_id)::text as count from public.proposals where workspace_id = $1`,
+    `select count(distinct lead_id)::text as count from public.proposals where workspace_id = $1 and status <> 'withdrawn'`,
     [workspaceId],
   );
   const won = await db.query<{ count: string }>(

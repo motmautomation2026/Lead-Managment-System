@@ -7,8 +7,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestWorkspace, deleteCreatedTestWorkspaces, trackTestMember } from "../helpers/testWorkspaces.js";
 import { Pool, type PoolClient } from "pg";
 import type { Actor } from "../../src/authMiddleware.js";
+import { firstCallDueAt } from "../../src/domain/reminders.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -19,6 +21,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
   // A fresh workspace per run with NO default owner, so these tests never
   // depend on (or disturb) the real MOTM workspace's Settings.
   let WORKSPACE_ID: string;
+  const authUserIds: string[] = [];
 
   async function inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
@@ -42,7 +45,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
 
   async function newWorkspace(defaultLeadOwnerId: string | null = null): Promise<string> {
     const id = randomUUID();
-    await pool.query(`insert into public.workspaces (id, name, slug, default_lead_owner_id) values ($1, $2, $2, $3)`, [id, `ingest-test-${id}`, defaultLeadOwnerId]);
+    await createTestWorkspace(pool, "ingest-test", { id: id, defaultLeadOwnerId: defaultLeadOwnerId });
     return id;
   }
 
@@ -52,12 +55,23 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`ingest-rep-${randomUUID()}@example.com`]);
+    authUserIds.push(auth.rows[0].id);
     const profile = await pool.query(`select id, full_name, email from public.profiles where id = $1`, [auth.rows[0].id]);
+    await trackTestMember(pool, profile.rows[0].id, "salesperson");
     actor = { id: profile.rows[0].id, fullName: profile.rows[0].full_name, email: profile.rows[0].email, isActive: true, role: "salesperson" };
     WORKSPACE_ID = await newWorkspace();
   });
 
   afterAll(async () => {
+    await deleteCreatedTestWorkspaces(pool);
+    // Best-effort: profiles cascade from auth.users; rows the tests created keep a null owner.
+    // One at a time: a user with append-only admin_audit_events rows (the
+    // deactivated owner) cannot be deleted, and must not block the others.
+    for (const id of authUserIds) {
+      await pool
+        .query(`delete from auth.users where id = $1`, [id])
+        .catch((error: Error) => console.warn(`[leadIngest] test user ${id} not deleted: ${error.message}`));
+    }
     await pool.end();
   });
 
@@ -96,10 +110,17 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     expect(submission.detail).toContain("Revenue range: Rs.10–50Cr");
     expect(submission.detail).toContain("Message: Testing the form");
 
-    const tasks = (await pool.query(`select title, owner_id, status, task_type from public.tasks where lead_id = $1`, [leadId])).rows;
-    expect(tasks).toEqual([{ title: "First call", owner_id: null, status: "open", task_type: "call" }]);
+    const tasks = (await pool.query(`select title, owner_id, status, task_type, due_at from public.tasks where lead_id = $1`, [leadId])).rows;
+    expect(tasks).toEqual([{ title: "First call", owner_id: null, status: "open", task_type: "call", due_at: expect.any(Date) }]);
+    // LL-2 rule 2: 1 working hour after creation (Mon–Sat 09:30–19:00 IST).
+    const expectedDue = firstCallDueAt(new Date()).getTime();
+    expect(Math.abs(tasks[0].due_at.getTime() - expectedDue)).toBeLessThan(5 * 60_000);
 
-    const notifications = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2`, [leadId, actor.id]);
+    // LL-2 rule 3: an urgent alert, also emailed (email_status pending until the worker's staff-alert step).
+    const notifications = await pool.query(
+      `select 1 from public.notifications where lead_id = $1 and recipient_id = $2 and title = 'New website lead — call within 1 working hour' and email_status = 'pending'`,
+      [leadId, actor.id],
+    );
     expect(notifications.rowCount).toBe(1);
 
     const runs = await pool.query(`select 1 from public.workflow_runs where lead_id = $1`, [leadId]);
@@ -118,7 +139,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const task = (await pool.query(`select owner_id, owner_name from public.tasks where lead_id = $1`, [leadId])).rows[0];
     expect(task).toEqual({ owner_id: actor.id, owner_name: actor.fullName });
     const assigned = await pool.query(`select detail from public.timeline_events where lead_id = $1 and title = 'Lead Assigned'`, [leadId]);
-    expect(assigned.rows[0].detail).toBe(`Owner: ${actor.fullName}`);
+    expect(assigned.rows[0].detail).toBe(`Owner: ${actor.fullName} (Revenue unknown — default owner)`);
 
     // Only the owner is notified - not every salesperson.
     const notified = await pool.query(`select recipient_id from public.notifications where lead_id = $1`, [leadId]);
@@ -133,6 +154,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
 
   it("falls back to an unassigned lead (never loses it) when the saved owner has been deactivated", async () => {
     const auth = await pool.query(`insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id`, [`ingest-gone-${randomUUID()}@example.com`]);
+    authUserIds.push(auth.rows[0].id);
     const goneId = auth.rows[0].id as string;
     await pool.query(`update public.profiles set is_active = false where id = $1`, [goneId]);
     const workspace = await newWorkspace(goneId);
@@ -142,12 +164,12 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const leadId = (outcome as { leadId: string }).leadId;
     const lead = (await pool.query(`select owner_id from public.leads where id = $1`, [leadId])).rows[0];
     expect(lead.owner_id).toBeNull();
-    // Unassigned, so every active salesperson is told instead.
+    // Unassigned, so every active user is told instead.
     const notified = await pool.query(`select 1 from public.notifications where lead_id = $1 and recipient_id = $2`, [leadId, actor.id]);
     expect(notified.rowCount).toBe(1);
   });
 
-  it("settings service: saves, reads back, rejects non-salespeople and clears the default owner", async () => {
+  it("settings service: saves, reads back, rejects unknown users and clears the default owner", async () => {
     const { getWebsiteLeadSettings, updateWebsiteLeadSettings } = await import("../../src/services/websiteLeadSettings.service.js");
     const workspace = await newWorkspace();
 
@@ -156,7 +178,7 @@ describeIfDb("website lead ingest (requires TEST_DATABASE_URL)", () => {
     const saved = await updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: actor.id });
     expect(saved).toEqual({ defaultOwnerId: actor.id, defaultOwnerName: actor.fullName, ownerAvailable: true });
 
-    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("Choose an active salesperson.");
+    await expect(updateWebsiteLeadSettings(actor, workspace, { defaultOwnerId: randomUUID() })).rejects.toThrow("The owner must be an active member of this workspace.");
     expect((await getWebsiteLeadSettings(workspace, pool)).defaultOwnerId).toBe(actor.id);
 
     await pool.query(`update public.profiles set is_active = false where id = $1`, [actor.id]);

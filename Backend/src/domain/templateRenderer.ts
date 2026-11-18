@@ -141,11 +141,16 @@ function renderText(text: string, variables: Map<string, string>, unknownTokens:
   });
 }
 
-export function renderTemplate(template: RenderableTemplate, lead: TemplateRenderLead, meeting?: TemplateRenderMeeting, now = new Date()): RenderedTemplate {
-  const meetingTokens = [...`${template.subject ?? ""}\n${template.body}`.matchAll(TOKEN_PATTERN)]
+/** The known `{{meeting.*}}` variables a template uses; rendering them needs a meeting. */
+export function meetingVariablesIn(template: { subject?: string | null; body: string }): string[] {
+  const tokens = [...`${template.subject ?? ""}\n${template.body}`.matchAll(TOKEN_PATTERN)]
     .map((match) => match[1]!)
     .filter((key) => key.startsWith("meeting.") && KNOWN_TEMPLATE_VARIABLES.includes(key as typeof KNOWN_TEMPLATE_VARIABLES[number]));
-  if (meetingTokens.length && !meeting) {
+  return [...new Set(tokens)];
+}
+
+export function renderTemplate(template: RenderableTemplate, lead: TemplateRenderLead, meeting?: TemplateRenderMeeting, now = new Date()): RenderedTemplate {
+  if (meetingVariablesIn(template).length && !meeting) {
     throw new Error("Meeting variables require a scheduled meeting. Use this template for Meeting Scheduled notifications.");
   }
   const variables = buildVariableMap(lead, meeting, now);
