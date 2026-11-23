@@ -5,8 +5,9 @@
 -- lead_summaries          one row per lead: the worker's AI summary (staff only, never sent, never in a prompt)
 --                         and its queue state.
 --   activity_at           the lead's latest timeline event (set by the trigger below).
---   due_at                when the worker may (re)generate it; null = nothing queued. Every timeline event pushes
---                         it to now() + 2 min (the debounce); opening a stale lead in the UI / Refresh set now().
+--   due_at                when the worker may (re)generate it; null = nothing queued. A call, lead reply, meeting,
+--                         proposal or (deal-)stage event pushes it to now() + 2 min (the debounce); opening a stale
+--                         lead in the UI / Refresh set now().
 --   opened_at             set when someone opened the lead while its summary was missing or stale: lets the worker
 --                         summarise a lead that is not automated (old leads only when opened). Cleared once done.
 --   force                 a manual Refresh: skips the 10-minute limit and the input-hash check.
@@ -64,17 +65,25 @@ create index if not exists lead_summary_runs_ws_created_idx on public.lead_summa
 create index if not exists lead_summary_runs_lead_idx on public.lead_summary_runs (lead_id) where lead_id is not null;
 alter table public.lead_summary_runs enable row level security;
 
--- Every timeline event = new activity: record it and push the debounce. Which leads the worker
--- actually summarises (automated, or opened) is decided in the worker with AUTOMATED_SQL.
+-- Every timeline event = new activity (a stale summary is rewritten when someone opens the lead). Only the events
+-- that change what a summary says push the debounce (cost): a call, a lead reply, a meeting, a proposal, a stage or
+-- deal-stage change -- never a sent message or a note. Which leads the worker actually summarises (automated, or
+-- opened) is decided in the worker with AUTOMATED_SQL.
 create or replace function public.lead_summary_mark_activity() returns trigger
 language plpgsql
 as $$
+declare
+  queue boolean := new.event_kind in ('call', 'meeting', 'proposal', 'stage')
+    or (new.related_deal_id is not null and new.title like 'Deal stage changed%')
+    or new.title in ('WhatsApp reply received - automation stopped', 'WhatsApp reply received', 'Replied by email');
 begin
   insert into public.lead_summaries as s (lead_id, workspace_id, activity_at, due_at)
-  select new.lead_id, l.workspace_id, now(), now() + interval '2 minutes'
+  select new.lead_id, l.workspace_id, now(), case when queue then now() + interval '2 minutes' end
     from public.leads l where l.id = new.lead_id
   on conflict (lead_id) do update
-    set activity_at = excluded.activity_at, due_at = excluded.due_at, updated_at = now();
+    set activity_at = excluded.activity_at,
+        due_at = case when queue then excluded.due_at else s.due_at end,
+        updated_at = now();
   return null;
 end;
 $$;

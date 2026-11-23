@@ -135,6 +135,14 @@ describe("model settings (E3a)", () => {
     expect(sent).not.toHaveProperty("max_tokens");
   });
 
+  it("SUM-1: a summary call caps the completion at its own limit", async () => {
+    const summary = { requirement: "r", soFar: [], status: "s", nextStep: "n" };
+    const { create, client } = fakeClient(completion(JSON.stringify(summary)));
+    await createOpenAIDecisionModel({ client, sleep }).summarizeLead({ ...input(), model: "gpt-5.4-nano@low", maxCompletionTokens: 150 });
+    const sent = (create.mock.calls as unknown as [Record<string, unknown>][])[0]![0];
+    expect(sent).toMatchObject({ model: "gpt-5.4-nano", reasoning_effort: "low", max_completion_tokens: 150 });
+  });
+
   it("reports cached input tokens from the usage", async () => {
     const { client } = fakeClient({ ...completion(JSON.stringify(WAIT)), usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 1024 } } });
     expect((await createOpenAIDecisionModel({ client, sleep }).decide(input())).cachedInputTokens).toBe(1024);
@@ -167,6 +175,9 @@ describe("pricing", () => {
   it("an unknown model has no price", () => {
     expect(costUsd(prices, "model-b", 1000, 100)).toBeNull();
     expect(costUsd(parsePrices(undefined), "model-a", 1, 1)).toBeNull();
+    // SUM-1: the summary model's price is built in; OPENAI_PRICES_JSON may override it.
+    expect(costUsd(parsePrices(undefined), "gpt-5.4-nano@low", 1_000_000, 1_000_000, 500_000)).toBe(1.36);
+    expect(parsePrices('{"gpt-5.4-nano":{"inputPer1M":1,"outputPer1M":1}}')["gpt-5.4-nano"]).toEqual({ inputPer1M: 1, outputPer1M: 1 });
   });
 
   it("rejects malformed price JSON", () => {

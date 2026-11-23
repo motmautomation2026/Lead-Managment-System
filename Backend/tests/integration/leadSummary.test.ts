@@ -12,8 +12,7 @@ import type { Actor } from "../../src/authMiddleware.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
-const PRICES = { "m-write": { inputPer1M: 2, outputPer1M: 8 }, "m-ground": { inputPer1M: 1, outputPer1M: 4 } };
-const MODELS = { decision: "m-write", grounding: "m-ground" };
+const PRICES = { "m-sum": { inputPer1M: 0.2, cachedInputPer1M: 0.02, outputPer1M: 1.25 } };
 const SUMMARY = { requirement: "Export sales calling", soFar: ["20 Nov: call connected"], status: "Active, warm", nextStep: "No next step" };
 
 describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
@@ -65,13 +64,16 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     );
   const run = async (ws: string, model = createFakeDecisionModel({ summaries: [SUMMARY], tokens: { input: 900, output: 120 } })) => {
     const { runLeadSummaries } = await import("../../src/services/leadSummary.service.js");
-    return { outcomes: await runLeadSummaries(true, { model, prices: PRICES, defaultModels: MODELS, workspaceIds: [ws] }), model };
+    return { outcomes: await runLeadSummaries(true, { model, prices: PRICES, summaryModel: "m-sum", workspaceIds: [ws] }), model };
   };
   const row = async (leadId: string) => (await pool.query(`select * from public.lead_summaries where lead_id = $1`, [leadId])).rows[0];
 
-  it("an automated lead's activity queues it after the debounce; once per 10 min; unchanged inputs skip the model; cost counted", async () => {
+  it("a call on an automated lead queues it after the debounce (a note or sent message doesn't); once per 10 min; unchanged inputs skip the model; cost counted", async () => {
     const { ws, leadId } = await scenario();
     await event(leadId, "Note Added", "note", "Wants pricing for export calling");
+    await event(leadId, "AI sent WhatsApp", "automation");
+    expect(await row(leadId)).toMatchObject({ due_at: null });
+    await event(leadId, "Call Connected - interested", "call", "Wants pricing for export calling");
     const queued = await row(leadId);
     expect(new Date(queued.due_at).getTime()).toBeGreaterThan(Date.now() + 60_000); // debounce
     expect((await run(ws)).outcomes).toEqual([]);
@@ -79,15 +81,15 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     await makeDue(leadId);
     const first = await run(ws);
     expect(first.outcomes).toEqual([{ leadId, result: "generated" }]);
-    expect(first.model.calls[0]!.input.model).toBe("m-write");
-    expect(await row(leadId)).toMatchObject({ status: "ready", summary: SUMMARY, due_at: null, model: "m-write" });
+    expect(first.model.calls[0]!.input).toMatchObject({ model: "m-sum", maxCompletionTokens: 150 });
+    expect(await row(leadId)).toMatchObject({ status: "ready", summary: SUMMARY, due_at: null, model: "m-sum" });
     const runs = await pool.query(`select model, input_tokens, output_tokens, cost_usd from public.lead_summary_runs where lead_id = $1`, [leadId]);
-    expect(runs.rows).toEqual([{ model: "m-write", input_tokens: 900, output_tokens: 120, cost_usd: "0.002760" }]);
+    expect(runs.rows).toEqual([{ model: "m-sum", input_tokens: 900, output_tokens: 120, cost_usd: "0.000330" }]);
     const { MONTH_SPEND_SQL } = await import("../../src/services/agentRunner.service.js");
-    expect(Number((await pool.query(`select ${MONTH_SPEND_SQL} as s`, [ws])).rows[0].s)).toBeCloseTo(0.00276, 6);
+    expect(Number((await pool.query(`select ${MONTH_SPEND_SQL} as s`, [ws])).rows[0].s)).toBeCloseTo(0.00033, 6);
 
     // New activity within 10 minutes of the last summary: not claimed even when due.
-    await event(leadId, "Call Connected - interested", "call", "Asked about timelines");
+    await event(leadId, "Call Not Connected (attempt 1)", "call", "no_answer");
     await makeDue(leadId);
     expect((await run(ws)).outcomes).toEqual([]);
 
@@ -106,7 +108,7 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
 
   it("an old (not automated) lead is summarised only when someone opens it", async () => {
     const { ws, leadId } = await scenario({ automated: false });
-    await event(leadId, "Note Added");
+    await event(leadId, "Call Connected - interested", "call");
     await makeDue(leadId);
     expect((await run(ws)).outcomes).toEqual([]);
     expect((await row(leadId)).due_at).toBeNull(); // pruned
@@ -121,7 +123,8 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
 
   it("the daily cap stops AI summaries (quick facts stay); agent off → no AI", async () => {
     const capped = await scenario({ cap: 0 });
-    await event(capped.leadId, "Note Added");
+    await event(capped.leadId, "Replied by email", "email");
+    expect((await row(capped.leadId)).due_at).not.toBeNull(); // a lead reply queues
     await makeDue(capped.leadId);
     const r = await run(capped.ws);
     expect(r.outcomes).toEqual([{ leadId: capped.leadId, result: "paused_cap" }]);
@@ -129,7 +132,7 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     expect((await api.call(owner, capped.ws, "GET", `/leads/${capped.leadId}/summary`)).body.ai.status).toBe("paused_cap");
 
     const off = await scenario({ mode: "off" });
-    await event(off.leadId, "Note Added");
+    await event(off.leadId, "Meeting scheduled", "meeting");
     await makeDue(off.leadId);
     expect((await run(off.ws)).outcomes).toEqual([{ leadId: off.leadId, result: "off" }]);
   });
@@ -146,9 +149,9 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     expect((await run(ws)).outcomes).toEqual([{ leadId, result: "generated" }]);
   });
 
-  it("the prompt never carries reply text (only date, channel and label)", async () => {
+  it("the prompt never carries reply text (only the timeline title)", async () => {
     const { ws, leadId } = await scenario();
-    // A matched reply: the summary reads only its date, channel and label columns, never body_* (CLAUDE.md).
+    // A matched reply: the summary reads only the timeline title, never body_* (CLAUDE.md).
     await pool.query(
       `insert into public.whatsapp_inbound_events (message_id, sender_jid, message_type, received_at, match_count, disposition, workspace_id, lead_id, reply_label)
        values ($1, '919700000000@s.whatsapp.net', 'conversation', now(), 1, 'matched', $2, $3, 'question')`,
@@ -158,7 +161,7 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     await makeDue(leadId);
     const { model } = await run(ws);
     const prompt = JSON.stringify(model.calls[0]!.input.messages);
-    expect(prompt).toContain("whatsapp (question)");
+    expect(prompt).toContain("whatsapp: WhatsApp reply received - automation stopped");
     expect(prompt).not.toMatch(/body_ciphertext|conversation/);
   });
 });

@@ -12,10 +12,6 @@ import { quickFactsOf } from "../../src/services/leadSummary.service.js";
 
 const INPUT: SummaryInput = {
   requirement: "Need help with export sales calling",
-  serviceInterest: "Sales outsourcing",
-  company: "Acme Steel",
-  industry: "Steel",
-  source: "website",
   lifecycle: "active",
   stage: "connected_qualifying",
   hotBand: "warm",
@@ -24,10 +20,12 @@ const INPUT: SummaryInput = {
   aiStatusReason: "lead replied",
   doNotContact: false,
   channelProblems: [{ channel: "email", status: "unsubscribed" }],
-  deals: [{ name: "Acme — calling", stage: "proposal_sent" }],
+  dealStages: ["proposal sent"],
   nextStep: { kind: "task", title: "Call back", at: "2026-11-25" },
-  replies: [{ at: "2026-11-21", channel: "whatsapp", label: "question" }],
-  timeline: [{ at: "2026-11-20", kind: "call", title: "Call Connected - interested", detail: "Asked for pricing" }],
+  timeline: [
+    { at: "2026-11-21", kind: "whatsapp", title: "WhatsApp reply received - automation stopped", detail: null },
+    { at: "2026-11-20", kind: "call", title: "Call Connected - interested", detail: "Asked for pricing" },
+  ],
 };
 
 describe("SUM-1 lead summary (pure)", () => {
@@ -36,14 +34,22 @@ describe("SUM-1 lead summary (pure)", () => {
     expect(summaryInputHash({ ...INPUT, stage: "negotiation" })).not.toBe(summaryInputHash(INPUT));
   });
 
-  it("puts fixed instructions first and the lead only in data blocks; replies only as labels", () => {
+  it("puts fixed instructions first and only requirement, status, next step and the timeline in the data", () => {
     const [system, user] = buildLeadSummaryMessages(INPUT);
     expect(system!.role).toBe("system");
-    expect(system!.content).not.toContain("Acme");
+    expect(system!.content).not.toContain("export");
+    expect(system!.content).toContain("at most 60 words");
     expect(user!.content).toContain("<lead_data>");
-    expect(user!.content).toContain("2026-11-21 whatsapp (question)");
-    // The input type has no field for reply text: the prompt can only carry date, channel and label.
-    expect(Object.keys(INPUT.replies[0]!)).toEqual(["at", "channel", "label"]);
+    expect(user!.content).toContain("deals: proposal sent");
+    expect(user!.content).toContain("email unsubscribed");
+    // A reply appears only as its timeline title, never its text.
+    expect(user!.content).toContain("2026-11-21 whatsapp: WhatsApp reply received - automation stopped");
+  });
+
+  it("stays small: about 300 prompt tokens for 10 full timeline events", () => {
+    const timeline = Array.from({ length: 10 }, (_, i) => ({ at: "2026-11-20", kind: "call", title: `Call Connected - interested ${i}`, detail: "x ".repeat(60).trim() }));
+    const chars = buildLeadSummaryMessages({ ...INPUT, timeline }).reduce((n, m) => n + m.content.length, 0);
+    expect(chars / 4).toBeLessThan(800);
   });
 
   it("defuses block tags written by a lead", () => {
@@ -51,16 +57,17 @@ describe("SUM-1 lead summary (pure)", () => {
     expect(user!.content.match(/<\/lead_data>/g)).toHaveLength(1);
   });
 
-  it("uses the writer model at low effort", () => {
+  it("runs the summary model at low effort", () => {
+    expect(summaryModel("gpt-5.4-nano")).toBe("gpt-5.4-nano@low");
     expect(summaryModel("gpt-5.4-mini@medium")).toBe("gpt-5.4-mini@low");
     expect(summaryModel("gpt-5.4-mini")).toBe("gpt-5.4-mini@low");
     expect(summaryModel("gpt-4.1-mini")).toBe("gpt-4.1-mini");
   });
 
-  it("keeps at most 4 'so far' items and trims long fields", () => {
-    const s = parseLeadSummary({ requirement: "x".repeat(500), soFar: ["a", "b", "c", "d", "e", " "], status: "s", nextStep: "n" });
-    expect(s.soFar).toEqual(["a", "b", "c", "d"]);
-    expect(s.requirement.length).toBeLessThanOrEqual(240);
+  it("keeps at most 3 'so far' items and trims long fields", () => {
+    const s = parseLeadSummary({ requirement: "x".repeat(500), soFar: ["a", "b", "c", "d", " "], status: "s", nextStep: "n" });
+    expect(s.soFar).toEqual(["a", "b", "c"]);
+    expect(s.requirement.length).toBeLessThanOrEqual(160);
     expect(() => parseLeadSummary({ requirement: "r", soFar: [], status: "s" })).toThrow();
   });
 

@@ -21,12 +21,13 @@ import {
   refreshWaitMs,
   summaryInputHash,
   summaryModel,
+  SUMMARY_MAX_OUTPUT_TOKENS,
   SUMMARY_TIMELINE_LIMIT,
   type LeadSummary,
   type SummaryInput,
   type SummaryStatus,
 } from "../agent/leadSummary.js";
-import { resolveAgentModels, type LeadSummaryModel } from "../providers/openai.provider.js";
+import type { LeadSummaryModel } from "../providers/openai.provider.js";
 import { PermanentProviderError, ProviderDeferredError } from "../providers/provider-errors.js";
 import { getLeadRowOr404 } from "./leads.service.js";
 import { AUTOMATED_SQL } from "./leadAutomation.service.js";
@@ -195,11 +196,6 @@ export async function refreshLeadSummary(actor: Actor, workspaceId: string, lead
 // --- The model input ------------------------------------------------------------
 
 interface InputLeadRow {
-  service_interest: string | null;
-  company: string | null;
-  company_name: string | null;
-  industry: string | null;
-  source: string;
   lifecycle_state: string;
   pipeline_stage: string;
   hot_band: string | null;
@@ -211,33 +207,31 @@ interface InputLeadRow {
   live_scope: "test_contacts" | "new_leads" | "all";
   live_since: Date | null;
   channels: { channel: string; status: string }[] | null;
-  deals: { name: string; stage: string }[] | null;
+  deal_stages: string[] | null;
 }
 
-/** The facts the model sees (rule 2): CRM data only, replies as labels, never reply text. */
+/** The facts the model sees: requirement, status, next step, the last 10 timeline events; never reply text. */
 export async function loadSummaryInput(db: Queryable, workspaceId: string, leadId: string): Promise<SummaryInput> {
   const [lead, facts, timeline] = await Promise.all([
     db.query<InputLeadRow>(
-      `select l.service_interest, l.company, c.name as company_name, coalesce(l.industry, c.industry) as industry, l.source::text as source,
-              l.lifecycle_state::text as lifecycle_state, l.pipeline_stage::text as pipeline_stage, l.hot_band, l.agent_status::text as agent_status,
+      `select l.lifecycle_state::text as lifecycle_state, l.pipeline_stage::text as pipeline_stage, l.hot_band, l.agent_status::text as agent_status,
               l.agent_status_reason, l.agent_live_test, ${AUTOMATED_SQL("l")} as automated,
               s.mode, s.live_scope, s.live_since,
               (select json_agg(json_build_object('channel', ch.channel, 'status', ch.status) order by ch.channel)
                  from public.lead_contact_channels ch where ch.lead_id = l.id and not (ch.status = any($3::text[]))) as channels,
-              (select json_agg(json_build_object('name', d.name, 'stage', d.stage) order by d.created_at)
-                 from public.deals d where d.lead_id = l.id and d.workspace_id = l.workspace_id) as deals
+              (select array_agg(replace(d.stage::text, '_', ' ') order by d.created_at)
+                 from public.deals d where d.lead_id = l.id and d.workspace_id = l.workspace_id and d.closed_at is null) as deal_stages
          from public.leads l
          join public.agent_settings s on s.workspace_id = l.workspace_id
-         left join public.companies c on c.id = l.company_id and c.workspace_id = l.workspace_id
         where l.id = $1 and l.workspace_id = $2`,
       [leadId, workspaceId, PLAIN_CHANNEL],
     ),
-    loadFacts(db, workspaceId, leadId, 5),
+    loadFacts(db, workspaceId, leadId, 1),
     db.query<{ at: string; kind: string; title: string; detail: string | null }>(
       `select ${IST_DATE("t.occurred_at")} as at, t.event_kind as kind, t.title, t.detail
          from public.timeline_events t join public.leads l on l.id = t.lead_id
         where t.lead_id = $1 and l.workspace_id = $2
-          and (t.event_kind = any($3::text[]) or (t.event_kind = 'system' and t.title = any($4::text[])))
+          and (t.event_kind = any($3::text[]) or (t.event_kind = 'system' and (t.title = any($4::text[]) or t.title like 'Deal stage changed%')))
         order by t.occurred_at desc, t.id desc limit $5`,
       [leadId, workspaceId, TIMELINE_KINDS, LIFECYCLE_TITLES, SUMMARY_TIMELINE_LIMIT],
     ),
@@ -247,10 +241,6 @@ export async function loadSummaryInput(db: Queryable, workspaceId: string, leadI
   const quick = quickFactsOf(facts);
   return {
     requirement: quick.requirement,
-    serviceInterest: l.service_interest,
-    company: l.company_name ?? l.company,
-    industry: l.industry,
-    source: l.source,
     lifecycle: l.lifecycle_state,
     stage: l.pipeline_stage,
     hotBand: l.hot_band,
@@ -259,9 +249,8 @@ export async function loadSummaryInput(db: Queryable, workspaceId: string, leadI
     aiStatusReason: l.agent_status_reason,
     doNotContact: l.lifecycle_state === "do_not_contact",
     channelProblems: l.channels ?? [],
-    deals: l.deals ?? [],
+    dealStages: l.deal_stages ?? [],
     nextStep: quick.nextStep ? { ...quick.nextStep, at: day(quick.nextStep.at) } : null,
-    replies: (facts.replies ?? []).map((r) => ({ at: day(r.at), channel: r.channel, label: r.label })),
     timeline: timeline.rows.map((t) => ({ at: t.at, kind: t.kind, title: clip(t.title), detail: clip(t.detail) || null })),
   };
 }
@@ -272,8 +261,8 @@ export interface LeadSummaryDeps {
   model: LeadSummaryModel;
   /** Default: OPENAI_PRICES_JSON. */
   prices?: ModelPrices;
-  /** Default: OPENAI_DECISION_MODEL / OPENAI_GROUNDING_MODEL (the writer summarises). */
-  defaultModels?: { decision?: string | undefined; grounding?: string | undefined };
+  /** Default: OPENAI_SUMMARY_MODEL (gpt-5.4-nano); always run at low effort. */
+  summaryModel?: string;
   /** Tests: only these workspaces. */
   workspaceIds?: string[];
 }
@@ -354,8 +343,8 @@ async function retryIn(row: Claimed, ms: number, restoreAttempt: boolean, error:
 async function summarise(row: Claimed, deps: LeadSummaryDeps): Promise<SummaryOutcome> {
   const base = { leadId: row.lead_id };
   const state = (
-    await pool.query<{ mode: AgentMode; decision_model: string | null; grounding_model: string | null; budget: string; cap: number; spent: string; today: number }>(
-      `select s.mode, s.decision_model, s.grounding_model, s.monthly_budget_usd as budget, s.summary_daily_cap as cap,
+    await pool.query<{ mode: AgentMode; budget: string; cap: number; spent: string; today: number }>(
+      `select s.mode, s.monthly_budget_usd as budget, s.summary_daily_cap as cap,
               ${MONTH_SPEND_SQL} as spent, ${SUMMARIES_TODAY_SQL} as today
          from public.agent_settings s where s.workspace_id = $1`,
       [row.workspace_id],
@@ -382,13 +371,7 @@ async function summarise(row: Claimed, deps: LeadSummaryDeps): Promise<SummaryOu
   }
 
   const prices = deps.prices ?? parsePrices(env.OPENAI_PRICES_JSON);
-  let model: string;
-  try {
-    model = summaryModel(resolveAgentModels(state!, deps.defaultModels).decisionModel);
-  } catch {
-    await retryIn(row, 10 * MINUTE, true, "no_model");
-    return { ...base, result: "deferred" };
-  }
+  const model = summaryModel(deps.summaryModel ?? env.OPENAI_SUMMARY_MODEL);
   if (!priceOf(prices, model)) {
     console.warn(`[summary] No price in OPENAI_PRICES_JSON for ${model}; lead summaries deferred 10 min.`);
     await retryIn(row, 10 * MINUTE, true, "no_price");
@@ -400,6 +383,7 @@ async function summarise(row: Claimed, deps: LeadSummaryDeps): Promise<SummaryOu
       model,
       messages: buildLeadSummaryMessages(input),
       jsonSchema: { name: "lead_summary", schema: LEAD_SUMMARY_JSON_SCHEMA as unknown as Record<string, unknown> },
+      maxCompletionTokens: SUMMARY_MAX_OUTPUT_TOKENS,
     });
     const cost = costUsd(prices, model, result.inputTokens, result.outputTokens, result.cachedInputTokens);
     await withTransaction(async (client) => {

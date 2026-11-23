@@ -148,6 +148,8 @@ export interface ModelCallInput {
   messages: ChatMessage[];
   /** Strict structured output: DECISION_JSON_SCHEMA or GROUNDING_JSON_SCHEMA. */
   jsonSchema: { name: string; schema: Record<string, unknown> };
+  /** Overrides the reasoning models' completion limit (reasoning counts towards it). SUM-1: summaries. */
+  maxCompletionTokens?: number;
 }
 
 export interface ModelCallResult<T> {
@@ -210,6 +212,7 @@ async function structuredCall<T>(client: ChatClient, input: ModelCallInput, pars
     try {
       completion = await client.chat.completions.create({
         ...modelParams(input.model),
+        ...(input.maxCompletionTokens ? { max_completion_tokens: input.maxCompletionTokens } : {}),
         messages: input.messages,
         stream: false,
         response_format: { type: "json_schema", json_schema: { name: input.jsonSchema.name, schema: input.jsonSchema.schema, strict: true } },
