@@ -112,6 +112,7 @@ import { InlineOwner } from "@/features/crm/row-controls";
 import { LatestSuggestedReply } from "@/features/crm/suggested-reply-card";
 import { AGENT_STATUS_LABEL, AGENT_STATUS_TONE } from "@/features/agent/agent-labels";
 import { HotScorePill } from "./hot-score";
+import { LeadSummaryCard } from "./lead-summary-card";
 import { cn } from "@/lib/utils";
 
 const DNC_HINT = "This contact is Do Not Contact. Remove the suppression first.";
@@ -752,6 +753,7 @@ function ContactRecord({ contact, link }: { contact: ContactDetail; link: Contac
 
   const main = (
     <>
+      <LeadSummaryCard contactId={id} />
       {nextStrip}
       <RecordComposer
         contactId={id}

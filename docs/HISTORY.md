@@ -1051,3 +1051,18 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   requirements." (no working-time logic; `domain/workingTime.ts` unchanged). `call_days` now also fails a first message with any
   time/day phrase (shortly, soon, today, tonight, tomorrow, morning/afternoon/evening, this/next week, weekend, weekdays); the two
   closings fail in any other message; polish also drops a writer's "… will give you a call …" before appending the closing.
+- **SUM-1 (lead summary card; migration 064; branch `dev`; no OpenAI call in a request or test):** "Lead summary" at the top of the
+  contact page (above Next; collapsible, remembered in `motmflow.leadSummaryCollapsed`): quick facts (no AI: requirement, last call,
+  last message, last reply, next task / meeting) + the worker's AI summary (requirement / so far / status / next step, writer model at
+  `@low`, strict JSON, ≤ 4 "so far" items). `lead_summaries` (one row per lead) + `lead_summary_runs` (cost; in `MONTH_SPEND_SQL`) +
+  `agent_settings.summary_daily_cap` (200; SQL only, no Settings field yet). A trigger on `timeline_events` marks the row due in 2 min
+  (debounce); the worker step `lead_summaries` (behind `AGENT_RUNNER_ENABLED`, fair pick, 10 per tick) prunes leads that are not
+  automated and not opened, then generates at most once per lead per 10 min, skips unchanged inputs (sha256 hash), stops on agent off /
+  monthly budget / daily cap (status `off` / `paused_budget` / `paused_cap`). `GET /leads/:id/summary` (workspace members) queues a
+  missing / stale summary (old leads only when opened); `POST /leads/:id/summary/refresh` (admin or owner, 429 within 5 min) forces one.
+  Replies reach the model only as date + channel + D4a label, never their text (CLAUDE.md), so the summary holds no inbound content and
+  is stored unencrypted like other AI drafts; it is never logged, never sent and never in the writer prompt. Peek drawer: not added.
+  Cost change (same phase, before release): own model `OPENAI_SUMMARY_MODEL` (default `gpt-5.4-nano@low`, price built in:
+  $0.20 / $0.02 cached / $1.25 per 1M); input = requirement + status + next step + last 10 timeline events (replies as titles only);
+  ≤ ~60 words, `max_completion_tokens` 300, ≤ 3 "so far" items; only call / reply / meeting / proposal / (deal-)stage events queue
+  a summary (notes and sent messages only make it stale for the next open).

@@ -24,6 +24,7 @@ import { logCall, listCallsForLead } from "../services/calls.service.js";
 import { listMeetings } from "../services/meetings.service.js";
 import { listProposals } from "../services/proposals.service.js";
 import { listRuns } from "../services/runs.service.js";
+import { getLeadSummary, refreshLeadSummary } from "../services/leadSummary.service.js";
 
 export const leadsRouter = Router();
 leadsRouter.use(requireAuth);
@@ -420,5 +421,20 @@ leadsRouter.get(
   "/:id/runs",
   asyncHandler(async (req, res) => {
     res.json({ data: await listRuns(pool, req.workspaceId!, { leadId: req.params.id! }) });
+  }),
+);
+
+// SUM-1: the lead summary card (quick facts + the worker's AI summary); never calls OpenAI in the request.
+leadsRouter.get(
+  "/:id/summary",
+  asyncHandler(async (req, res) => {
+    res.json(await getLeadSummary(pool, req.actor!, req.workspaceId!, req.params.id!));
+  }),
+);
+
+leadsRouter.post(
+  "/:id/summary/refresh",
+  asyncHandler(async (req, res) => {
+    res.status(202).json(await refreshLeadSummary(req.actor!, req.workspaceId!, req.params.id!));
   }),
 );

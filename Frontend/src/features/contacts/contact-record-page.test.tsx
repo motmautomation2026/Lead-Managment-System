@@ -90,6 +90,7 @@ vi.mock("@/app/add-lead-context", async (importOriginal) => ({
   useCreateTaskDialog: () => ({ open: mocks.openTask }),
 }));
 vi.mock("@/features/agent/lead-ai-panel", () => ({ LeadAiPanel: () => <div>AI panel</div> }));
+vi.mock("./lead-summary-card", () => ({ LeadSummaryCard: () => <div>Lead summary</div> }));
 // UX-3: jsdom has no matchMedia (phone layout: rail = tabs); `mocks.wide` renders the laptop layout.
 vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => mocks.wide }));
 vi.mock("@/store", () => ({

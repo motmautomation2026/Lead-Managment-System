@@ -74,6 +74,8 @@ const EnvSchema = DbEnvSchema.extend({
   // million tokens, e.g. {"<model>": {"inputPer1M": 2.5, "outputPer1M": 10}}.
   OPENAI_DECISION_MODEL: blankToUndefined(z.string().optional()),
   OPENAI_GROUNDING_MODEL: blankToUndefined(z.string().optional()),
+  // SUM-1: the staff-only lead summary's own model (run at low effort); writer and checker are unchanged.
+  OPENAI_SUMMARY_MODEL: blankToUndefined(z.string().default("gpt-5.4-nano")),
   OPENAI_PRICES_JSON: blankToUndefined(
     z
       .string()

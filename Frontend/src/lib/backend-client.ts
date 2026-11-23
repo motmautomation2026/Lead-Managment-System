@@ -70,6 +70,7 @@ import type {
   ReplyLabel,
   ReplyChannel,
   ReplyDraft,
+  LeadSummaryCard,
   User,
   Workflow,
   WorkflowStep,
@@ -1218,6 +1219,12 @@ export const backend = {
       return { ...rest, messageId: replyId } satisfies InboundReply;
     },
     /** E3b-2a: the contact's open (else latest sent) suggested reply; owner + admins. */
+    /** SUM-1: quick facts + the AI summary; opening a stale one queues it for the worker. */
+    summary: (id: string, signal?: AbortSignal) =>
+      get<LeadSummaryCard>(`/leads/${id}/summary`, signal),
+    /** SUM-1: queue a fresh AI summary (admin or owner; once per 5 minutes). */
+    refreshSummary: (id: string) =>
+      send<{ queued: boolean }>("POST", `/leads/${id}/summary/refresh`),
     latestReplyDraft: (id: string, signal?: AbortSignal) =>
       get<{ draft: ReplyDraft | null }>(`/contacts/${id}/reply-drafts/latest`, signal),
     /** E3b-2a: queue the (edited) suggested reply; the worker sends it in the send window. */

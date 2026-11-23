@@ -41,6 +41,7 @@ export const WORKER_LOOPS = {
   deal_follow_ups: { critical: false },
   staff_alert_emails: { critical: true },
   morning_digest: { critical: false },
+  lead_summaries: { critical: false },
   whatsapp_managers: { critical: true },
 } as const;
 export type WorkerLoop = keyof typeof WORKER_LOOPS;

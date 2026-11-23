@@ -5,10 +5,13 @@ import { parseModelSetting } from "./modelSetting.js";
 const pricesSchema = z.record(z.object({ inputPer1M: z.number().nonnegative(), cachedInputPer1M: z.number().nonnegative().optional(), outputPer1M: z.number().nonnegative() }).strict());
 export type ModelPrices = z.infer<typeof pricesSchema>;
 
-/** Parses OPENAI_PRICES_JSON; blank → no prices. Throws on malformed JSON or values. */
+/** Built-in prices (USD per 1M tokens); OPENAI_PRICES_JSON overrides them. SUM-1: the summary model. */
+export const DEFAULT_PRICES: ModelPrices = { "gpt-5.4-nano": { inputPer1M: 0.2, cachedInputPer1M: 0.02, outputPer1M: 1.25 } };
+
+/** Parses OPENAI_PRICES_JSON over DEFAULT_PRICES; blank → the defaults. Throws on malformed JSON or values. */
 export function parsePrices(raw: string | undefined): ModelPrices {
-  if (!raw?.trim()) return {};
-  return pricesSchema.parse(JSON.parse(raw));
+  if (!raw?.trim()) return { ...DEFAULT_PRICES };
+  return { ...DEFAULT_PRICES, ...pricesSchema.parse(JSON.parse(raw)) };
 }
 
 /** The price of a model setting ("gpt-5.4-mini@low" is priced as gpt-5.4-mini). */

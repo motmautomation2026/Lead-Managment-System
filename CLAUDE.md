@@ -21,7 +21,8 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
   inject an `Embedder` (`tests/helpers/fakeEmbedder.ts`) or a `DecisionModel`
   (`tests/helpers/fakeDecisionModel.ts`). The agent also reads `OPENAI_DECISION_MODEL`,
   `OPENAI_GROUNDING_MODEL` (defaults when a workspace sets none; `name` or `name@effort`) and `OPENAI_PRICES_JSON`
-  (optional `cachedInputPer1M` per model).
+  (optional `cachedInputPer1M` per model; built in: `gpt-5.4-nano`, overridable). `OPENAI_SUMMARY_MODEL` (backend + worker, default
+  `gpt-5.4-nano`, always low effort): SUM-1 lead summaries only.
 - `CRM_COMPANY_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the company sweeper.
 - `CRM_DEAL_SWEEP_ENABLED` (worker; default on, off only when exactly `false`): the deal backfill sweeper.
 - Email has no env vars (E1b): no `RESEND_API_KEY` / `SMTP_FROM_*`; the SMTP + IMAP mailbox is saved per workspace by an
@@ -97,7 +98,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 ## Migrations
 
 - Additive only, numbered after the highest existing file in `Supabase/migrations/`
-  (currently `063`).
+  (currently `064`).
 - Apply them to staging only.
 
 ## Architecture boundaries
@@ -126,7 +127,7 @@ audit; findings A1–A23 and B1–B40, summarised in `docs/audit/07-findings.md`
 - Do not treat pipeline stage and lifecycle state as interchangeable.
 - Do not edit published workflow versions; create a draft and publish a new version.
 - Do not rotate `INTEGRATION_ENCRYPTION_KEY` casually.
-- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `063`).
+- Do not skip migrations or apply only `001_initial_migration.sql`; the latest project needs every migration from `001` through the latest (currently `064`).
 
 ## Way of working
 
@@ -415,6 +416,16 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
 - Deal routing lives in `domain/dealRouting.ts`; event-driven deal moves never touch the contact; only a
   manual deal won (no other open deal) syncs the contact (via `markWon`). Deal code never changes DNC, the
   contact owner, `agent_status` or automation.
+
+## Lead summary (SUM-1)
+
+- Staff only: never sent to a lead, never in the writer / decision prompt, never logged. Pure prompt + hash in `agent/leadSummary.ts`,
+  SQL only in `services/leadSummary.service.ts`. Input: requirement, status, next step, the last 10 timeline events (replies only as
+  their timeline title, never their text); output ≤ ~60 words, `max_completion_tokens` 300; model `OPENAI_SUMMARY_MODEL` at `@low`.
+- Queue: the `timeline_events` trigger (migration 064) marks `lead_summaries.due_at` now + 2 min only for a call, lead reply, meeting,
+  proposal or (deal-)stage event (never a sent message or note; any event makes it stale for the next open); the worker (`lead_summaries` step)
+  summarises only automated leads (AUTOMATED_SQL) or leads opened while stale; ≤ 1 per lead per 10 min (Refresh skips it), unchanged
+  input hash → no call; `agent_settings.summary_daily_cap` (default 200) + the monthly budget (`lead_summary_runs` in `MONTH_SPEND_SQL`).
 
 ## AI agent (Feature 3)
 

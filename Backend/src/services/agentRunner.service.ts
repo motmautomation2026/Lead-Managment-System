@@ -46,6 +46,9 @@ export const MONTH_SPEND_SQL = `(coalesce((select sum(cost_usd) from public.agen
    + coalesce((select sum(classification_cost_usd) from public.email_inbound_events
      where workspace_id = $1 and classified_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
    + coalesce((select sum(cost_usd) from public.reply_drafts
+     where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0)
+   -- SUM-1: staff-only lead summaries (own daily cap, same monthly budget).
+   + coalesce((select sum(cost_usd) from public.lead_summary_runs
      where workspace_id = $1 and created_at >= (${IST_MONTH} at time zone 'Asia/Kolkata')), 0))`;
 /** Today's (IST) count toward max_decisions_per_day of workspace $1: AI decisions plus reply drafts (E3b-2a rule 3). AI reply labels count only toward the monthly budget (E3b-2b rule 1). */
 export const DAY_DECISIONS_SQL = `((select count(*) from public.agent_decisions

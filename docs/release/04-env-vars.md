@@ -37,6 +37,7 @@ A = API, W = worker, F = frontend (build time). "Blank" = leave empty (the defau
 | `OPENAI_EMBEDDING_MODEL` | ✔ | ✔ | `text-embedding-3-small` (must be 1536 dimensions) |
 | `OPENAI_DECISION_MODEL` | ✔ | ✔ | `gpt-5.4-mini@low` (the writer; used when a workspace's AI settings leave the model blank. Staging MOTM sets the same pair in Settings → AI agent.) |
 | `OPENAI_GROUNDING_MODEL` | ✔ | ✔ | `gpt-4.1` (the checker) |
+| `OPENAI_SUMMARY_MODEL` | ✔ | ✔ | blank = `gpt-5.4-nano` (SUM-1 lead summaries, always low effort; its price is built in, `OPENAI_PRICES_JSON` may override it) |
 | `OPENAI_PRICES_JSON` | ✔ | ✔ | one line of JSON with a price for **both** models, USD per million tokens, e.g. `{"gpt-5.4-mini":{"inputPer1M":<in>,"cachedInputPer1M":<cached>,"outputPer1M":<out>},"gpt-4.1":{"inputPer1M":<in>,"cachedInputPer1M":<cached>,"outputPer1M":<out>}}`. Take the numbers from OpenAI's pricing page, or from the JSON you used for `agent:model-test` / the demo journey (staging's `.env` has none). **A model without a price never runs** (the AI waits with "No AI model configured"). Malformed JSON stops the API from starting. |
 | `PUBLIC_API_BASE_URL` | ✔ | ✔ | the API's public **https** URL, e.g. `https://api.example.com` (the email open pixel; open tracking itself stays OFF per workspace) |
 | `APP_BASE_URL` | | ✔ | the CRM's public URL, e.g. `https://crm.example.com` (links in staff alert / digest emails) |

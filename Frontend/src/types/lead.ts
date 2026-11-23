@@ -237,3 +237,22 @@ export interface Call {
   callbackDueAt?: string;
   createdAt: string;
 }
+
+/** SUM-1: GET /leads/:id/summary — quick facts (no AI) + the worker's staff-only AI summary. */
+export interface LeadSummaryCard {
+  quickFacts: {
+    requirement: string | null;
+    lastCall: { at: string; connected: boolean; outcome: string } | null;
+    lastMessage: { at: string; channel: string; source: string } | null;
+    lastReply: { at: string; channel: string; label: string | null } | null;
+    nextStep: { kind: "task" | "meeting"; title: string; at: string } | null;
+  };
+  ai: {
+    summary: { requirement: string; soFar: string[]; status: string; nextStep: string } | null;
+    generatedAt: string | null;
+    status: "ready" | "off" | "paused_cap" | "paused_budget" | "failed" | null;
+    pending: boolean;
+  };
+  canRefresh: boolean;
+  refreshAvailableAt: string | null;
+}
