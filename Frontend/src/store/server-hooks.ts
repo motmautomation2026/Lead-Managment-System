@@ -1053,6 +1053,28 @@ export function useLatestReplyDraft(contactId: string, enabled: boolean) {
   });
 }
 
+/** SUM-1: the lead summary card; polls every 15 s while the worker is writing a summary. */
+export function useLeadSummary(contactId: string) {
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useQuery({
+    queryKey: keys.leadSummary(ws, contactId),
+    queryFn: ({ signal }) => backend.contacts.summary(contactId, signal),
+    enabled: Boolean(contactId),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.ai.pending ? 15_000 : false),
+  });
+}
+
+/** SUM-1: Refresh (queues a summary for the worker). */
+export function useRefreshLeadSummary(contactId: string) {
+  const client = useQueryClient();
+  const { currentWorkspaceId: ws } = useWorkspace();
+  return useMutation({
+    mutationFn: () => backend.contacts.refreshSummary(contactId),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.leadSummary(ws, contactId) }),
+  });
+}
+
 /** E3b-2a: Send (queued; the worker sends) or Discard a suggested reply; refreshes the contact and its tasks. */
 export function useReplyDraftActions(contactId: string) {
   const client = useQueryClient();

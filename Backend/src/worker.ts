@@ -20,6 +20,7 @@ import { runAgentTick } from "./services/agentRunner.service.js";
 import { runAgentSends } from "./services/agentSends.service.js";
 import { runReplyClassification } from "./services/replyClassifier.service.js";
 import { runReplyDrafts, runReplyDraftSends } from "./services/replyDrafts.service.js";
+import { runLeadSummaries } from "./services/leadSummary.service.js";
 import { runMeetingOutcomeTasks, runReplyEscalation } from "./services/workReminders.service.js";
 import { runNextActionSweep } from "./services/nextAction.service.js";
 import { runTaskReminders } from "./services/taskReminders.service.js";
@@ -273,6 +274,10 @@ async function tick(): Promise<void> {
   // E3b-2a: suggested replies for reps (after the labels), behind AGENT_RUNNER_ENABLED.
   const drafted = await step("reply_drafts", "Reply drafts", () => runReplyDrafts(env.AGENT_RUNNER_ENABLED, { model: decisionModel, embedder: getDefaultEmbedder() }), (r) => r.length);
   if (drafted?.length) console.log(`[worker] Reply drafts: ${drafted.map((d) => d.result).join(", ")}.`);
+
+  // SUM-1: staff-only lead summaries (automated leads after activity, any lead opened while stale), behind AGENT_RUNNER_ENABLED.
+  const summaries = await step("lead_summaries", "Lead summaries", () => runLeadSummaries(env.AGENT_RUNNER_ENABLED, { model: decisionModel }), (r) => r.length);
+  if (summaries?.length) console.log(`[worker] Lead summaries: ${summaries.map((s) => s.result).join(", ")}.`);
 
   // E3b-2a: a rep's Send of a WhatsApp reply draft (emails go through runEmailOutbound above); no flag: the rep chose to send.
   const replySends = await step("reply_draft_sends", "Reply sends", () => runReplyDraftSends({ dryRun: env.WORKER_DRY_RUN }), (r) => r.length);

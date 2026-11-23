@@ -5,6 +5,7 @@ import { parseModelOutput, type AgentDecision } from "../agent/decisionSchema.js
 import { modelParams } from "../agent/modelSetting.js";
 import { parseGroundingOutput, type ChatMessage, type GroundingResult } from "../agent/prompt.js";
 import { parseReplyClassification, type ReplyClassification } from "../agent/replyClassification.js";
+import { parseLeadSummary, type LeadSummary } from "../agent/leadSummary.js";
 
 /** kb_chunks.embedding is vector(1536): every model must produce exactly this many dimensions. */
 export const EMBEDDING_DIMENSIONS = 1536;
@@ -176,6 +177,11 @@ export interface ReplyClassifierModel {
   classifyReply(input: ModelCallInput): Promise<ModelCallResult<ReplyClassification>>;
 }
 
+/** SUM-1: the staff-only lead summary (LEAD_SUMMARY_JSON_SCHEMA). Same errors as DecisionModel. */
+export interface LeadSummaryModel {
+  summarizeLead(input: ModelCallInput): Promise<ModelCallResult<LeadSummary>>;
+}
+
 type ChatClient = Pick<OpenAI, "chat">;
 
 export interface OpenAIDecisionModelOptions {
@@ -240,7 +246,7 @@ async function structuredCall<T>(client: ChatClient, input: ModelCallInput, pars
  * up to 2 retries on network / 5xx failures (1 s, 2 s). A missing key throws
  * ProviderDeferredError("OpenAI is not configured"). Server-only.
  */
-export function createOpenAIDecisionModel(options: OpenAIDecisionModelOptions = {}): DecisionModel & ReplyClassifierModel {
+export function createOpenAIDecisionModel(options: OpenAIDecisionModelOptions = {}): DecisionModel & ReplyClassifierModel & LeadSummaryModel {
   const apiKey = options.apiKey ?? env.OPENAI_API_KEY;
   const client = options.client ?? (apiKey ? new OpenAI({ apiKey, timeout: TIMEOUT_MS, maxRetries: 0 }) : null);
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -252,5 +258,6 @@ export function createOpenAIDecisionModel(options: OpenAIDecisionModelOptions = 
     decide: async (input) => call(input, parseModelOutput),
     checkGrounding: async (input) => call(input, parseGroundingOutput),
     classifyReply: async (input) => call(input, parseReplyClassification),
+    summarizeLead: async (input) => call(input, parseLeadSummary),
   };
 }

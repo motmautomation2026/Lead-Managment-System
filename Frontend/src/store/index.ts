@@ -54,6 +54,8 @@ export {
   useInboundReply,
   useCorrectReplyLabel,
   useLatestReplyDraft,
+  useLeadSummary,
+  useRefreshLeadSummary,
   useReplyDraftActions,
   useCreateCompany,
   useUpdateCompany,
