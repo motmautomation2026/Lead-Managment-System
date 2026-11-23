@@ -138,9 +138,9 @@ describe("model settings (E3a)", () => {
   it("SUM-1: a summary call caps the completion at its own limit", async () => {
     const summary = { requirement: "r", soFar: [], status: "s", nextStep: "n" };
     const { create, client } = fakeClient(completion(JSON.stringify(summary)));
-    await createOpenAIDecisionModel({ client, sleep }).summarizeLead({ ...input(), model: "gpt-5.4-nano@low", maxCompletionTokens: 150 });
+    await createOpenAIDecisionModel({ client, sleep }).summarizeLead({ ...input(), model: "gpt-5.4-nano@low", maxCompletionTokens: 300 });
     const sent = (create.mock.calls as unknown as [Record<string, unknown>][])[0]![0];
-    expect(sent).toMatchObject({ model: "gpt-5.4-nano", reasoning_effort: "low", max_completion_tokens: 150 });
+    expect(sent).toMatchObject({ model: "gpt-5.4-nano", reasoning_effort: "low", max_completion_tokens: 300 });
   });
 
   it("reports cached input tokens from the usage", async () => {

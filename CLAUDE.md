@@ -421,7 +421,7 @@ Integration checks owed by phases run without staging, and what INT-1 left open:
 
 - Staff only: never sent to a lead, never in the writer / decision prompt, never logged. Pure prompt + hash in `agent/leadSummary.ts`,
   SQL only in `services/leadSummary.service.ts`. Input: requirement, status, next step, the last 10 timeline events (replies only as
-  their timeline title, never their text); output ≤ ~60 words, `max_completion_tokens` 150; model `OPENAI_SUMMARY_MODEL` at `@low`.
+  their timeline title, never their text); output ≤ ~60 words, `max_completion_tokens` 300; model `OPENAI_SUMMARY_MODEL` at `@low`.
 - Queue: the `timeline_events` trigger (migration 064) marks `lead_summaries.due_at` now + 2 min only for a call, lead reply, meeting,
   proposal or (deal-)stage event (never a sent message or note; any event makes it stale for the next open); the worker (`lead_summaries` step)
   summarises only automated leads (AUTOMATED_SQL) or leads opened while stale; ≤ 1 per lead per 10 min (Refresh skips it), unchanged

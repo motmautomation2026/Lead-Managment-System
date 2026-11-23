@@ -81,7 +81,7 @@ describeIfDb("Lead summary (requires TEST_DATABASE_URL)", () => {
     await makeDue(leadId);
     const first = await run(ws);
     expect(first.outcomes).toEqual([{ leadId, result: "generated" }]);
-    expect(first.model.calls[0]!.input).toMatchObject({ model: "m-sum", maxCompletionTokens: 150 });
+    expect(first.model.calls[0]!.input).toMatchObject({ model: "m-sum", maxCompletionTokens: 300 });
     expect(await row(leadId)).toMatchObject({ status: "ready", summary: SUMMARY, due_at: null, model: "m-sum" });
     const runs = await pool.query(`select model, input_tokens, output_tokens, cost_usd from public.lead_summary_runs where lead_id = $1`, [leadId]);
     expect(runs.rows).toEqual([{ model: "m-sum", input_tokens: 900, output_tokens: 120, cost_usd: "0.000330" }]);

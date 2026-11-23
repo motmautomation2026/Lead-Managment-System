@@ -1064,5 +1064,5 @@ Completed phases, moved unchanged from CLAUDE.md ("Completed so far").
   is stored unencrypted like other AI drafts; it is never logged, never sent and never in the writer prompt. Peek drawer: not added.
   Cost change (same phase, before release): own model `OPENAI_SUMMARY_MODEL` (default `gpt-5.4-nano@low`, price built in:
   $0.20 / $0.02 cached / $1.25 per 1M); input = requirement + status + next step + last 10 timeline events (replies as titles only);
-  ≤ ~60 words, `max_completion_tokens` 150, ≤ 3 "so far" items; only call / reply / meeting / proposal / (deal-)stage events queue
+  ≤ ~60 words, `max_completion_tokens` 300, ≤ 3 "so far" items; only call / reply / meeting / proposal / (deal-)stage events queue
   a summary (notes and sent messages only make it stale for the next open).

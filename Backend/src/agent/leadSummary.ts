@@ -2,7 +2,7 @@
  * SUM-1: the lead summary card's AI layer. Pure: the model input, its hash, the prompt and the output schema.
  * The summary is for staff only: never sent to a lead and never put into the writer's (decision) prompt.
  * Kept small for cost: requirement, status, next step and the last 10 timeline events (titles; never inbound reply
- * text — CLAUDE.md: inbound text never reaches the AI except the reply classifier); ~60 words out, ≤ 150 tokens.
+ * text — CLAUDE.md: inbound text never reaches the AI except the reply classifier); ~60 words out, ≤ 300 completion tokens (reasoning included).
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -16,7 +16,7 @@ export const SUMMARY_MIN_GAP_MS = 10 * 60_000;
 export const SUMMARY_REFRESH_GAP_MS = 5 * 60_000;
 export const SUMMARY_TIMELINE_LIMIT = 10;
 /** The completion limit (reasoning counts towards it on GPT-5.x). */
-export const SUMMARY_MAX_OUTPUT_TOKENS = 150;
+export const SUMMARY_MAX_OUTPUT_TOKENS = 300;
 const DETAIL_CHARS = 120;
 const MAX_SO_FAR = 3;
 
